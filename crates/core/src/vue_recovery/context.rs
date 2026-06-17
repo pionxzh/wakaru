@@ -1,12 +1,13 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
-    Decl, Expr, FnDecl, ImportSpecifier, Module, ModuleDecl, ModuleItem, Pat, Stmt, VarDeclKind,
+    BlockStmtOrExpr, Decl, Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem, Pat, Stmt,
+    VarDeclKind,
 };
 
 use super::helpers::{helper_name, VueHelper};
 use super::syntax::{module_export_name, param_binding_ident, string_lit};
-use super::VueRecoveryContext;
+use super::{RenderSource, VueRecoveryContext};
 
 pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
     let mut ctx = VueRecoveryContext {
@@ -58,11 +59,11 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
     ctx
 }
 
-pub(super) fn collect_render_context(render: &FnDecl, ctx: &mut VueRecoveryContext) {
-    let Some(body) = render.function.body.as_ref() else {
+pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueRecoveryContext) {
+    let Some(stmts) = render_stmts(render) else {
         return;
     };
-    for stmt in &body.stmts {
+    for stmt in stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
         };
@@ -85,13 +86,33 @@ pub(super) fn collect_render_context(render: &FnDecl, ctx: &mut VueRecoveryConte
     }
 }
 
-pub(super) fn render_context_param(render: &FnDecl) -> Option<Atom> {
-    render
-        .function
-        .params
-        .first()
-        .and_then(param_binding_ident)
-        .map(|ident| ident.sym.clone())
+pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
+    match render {
+        RenderSource::Function(render) => render
+            .function
+            .params
+            .first()
+            .and_then(param_binding_ident)
+            .map(|ident| ident.sym.clone()),
+        RenderSource::Arrow(render) => render.params.first().and_then(|param| match param {
+            Pat::Ident(binding) => Some(binding.id.sym.clone()),
+            _ => None,
+        }),
+    }
+}
+
+fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
+    match render {
+        RenderSource::Function(render) => render
+            .function
+            .body
+            .as_ref()
+            .map(|body| body.stmts.as_slice()),
+        RenderSource::Arrow(render) => match render.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
+            BlockStmtOrExpr::Expr(_) => None,
+        },
+    }
 }
 
 fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {

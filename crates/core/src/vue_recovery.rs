@@ -4,8 +4,8 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
-    CallExpr, Callee, Decl, ExportDecl, Expr, FnDecl, Module, ModuleDecl, ModuleItem, ObjectLit,
-    Stmt,
+    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr, FnDecl, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -25,6 +25,7 @@ use context::{collect_context, collect_render_context, render_context_param};
 use expressions::print_expr;
 use helpers::VueHelper;
 use nodes::recover_render_root;
+use syntax::prop_name;
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -35,6 +36,12 @@ struct VueRecoveryContext {
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum RenderSource<'a> {
+    Function(&'a FnDecl),
+    Arrow(&'a ArrowExpr),
 }
 
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
@@ -53,7 +60,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
     let mut ctx = collect_context(&module, cm);
-    let Some(render) = find_render_fn(&module) else {
+    let Some(render) = find_render_source(&module) else {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
@@ -99,6 +106,12 @@ fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
         .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))
 }
 
+fn find_render_source(module: &Module) -> Option<RenderSource<'_>> {
+    find_render_fn(module)
+        .map(RenderSource::Function)
+        .or_else(|| find_setup_render_arrow(module).map(RenderSource::Arrow))
+}
+
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     for item in &module.body {
         match item {
@@ -117,10 +130,101 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     None
 }
 
-fn render_uses_vue_helper(render: &FnDecl, ctx: &VueRecoveryContext) -> bool {
-    let Some(body) = render.function.body.as_ref() else {
-        return false;
-    };
+fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if let Some(render) = setup_render_arrow_from_expr(export.expr.as_ref()) {
+                    return Some(render);
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some(render) = setup_render_arrow_from_expr(init) {
+                        return Some(render);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn setup_render_arrow_from_expr(expr: &Expr) -> Option<&ArrowExpr> {
+    match expr {
+        Expr::Paren(paren) => setup_render_arrow_from_expr(paren.expr.as_ref()),
+        Expr::Call(call) => call
+            .args
+            .first()
+            .and_then(|arg| setup_render_arrow_from_expr(arg.expr.as_ref())),
+        Expr::Object(object) => setup_render_arrow_from_options(object),
+        _ => None,
+    }
+}
+
+fn setup_render_arrow_from_options(object: &ObjectLit) -> Option<&ArrowExpr> {
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        match prop.as_ref() {
+            Prop::Method(method) if prop_name(&method.key).as_deref() == Some("setup") => {
+                let Some(body) = method.function.body.as_ref() else {
+                    continue;
+                };
+                if let Some(render) = return_arrow_from_stmts(&body.stmts) {
+                    return Some(render);
+                }
+            }
+            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("setup") => {
+                if let Some(render) = setup_return_arrow_from_expr(key_value.value.as_ref()) {
+                    return Some(render);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn setup_return_arrow_from_expr(expr: &Expr) -> Option<&ArrowExpr> {
+    match expr {
+        Expr::Paren(paren) => setup_return_arrow_from_expr(paren.expr.as_ref()),
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => return_arrow_from_stmts(&block.stmts),
+            BlockStmtOrExpr::Expr(expr) => arrow_expr(expr.as_ref()),
+        },
+        Expr::Fn(fn_expr) => fn_expr
+            .function
+            .body
+            .as_ref()
+            .and_then(|body| return_arrow_from_stmts(&body.stmts)),
+        _ => None,
+    }
+}
+
+fn return_arrow_from_stmts(stmts: &[Stmt]) -> Option<&ArrowExpr> {
+    stmts.iter().rev().find_map(|stmt| match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => arrow_expr(expr.as_ref()),
+        _ => None,
+    })
+}
+
+fn arrow_expr(expr: &Expr) -> Option<&ArrowExpr> {
+    match expr {
+        Expr::Paren(paren) => arrow_expr(paren.expr.as_ref()),
+        Expr::Arrow(arrow) => Some(arrow),
+        _ => None,
+    }
+}
+
+fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> bool {
     if ctx.vue_helpers.is_empty() {
         return false;
     }
@@ -149,7 +253,15 @@ fn render_uses_vue_helper(render: &FnDecl, ctx: &VueRecoveryContext) -> bool {
         helpers: &ctx.vue_helpers,
         found: false,
     };
-    body.visit_with(&mut finder);
+    match render {
+        RenderSource::Function(render) => {
+            let Some(body) = render.function.body.as_ref() else {
+                return false;
+            };
+            body.visit_with(&mut finder);
+        }
+        RenderSource::Arrow(render) => render.body.visit_with(&mut finder),
+    }
     finder.found
 }
 
@@ -277,6 +389,48 @@ export function render(e, o) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <div>{{ msg }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_returned_render_arrow() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "Greeting",
+  setup(__props) {
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("h1", null, toDisplayString(_ctx.title), 1)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <h1>{{ title }}</h1>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_render_block_component_context() {
+        let input = r#"
+import { defineComponent, resolveComponent, openBlock, createBlock } from "vue";
+const _sfc_main = defineComponent({
+  __name: "WrappedPanel",
+  setup(__props) {
+    return (_ctx, _cache) => {
+      const _component_Panel = resolveComponent("Panel");
+      return openBlock(), createBlock(_component_Panel, { title: _ctx.title }, null, 8, ["title"]);
+    };
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Panel :title=\"title\" />\n</template>\n"
         );
     }
 
