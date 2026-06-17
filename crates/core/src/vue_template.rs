@@ -274,6 +274,35 @@ mod tests {
     }
 
     #[test]
+    fn wraps_fragment_and_text_control_flow_in_template() {
+        let template = VueTemplate {
+            children: vec![
+                VueNode::If(vec![VueIfBranch {
+                    condition: Some("visible".into()),
+                    node: Box::new(VueNode::Fragment(vec![
+                        VueNode::Element(
+                            VueElement::new("span").with_children(vec![VueNode::Text("A".into())]),
+                        ),
+                        VueNode::Element(
+                            VueElement::new("strong")
+                                .with_children(vec![VueNode::Text("B".into())]),
+                        ),
+                    ])),
+                }]),
+                VueNode::If(vec![VueIfBranch {
+                    condition: Some("ready".into()),
+                    node: Box::new(VueNode::Interpolation("message".into())),
+                }]),
+            ],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <template v-if=\"visible\">\n    <span>A</span>\n    <strong>B</strong>\n  </template>\n  <template v-if=\"ready\">\n    {{ message }}\n  </template>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn escapes_text_attrs_and_comments() {
         let template = VueTemplate {
             children: vec![VueNode::Element(

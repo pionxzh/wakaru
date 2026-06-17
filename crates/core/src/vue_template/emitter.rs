@@ -166,11 +166,14 @@ impl TemplateEmitter {
                 self.emit_element_with_leading_attrs(element, depth, leading_attrs)
             }
             VueNode::Fragment(children) => {
-                if let Some((first, rest)) = children.split_first() {
-                    self.emit_node_with_leading_attrs(first, depth, leading_attrs);
-                    for child in rest {
+                if leading_attrs.is_empty() {
+                    for child in children {
                         self.emit_node(child, depth);
                     }
+                } else if children.len() == 1 {
+                    self.emit_node_with_leading_attrs(&children[0], depth, leading_attrs);
+                } else {
+                    self.emit_template_wrapper(depth, leading_attrs, children);
                 }
             }
             VueNode::If(branches) => {
@@ -197,21 +200,24 @@ impl TemplateEmitter {
             | VueNode::Interpolation(_)
             | VueNode::Comment(_)
             | VueNode::RawExpr(_) => {
-                let directive_names = leading_attrs
-                    .iter()
-                    .filter_map(|attr| match attr {
-                        VueAttr::Directive(directive) => Some(format!("v-{}", directive.name)),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                self.emit_node(
-                    &VueNode::Comment(format!("wakaru: {directive_names}")),
-                    depth,
-                );
-                self.emit_node(node, depth);
+                self.emit_template_wrapper(depth, leading_attrs, std::slice::from_ref(node));
             }
         }
+    }
+
+    fn emit_template_wrapper(&mut self, depth: usize, attrs: &[VueAttr], children: &[VueNode]) {
+        self.indent(depth);
+        self.out.push_str("<template");
+        for attr in attrs {
+            self.out.push(' ');
+            self.emit_attr(attr);
+        }
+        self.out.push_str(">\n");
+        for child in children {
+            self.emit_node(child, depth + 1);
+        }
+        self.indent(depth);
+        self.out.push_str("</template>\n");
     }
 
     fn emit_attr(&mut self, attr: &VueAttr) {
