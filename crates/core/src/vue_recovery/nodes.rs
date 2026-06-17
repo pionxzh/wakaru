@@ -340,7 +340,13 @@ fn recover_component_slots(
         if slot_name == "_" {
             continue;
         }
-        let Some(slot) = recover_component_slot(&slot_name, key_value.value.as_ref(), ctx)? else {
+        let Some(slot) = recover_component_slot(
+            &RecoveredSlotName::Static(slot_name),
+            key_value.value.as_ref(),
+            ctx,
+            Vec::new(),
+        )?
+        else {
             return Ok(None);
         };
         slots.push(slot);
@@ -350,6 +356,7 @@ fn recover_component_slots(
 
 fn recover_dynamic_slot(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     match expr {
+        Expr::Paren(paren) => recover_dynamic_slot(paren.expr.as_ref(), ctx),
         Expr::Object(object) => recover_slot_descriptor(object, ctx),
         Expr::Cond(cond) if is_undefined_expr(cond.alt.as_ref()) => {
             let Some(slot) = recover_dynamic_slot(cond.cons.as_ref(), ctx)? else {
@@ -360,8 +367,53 @@ fn recover_dynamic_slot(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<
                 node: Box::new(slot),
             }])))
         }
+        Expr::Call(call) if helper_name(&call.callee, ctx) == Some(VueHelper::RenderList) => {
+            recover_dynamic_slot_list(&call.args, ctx)
+        }
         _ => Ok(None),
     }
+}
+
+fn recover_dynamic_slot_list(
+    args: &[ExprOrSpread],
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueNode>> {
+    let Some(source_arg) = args.first() else {
+        return Ok(None);
+    };
+    let Some(callback_arg) = args.get(1) else {
+        return Ok(None);
+    };
+    let Expr::Arrow(callback) = callback_arg.expr.as_ref() else {
+        return Ok(None);
+    };
+    let Some(item_param) = callback
+        .params
+        .first()
+        .and_then(pat_binding_ident)
+        .map(|ident| ident.sym.clone())
+    else {
+        return Ok(None);
+    };
+    let Some(slot_expr) = arrow_return_expr(&callback.body) else {
+        return Ok(None);
+    };
+
+    let mut item_ctx = ctx.clone();
+    item_ctx.render_context = None;
+    let Some(mut slot) = recover_dynamic_slot(slot_expr, &item_ctx)? else {
+        return Ok(None);
+    };
+    rename_node_expr_prefix(&mut slot, item_param.as_ref(), "slot");
+
+    Ok(Some(VueNode::For(VueFor {
+        value: "slot".to_string(),
+        source: VueExpr::new(clean_attr_expr(
+            &print_expr(source_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )),
+        node: Box::new(slot),
+    })))
 }
 
 fn recover_slot_descriptor(
@@ -370,6 +422,7 @@ fn recover_slot_descriptor(
 ) -> Result<Option<VueNode>> {
     let mut slot_name = None;
     let mut slot_fn = None;
+    let mut extra_attrs = Vec::new();
 
     for prop in &object.props {
         let PropOrSpread::Prop(prop) = prop else {
@@ -383,13 +436,21 @@ fn recover_slot_descriptor(
         };
         match name.as_str() {
             "name" => {
-                let Some(name) = string_lit(key_value.value.as_ref()) else {
-                    return Ok(None);
-                };
-                slot_name = Some(name);
+                slot_name = Some(if let Some(name) = string_lit(key_value.value.as_ref()) {
+                    RecoveredSlotName::Static(name)
+                } else {
+                    RecoveredSlotName::Dynamic(printed_vue_expr(key_value.value.as_ref(), ctx)?)
+                });
             }
             "fn" => slot_fn = Some(key_value.value.as_ref()),
-            "key" => {}
+            "key" => {
+                if string_lit(key_value.value.as_ref()).is_none() {
+                    extra_attrs.push(VueAttr::Bind {
+                        name: "key".to_string(),
+                        expr: printed_vue_expr(key_value.value.as_ref(), ctx)?,
+                    });
+                };
+            }
             _ => return Ok(None),
         }
     }
@@ -397,13 +458,20 @@ fn recover_slot_descriptor(
     let (Some(slot_name), Some(slot_fn)) = (slot_name, slot_fn) else {
         return Ok(None);
     };
-    recover_component_slot(&slot_name, slot_fn, ctx)
+    recover_component_slot(&slot_name, slot_fn, ctx, extra_attrs)
+}
+
+#[derive(Clone)]
+enum RecoveredSlotName {
+    Static(String),
+    Dynamic(VueExpr),
 }
 
 fn recover_component_slot(
-    slot_name: &str,
+    slot_name: &RecoveredSlotName,
     expr: &Expr,
     ctx: &VueRecoveryContext,
+    extra_attrs: Vec<VueAttr>,
 ) -> Result<Option<VueNode>> {
     let Some(slot_fn) = slot_fn_expr(expr, ctx) else {
         return Ok(None);
@@ -414,13 +482,18 @@ fn recover_component_slot(
     let Some(children_expr) = arrow_return_expr(&arrow.body) else {
         return Ok(None);
     };
-    let mut directive = VueDirective::new("slot").with_arg(slot_name.to_string());
+    let mut directive = match slot_name {
+        RecoveredSlotName::Static(name) => VueDirective::new("slot").with_arg(name.clone()),
+        RecoveredSlotName::Dynamic(name) => VueDirective::new("slot").with_dynamic_arg(name),
+    };
     if let Some(scope) = slot_scope(arrow, ctx)? {
         directive = directive.with_expr(scope);
     }
+    let mut attrs = vec![VueAttr::Directive(directive)];
+    attrs.extend(extra_attrs);
     Ok(Some(VueNode::Element(
         VueElement::new("template")
-            .with_attrs(vec![VueAttr::Directive(directive)])
+            .with_attrs(attrs)
             .with_children(recover_children(children_expr, ctx)?),
     )))
 }
@@ -717,15 +790,18 @@ fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
 
 fn rename_attr_expr_prefix(attr: &mut VueAttr, from: &str, to: &str) {
     match attr {
-        VueAttr::Bind { expr, .. }
-        | VueAttr::On { expr, .. }
-        | VueAttr::Spread(expr)
-        | VueAttr::Directive(VueDirective {
-            expr: Some(expr), ..
-        }) => {
+        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
             expr.replace_prefix(from, to);
         }
-        VueAttr::Static { .. } | VueAttr::Directive(VueDirective { expr: None, .. }) => {}
+        VueAttr::Directive(directive) => {
+            if let Some(VueDirectiveArg::Dynamic(arg)) = &mut directive.arg {
+                arg.replace_prefix(from, to);
+            }
+            if let Some(expr) = &mut directive.expr {
+                expr.replace_prefix(from, to);
+            }
+        }
+        VueAttr::Static { .. } => {}
     }
 }
 

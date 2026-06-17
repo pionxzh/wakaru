@@ -530,6 +530,32 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_render_list_dynamic_slot_names() {
+        let input = r#"
+import { resolveComponent, createVNode, createSlots, renderList, withCtx, createElementVNode, toDisplayString, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_I18nT = resolveComponent("I18nT");
+  return openBlock(), createElementBlock("section", null, [
+    createVNode(_component_I18nT, { keypath: _ctx.configKey }, createSlots({ _: 2 }, [
+      renderList(_ctx.props.config.slots, slot => ({
+        name: slot.name,
+        fn: withCtx(() => [
+          createElementVNode("span", null, toDisplayString(slot.content), 1)
+        ]),
+        key: slot.name
+      }))
+    ]), 1024)
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <I18nT :keypath=\"configKey\">\n      <template v-for=\"slot in props.config.slots\" v-slot:[slot.name] :key=\"slot.name\">\n        <span>{{ slot.content }}</span>\n      </template>\n    </I18nT>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_aliased_vue_builtin_component() {
         let input = r##"
 import { Teleport as _Teleport, createBlock, openBlock, createElementBlock } from "vue";
