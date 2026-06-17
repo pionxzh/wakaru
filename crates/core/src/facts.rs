@@ -976,6 +976,7 @@ fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind>
         TranspilerHelperKind::TaggedTemplateLiteral => Some(HelperKind::TaggedTemplateLiteral),
         TranspilerHelperKind::Typeof => None,
         TranspilerHelperKind::DefineProperty => None,
+        TranspilerHelperKind::CreateClass => None,
         TranspilerHelperKind::HelperDependency => None,
     }
 }

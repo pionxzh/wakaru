@@ -1758,6 +1758,37 @@ class Foo {
 }
 
 #[test]
+fn swc_external_create_class_import() {
+    let input = r#"
+import { _ as _create_class } from "@swc/helpers/_/_create_class";
+var Foo = (function() {
+    function t(name) { this.name = name; }
+    return _create_class(t, [{
+        key: "greet",
+        value: function greet() { return "hello " + this.name; }
+    }]);
+}());
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("class Foo"),
+        "should recover class declaration, got:\n{output}"
+    );
+    assert!(
+        output.contains("greet()"),
+        "should recover method from _create_class, got:\n{output}"
+    );
+    assert!(
+        !output.contains("_create_class"),
+        "should remove _create_class call, got:\n{output}"
+    );
+    assert!(
+        !output.contains("@swc/helpers"),
+        "should remove helper import, got:\n{output}"
+    );
+}
+
+#[test]
 fn swc_external_call_super_import() {
     let input = r#"
 import { _ as _call_super } from "@swc/helpers/_/_call_super";

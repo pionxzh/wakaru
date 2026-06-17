@@ -106,12 +106,20 @@ impl Es6ClassHelperContext {
             .into_keys()
             .collect();
         call_super_helpers.extend(collect_call_super_helpers_from_items(items));
+        let mut create_class_helpers: HashSet<BindingKey> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::CreateClass)
+            .into_keys()
+            .collect();
+        create_class_helpers.extend(collect_create_class_helpers_from_items(
+            items,
+            unresolved_mark,
+        ));
         Self {
             inherits_helpers,
             ts_extends_helpers,
             tslib_namespaces: local_helpers.tslib_namespaces().clone(),
             set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
-            create_class_helpers: collect_create_class_helpers_from_items(items, unresolved_mark),
+            create_class_helpers,
             call_super_helpers,
         }
     }
@@ -830,6 +838,20 @@ fn detect_create_class_stmt_key(stmt: &Stmt, unresolved_mark: Mark) -> Option<Bi
 fn detect_create_class_item_key(item: &ModuleItem, unresolved_mark: Mark) -> Option<BindingKey> {
     match item {
         ModuleItem::Stmt(stmt) => detect_create_class_stmt_key(stmt, unresolved_mark),
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+            if import.specifiers.len() == 1
+                && import
+                    .src
+                    .value
+                    .as_str()
+                    .is_some_and(|p| detect_helper_from_path(p).is_some()) =>
+        {
+            match &import.specifiers[0] {
+                ImportSpecifier::Default(spec) => Some(binding_key(&spec.local)),
+                ImportSpecifier::Named(spec) => Some(binding_key(&spec.local)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }

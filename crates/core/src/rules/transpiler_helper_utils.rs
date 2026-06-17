@@ -58,6 +58,7 @@ pub(crate) enum TranspilerHelperKind {
     AsyncToGenerator,
     TaggedTemplateLiteral,
     DefineProperty,
+    CreateClass,
     Typeof,
     HelperDependency,
 }
@@ -360,6 +361,12 @@ const ASSERT_THIS_INITIALIZED_PATHS: &[&str] = &[
 ];
 
 const CALL_SUPER_PATHS: &[&str] = &["@swc/helpers/_/_call_super"];
+
+const CREATE_CLASS_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/createClass",
+    "@babel/runtime/helpers/esm/createClass",
+    "@swc/helpers/_/_create_class",
+];
 
 const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_template_literal"];
 
@@ -1176,10 +1183,10 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     if CALL_SUPER_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::CallSuper);
     }
-    if path == "@swc/helpers/_/_array_with_holes"
-        || path == "@swc/helpers/_/_set_prototype_of"
-        || path == "@swc/helpers/_/_create_class"
-    {
+    if CREATE_CLASS_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::CreateClass);
+    }
+    if path == "@swc/helpers/_/_array_with_holes" || path == "@swc/helpers/_/_set_prototype_of" {
         return Some(TranspilerHelperKind::HelperDependency);
     }
     None
