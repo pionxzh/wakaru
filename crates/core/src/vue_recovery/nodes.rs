@@ -670,6 +670,17 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
     if let Some(text) = string_lit(text_arg.expr.as_ref()) {
         return Ok(VueNode::Text(text));
     }
+    if let Expr::Call(call) = text_arg.expr.as_ref() {
+        if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) {
+            let Some(arg) = call.args.first() else {
+                return Ok(VueNode::Interpolation(VueExpr::new(String::new())));
+            };
+            return Ok(VueNode::Interpolation(VueExpr::new(clean_expr(
+                &print_expr(arg.expr.as_ref(), ctx)?,
+                ctx,
+            ))));
+        }
+    }
     Ok(raw_expr(clean_expr(
         &print_expr(text_arg.expr.as_ref(), ctx)?,
         ctx,
