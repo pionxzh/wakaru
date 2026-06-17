@@ -37,9 +37,12 @@ Supported shapes:
   `withKeys(...)` event modifiers.
 - `v-if` / `v-else-if` / `v-else` from Vue conditional render branches.
 - `v-for` from `renderList(...)` fragment children.
-- Component vnodes from `resolveComponent(...)` + `createVNode(...)`, including
-  default and named component `v-model` pairs from `prop` + `onUpdate:prop`,
-  plus component model modifier props such as `modelModifiers`.
+- Component vnodes from `resolveComponent(...)` + `createVNode(...)` /
+  `createBlock(...)`, including default and named component `v-model` pairs
+  from `prop` + `onUpdate:prop`, plus component model modifier props such as
+  `modelModifiers`.
+- Dynamic component vnodes from `resolveDynamicComponent(...)` as
+  `<component :is="...">`.
 - Named slots with fallback text from `renderSlot(...)`.
 - Runtime directives from `withDirectives(...)`, including `v-model` text
   inputs, `v-show`, directive arguments, modifiers, and custom
