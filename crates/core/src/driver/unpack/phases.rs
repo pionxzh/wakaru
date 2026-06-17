@@ -337,7 +337,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 // at modules renamed via recovered filenames. Runs after every
                 // fact-driven pass so the fact map stays keyed by provisional names.
                 if !rename_ref.is_empty() {
-                    rewrite_import_sources(&mut module, &unpacked.module.filename, rename_ref);
+                    rewrite_import_sources(
+                        &mut module,
+                        &unpacked.module.filename,
+                        rename_ref,
+                        unresolved_mark,
+                    );
                 }
 
                 // Collect the dead-module-elimination report from the final AST

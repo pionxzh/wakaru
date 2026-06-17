@@ -171,3 +171,49 @@ fn minimal_level_keeps_helper_module() {
         "minimal level should not drop modules, got {names:?}"
     );
 }
+
+#[test]
+fn keeps_helper_module_with_top_level_class_static_block() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "helper.js".to_string(),
+                source: r#"
+class C {
+    static {
+        sideEffect();
+    }
+}
+function _extends() {
+    _extends = Object.assign || function(target) {
+        return target;
+    };
+    return _extends.apply(this, arguments);
+}
+export default _extends;
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: r#"import _extends from "./helper.js";
+export const x = _extends({}, app_info);
+"#
+                .to_string(),
+            },
+        ],
+        dce_options(),
+    )
+    .expect("unpack");
+
+    let helper = output
+        .modules
+        .iter()
+        .find(|(n, _)| n == "helper.js")
+        .map(|(_, code)| code)
+        .expect("helper module with class side effects must remain");
+    assert!(
+        helper.contains("sideEffect"),
+        "class static block side effect should not be dropped:\n{helper}"
+    );
+}

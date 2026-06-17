@@ -5,7 +5,8 @@
 //! `data-sentry-source-file="<file>"` (and `data-sentry-component`). After the
 //! application's own JSX transform + minification, that annotation survives in
 //! the bundle as a string-literal property in the `jsx`/`createElement` props
-//! object — e.g. `_jsx("div", { "data-sentry-source-file": "Foo.jsx", ... })`.
+//! object — e.g. `_jsx("div", { "data-sentry-component": "Foo",
+//! "data-sentry-source-file": "Foo.jsx", ... })`.
 //!
 //! Because `data-sentry-source-file` names the file the JSX is *written in*,
 //! every annotated element in one source module carries the same value. We
@@ -20,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     CallExpr, Callee, ExportAll, Expr, ImportDecl, KeyValueProp, Lit, Module, NamedExport,
     ObjectLit, Prop, PropName, PropOrSpread, Str,
@@ -33,10 +35,12 @@ const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySource
 const COMPONENT_KEYS: &[&str] = &["data-sentry-component", "dataSentryComponent"];
 
 /// Harvest the original source filename advertised by Sentry annotations in a
-/// freshly-parsed module, if any. Prefers the value co-located with a
-/// `data-sentry-component` root; otherwise accepts a unanimous value. Returns
-/// `None` when the module has no marker or carries conflicting filenames
-/// (e.g. several concatenated source files), so naming stays conservative.
+/// freshly-parsed module, if any. Only accepts values co-located with a
+/// `data-sentry-component` marker, matching the Sentry plugin shape and avoiding
+/// unrelated objects that happen to carry a `data-sentry-source-file` key.
+/// Returns `None` when the module has no complete marker or carries conflicting
+/// filenames (e.g. several concatenated source files), so naming stays
+/// conservative.
 pub(super) fn harvest_suggested_filename(module: &Module) -> Option<String> {
     let mut collector = SentrySourceFileCollector::default();
     module.visit_with(&mut collector);
@@ -45,15 +49,11 @@ pub(super) fn harvest_suggested_filename(module: &Module) -> Option<String> {
 
 #[derive(Default)]
 struct SentrySourceFileCollector {
-    component_file: Option<String>,
     counts: HashMap<String, usize>,
 }
 
 impl SentrySourceFileCollector {
     fn choose(&self) -> Option<String> {
-        if let Some(file) = &self.component_file {
-            return Some(file.clone());
-        }
         if self.counts.len() == 1 {
             return self.counts.keys().next().cloned();
         }
@@ -87,10 +87,9 @@ impl Visit for SentrySourceFileCollector {
                 has_component = true;
             }
         }
-        if let Some(source_file) = source_file {
-            *self.counts.entry(source_file.clone()).or_default() += 1;
-            if has_component && self.component_file.is_none() {
-                self.component_file = Some(source_file);
+        if has_component {
+            if let Some(source_file) = source_file {
+                *self.counts.entry(source_file).or_default() += 1;
             }
         }
         obj.visit_children_with(self);
@@ -153,10 +152,12 @@ pub(super) fn rewrite_import_sources(
     module: &mut Module,
     from_filename: &str,
     rename_map: &HashMap<String, String>,
+    unresolved_mark: Mark,
 ) {
     let mut rewriter = ImportSourceRewriter {
         from_filename,
         rename_map,
+        unresolved_mark,
     };
     module.visit_mut_with(&mut rewriter);
 }
@@ -164,6 +165,7 @@ pub(super) fn rewrite_import_sources(
 struct ImportSourceRewriter<'a> {
     from_filename: &'a str,
     rename_map: &'a HashMap<String, String>,
+    unresolved_mark: Mark,
 }
 
 impl ImportSourceRewriter<'_> {
@@ -207,7 +209,17 @@ impl VisitMut for ImportSourceRewriter<'_> {
     }
 
     fn visit_mut_call_expr(&mut self, n: &mut CallExpr) {
-        if matches!(n.callee, Callee::Import(_)) {
+        let should_rewrite = match &n.callee {
+            Callee::Import(_) => true,
+            Callee::Expr(callee) => matches!(
+                callee.as_ref(),
+                Expr::Ident(ident)
+                    if ident.sym.as_ref() == "require"
+                        && ident.ctxt.outer() == self.unresolved_mark
+            ),
+            _ => false,
+        };
+        if should_rewrite {
             if let Some(arg) = n.args.first_mut() {
                 if arg.spread.is_none() {
                     if let Expr::Lit(Lit::Str(s)) = arg.expr.as_mut() {
@@ -222,9 +234,10 @@ impl VisitMut for ImportSourceRewriter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::io::parse_js;
+    use super::super::super::io::{parse_js, print_js};
     use super::*;
-    use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
+    use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
+    use swc_core::ecma::transforms::base::resolver;
 
     fn harvest(source: &str) -> Option<String> {
         GLOBALS.set(&Default::default(), || {
@@ -236,14 +249,24 @@ mod tests {
 
     #[test]
     fn harvests_source_file_from_props_object() {
-        let got =
-            harvest(r#"_jsx("div", { "data-sentry-source-file": "Widget.jsx", children: "x" });"#);
+        let got = harvest(
+            r#"_jsx("div", {
+                "data-sentry-component": "Widget",
+                "data-sentry-source-file": "Widget.jsx",
+                children: "x"
+            });"#,
+        );
         assert_eq!(got.as_deref(), Some("Widget.jsx"));
     }
 
     #[test]
     fn harvests_native_camelcase_attribute() {
-        let got = harvest(r#"_jsx("div", { dataSentrySourceFile: "Widget.jsx" });"#);
+        let got = harvest(
+            r#"_jsx("div", {
+                dataSentryComponent: "Widget",
+                dataSentrySourceFile: "Widget.jsx"
+            });"#,
+        );
         assert_eq!(got.as_deref(), Some("Widget.jsx"));
     }
 
@@ -272,6 +295,15 @@ mod tests {
             "#,
         );
         assert_eq!(got, None, "ambiguous source files should not pick a name");
+    }
+
+    #[test]
+    fn ignores_source_file_without_component_marker() {
+        let got = harvest(r#"const meta = { "data-sentry-source-file": "Widget.jsx" };"#);
+        assert_eq!(
+            got, None,
+            "source-file alone is too broad to prove a module filename"
+        );
     }
 
     #[test]
@@ -339,5 +371,44 @@ mod tests {
             Some("a.js")
         );
         assert_eq!(resolve_relative_specifier("b.js", "react"), None);
+    }
+
+    fn rewrite(source: &str) -> String {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module =
+                parse_js(source, "consumer.js", cm.clone()).expect("source should parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            let rename_map = HashMap::from([("a.js".to_string(), "Widget.jsx".to_string())]);
+            rewrite_import_sources(&mut module, "consumer.js", &rename_map, unresolved_mark);
+            print_js(&module, cm).expect("module should print")
+        })
+    }
+
+    #[test]
+    fn rewrites_unresolved_require_source() {
+        let got = rewrite(r#"export default require("./a.js");"#);
+        assert!(
+            got.contains(r#"require("./Widget.jsx")"#),
+            "unresolved require should point at recovered filename:\n{got}"
+        );
+    }
+
+    #[test]
+    fn does_not_rewrite_shadowed_require_source() {
+        let got = rewrite(
+            r#"
+function require(x) {
+    return x;
+}
+export default require("./a.js");
+"#,
+        );
+        assert!(
+            got.contains(r#"require("./a.js")"#),
+            "local require binding should not be treated as CommonJS:\n{got}"
+        );
     }
 }

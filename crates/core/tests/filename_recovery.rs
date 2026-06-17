@@ -75,6 +75,63 @@ fn rewrites_importer_source_to_recovered_filename() {
 }
 
 #[test]
+fn rewrites_surviving_require_source_to_recovered_filename() {
+    let mut inputs = sentry_annotated_inputs();
+    inputs[1].source = r#"export default require("./a.js");"#.to_string();
+
+    let output =
+        unpack_files(inputs, DecompileOptions::default()).expect("two modules should unpack");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(n, _)| n == "b.js")
+        .map(|(_, code)| code)
+        .expect("consumer module b.js should exist");
+
+    assert!(
+        consumer.contains(r#"require("./myAwesomeComponent.jsx")"#),
+        "surviving require() should reference the recovered filename:\n{consumer}"
+    );
+    assert!(
+        !consumer.contains(r#"require("./a.js")"#),
+        "surviving require() should not reference the provisional filename:\n{consumer}"
+    );
+}
+
+#[test]
+fn source_file_without_component_marker_does_not_recover_filename() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "a.js".to_string(),
+                source: r#"
+export const marker = {
+    "data-sentry-source-file": "plainObject.jsx",
+    children: "hi"
+};
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "b.js".to_string(),
+                source: r#"import { marker } from "./a.js";
+export const x = marker;
+"#
+                .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("two modules should unpack");
+
+    let names: Vec<&str> = output.modules.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&"a.js") && !names.contains(&"plainObject.jsx"),
+        "source-file without component marker should not rename the module, got {names:?}"
+    );
+}
+
+#[test]
 fn minimal_level_keeps_provisional_filename() {
     let output = unpack_files(
         sentry_annotated_inputs(),

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
-    CallExpr, Callee, Decl, Expr, Lit, Module, ModuleDecl, ModuleItem, Stmt,
+    CallExpr, Callee, Decl, DefaultDecl, Expr, Lit, Module, ModuleDecl, ModuleItem, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -284,7 +284,7 @@ fn is_own_body_pure(module: &Module) -> bool {
             ModuleDecl::ExportAll(_) => false,
             ModuleDecl::ExportNamed(named) => named.src.is_none(),
             ModuleDecl::ExportDecl(export) => is_pure_decl(&export.decl),
-            ModuleDecl::ExportDefaultDecl(_) => true,
+            ModuleDecl::ExportDefaultDecl(export) => is_pure_default_decl(&export.decl),
             ModuleDecl::ExportDefaultExpr(export) => is_pure_init(&export.expr),
             _ => false,
         },
@@ -295,7 +295,8 @@ fn is_own_body_pure(module: &Module) -> bool {
 
 fn is_pure_decl(decl: &Decl) -> bool {
     match decl {
-        Decl::Fn(_) | Decl::Class(_) => true,
+        Decl::Fn(_) => true,
+        Decl::Class(_) => false,
         Decl::Var(var) => var
             .decls
             .iter()
@@ -305,10 +306,14 @@ fn is_pure_decl(decl: &Decl) -> bool {
     }
 }
 
+fn is_pure_default_decl(decl: &DefaultDecl) -> bool {
+    matches!(decl, DefaultDecl::Fn(_) | DefaultDecl::TsInterfaceDecl(_))
+}
+
 fn is_pure_init(expr: &Expr) -> bool {
     matches!(
         expr,
-        Expr::Fn(_) | Expr::Arrow(_) | Expr::Class(_) | Expr::Lit(_) | Expr::Ident(_)
+        Expr::Fn(_) | Expr::Arrow(_) | Expr::Lit(_) | Expr::Ident(_)
     )
 }
 
@@ -401,6 +406,20 @@ mod tests {
     #[test]
     fn top_level_side_effect_is_not_pure() {
         assert!(!is_own_body_pure(&parse("doThing(); export const x = 1;")));
+    }
+
+    #[test]
+    fn class_declaration_is_not_pure() {
+        assert!(!is_own_body_pure(&parse(
+            "class C { static { sideEffect(); } } export default function _x() {}"
+        )));
+    }
+
+    #[test]
+    fn export_default_class_is_not_pure() {
+        assert!(!is_own_body_pure(&parse(
+            "export default class C { static { sideEffect(); } }"
+        )));
     }
 
     #[test]
