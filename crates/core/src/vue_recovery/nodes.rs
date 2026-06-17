@@ -745,6 +745,14 @@ fn recover_component_tag(
             .component_bindings
             .get(&ident.sym)
             .cloned()
+            .or_else(|| {
+                ctx.vue_helpers
+                    .get(&ident.sym)
+                    .and_then(|helper| match helper {
+                        VueHelper::Other(name) if is_builtin_component(name) => Some(name.clone()),
+                        _ => None,
+                    })
+            })
             .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string()))
             .map(|tag| RecoveredComponentTag {
                 tag,
@@ -774,4 +782,11 @@ fn is_pascal_case(value: &str) -> bool {
         .next()
         .map(|ch| ch.is_ascii_uppercase())
         .unwrap_or(false)
+}
+
+fn is_builtin_component(name: &str) -> bool {
+    matches!(
+        name,
+        "KeepAlive" | "Suspense" | "Teleport" | "Transition" | "TransitionGroup"
+    )
 }
