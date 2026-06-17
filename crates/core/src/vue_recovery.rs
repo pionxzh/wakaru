@@ -917,6 +917,45 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_cached_event_direct_call() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("input", {
+    onInput: _cache[0] || (_cache[0] = (event) => _ctx.onChange(event.target.checked))
+  }, null, 40);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input @input=\"onChange($event.target.checked)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cached_event_unref_call() {
+        let input = r#"
+import { d as dc, _ as ur, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "SubTab",
+  setup() {
+    return (_ctx, _cache) => (
+      ob(), ce("li", {
+        onClick: _cache[0] || (_cache[0] = (event) => ur(selectTab)(name))
+      }, "Tab", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <li @click=\"selectTab(name)\">Tab</li>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_conditional_branch_chain() {
         let input = r#"
 import { toDisplayString, openBlock, createElementBlock } from "vue";
