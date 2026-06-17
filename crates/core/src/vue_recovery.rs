@@ -478,6 +478,23 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_aliased_vue_builtin_component() {
+        let input = r##"
+import { Teleport as _Teleport, createBlock, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createBlock(_Teleport, { to: "#portal" }, [
+    createElementBlock("div", null, "Popup")
+  ]);
+}
+"##;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Teleport to=\"#portal\">\n    <div>Popup</div>\n  </Teleport>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_v_model_pairs() {
         let input = r#"
 import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
