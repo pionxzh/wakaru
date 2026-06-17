@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
-use swc_core::atoms::{Atom, Wtf8Atom};
+use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr, ExprOrSpread,
-    FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
+    FnDecl, ImportSpecifier, Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -19,11 +19,16 @@ use crate::vue_template::{
 
 mod expressions;
 mod helpers;
+mod syntax;
 
 use expressions::{
     clean_attr_expr, clean_expr, clean_vue_expr, print_expr, printed_vue_expr, raw_expr,
 };
 use helpers::{helper_call_name, helper_name, is_fragment_tag, VueHelper};
+use syntax::{
+    module_export_name, param_binding_ident, pat_binding_ident, prop_name, string_lit,
+    wtf8_to_string,
+};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -199,13 +204,6 @@ fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Strin
         .and_then(|arg| string_lit(arg.expr.as_ref()))
 }
 
-fn module_export_name(name: &ModuleExportName) -> String {
-    match name {
-        ModuleExportName::Ident(ident) => ident.sym.to_string(),
-        ModuleExportName::Str(str) => wtf8_to_string(&str.value),
-    }
-}
-
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     for item in &module.body {
         match item {
@@ -346,20 +344,6 @@ fn render_context_param(render: &FnDecl) -> Option<Atom> {
         .first()
         .and_then(param_binding_ident)
         .map(|ident| ident.sym.clone())
-}
-
-fn param_binding_ident(param: &Param) -> Option<&Ident> {
-    match &param.pat {
-        Pat::Ident(binding) => Some(&binding.id),
-        _ => None,
-    }
-}
-
-fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
-    match pat {
-        Pat::Ident(binding) => Some(&binding.id),
-        _ => None,
-    }
 }
 
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
@@ -1298,21 +1282,6 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
     Ok(Some(format!("export default {printed}")))
 }
 
-fn prop_name(name: &PropName) -> Option<String> {
-    match name {
-        PropName::Ident(ident) => Some(ident.sym.to_string()),
-        PropName::Str(str) => Some(wtf8_to_string(&str.value)),
-        _ => None,
-    }
-}
-
-fn string_lit(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Lit(Lit::Str(str)) => Some(wtf8_to_string(&str.value)),
-        _ => None,
-    }
-}
-
 fn lower_first(value: &str) -> String {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
@@ -1327,13 +1296,6 @@ fn is_pascal_case(value: &str) -> bool {
         .next()
         .map(|ch| ch.is_ascii_uppercase())
         .unwrap_or(false)
-}
-
-fn wtf8_to_string(value: &Wtf8Atom) -> String {
-    value
-        .as_str()
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| value.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
