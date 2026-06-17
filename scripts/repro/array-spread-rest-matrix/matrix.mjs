@@ -83,12 +83,18 @@ const snippets = [
   {
     name: "array-rest-basic",
     source: "const [first, ...rest_items] = items;\nuse(first, rest_items);\n",
+    acceptForms: [
+      "const unused = undefined;\nconst [first, ...rest_items] = items;\nuse(first, rest_items);\n",
+    ],
     expected: ["const [first, ...rest_items] = items", "use(first, rest_items)"],
     rejected: ARRAY_HELPER_REJECTED,
   },
   {
     name: "array-rest-default-hole",
     source: "const [first, , second = fallback, ...rest_items] = items;\nuse(first, second, rest_items);\n",
+    acceptForms: [
+      "const unused = undefined;\nconst [first, , second = fallback, ...rest_items] = items;\nuse(first, second, rest_items);\n",
+    ],
     expected: ["first", "second = fallback", "...rest_items"],
     rejected: ARRAY_HELPER_REJECTED,
   },
