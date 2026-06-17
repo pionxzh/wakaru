@@ -169,6 +169,31 @@ function f(_maybeArrayLike, _toArray, items) {
 }
 
 #[test]
+fn preserves_non_helper_delegate_with_array_check() {
+    let input = r#"
+function choose(orElse, arr, i) {
+  if (Array.isArray(arr)) {
+    sideEffect(arr);
+  }
+  return orElse(arr, i);
+}
+var [first, ...rest] = choose(transform, items);
+use(first, rest);
+"#;
+    let expected = r#"
+function choose(orElse, arr, i) {
+  if (Array.isArray(arr)) {
+    sideEffect(arr);
+  }
+  return orElse(arr, i);
+}
+var [first, ...rest] = choose(transform, items);
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn preserves_unrelated_unused_function_when_maybe_array_like_is_present() {
     let input = r#"
 function unrelated() {}

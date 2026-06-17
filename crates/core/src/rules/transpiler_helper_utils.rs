@@ -4397,15 +4397,87 @@ fn is_maybe_array_like_fn(func: &Function) -> bool {
         Pat::Ident(id) => &id.id,
         _ => return false,
     };
+    let array_param = match &func.params[1].pat {
+        Pat::Ident(id) => &id.id,
+        _ => return false,
+    };
 
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
-    if !markers.has_array_is_array {
+    if !markers.has_array_is_array || !has_array_like_length_typeof_guard(&body.stmts, array_param)
+    {
         return false;
     }
 
     has_delegate_return(&body.stmts, first_param)
+}
+
+fn has_array_like_length_typeof_guard(stmts: &[Stmt], array_param: &Ident) -> bool {
+    struct Finder<'a> {
+        array_param: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_bin_expr(&mut self, bin: &BinExpr) {
+            if is_number_typeof_length_check(bin, self.array_param) {
+                self.found = true;
+                return;
+            }
+            bin.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        array_param,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_number_typeof_length_check(bin: &BinExpr, array_param: &Ident) -> bool {
+    if !matches!(
+        bin.op,
+        BinaryOp::EqEq | BinaryOp::EqEqEq | BinaryOp::NotEq | BinaryOp::NotEqEq
+    ) {
+        return false;
+    }
+    (is_typeof_array_length(&bin.left, array_param) && is_number_string_literal(&bin.right))
+        || (is_number_string_literal(&bin.left) && is_typeof_array_length(&bin.right, array_param))
+}
+
+fn is_typeof_array_length(expr: &Expr, array_param: &Ident) -> bool {
+    let Expr::Unary(unary) = strip_parens(expr) else {
+        return false;
+    };
+    if unary.op != UnaryOp::TypeOf {
+        return false;
+    }
+    let Expr::Member(member) = strip_parens(unary.arg.as_ref()) else {
+        return false;
+    };
+    if !member_prop_name(&member.prop, "length") {
+        return false;
+    }
+    matches!(
+        strip_parens(member.obj.as_ref()),
+        Expr::Ident(obj) if obj.sym == array_param.sym && obj.ctxt == array_param.ctxt
+    )
+}
+
+fn is_number_string_literal(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("number"))
 }
 
 fn has_delegate_return(stmts: &[Stmt], first_param: &Ident) -> bool {
