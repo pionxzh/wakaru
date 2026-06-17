@@ -158,6 +158,10 @@ impl Visit for HelperInference<'_> {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            self.infer_unref_expr(callee.as_ref());
+        }
+
         if let Some(callee) = call_callee_ident(call) {
             if self.candidates.contains(&callee.sym) {
                 if let Some(helper) = infer_call_helper(call) {

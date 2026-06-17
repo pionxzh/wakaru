@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Lit, ObjectLit, Prop, PropOrSpread,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Lit, ObjectLit, Pat, Prop, PropOrSpread,
 };
 
 use super::directives::directive_modifiers;
@@ -329,37 +329,65 @@ fn cached_event_handler_name(value: &Expr, ctx: &VueRecoveryContext) -> Result<O
         Expr::Assign(assign) if assign.op == AssignOp::Assign => {
             arrow_handler_name(assign.right.as_ref(), ctx)
         }
-        Expr::Arrow(arrow) => arrow_body_handler_name(&arrow.body, ctx),
+        Expr::Arrow(arrow) => arrow_handler_expr(arrow, ctx),
         _ => Ok(None),
     }
 }
 
 fn arrow_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     match body {
-        Expr::Arrow(arrow) => arrow_body_handler_name(&arrow.body, ctx),
+        Expr::Arrow(arrow) => arrow_handler_expr(arrow, ctx),
         _ => Ok(None),
     }
 }
 
-fn arrow_body_handler_name(
-    body: &BlockStmtOrExpr,
-    ctx: &VueRecoveryContext,
-) -> Result<Option<String>> {
-    let BlockStmtOrExpr::Expr(expr) = body else {
+fn arrow_handler_expr(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() else {
         return Ok(None);
     };
-    logical_handler_name(expr.as_ref(), ctx)
+    handler_expr_name(expr.as_ref(), ctx, arrow_event_param(arrow))
 }
 
-fn logical_handler_name(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn handler_expr_name(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    event_param: Option<&str>,
+) -> Result<Option<String>> {
     match expr {
-        Expr::Paren(paren) => logical_handler_name(paren.expr.as_ref(), ctx),
-        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => Ok(Some(clean_attr_expr(
-            &print_expr(bin.left.as_ref(), ctx)?,
-            ctx,
-        ))),
+        Expr::Paren(paren) => handler_expr_name(paren.expr.as_ref(), ctx, event_param),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+            clean_event_handler_expr(bin.left.as_ref(), ctx, event_param).map(Some)
+        }
+        Expr::Call(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         _ => Ok(None),
     }
+}
+
+fn clean_event_handler_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    event_param: Option<&str>,
+) -> Result<String> {
+    let mut handler = clean_attr_expr(&print_expr(expr, ctx)?, ctx);
+    if let Some(param) = event_param {
+        handler = replace_event_param(&handler, param);
+    }
+    Ok(handler)
+}
+
+fn arrow_event_param(arrow: &ArrowExpr) -> Option<&str> {
+    let Pat::Ident(binding) = arrow.params.first()? else {
+        return None;
+    };
+    Some(binding.id.sym.as_ref())
+}
+
+fn replace_event_param(expr: &str, param: &str) -> String {
+    let mut renamed = expr.replace(&format!("{param}."), "$event.");
+    if renamed == param {
+        renamed = "$event".to_string();
+    }
+    renamed
 }
 
 fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
