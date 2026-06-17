@@ -184,6 +184,15 @@ fn attrs_from_key_value(
         }]);
     }
 
+    if let Some(directive_name) = html_directive_name(name) {
+        return Ok(vec![VueAttr::Directive(VueDirective {
+            name: directive_name.to_string(),
+            arg: None,
+            expr: Some(printed_vue_expr(value, ctx)?),
+            modifiers: Vec::new(),
+        })]);
+    }
+
     if name == "class" {
         if let Some(attrs) = class_attrs_from_helper(value, ctx)? {
             return Ok(attrs);
@@ -210,6 +219,14 @@ fn attrs_from_key_value(
             name: name.to_string(),
             expr: printed_vue_expr(value, ctx)?,
         }]),
+    }
+}
+
+fn html_directive_name(name: &str) -> Option<&'static str> {
+    match name {
+        "innerHTML" => Some("html"),
+        "textContent" => Some("text"),
+        _ => None,
     }
 }
 
