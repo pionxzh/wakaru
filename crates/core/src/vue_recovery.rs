@@ -378,7 +378,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             match helper.as_str() {
                 "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
-                "createVNode" => recover_component_vnode(&call.args, ctx).map(Some),
+                "createBlock" | "createVNode" => recover_component_vnode(&call.args, ctx).map(Some),
                 "createTextVNode" => recover_text_vnode(&call.args, ctx).map(Some),
                 "renderSlot" => recover_slot(&call.args, ctx).map(Some),
                 "renderList" => recover_render_list(&call.args, ctx).map(Some),
@@ -505,17 +505,19 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
     let Some(component_arg) = args.first() else {
         return Ok(VueNode::RawExpr("createVNode()".into()));
     };
-    let Some(tag) = component_tag(component_arg.expr.as_ref(), ctx) else {
+    let Some(component) = recover_component_tag(component_arg.expr.as_ref(), ctx)? else {
         return Ok(VueNode::RawExpr(clean_expr(
             &print_expr(component_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
     };
-    let attrs = args
-        .get(1)
-        .map(|arg| recover_component_attrs(arg.expr.as_ref(), ctx))
-        .transpose()?
-        .unwrap_or_default();
+    let mut attrs = component.attrs;
+    attrs.extend(
+        args.get(1)
+            .map(|arg| recover_component_attrs(arg.expr.as_ref(), ctx))
+            .transpose()?
+            .unwrap_or_default(),
+    );
     let children = args
         .get(2)
         .map(|arg| recover_children(arg.expr.as_ref(), ctx))
@@ -523,7 +525,7 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
         .unwrap_or_default();
 
     Ok(VueNode::Element(
-        VueElement::new(tag)
+        VueElement::new(component.tag)
             .with_attrs(attrs)
             .with_children(children),
     ))
@@ -1255,14 +1257,40 @@ fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     }
 }
 
-fn component_tag(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+struct RecoveredComponentTag {
+    tag: String,
+    attrs: Vec<VueAttr>,
+}
+
+fn recover_component_tag(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<RecoveredComponentTag>> {
     match expr {
-        Expr::Ident(ident) => ctx
+        Expr::Ident(ident) => Ok(ctx
             .component_bindings
             .get(&ident.sym)
             .cloned()
-            .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string())),
-        _ => None,
+            .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string()))
+            .map(|tag| RecoveredComponentTag {
+                tag,
+                attrs: Vec::new(),
+            })),
+        Expr::Call(call)
+            if helper_name(&call.callee, ctx).as_deref() == Some("resolveDynamicComponent") =>
+        {
+            let Some(target) = call.args.first() else {
+                return Ok(None);
+            };
+            Ok(Some(RecoveredComponentTag {
+                tag: "component".to_string(),
+                attrs: vec![VueAttr::Bind {
+                    name: "is".to_string(),
+                    expr: clean_attr_expr(&print_expr(target.expr.as_ref(), ctx)?, ctx),
+                }],
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -1677,6 +1705,23 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <section>\n    <FormInput v-model.trim=\"name\" v-model:filter.number.lazy=\"filter\" label=\"Name\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_dynamic_component() {
+        let input = r#"
+import { resolveDynamicComponent, openBlock, createBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createBlock(resolveDynamicComponent(_ctx.currentView), {
+    class: "panel"
+  }, null, 512);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component :is=\"currentView\" class=\"panel\" />\n</template>\n"
         );
     }
 
