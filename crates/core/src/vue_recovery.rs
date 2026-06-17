@@ -682,6 +682,25 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_pascal_case_chunk_component_import_alias() {
+        let input = r#"
+import { S as __1 } from "./SvgIcon-Dg6MjH_p.js";
+import { d as dc, q as ob, aa as cb } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "UsesSvgIcon",
+  setup() {
+    return () => (ob(), cb(__1, { name: "icon-system-play-video-cycle" }, null));
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SvgIcon name=\"icon-system-play-video-cycle\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_unref_helper_alias_in_conditions_and_expressions() {
         let input = r#"
 import { d as dc, _ as ur, q as ob, aa as cb, X as ce, J as td, Z as cc } from "./vendor-vue-C85wAS_L.js";
