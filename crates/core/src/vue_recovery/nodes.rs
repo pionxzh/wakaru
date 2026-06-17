@@ -10,17 +10,19 @@ use super::directives::recover_directive_tuple;
 use super::expressions::{clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr};
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
 use super::syntax::{prop_name, string_lit, wtf8_to_string};
-use super::VueRecoveryContext;
+use super::{RenderSource, VueRecoveryContext};
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
 };
 
 pub(super) fn recover_render_root(
-    render: &FnDecl,
+    render: RenderSource<'_>,
     ctx: &VueRecoveryContext,
 ) -> Result<Option<VueNode>> {
-    if let Some(node) = recover_render_if_chain(render, ctx)? {
-        return Ok(Some(node));
+    if let RenderSource::Function(render_fn) = render {
+        if let Some(node) = recover_render_if_chain(render_fn, ctx)? {
+            return Ok(Some(node));
+        }
     }
     let Some(root_expr) = find_render_return(render) else {
         return Ok(None);
@@ -87,14 +89,19 @@ fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
     }
 }
 
-fn find_render_return(render: &FnDecl) -> Option<&Expr> {
-    let body = render.function.body.as_ref()?;
-    body.stmts.iter().rev().find_map(|stmt| match stmt {
-        Stmt::Return(ReturnStmt {
-            arg: Some(expr), ..
-        }) => Some(expr.as_ref()),
-        _ => None,
-    })
+fn find_render_return(render: RenderSource<'_>) -> Option<&Expr> {
+    match render {
+        RenderSource::Function(render) => {
+            let body = render.function.body.as_ref()?;
+            body.stmts.iter().rev().find_map(|stmt| match stmt {
+                Stmt::Return(ReturnStmt {
+                    arg: Some(expr), ..
+                }) => Some(expr.as_ref()),
+                _ => None,
+            })
+        }
+        RenderSource::Arrow(render) => arrow_return_expr(&render.body),
+    }
 }
 
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
