@@ -127,6 +127,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                 VueHelper::CreateBlock | VueHelper::CreateVNode => {
                     recover_component_vnode(&call.args, ctx).map(Some)
                 }
+                VueHelper::CreateCommentVNode => Ok(recover_comment_vnode(&call.args)),
                 VueHelper::CreateTextVNode => recover_text_vnode(&call.args, ctx).map(Some),
                 VueHelper::RenderSlot => recover_slot(&call.args, ctx).map(Some),
                 VueHelper::RenderList => recover_render_list(&call.args, ctx).map(Some),
@@ -510,6 +511,15 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
         &print_expr(text_arg.expr.as_ref(), ctx)?,
         ctx,
     )))
+}
+
+fn recover_comment_vnode(args: &[ExprOrSpread]) -> Option<VueNode> {
+    let comment_arg = args.first()?;
+    let comment = string_lit(comment_arg.expr.as_ref())?;
+    if comment.is_empty() || comment == "v-if" {
+        return None;
+    }
+    Some(VueNode::Comment(comment))
 }
 
 fn recover_slot(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {

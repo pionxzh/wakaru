@@ -383,6 +383,23 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn omits_empty_comment_vnode_else_branch() {
+        let input = r#"
+import { createCommentVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return _ctx.visible
+    ? (openBlock(), createElementBlock("p", null, "Visible"))
+    : createCommentVNode("v-if", true);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"visible\">Visible</p>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_render_list_fragment_with_mangled_item_param() {
         let input = r#"
 import { renderList as r, Fragment as t, openBlock as n, createElementBlock as o, toDisplayString as s } from "vue";
