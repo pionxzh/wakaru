@@ -1120,6 +1120,28 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_vite_fragment_alias_from_block() {
+        let input = r#"
+import { d as dc, q as ob, X as ce, F as fr, a0 as tv, R as td } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "FragmentBlock",
+  setup() {
+    return () => (
+      ob(), ce(fr, { key: 0 }, [
+        tv(td(count), 1)
+      ], 64)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  {{ count }}\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_vnode_and_named_slot() {
         let input = r#"
 import { resolveComponent, createVNode, renderSlot, createTextVNode, openBlock, createElementBlock } from "vue";

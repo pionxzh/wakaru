@@ -162,6 +162,13 @@ impl Visit for HelperInference<'_> {
             self.infer_unref_expr(callee.as_ref());
         }
 
+        if let Some((callee, fragment)) = self.fragment_block_call(call) {
+            self.inferred
+                .insert(callee.sym.clone(), VueHelper::CreateElementBlock);
+            self.inferred
+                .insert(fragment.sym.clone(), VueHelper::Fragment);
+        }
+
         if let Some(callee) = call_callee_ident(call) {
             if self.candidates.contains(&callee.sym) {
                 if let Some(helper) = infer_call_helper(call) {
@@ -190,6 +197,30 @@ impl Visit for HelperInference<'_> {
 }
 
 impl HelperInference<'_> {
+    fn fragment_block_call<'a>(
+        &self,
+        call: &'a CallExpr,
+    ) -> Option<(
+        &'a swc_core::ecma::ast::Ident,
+        &'a swc_core::ecma::ast::Ident,
+    )> {
+        let callee = call_callee_ident(call)?;
+        if !self.candidates.contains(&callee.sym) {
+            return None;
+        }
+        if !is_fragment_patch_flag(call.args.get(3).map(|arg| arg.expr.as_ref())) {
+            return None;
+        }
+        let fragment = call
+            .args
+            .first()
+            .and_then(|arg| ident_expr(arg.expr.as_ref()))?;
+        if !self.candidates.contains(&fragment.sym) {
+            return None;
+        }
+        Some((callee, fragment))
+    }
+
     fn infer_unref_expr(&mut self, expr: &Expr) {
         let Expr::Call(call) = unwrap_paren_expr(expr) else {
             return;
@@ -205,6 +236,14 @@ impl HelperInference<'_> {
         }
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
     }
+}
+
+fn is_fragment_patch_flag(expr: Option<&Expr>) -> bool {
+    matches!(
+        expr,
+        Some(Expr::Lit(Lit::Num(number)))
+            if matches!(number.value as i32, 64 | 128 | 256)
+    )
 }
 
 fn unwrap_paren_expr(expr: &Expr) -> &Expr {
@@ -235,6 +274,9 @@ fn infer_call_helper(call: &CallExpr) -> Option<VueHelper> {
     }
     if is_create_comment_vnode_call(&call.args) {
         return Some(VueHelper::CreateCommentVNode);
+    }
+    if is_create_text_vnode_call(&call.args) {
+        return Some(VueHelper::CreateTextVNode);
     }
     if is_element_vnode_call(&call.args) {
         return Some(VueHelper::CreateElementBlock);
@@ -304,6 +346,13 @@ fn is_create_comment_vnode_call(args: &[ExprOrSpread]) -> bool {
             args.get(1).map(|arg| arg.expr.as_ref())
         ),
         (Some(Expr::Lit(Lit::Str(_))), Some(Expr::Lit(Lit::Bool(_))))
+    )
+}
+
+fn is_create_text_vnode_call(args: &[ExprOrSpread]) -> bool {
+    matches!(
+        args.get(1).map(|arg| arg.expr.as_ref()),
+        Some(Expr::Lit(Lit::Num(_)))
     )
 }
 
