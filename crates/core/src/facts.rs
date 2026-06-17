@@ -7,7 +7,7 @@
 //! These facts are the foundation for cross-module analysis in the multi-module
 //! `unpack()` path. Single-file `decompile()` does not use them.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
@@ -16,8 +16,10 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::rules::helper_matcher::{binding_key, BindingKey};
 use crate::rules::transpiler_helper_utils::{
-    collect_transpiler_helpers, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    collect_inline_ts_helpers_deep, collect_transpiler_helpers, LocalHelperContext,
+    TranspilerHelperKind, TsHelperKind,
 };
 
 /// How a binding was imported.
@@ -620,6 +622,7 @@ fn collect_ts_helper_exports(
     exports: &[ExportFact],
 ) -> Vec<TypeScriptHelperExportFact> {
     let local_helpers = LocalHelperContext::collect(module);
+    let deep_inline_helpers = collect_inline_ts_helpers_deep(module);
     let mut helper_exports = Vec::new();
 
     for export in exports {
@@ -639,12 +642,15 @@ fn collect_ts_helper_exports(
         let Some(kind) = kind else {
             continue;
         };
-        helper_exports.push(TypeScriptHelperExportFact {
-            exported: export.exported.clone(),
-            local: Some(local.clone()),
+        push_ts_helper_export(
+            &mut helper_exports,
+            export.exported.clone(),
+            Some(local.clone()),
             kind,
-        });
+        );
     }
+
+    collect_registered_ts_helper_exports(module, &deep_inline_helpers, &mut helper_exports);
 
     helper_exports
 }
@@ -654,6 +660,89 @@ fn helper_kind_from_transpiler_ts(kind: TranspilerHelperKind) -> Option<TypeScri
         TranspilerHelperKind::ObjectWithoutProperties => Some(TypeScriptHelperKind::Rest),
         _ => None,
     }
+}
+
+fn collect_registered_ts_helper_exports(
+    module: &Module,
+    inline_helpers: &HashMap<BindingKey, TsHelperKind>,
+    helper_exports: &mut Vec<TypeScriptHelperExportFact>,
+) {
+    struct RegistrarExportCollector<'a, 'b> {
+        inline_helpers: &'a HashMap<BindingKey, TsHelperKind>,
+        helper_exports: &'b mut Vec<TypeScriptHelperExportFact>,
+    }
+
+    impl Visit for RegistrarExportCollector<'_, '_> {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            let [export_arg, local_arg] = call.args.as_slice() else {
+                call.visit_children_with(self);
+                return;
+            };
+            if export_arg.spread.is_some() || local_arg.spread.is_some() {
+                call.visit_children_with(self);
+                return;
+            }
+            let Expr::Lit(Lit::Str(exported)) = export_arg.expr.as_ref() else {
+                call.visit_children_with(self);
+                return;
+            };
+            let Expr::Ident(local) = local_arg.expr.as_ref() else {
+                call.visit_children_with(self);
+                return;
+            };
+            let Some(exported_name) = exported.value.as_str() else {
+                call.visit_children_with(self);
+                return;
+            };
+            let Some(exported_kind) = ts_helper_kind_from_name(exported_name) else {
+                call.visit_children_with(self);
+                return;
+            };
+            let Some(local_kind) = self
+                .inline_helpers
+                .get(&binding_key(local))
+                .copied()
+                .map(helper_kind_from_ts)
+            else {
+                call.visit_children_with(self);
+                return;
+            };
+            if local_kind == exported_kind {
+                push_ts_helper_export(
+                    self.helper_exports,
+                    str_to_atom(&exported.value),
+                    Some(local.sym.clone()),
+                    local_kind,
+                );
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = RegistrarExportCollector {
+        inline_helpers,
+        helper_exports,
+    };
+    module.visit_with(&mut collector);
+}
+
+fn push_ts_helper_export(
+    helper_exports: &mut Vec<TypeScriptHelperExportFact>,
+    exported: Atom,
+    local: Option<Atom>,
+    kind: TypeScriptHelperKind,
+) {
+    if helper_exports
+        .iter()
+        .any(|helper| helper.exported == exported && helper.local == local && helper.kind == kind)
+    {
+        return;
+    }
+    helper_exports.push(TypeScriptHelperExportFact {
+        exported,
+        local,
+        kind,
+    });
 }
 
 fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind> {
@@ -767,6 +856,25 @@ fn helper_kind_from_ts(kind: TsHelperKind) -> TypeScriptHelperKind {
         TsHelperKind::SpreadArray => TypeScriptHelperKind::SpreadArray,
         TsHelperKind::ClassPrivateFieldGet => TypeScriptHelperKind::ClassPrivateFieldGet,
         TsHelperKind::ClassPrivateFieldSet => TypeScriptHelperKind::ClassPrivateFieldSet,
+    }
+}
+
+fn ts_helper_kind_from_name(name: &str) -> Option<TypeScriptHelperKind> {
+    match name {
+        "__awaiter" => Some(TypeScriptHelperKind::Awaiter),
+        "__generator" => Some(TypeScriptHelperKind::Generator),
+        "__values" | "_ts_values" => Some(TypeScriptHelperKind::Values),
+        "__assign" => Some(TypeScriptHelperKind::Assign),
+        "__rest" => Some(TypeScriptHelperKind::Rest),
+        "__extends" => Some(TypeScriptHelperKind::Extends),
+        "__importDefault" => Some(TypeScriptHelperKind::ImportDefault),
+        "__importStar" => Some(TypeScriptHelperKind::ImportStar),
+        "__createBinding" => Some(TypeScriptHelperKind::CreateBinding),
+        "__setModuleDefault" => Some(TypeScriptHelperKind::SetModuleDefault),
+        "__spreadArray" => Some(TypeScriptHelperKind::SpreadArray),
+        "__classPrivateFieldGet" => Some(TypeScriptHelperKind::ClassPrivateFieldGet),
+        "__classPrivateFieldSet" => Some(TypeScriptHelperKind::ClassPrivateFieldSet),
+        _ => None,
     }
 }
 

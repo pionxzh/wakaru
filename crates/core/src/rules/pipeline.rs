@@ -382,7 +382,13 @@ runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, UnRestArrayCopy);
 runner!(run_arrow_function, ArrowFunction);
 runner!(run_arrow_return, ArrowReturn);
-runner!(run_un_for_of, |ctx| UnForOf::new(ctx.rewrite_level));
+runner!(run_un_for_of, |ctx| {
+    if let Some(module_facts) = ctx.module_facts {
+        UnForOf::new_with_mark_and_facts(ctx.unresolved_mark, ctx.rewrite_level, module_facts)
+    } else {
+        UnForOf::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
+    }
+});
 runner!(run_un_webpack_define_getters, |ctx| {
     UnWebpackDefineGetters::new(ctx.unresolved_mark)
 });

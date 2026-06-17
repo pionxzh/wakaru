@@ -1,10 +1,13 @@
 mod common;
 
 use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::facts::{
+    ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+};
 use wakaru_core::{rules::UnForOf, RewriteLevel};
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
-    render_rule(input, |_| UnForOf::new(level))
+    render_rule(input, |mark| UnForOf::new_with_mark(mark, level))
 }
 
 #[test]
@@ -357,6 +360,7 @@ try {
 #[test]
 fn for_of_from_ts_values_helper() {
     let input = r#"
+var tslib = require("tslib");
 let errorState;
 let iteratorReturn;
 try {
@@ -379,11 +383,180 @@ try {
 }
 "#;
     let expected = r#"
+import tslib from "tslib";
 for (const item of items) {
   use(item);
 }
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_preserves_unproven_ts_values_member() {
+    let input = r#"
+function run(tslib, items) {
+  let errorState;
+  let iteratorReturn;
+  try {
+    for (var iterator = tslib.__values(items), step = iterator.next(); !step.done; step = iterator.next()) {
+      const item = step.value;
+      use(item);
+    }
+  } catch (error) {
+    errorState = { error };
+  } finally {
+    try {
+      if (step && !step.done && (iteratorReturn = iterator.return)) {
+        iteratorReturn.call(iterator);
+      }
+    } finally {
+      if (errorState) {
+        throw errorState.error;
+      }
+    }
+  }
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn for_of_preserves_unproven_ts_values_ident() {
+    let input = r#"
+function run(__values, items) {
+  let errorState;
+  let iteratorReturn;
+  try {
+    for (var iterator = __values(items), step = iterator.next(); !step.done; step = iterator.next()) {
+      const item = step.value;
+      use(item);
+    }
+  } catch (error) {
+    errorState = { error };
+  } finally {
+    try {
+      if (step && !step.done && (iteratorReturn = iterator.return)) {
+        iteratorReturn.call(iterator);
+      }
+    } finally {
+      if (errorState) {
+        throw errorState.error;
+      }
+    }
+  }
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn for_of_from_cross_module_values_namespace_factory() {
+    let input = r#"
+import { tslibModule } from "./tslib-module.js";
+const tslib = tslibModule();
+let errorState;
+let iteratorReturn;
+try {
+  for (var iterator = tslib.__values(items), step = iterator.next(); !step.done; step = iterator.next()) {
+    const item = step.value;
+    use(item);
+  }
+} catch (error) {
+  errorState = { error };
+} finally {
+  try {
+    if (step && !step.done && (iteratorReturn = iterator.return)) {
+      iteratorReturn.call(iterator);
+    }
+  } finally {
+    if (errorState) {
+      throw errorState.error;
+    }
+  }
+}
+"#;
+    let expected = r#"
+import { tslibModule } from "./tslib-module.js";
+const tslib = tslibModule();
+for (const item of items) {
+  use(item);
+}
+"#;
+
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "./tslib-module.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__values".into(),
+                local: Some("values".into()),
+                kind: TypeScriptHelperKind::Values,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let output = render_rule(input, |mark| {
+        UnForOf::new_with_mark_and_facts(mark, RewriteLevel::Standard, &facts)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_from_nested_cross_module_values_namespace_factory() {
+    let input = r#"
+import { tslibModule } from "./tslib-module.js";
+export function run(items) {
+  const tslib = tslibModule();
+  let errorState;
+  let iteratorReturn;
+  try {
+    for (var iterator = tslib.__values(items), step = iterator.next(); !step.done; step = iterator.next()) {
+      const item = step.value;
+      use(item);
+    }
+  } catch (error) {
+    errorState = { error };
+  } finally {
+    try {
+      if (step && !step.done && (iteratorReturn = iterator.return)) {
+        iteratorReturn.call(iterator);
+      }
+    } finally {
+      if (errorState) {
+        throw errorState.error;
+      }
+    }
+  }
+}
+"#;
+    let expected = r#"
+import { tslibModule } from "./tslib-module.js";
+export function run(items) {
+  const tslib = tslibModule();
+  for (const item of items) {
+    use(item);
+  }
+}
+"#;
+
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "./tslib-module.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__values".into(),
+                local: Some("values".into()),
+                kind: TypeScriptHelperKind::Values,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let output = render_rule(input, |mark| {
+        UnForOf::new_with_mark_and_facts(mark, RewriteLevel::Standard, &facts)
+    });
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

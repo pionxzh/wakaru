@@ -533,6 +533,54 @@ fn collect_ts_helpers(
     helpers
 }
 
+pub(crate) fn collect_inline_ts_helpers_deep(module: &Module) -> HashMap<BindingKey, TsHelperKind> {
+    struct Collector {
+        helpers: HashMap<BindingKey, TsHelperKind>,
+    }
+
+    impl Visit for Collector {
+        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
+            if let Some(kind) =
+                ts_private_helper_name_kind(fn_decl.ident.sym.as_ref(), &fn_decl.function)
+                    .or_else(|| ts_generated_fn_helper_kind(&fn_decl.ident, &fn_decl.function))
+            {
+                self.helpers.insert(binding_key(&fn_decl.ident), kind);
+            }
+            fn_decl.visit_children_with(self);
+        }
+
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            if let Some((key, helper)) =
+                collect_ts_helper_from_var_decl(decl, &HashSet::new(), None)
+            {
+                if helper.source == TsHelperSource::Inline {
+                    self.helpers.insert(key, helper.kind);
+                }
+            }
+            decl.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if assign.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left {
+                    if let Some(kind) =
+                        ts_generated_values_callable_kind(&target.id, assign.right.as_ref())
+                    {
+                        self.helpers.insert(binding_key(&target.id), kind);
+                    }
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        helpers: HashMap::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.helpers
+}
+
 fn collect_ts_helper_from_var_decl(
     decl: &VarDeclarator,
     tslib_namespaces: &HashSet<BindingKey>,
@@ -558,6 +606,18 @@ fn collect_ts_helper_from_var_decl(
                 source: TsHelperSource::Inline,
             },
         ));
+    }
+
+    if let Pat::Ident(binding) = &decl.name {
+        if let Some(kind) = ts_generated_values_callable_kind(&binding.id, init) {
+            return Some((
+                key,
+                TsHelperInfo {
+                    kind,
+                    source: TsHelperSource::Inline,
+                },
+            ));
+        }
     }
 
     if let Some(kind) =
@@ -917,11 +977,18 @@ pub(crate) fn tslib_require_member_name(
     static_member_prop_name(&member.prop)
 }
 
+pub(crate) fn tslib_require_ts_helper_kind(
+    expr: &Expr,
+    unresolved_mark: Option<Mark>,
+) -> Option<TsHelperKind> {
+    tslib_require_member_name(expr, unresolved_mark).and_then(ts_helper_name_kind)
+}
+
 pub(crate) fn tslib_require_ts_helper_kind_with_mark(
     expr: &Expr,
     unresolved_mark: Mark,
 ) -> Option<TsHelperKind> {
-    tslib_require_member_name(expr, Some(unresolved_mark)).and_then(ts_helper_name_kind)
+    tslib_require_ts_helper_kind(expr, Some(unresolved_mark))
 }
 
 pub(crate) fn is_tslib_require_expr_with_mark(expr: &Expr, unresolved_mark: Mark) -> bool {
@@ -2460,6 +2527,16 @@ fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsH
     } else {
         None
     }
+}
+
+fn ts_generated_values_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHelperKind> {
+    if !is_likely_generated_alias(ident.sym.as_ref()) {
+        return None;
+    }
+    let (param_len, body) = ts_helper_callable_body(expr)?;
+    let signals = collect_ts_helper_body_signals(body);
+    (param_len == 1 && signals.symbol_iterator && signals.type_error)
+        .then_some(TsHelperKind::Values)
 }
 
 fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {

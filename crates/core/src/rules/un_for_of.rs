@@ -1,13 +1,22 @@
+use std::collections::{HashMap, HashSet};
+
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
-    CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, Lit, MemberExpr,
-    MemberProp, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr,
-    UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, ImportSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget,
+    Stmt, TryStmt, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
+
+use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
+use super::transpiler_helper_utils::{
+    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, LocalHelperContext, TsHelperKind,
+};
 use super::RewriteLevel;
 
 use crate::utils::paren::strip_parens;
@@ -24,23 +33,284 @@ use crate::utils::paren::strip_parens;
 ///     // body...
 /// }
 /// ```
-pub struct UnForOf {
+pub struct UnForOf<'a> {
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
+    module_facts: Option<&'a ModuleFactsMap>,
+    helper_context: ForOfHelperContext,
 }
 
-impl UnForOf {
+impl UnForOf<'_> {
     pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+        Self {
+            level,
+            unresolved_mark: None,
+            module_facts: None,
+            helper_context: ForOfHelperContext::default(),
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            level,
+            unresolved_mark: Some(unresolved_mark),
+            module_facts: None,
+            helper_context: ForOfHelperContext::default(),
+        }
     }
 }
 
-impl Default for UnForOf {
+impl<'a> UnForOf<'a> {
+    pub fn new_with_mark_and_facts(
+        unresolved_mark: Mark,
+        level: RewriteLevel,
+        module_facts: &'a ModuleFactsMap,
+    ) -> Self {
+        Self {
+            level,
+            unresolved_mark: Some(unresolved_mark),
+            module_facts: Some(module_facts),
+            helper_context: ForOfHelperContext::default(),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct ForOfHelperContext {
+    values_helpers: HashSet<BindingKey>,
+    tslib_namespaces: HashSet<BindingKey>,
+    cross_module_values_namespaces: HashMap<BindingKey, HashSet<String>>,
+    unresolved_mark: Option<Mark>,
+}
+
+impl ForOfHelperContext {
+    fn from_local_helpers(
+        module: &Module,
+        local_helpers: &LocalHelperContext,
+        unresolved_mark: Option<Mark>,
+        module_facts: Option<&ModuleFactsMap>,
+    ) -> Self {
+        let cross_module_values = module_facts
+            .map(|facts| collect_cross_module_values_refs(module, facts))
+            .unwrap_or_default();
+        let mut values_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Values);
+        values_helpers.extend(cross_module_values.direct);
+        Self {
+            values_helpers,
+            tslib_namespaces: local_helpers.tslib_namespaces().clone(),
+            cross_module_values_namespaces: cross_module_values.namespaces,
+            unresolved_mark,
+        }
+    }
+
+    fn is_ts_values_callee(&self, callee: &Callee) -> bool {
+        let Callee::Expr(callee_expr) = callee else {
+            return false;
+        };
+        self.is_ts_values_callee_expr(callee_expr)
+    }
+
+    fn is_ts_values_callee_expr(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(id) => self.values_helpers.contains(&binding_key(id)),
+            Expr::Member(_) => {
+                tslib_member_ts_helper_kind(expr, &self.tslib_namespaces)
+                    == Some(TsHelperKind::Values)
+                    || tslib_require_ts_helper_kind(expr, self.unresolved_mark)
+                        == Some(TsHelperKind::Values)
+                    || is_cross_module_values_member(expr, &self.cross_module_values_namespaces)
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Default)]
+struct CrossModuleValuesRefs {
+    direct: HashSet<BindingKey>,
+    namespaces: HashMap<BindingKey, HashSet<String>>,
+}
+
+fn collect_cross_module_values_refs(
+    module: &Module,
+    module_facts: &ModuleFactsMap,
+) -> CrossModuleValuesRefs {
+    let mut refs = CrossModuleValuesRefs::default();
+    let mut namespace_factories: HashMap<BindingKey, HashSet<String>> = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = Atom::from(import.src.value.as_str().unwrap_or(""));
+        let exported_values =
+            ts_helper_export_names(module_facts, &source, TypeScriptHelperKind::Values);
+        if exported_values.is_empty() {
+            continue;
+        }
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Default(default) => {
+                    let local = binding_key(&default.local);
+                    if module_exports_ts_helper(
+                        module_facts,
+                        &source,
+                        "default",
+                        TypeScriptHelperKind::Values,
+                    ) {
+                        refs.direct.insert(local);
+                    } else {
+                        namespace_factories.insert(local, exported_values.clone());
+                    }
+                }
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    let local = binding_key(&named.local);
+                    if module_exports_ts_helper(
+                        module_facts,
+                        &source,
+                        imported.as_ref(),
+                        TypeScriptHelperKind::Values,
+                    ) {
+                        refs.direct.insert(local);
+                    } else {
+                        namespace_factories.insert(local, exported_values.clone());
+                    }
+                }
+                ImportSpecifier::Namespace(namespace) => {
+                    refs.namespaces
+                        .insert(binding_key(&namespace.local), exported_values.clone());
+                }
+            }
+        }
+    }
+
+    if namespace_factories.is_empty() {
+        return refs;
+    }
+
+    struct NamespaceFactoryUseCollector<'a, 'b> {
+        namespace_factories: &'a HashMap<BindingKey, HashSet<String>>,
+        refs: &'b mut CrossModuleValuesRefs,
+    }
+
+    impl Visit for NamespaceFactoryUseCollector<'_, '_> {
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            let Pat::Ident(binding) = &decl.name else {
+                decl.visit_children_with(self);
+                return;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                decl.visit_children_with(self);
+                return;
+            };
+            let Some(factory) = zero_arg_call_ident(init) else {
+                decl.visit_children_with(self);
+                return;
+            };
+            if let Some(exports) = self.namespace_factories.get(&binding_key(factory)) {
+                self.refs
+                    .namespaces
+                    .insert(binding_key(&binding.id), exports.clone());
+            }
+            decl.visit_children_with(self);
+        }
+    }
+
+    let mut collector = NamespaceFactoryUseCollector {
+        namespace_factories: &namespace_factories,
+        refs: &mut refs,
+    };
+    module.visit_with(&mut collector);
+
+    refs
+}
+
+fn module_exports_ts_helper(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+    kind: TypeScriptHelperKind,
+) -> bool {
+    module_facts.get(source.as_ref()).is_some_and(|facts| {
+        facts
+            .ts_helper_exports
+            .iter()
+            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+    })
+}
+
+fn ts_helper_export_names(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    kind: TypeScriptHelperKind,
+) -> HashSet<String> {
+    module_facts
+        .get(source.as_ref())
+        .map(|facts| {
+            facts
+                .ts_helper_exports
+                .iter()
+                .filter(|helper| helper.kind == kind)
+                .map(|helper| helper.exported.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn zero_arg_call_ident(expr: &Expr) -> Option<&Ident> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = strip_parens(callee) else {
+        return None;
+    };
+    Some(id)
+}
+
+fn is_cross_module_values_member(
+    expr: &Expr,
+    namespaces: &HashMap<BindingKey, HashSet<String>>,
+) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj) = strip_parens(&member.obj) else {
+        return false;
+    };
+    let Some(exported) = static_member_prop_name(&member.prop) else {
+        return false;
+    };
+    namespaces
+        .get(&binding_key(obj))
+        .is_some_and(|exports| exports.contains(exported))
+}
+
+fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
+        swc_core::ecma::ast::ModuleExportName::Str(s) => Atom::from(s.value.as_str().unwrap_or("")),
+    }
+}
+
+impl Default for UnForOf<'_> {
     fn default() -> Self {
         Self::new(RewriteLevel::Standard)
     }
 }
 
-impl UnForOf {
+impl UnForOf<'_> {
     fn should_run(module: &swc_core::ecma::ast::Module) -> bool {
         struct Scan {
             found: bool,
@@ -63,12 +333,24 @@ impl UnForOf {
     }
 }
 
-impl VisitMut for UnForOf {
-    fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+impl VisitMut for UnForOf<'_> {
+    fn visit_mut_module(&mut self, module: &mut Module) {
         if self.level < RewriteLevel::Standard || !Self::should_run(module) {
             return;
         }
+        let local_helpers = self.unresolved_mark.map_or_else(
+            || LocalHelperContext::collect(module),
+            |mark| LocalHelperContext::collect_with_mark(module, mark),
+        );
+        let helper_context = ForOfHelperContext::from_local_helpers(
+            module,
+            &local_helpers,
+            self.unresolved_mark,
+            self.module_facts,
+        );
+        let previous = std::mem::replace(&mut self.helper_context, helper_context);
         module.visit_mut_children_with(self);
+        self.helper_context = previous;
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -81,17 +363,17 @@ impl VisitMut for UnForOf {
             match item {
                 ModuleItem::Stmt(stmt) => stmt_run.push(stmt),
                 item => {
-                    flush_stmt_run(items, &mut stmt_run);
+                    flush_stmt_run(items, &mut stmt_run, &self.helper_context);
                     items.push(item);
                 }
             }
         }
-        flush_stmt_run(items, &mut stmt_run);
+        flush_stmt_run(items, &mut stmt_run, &self.helper_context);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        process_stmt_vec(stmts);
+        process_stmt_vec(stmts, &self.helper_context);
     }
 
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
@@ -103,11 +385,15 @@ impl VisitMut for UnForOf {
     }
 }
 
-fn flush_stmt_run(items: &mut Vec<ModuleItem>, stmts: &mut Vec<Stmt>) {
+fn flush_stmt_run(
+    items: &mut Vec<ModuleItem>,
+    stmts: &mut Vec<Stmt>,
+    helper_context: &ForOfHelperContext,
+) {
     if stmts.is_empty() {
         return;
     }
-    process_stmt_vec(stmts);
+    process_stmt_vec(stmts, helper_context);
     items.extend(std::mem::take(stmts).into_iter().map(ModuleItem::Stmt));
 }
 
@@ -117,14 +403,14 @@ fn has_for_of_sequence_candidates(stmts: &[Stmt]) -> bool {
         .any(|stmt| matches!(stmt, Stmt::For(_) | Stmt::Try(_)))
 }
 
-fn process_stmt_vec(stmts: &mut Vec<Stmt>) {
+fn process_stmt_vec(stmts: &mut Vec<Stmt>, helper_context: &ForOfHelperContext) {
     if !has_for_of_sequence_candidates(stmts) {
         return;
     }
     let old = std::mem::take(stmts);
     let mut i = 0;
     while i < old.len() {
-        if let Some(rewrite) = try_convert_ts_values_sequence(&old[i..]) {
+        if let Some(rewrite) = try_convert_ts_values_sequence(&old[i..], helper_context) {
             stmts.push(Stmt::ForOf(rewrite.for_of));
             i += rewrite.consumed_stmts;
             continue;
@@ -270,11 +556,15 @@ fn try_convert_loose_iterator_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite
     })
 }
 
-fn try_convert_ts_values_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+fn try_convert_ts_values_sequence(
+    stmts: &[Stmt],
+    helper_context: &ForOfHelperContext,
+) -> Option<SequenceRewrite> {
     let error_ident = empty_single_var_ident(stmts.first()?)?;
     let return_ident = empty_single_var_ident(stmts.get(1)?)?;
     let try_stmt = stmt_as_try(stmts.get(2)?)?;
-    let helper_loop = extract_ts_values_loop(try_stmt, &error_ident, &return_ident)?;
+    let helper_loop =
+        extract_ts_values_loop(try_stmt, &error_ident, &return_ident, helper_context)?;
     if stmts[3..].iter().any(|stmt| {
         stmt_uses_ident_key(stmt, &error_ident) || stmt_uses_ident_key(stmt, &return_ident)
     }) {
@@ -382,6 +672,7 @@ fn extract_ts_values_loop(
     try_stmt: &TryStmt,
     error_ident: &Ident,
     return_ident: &Ident,
+    helper_context: &ForOfHelperContext,
 ) -> Option<TsValuesLoop> {
     let for_stmt = single_for_stmt(&try_stmt.block)?;
     let Some(VarDeclOrExpr::VarDecl(init_decl)) = &for_stmt.init else {
@@ -392,7 +683,7 @@ fn extract_ts_values_loop(
     };
     let iterator_ident = pat_as_ident(&iterator_decl.name)?.id.clone();
     let result_ident = pat_as_ident(&result_decl.name)?.id.clone();
-    let iterable = extract_ts_values_arg(iterator_decl.init.as_ref()?)?;
+    let iterable = extract_ts_values_arg(iterator_decl.init.as_ref()?, helper_context)?;
     if !is_iterator_next_call(result_decl.init.as_ref()?, &iterator_ident) {
         return None;
     }
@@ -798,11 +1089,11 @@ fn extract_single_call_arg(expr: &Expr) -> Option<Box<Expr>> {
     Some(expr.clone())
 }
 
-fn extract_ts_values_arg(expr: &Expr) -> Option<Box<Expr>> {
+fn extract_ts_values_arg(expr: &Expr, helper_context: &ForOfHelperContext) -> Option<Box<Expr>> {
     let Expr::Call(CallExpr { callee, args, .. }) = expr else {
         return None;
     };
-    if !callee_is_prop(callee, "__values") && !callee_is_ident(callee, "__values") {
+    if !helper_context.is_ts_values_callee(callee) {
         return None;
     }
     let [ExprOrSpread { spread: None, expr }] = args.as_slice() else {
@@ -1117,23 +1408,6 @@ fn replace_iterator_value_refs(block: &mut BlockStmt, item_ident: &Ident) {
     block.visit_mut_with(&mut Replacer {
         ident: item_ident.clone(),
     });
-}
-
-fn callee_is_prop(callee: &Callee, prop_name: &str) -> bool {
-    let Callee::Expr(callee_expr) = callee else {
-        return false;
-    };
-    let Expr::Member(MemberExpr { prop, .. }) = &**callee_expr else {
-        return false;
-    };
-    matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == prop_name)
-}
-
-fn callee_is_ident(callee: &Callee, sym: &str) -> bool {
-    let Callee::Expr(callee_expr) = callee else {
-        return false;
-    };
-    matches!(&**callee_expr, Expr::Ident(ident) if ident.sym.as_ref() == sym)
 }
 
 fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {

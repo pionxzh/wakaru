@@ -564,6 +564,108 @@ export function __rest(source, excluded) {
     );
 }
 
+#[test]
+fn registered_typescript_values_helper_fact() {
+    let facts = collect_facts(
+        r#"
+function __values(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function() {
+      if (o && i >= o.length) o = void 0;
+      return { value: o && o[i++], done: !o };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+register("__values", __values);
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__values",
+            Some("__values"),
+            TypeScriptHelperKind::Values
+        )]
+    );
+}
+
+#[test]
+fn registered_nested_typescript_values_helper_fact() {
+    let facts = collect_facts(
+        r#"
+export function tslibModule() {
+  function __values(o) {
+    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+    if (m) return m.call(o);
+    if (o && typeof o.length === "number") return {
+      next: function() {
+        if (o && i >= o.length) o = void 0;
+        return { value: o && o[i++], done: !o };
+      }
+    };
+    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+  }
+  register("__values", __values);
+  return exports;
+}
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__values",
+            Some("__values"),
+            TypeScriptHelperKind::Values
+        )]
+    );
+}
+
+#[test]
+fn registered_assigned_typescript_values_helper_fact() {
+    let facts = collect_facts(
+        r#"
+export function tslibModule() {
+  let ZM8;
+  ZM8 = (o) => {
+    const s = typeof Symbol === "function" && Symbol.iterator;
+    const m = s && o[s];
+    let i = 0;
+    if (m) {
+      return m.call(o);
+    }
+    if (o && typeof o.length === "number") {
+      return {
+        next() {
+          if (o && i >= o.length) {
+            o = undefined;
+          }
+          return {
+            value: o && o[i++],
+            done: !o
+          };
+        }
+      };
+    }
+    throw TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+  };
+  q("__values", ZM8);
+  return exports;
+}
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__values",
+            Some("ZM8"),
+            TypeScriptHelperKind::Values
+        )]
+    );
+}
+
 // ── CJS exports → ESM ──────────────────────────────────────────────
 
 #[test]
