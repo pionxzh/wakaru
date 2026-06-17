@@ -3,7 +3,7 @@ use common::{assert_eq_normalized, render, render_rule};
 use wakaru_core::rules::UnToArray;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnToArray)
+    render_rule(input, UnToArray::new_with_mark)
 }
 
 #[test]
@@ -62,6 +62,20 @@ var [first, ...rest_items] = items;
 use(first, rest_items);
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_shadowed_require_to_array_runtime_import() {
+    let input = r#"
+function require(path) {
+    return load(path);
+}
+var _toArray = require("@babel/runtime/helpers/toArray");
+var [first, ...rest_items] = _toArray(items);
+use(first, rest_items);
+"#;
+
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

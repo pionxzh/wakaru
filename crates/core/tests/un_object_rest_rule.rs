@@ -932,6 +932,29 @@ use(picked, rest);
 }
 
 #[test]
+fn preserves_shadowed_numeric_require_object_rest_namespace() {
+    let input = r#"
+function require(id) {
+    return load(id);
+}
+const helpers = require(12345);
+const picked = input.picked;
+const rest = helpers._T(input, ["picked"]);
+use(picked, rest);
+"#;
+
+    let output = render(input);
+    assert!(
+        output.contains("helpers._T(input"),
+        "shadowed numeric require namespace must not be rewritten:\n{output}"
+    );
+    assert!(
+        !output.contains("...rest"),
+        "shadowed numeric require namespace must not produce object rest:\n{output}"
+    );
+}
+
+#[test]
 fn named_owp_helper_preserves_destructuring_defaults() {
     let input = r#"
 function _objectWithoutPropertiesLoose(r, e) {

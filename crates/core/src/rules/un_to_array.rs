@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AssignTargetPat, Callee, Decl, Expr, ImportSpecifier, Lit,
     Module, ModuleDecl, ModuleExportName, ModuleItem, Pat, Stmt, VarDeclarator,
@@ -50,11 +51,21 @@ const TO_ARRAY_PATHS: &[&str] = &[
 ///
 /// Runs after `UnDestructuring`, which builds the `[a, ...b]` pattern; this rule
 /// then strips the now-redundant helper call and drops its import.
-pub struct UnToArray;
+pub struct UnToArray {
+    unresolved_mark: Option<Mark>,
+}
 
 impl UnToArray {
     pub fn new() -> Self {
-        Self
+        Self {
+            unresolved_mark: None,
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark) -> Self {
+        Self {
+            unresolved_mark: Some(unresolved_mark),
+        }
     }
 }
 
@@ -66,7 +77,7 @@ impl Default for UnToArray {
 
 impl VisitMut for UnToArray {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let helpers = collect_to_array_bindings(module);
+        let helpers = collect_to_array_bindings(module, self.unresolved_mark);
         if !helpers.is_empty() {
             let mut replacer = ToArrayUnwrapper { helpers: &helpers };
             module.visit_mut_with(&mut replacer);
@@ -217,7 +228,10 @@ fn is_array_rest_assign_target(target: &AssignTarget) -> bool {
     arr.elems.iter().any(|e| matches!(e, Some(Pat::Rest(_))))
 }
 
-fn collect_to_array_bindings(module: &Module) -> HashSet<BindingKey> {
+fn collect_to_array_bindings(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
 
     for item in &module.body {
@@ -248,7 +262,7 @@ fn collect_to_array_bindings(module: &Module) -> HashSet<BindingKey> {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for declarator in &var.decls {
                     if let Some(init) = &declarator.init {
-                        if init_requires_to_array(init) {
+                        if init_requires_to_array(init, unresolved_mark) {
                             if let Pat::Ident(binding) = &declarator.name {
                                 bindings.insert(binding_key(&binding.id));
                             }
@@ -273,7 +287,7 @@ fn named_import_is_helper(named: &swc_core::ecma::ast::ImportNamedSpecifier) -> 
 }
 
 /// `require("...toArray")` or `require("...toArray").default`.
-fn init_requires_to_array(init: &Expr) -> bool {
+fn init_requires_to_array(init: &Expr, unresolved_mark: Option<Mark>) -> bool {
     let call = match init {
         Expr::Call(call) => call,
         Expr::Member(member) => {
@@ -290,7 +304,10 @@ fn init_requires_to_array(init: &Expr) -> bool {
     let Expr::Ident(id) = callee.as_ref() else {
         return false;
     };
-    if id.sym.as_ref() != "require" || call.args.len() != 1 {
+    if id.sym.as_ref() != "require"
+        || unresolved_mark.is_some_and(|mark| id.ctxt.outer() != mark)
+        || call.args.len() != 1
+    {
         return false;
     }
     let Expr::Lit(Lit::Str(path)) = call.args[0].expr.as_ref() else {

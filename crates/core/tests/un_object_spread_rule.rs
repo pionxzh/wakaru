@@ -105,6 +105,28 @@ const x = { ...app_info, app_name: name };
 }
 
 #[test]
+fn preserves_shadowed_require_runtime_object_spread_helper() {
+    let input = r#"
+function require(path) {
+    return load(path);
+}
+var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
+var x = _objectSpread2({}, y);
+use(x);
+"#;
+
+    let output = render(input);
+    assert!(
+        output.contains("_objectSpread2({}, y)"),
+        "shadowed require helper binding must not be rewritten:\n{output}"
+    );
+    assert!(
+        !output.contains("{ ...y }"),
+        "shadowed require helper binding must not produce object spread:\n{output}"
+    );
+}
+
+#[test]
 fn handles_swc_numeric_namespace_object_spread() {
     let input = r#"
 const Y = require(39889);
@@ -114,6 +136,28 @@ const out = Y.pi(Y.pi({}, app_info), { app_name: name });
 const out = { ...app_info, app_name: name };
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_shadowed_numeric_require_object_spread_namespace() {
+    let input = r#"
+function require(id) {
+    return load(id);
+}
+const Y = require(39889);
+const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+use(out);
+"#;
+
+    let output = render(input);
+    assert!(
+        output.contains("Y.pi(Y.pi({}, app_info),"),
+        "shadowed numeric require namespace must not be rewritten:\n{output}"
+    );
+    assert!(
+        !output.contains("{ ...app_info, app_name: name }"),
+        "shadowed numeric require namespace must not produce object spread:\n{output}"
+    );
 }
 
 #[test]

@@ -238,6 +238,34 @@ class Admin extends User {
 }
 
 #[test]
+fn shadowed_require_does_not_create_tslib_extends_namespace() {
+    let input = r#"
+function require(path) {
+    return load(path);
+}
+var tslib_1 = require("tslib");
+var Admin = (function (_super) {
+    tslib_1.__extends(Admin, _super);
+    function Admin(name) {
+        var _this = _super.call(this, name) || this;
+        return _this;
+    }
+    return Admin;
+}(User));
+"#;
+
+    let output = render_pipeline_between(input, "UnEs6Class", "UnEs6Class");
+    assert!(
+        output.contains("tslib_1.__extends(Admin, _super)"),
+        "shadowed require must not create a tslib namespace helper:\n{output}"
+    );
+    assert!(
+        !output.contains("class Admin extends User"),
+        "shadowed require must not recover class inheritance through tslib:\n{output}"
+    );
+}
+
+#[test]
 fn tslib_named_extends_import_is_recovered() {
     let input = r#"
 import { __extends } from "tslib";

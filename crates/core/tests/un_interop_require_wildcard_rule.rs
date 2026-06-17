@@ -58,6 +58,27 @@ console.log(foo);
 }
 
 #[test]
+fn preserves_wildcard_call_with_shadowed_inner_require() {
+    let input = r#"
+import _interopRequireWildcard from "@babel/runtime/helpers/interopRequireWildcard";
+function load(require) {
+    var ns = _interopRequireWildcard(require("a"));
+    return ns;
+}
+"#;
+
+    let output = render(input);
+    assert!(
+        output.contains("_interopRequireWildcard(require(\"a\"))"),
+        "shadowed require argument must not be treated as a module import:\n{output}"
+    );
+    assert!(
+        !output.contains("import * as ns from \"a\""),
+        "shadowed require must not be converted to a namespace import:\n{output}"
+    );
+}
+
+#[test]
 fn preserves_wildcard_for_non_require_args() {
     let input = r#"
 var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");

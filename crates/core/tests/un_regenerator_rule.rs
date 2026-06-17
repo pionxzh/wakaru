@@ -2253,6 +2253,45 @@ function _load_user() {
 }
 
 #[test]
+fn shadowed_require_does_not_enable_cross_module_async_helper_fact() {
+    let input = r#"
+function require(path) {
+  return load(path);
+}
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+function load_user() {
+  return asyncHelper.default(runtime.default.mark(function _callee() {
+    return runtime.default.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            _context.next = 2;
+            return fetch_user();
+          case 2:
+            return _context.abrupt("return", _context.sent);
+          case 3:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }));
+}
+"#;
+
+    let output = apply_with_helper_facts(input);
+    assert!(
+        output.contains("asyncHelper.default(runtime.default.mark"),
+        "shadowed require must not enable cross-module async helper facts:\n{output}"
+    );
+    assert!(
+        !output.contains("async function"),
+        "shadowed require must not recover async through cross-module helper facts:\n{output}"
+    );
+}
+
+#[test]
 fn babel_728_regenerator_function() {
     let input = r#"
 function read_items(items) {

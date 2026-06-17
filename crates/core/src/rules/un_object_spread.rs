@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
     ForInStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, Module, ModuleDecl, ModuleItem,
@@ -37,11 +37,22 @@ use crate::utils::paren::strip_parens;
 ///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
 pub struct UnObjectSpread<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    unresolved_mark: Option<Mark>,
 }
 
 impl UnObjectSpread<'_> {
     pub fn new() -> Self {
-        Self { module_facts: None }
+        Self {
+            module_facts: None,
+            unresolved_mark: None,
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark) -> Self {
+        Self {
+            module_facts: None,
+            unresolved_mark: Some(unresolved_mark),
+        }
     }
 }
 
@@ -49,27 +60,38 @@ impl<'a> UnObjectSpread<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            unresolved_mark: None,
         }
     }
 
     pub(crate) fn run_with_helpers(
         module: &mut Module,
+        unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
     ) {
-        run_un_object_spread(module, local_helpers, module_facts);
+        run_un_object_spread(module, Some(unresolved_mark), local_helpers, module_facts);
     }
 }
 
 impl VisitMut for UnObjectSpread<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let local_helpers = LocalHelperContext::collect(module);
-        run_un_object_spread(module, &local_helpers, self.module_facts);
+        let local_helpers = self.unresolved_mark.map_or_else(
+            || LocalHelperContext::collect(module),
+            |mark| LocalHelperContext::collect_with_mark(module, mark),
+        );
+        run_un_object_spread(
+            module,
+            self.unresolved_mark,
+            &local_helpers,
+            self.module_facts,
+        );
     }
 }
 
 fn run_un_object_spread(
     module: &mut Module,
+    unresolved_mark: Option<Mark>,
     local_helper_context: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
 ) {
@@ -120,7 +142,8 @@ fn run_un_object_spread(
             .iter()
             .map(|key| (key.clone(), TranspilerHelperKind::Extends)),
     );
-    let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
+    let swc_numeric_helper_namespaces =
+        collect_swc_numeric_helper_namespaces(module, unresolved_mark);
     let tslib_namespaces = local_helper_context.tslib_namespaces();
     if helpers.is_empty()
         && cross_module_ts_assign_refs.namespaces.is_empty()
@@ -795,7 +818,10 @@ fn helper_kind_to_transpiler(kind: HelperKind) -> Option<TranspilerHelperKind> {
     }
 }
 
-fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey> {
+fn collect_swc_numeric_helper_namespaces(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> HashSet<BindingKey> {
     let mut namespaces = HashSet::new();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -805,7 +831,11 @@ fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey>
             let Pat::Ident(binding) = &decl.name else {
                 continue;
             };
-            if decl.init.as_deref().is_some_and(is_numeric_require_call) {
+            if decl
+                .init
+                .as_deref()
+                .is_some_and(|init| is_numeric_require_call(init, unresolved_mark))
+            {
                 namespaces.insert((binding.id.sym.clone(), binding.id.ctxt));
             }
         }
@@ -813,7 +843,7 @@ fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey>
     namespaces
 }
 
-fn is_numeric_require_call(expr: &Expr) -> bool {
+fn is_numeric_require_call(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
     let Expr::Call(call) = expr else {
         return false;
     };
@@ -823,7 +853,8 @@ fn is_numeric_require_call(expr: &Expr) -> bool {
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark))
+    {
         return false;
     }
     matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(_)))

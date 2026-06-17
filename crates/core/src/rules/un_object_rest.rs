@@ -108,7 +108,7 @@ impl UnObjectRest<'_> {
 
 impl VisitMut for UnObjectRest<'_> {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
-        let local_helpers = LocalHelperContext::collect(module);
+        let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
         run_un_object_rest(
             module,
             self.unresolved_mark,
@@ -163,7 +163,8 @@ fn run_un_object_rest(
         }
     }
     let tslib_namespaces = local_helpers.tslib_namespaces();
-    let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
+    let swc_numeric_helper_namespaces =
+        collect_swc_numeric_helper_namespaces(module, unresolved_mark);
 
     if named_helpers.is_empty()
         && cross_module_helpers.namespaces.is_empty()
@@ -997,7 +998,10 @@ fn extract_exclusion_keys(
     }
 }
 
-fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey> {
+fn collect_swc_numeric_helper_namespaces(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
     let mut namespaces = HashSet::new();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -1007,7 +1011,11 @@ fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey>
             let Pat::Ident(binding) = &decl.name else {
                 continue;
             };
-            if decl.init.as_deref().is_some_and(is_numeric_require_call) {
+            if decl
+                .init
+                .as_deref()
+                .is_some_and(|init| is_numeric_require_call(init, unresolved_mark))
+            {
                 namespaces.insert((binding.id.sym.clone(), binding.id.ctxt));
             }
         }
@@ -1015,7 +1023,7 @@ fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey>
     namespaces
 }
 
-fn is_numeric_require_call(expr: &Expr) -> bool {
+fn is_numeric_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Call(call) = expr else {
         return false;
     };
@@ -1025,7 +1033,8 @@ fn is_numeric_require_call(expr: &Expr) -> bool {
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark)
+    {
         return false;
     }
     matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(_)))

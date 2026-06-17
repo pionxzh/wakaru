@@ -59,7 +59,7 @@ impl<'a> UnRegenerator<'a> {
 
 impl VisitMut for UnRegenerator<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let local_helpers = LocalHelperContext::collect(module);
+        let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
         run_un_regenerator(
             module,
             self.unresolved_mark,
@@ -84,7 +84,8 @@ fn run_un_regenerator(
         .collect();
     let mut async_to_gen_default_members = Vec::new();
     if let Some(module_facts) = module_facts {
-        let imported_helpers = collect_cross_module_async_helpers(module, module_facts);
+        let imported_helpers =
+            collect_cross_module_async_helpers(module, module_facts, unresolved_mark);
         async_to_gen_bindings.extend(imported_helpers.direct);
         async_to_gen_default_members.extend(imported_helpers.default_members);
     }
@@ -169,6 +170,7 @@ struct CrossModuleAsyncHelpers {
 fn collect_cross_module_async_helpers(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    unresolved_mark: Mark,
 ) -> CrossModuleAsyncHelpers {
     let mut helpers = CrossModuleAsyncHelpers::default();
 
@@ -218,7 +220,8 @@ fn collect_cross_module_async_helpers(
                     let Some(init) = &decl.init else {
                         continue;
                     };
-                    let Some(source) = require_source_from_interop_init(init) else {
+                    let Some(source) = require_source_from_interop_init(init, unresolved_mark)
+                    else {
                         continue;
                     };
                     if module_exports_helper(
@@ -254,8 +257,8 @@ fn module_exports_helper(
     })
 }
 
-fn require_source_from_interop_init(expr: &Expr) -> Option<Atom> {
-    if let Some(source) = require_source(expr) {
+fn require_source_from_interop_init(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+    if let Some(source) = require_source(expr, unresolved_mark) {
         return Some(source);
     }
 
@@ -265,10 +268,10 @@ fn require_source_from_interop_init(expr: &Expr) -> Option<Atom> {
     if call.args.len() != 1 || call.args[0].spread.is_some() {
         return None;
     }
-    require_source(&call.args[0].expr)
+    require_source(&call.args[0].expr, unresolved_mark)
 }
 
-fn require_source(expr: &Expr) -> Option<Atom> {
+fn require_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -276,7 +279,8 @@ fn require_source(expr: &Expr) -> Option<Atom> {
         return None;
     }
     let callee = call.callee.as_expr()?;
-    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark)
+    {
         return None;
     }
     let Expr::Lit(Lit::Str(source)) = call.args[0].expr.as_ref() else {

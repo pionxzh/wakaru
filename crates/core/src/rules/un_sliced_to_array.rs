@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
     ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
@@ -37,6 +37,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 pub struct UnSlicedToArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
 }
 
 struct SlicedExtraction {
@@ -51,6 +52,7 @@ impl UnSlicedToArray<'_> {
         Self {
             module_facts: None,
             level: RewriteLevel::Standard,
+            unresolved_mark: None,
         }
     }
 
@@ -58,6 +60,7 @@ impl UnSlicedToArray<'_> {
         Self {
             module_facts: None,
             level,
+            unresolved_mark: None,
         }
     }
 }
@@ -67,6 +70,7 @@ impl<'a> UnSlicedToArray<'a> {
         Self {
             module_facts: Some(module_facts),
             level: RewriteLevel::Standard,
+            unresolved_mark: None,
         }
     }
 
@@ -74,16 +78,24 @@ impl<'a> UnSlicedToArray<'a> {
         Self {
             module_facts: Some(module_facts),
             level,
+            unresolved_mark: None,
         }
     }
 
     pub(crate) fn run_with_helpers(
         module: &mut Module,
+        unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
         level: RewriteLevel,
     ) {
-        run_un_sliced_to_array(module, local_helpers, module_facts, level);
+        run_un_sliced_to_array(
+            module,
+            Some(unresolved_mark),
+            local_helpers,
+            module_facts,
+            level,
+        );
     }
 }
 
@@ -96,12 +108,19 @@ impl Default for UnSlicedToArray<'_> {
 impl VisitMut for UnSlicedToArray<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_sliced_to_array(module, &local_helpers, self.module_facts, self.level);
+        run_un_sliced_to_array(
+            module,
+            self.unresolved_mark,
+            &local_helpers,
+            self.module_facts,
+            self.level,
+        );
     }
 }
 
 fn run_un_sliced_to_array(
     module: &mut Module,
+    unresolved_mark: Option<Mark>,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
     level: RewriteLevel,
@@ -143,6 +162,7 @@ fn run_un_sliced_to_array(
         cross_module_helpers: &cross_module_helpers,
         maybe_array_like: &maybe_array_like,
         level,
+        unresolved_mark,
     });
 
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Read);
@@ -182,6 +202,7 @@ struct SlicedToArrayRewriter<'a> {
     cross_module_helpers: &'a CrossModuleHelperRefs,
     maybe_array_like: &'a HashSet<BindingKey>,
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
 }
 
 impl VisitMut for SlicedToArrayRewriter<'_> {
@@ -192,6 +213,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
             self.local_helpers,
             self.cross_module_helpers,
             self.maybe_array_like,
+            self.unresolved_mark,
         );
         for item in items {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -202,6 +224,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                 self.local_helpers,
                 self.cross_module_helpers,
                 self.maybe_array_like,
+                self.unresolved_mark,
             );
         }
     }
@@ -214,6 +237,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
             self.cross_module_helpers,
             self.maybe_array_like,
             self.level,
+            self.unresolved_mark,
         );
         for stmt in stmts {
             let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -224,6 +248,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                 self.local_helpers,
                 self.cross_module_helpers,
                 self.maybe_array_like,
+                self.unresolved_mark,
             );
         }
     }
@@ -234,6 +259,7 @@ fn fold_sliced_to_array_module_item_groups(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) {
     let mut i = 0;
     while i < body.len() {
@@ -243,6 +269,7 @@ fn fold_sliced_to_array_module_item_groups(
             local_helpers,
             cross_module_helpers,
             maybe_array_like,
+            unresolved_mark,
         );
         i += 1;
     }
@@ -254,12 +281,14 @@ fn try_fold_sliced_to_array_module_item_group(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some(extraction) = extract_sliced_to_array_module_item(
         &body[start],
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     ) else {
         return false;
     };
@@ -348,6 +377,7 @@ fn fold_sliced_to_array_stmt_groups(
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
 ) {
     let mut i = 0;
     while i < stmts.len() {
@@ -359,6 +389,7 @@ fn fold_sliced_to_array_stmt_groups(
             cross_module_helpers,
             maybe_array_like,
             allow_assignment_index_folds,
+            unresolved_mark,
         ) || (allow_assignment_index_folds
             && try_fold_sliced_to_array_assignment_stmt_group(
                 stmts,
@@ -366,6 +397,7 @@ fn fold_sliced_to_array_stmt_groups(
                 local_helpers,
                 cross_module_helpers,
                 maybe_array_like,
+                unresolved_mark,
             ))
             || (allow_assignment_index_folds
                 && try_fold_sliced_to_array_ref_assignment_stmt_group(
@@ -374,6 +406,7 @@ fn fold_sliced_to_array_stmt_groups(
                     local_helpers,
                     cross_module_helpers,
                     maybe_array_like,
+                    unresolved_mark,
                 ));
         i += 1;
     }
@@ -386,12 +419,14 @@ fn try_fold_sliced_to_array_stmt_group(
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
     allow_assignment_index_folds: bool,
+    unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some(extraction) = extract_sliced_to_array_stmt(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     ) else {
         return false;
     };
@@ -408,6 +443,7 @@ fn try_fold_sliced_to_array_stmt_group(
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     ) else {
         return false;
     };
@@ -554,12 +590,14 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some((first, extraction)) = extract_sliced_to_array_assignment_stmt(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     ) else {
         return false;
     };
@@ -627,12 +665,14 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> bool {
     let Some(extraction) = extract_sliced_to_array_ref_assignment_stmt(
         &stmts[start],
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     ) else {
         return false;
     };
@@ -701,6 +741,7 @@ fn extract_sliced_to_array_module_item(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -713,6 +754,7 @@ fn extract_sliced_to_array_module_item(
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     )
 }
 
@@ -721,6 +763,7 @@ fn extract_sliced_to_array_stmt(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
@@ -733,6 +776,7 @@ fn extract_sliced_to_array_stmt(
         local_helpers,
         cross_module_helpers,
         maybe_array_like,
+        unresolved_mark,
     )
 }
 
@@ -741,6 +785,7 @@ fn extract_sliced_to_array_assignment_stmt(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<(BindingIdent, SlicedExtraction)> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -763,8 +808,13 @@ fn extract_sliced_to_array_assignment_stmt(
         return None;
     };
 
-    let (source, length_val) =
-        extract_sliced_call_args(call, local_helpers, cross_module_helpers, maybe_array_like)?;
+    let (source, length_val) = extract_sliced_call_args(
+        call,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    )?;
     let length = numeric_length(length_val)?;
 
     Some((
@@ -789,6 +839,7 @@ fn extract_sliced_to_array_ref_assignment_stmt(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -801,8 +852,13 @@ fn extract_sliced_to_array_ref_assignment_stmt(
         return None;
     };
 
-    let (source, length_val) =
-        extract_sliced_call_args(call, local_helpers, cross_module_helpers, maybe_array_like)?;
+    let (source, length_val) = extract_sliced_call_args(
+        call,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    )?;
     let length = numeric_length(length_val)?;
 
     Some(SlicedExtraction {
@@ -954,6 +1010,7 @@ fn rewrite_sliced_to_array_decls(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) {
     let mut i = 0;
     while i < decls.len() {
@@ -962,6 +1019,7 @@ fn rewrite_sliced_to_array_decls(
             local_helpers,
             cross_module_helpers,
             maybe_array_like,
+            unresolved_mark,
         );
         i += 1;
     }
@@ -972,6 +1030,7 @@ fn extract_sliced_to_array_decl(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<SlicedExtraction> {
     let Pat::Ident(binding) = &decl.name else {
         return None;
@@ -988,8 +1047,13 @@ fn extract_sliced_to_array_decl(
         });
     };
 
-    let (source, length_val) =
-        extract_sliced_call_args(call, local_helpers, cross_module_helpers, maybe_array_like)?;
+    let (source, length_val) = extract_sliced_call_args(
+        call,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    )?;
     let length = numeric_length(length_val)?;
     Some(SlicedExtraction {
         ref_binding: binding.clone(),
@@ -1065,15 +1129,20 @@ fn try_unwrap_sliced_to_array(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) {
     let Some(init) = &decl.init else { return };
     let Expr::Call(call) = init.as_ref() else {
         return;
     };
 
-    let Some((source, length_val)) =
-        extract_sliced_call_args(call, local_helpers, cross_module_helpers, maybe_array_like)
-    else {
+    let Some((source, length_val)) = extract_sliced_call_args(
+        call,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    ) else {
         return;
     };
     let Some(length) = numeric_length(length_val) else {
@@ -1095,6 +1164,7 @@ fn is_sliced_to_array_callee(
     callee: &Expr,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
+    unresolved_mark: Option<Mark>,
 ) -> bool {
     local_helpers.is_helper_callee(callee, TranspilerHelperKind::SlicedToArray)
         || matches!(
@@ -1116,7 +1186,7 @@ fn is_sliced_to_array_callee(
         || ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
         || tslib_member_ts_helper_kind(callee, local_helpers.tslib_namespaces())
             == Some(TsHelperKind::Read)
-        || tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::Read)
+        || tslib_require_ts_helper_kind(callee, unresolved_mark) == Some(TsHelperKind::Read)
 }
 
 fn extend_cross_module_helpers(
@@ -1169,12 +1239,13 @@ fn extract_sliced_call_args<'a>(
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
     maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<(&'a Expr, f64)> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
 
-    if is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers)
+    if is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers, unresolved_mark)
         && call.args.len() == 2
     {
         let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
@@ -1189,6 +1260,7 @@ fn extract_sliced_call_args<'a>(
             call.args[0].expr.as_ref(),
             local_helpers,
             cross_module_helpers,
+            unresolved_mark,
         )
     {
         let Expr::Lit(Lit::Num(num)) = call.args[2].expr.as_ref() else {

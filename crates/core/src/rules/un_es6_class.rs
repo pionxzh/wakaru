@@ -15,8 +15,9 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
-    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path, is_tslib_require_expr,
-    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, LocalHelperContext, TsHelperKind,
+    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
+    is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
+    tslib_require_ts_helper_kind_with_mark, LocalHelperContext, TsHelperKind,
 };
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -97,13 +98,14 @@ impl Es6ClassHelperContext {
         cached_ts_extends_helpers: Option<HashSet<BindingKey>>,
         cached_tslib_namespaces: Option<HashSet<BindingKey>>,
     ) -> Self {
-        let tslib_namespaces =
-            cached_tslib_namespaces.unwrap_or_else(|| collect_tslib_namespaces_from_items(items));
+        let tslib_namespaces = cached_tslib_namespaces
+            .unwrap_or_else(|| collect_tslib_namespaces_from_items(items, unresolved_mark));
         let ts_extends_helpers = cached_ts_extends_helpers.unwrap_or_else(|| {
             let mut helpers = collect_ts_extends_helpers_from_items(items);
             helpers.extend(collect_tslib_extends_helpers_from_items(
                 items,
                 &tslib_namespaces,
+                unresolved_mark,
             ));
             helpers
         });
@@ -122,12 +124,13 @@ impl Es6ClassHelperContext {
 
     fn from_stmts(stmts: &[Stmt], unresolved_mark: Mark) -> Self {
         let ts_extends_helpers = collect_ts_extends_helpers_from_stmts(stmts);
-        let tslib_namespaces = collect_tslib_namespaces_from_stmts(stmts);
+        let tslib_namespaces = collect_tslib_namespaces_from_stmts(stmts, unresolved_mark);
         let mut inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
         inherits_helpers.extend(collect_tslib_extends_helpers_from_stmts(
             stmts,
             &tslib_namespaces,
+            unresolved_mark,
         ));
 
         Self {
@@ -320,7 +323,10 @@ fn collect_ts_extends_helpers_from_items(items: &[ModuleItem]) -> HashSet<Bindin
     helpers
 }
 
-fn collect_tslib_namespaces_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+fn collect_tslib_namespaces_from_stmts(
+    stmts: &[Stmt],
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
     let mut namespaces = HashSet::new();
     for stmt in stmts {
         let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
@@ -333,7 +339,7 @@ fn collect_tslib_namespaces_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if is_tslib_require_expr(init) {
+            if is_tslib_require_expr_with_mark(init, unresolved_mark) {
                 namespaces.insert(binding_key(&binding.id));
             }
         }
@@ -341,7 +347,10 @@ fn collect_tslib_namespaces_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
     namespaces
 }
 
-fn collect_tslib_namespaces_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+fn collect_tslib_namespaces_from_items(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
     let mut namespaces = HashSet::new();
     for item in items {
         match item {
@@ -361,9 +370,10 @@ fn collect_tslib_namespaces_from_items(items: &[ModuleItem]) -> HashSet<BindingK
                 }
             }
             ModuleItem::Stmt(stmt) => {
-                namespaces.extend(collect_tslib_namespaces_from_stmts(std::slice::from_ref(
-                    stmt,
-                )));
+                namespaces.extend(collect_tslib_namespaces_from_stmts(
+                    std::slice::from_ref(stmt),
+                    unresolved_mark,
+                ));
             }
             _ => {}
         }
@@ -374,6 +384,7 @@ fn collect_tslib_namespaces_from_items(items: &[ModuleItem]) -> HashSet<BindingK
 fn collect_tslib_extends_helpers_from_stmts(
     stmts: &[Stmt],
     namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
 ) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
@@ -387,7 +398,7 @@ fn collect_tslib_extends_helpers_from_stmts(
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if is_tslib_extends_member(init, namespaces) {
+            if is_tslib_extends_member(init, namespaces, unresolved_mark) {
                 helpers.insert(binding_key(&binding.id));
             }
         }
@@ -398,6 +409,7 @@ fn collect_tslib_extends_helpers_from_stmts(
 fn collect_tslib_extends_helpers_from_items(
     items: &[ModuleItem],
     namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
 ) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for item in items {
@@ -423,6 +435,7 @@ fn collect_tslib_extends_helpers_from_items(
                 helpers.extend(collect_tslib_extends_helpers_from_stmts(
                     std::slice::from_ref(stmt),
                     namespaces,
+                    unresolved_mark,
                 ));
             }
             _ => {}
@@ -438,8 +451,12 @@ fn module_export_name_as_str(name: &ModuleExportName) -> &str {
     }
 }
 
-fn is_tslib_extends_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
-    tslib_require_ts_helper_kind(expr) == Some(TsHelperKind::Extends)
+fn is_tslib_extends_member(
+    expr: &Expr,
+    namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    tslib_require_ts_helper_kind_with_mark(expr, unresolved_mark) == Some(TsHelperKind::Extends)
         || tslib_member_ts_helper_kind(expr, namespaces) == Some(TsHelperKind::Extends)
 }
 
@@ -1456,7 +1473,7 @@ fn try_parse_extends_call(
                 && fn_name.ctxt.outer() == unresolved_mark;
             is_unresolved_builtin || inherits_helpers.contains(&binding_key(fn_name))
         }
-        Expr::Member(_) => is_tslib_extends_member(callee, tslib_namespaces),
+        Expr::Member(_) => is_tslib_extends_member(callee, tslib_namespaces, unresolved_mark),
         _ => false,
     };
     if !is_helper {

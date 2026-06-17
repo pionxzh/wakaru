@@ -4,7 +4,7 @@ use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
     Callee, ComputedPropName, Decl, Expr, ForHead, Function, Ident, IdentName, IfStmt,
@@ -102,17 +102,27 @@ pub(crate) struct LocalHelperContext {
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
     tslib_namespaces: HashSet<BindingKey>,
     tslib_require_member_calls: HashSet<TranspilerHelperKind>,
+    unresolved_mark: Option<Mark>,
     top_level_callable_ref_graph: OnceCell<HashMap<BindingKey, HashSet<BindingKey>>>,
 }
 
 impl LocalHelperContext {
     pub(crate) fn collect(module: &Module) -> Self {
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        Self::collect_inner(module, None)
+    }
+
+    pub(crate) fn collect_with_mark(module: &Module, unresolved_mark: Mark) -> Self {
+        Self::collect_inner(module, Some(unresolved_mark))
+    }
+
+    fn collect_inner(module: &Module, unresolved_mark: Option<Mark>) -> Self {
+        let tslib_namespaces = collect_tslib_namespace_bindings(module, unresolved_mark);
         Self {
-            helpers: collect_transpiler_helpers(module),
-            ts_helpers: collect_ts_helpers(module, &tslib_namespaces),
+            helpers: collect_transpiler_helpers_inner(module, unresolved_mark),
+            ts_helpers: collect_ts_helpers(module, &tslib_namespaces, unresolved_mark),
             tslib_namespaces,
-            tslib_require_member_calls: collect_tslib_require_member_calls(module),
+            tslib_require_member_calls: collect_tslib_require_member_calls(module, unresolved_mark),
+            unresolved_mark,
             top_level_callable_ref_graph: OnceCell::new(),
         }
     }
@@ -208,12 +218,17 @@ impl LocalHelperContext {
             }
         }
 
-        tslib_member_helper_kind(callee, &self.tslib_namespaces)
-            .or_else(|| tslib_require_member_name(callee).and_then(tslib_helper_name_kind))
+        tslib_member_helper_kind(callee, &self.tslib_namespaces).or_else(|| {
+            tslib_require_member_name(callee, self.unresolved_mark).and_then(tslib_helper_name_kind)
+        })
     }
 
     pub(crate) fn is_helper_callee(&self, callee: &Expr, kind: TranspilerHelperKind) -> bool {
         self.helper_callee_kind(callee) == Some(kind)
+    }
+
+    pub(crate) fn is_unresolved_or_unguarded_ident(&self, id: &Ident, name: &str) -> bool {
+        is_unresolved_or_unguarded_ident(id, name, self.unresolved_mark)
     }
 
     pub(crate) fn helper_dependencies(
@@ -327,6 +342,13 @@ const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_templat
 pub(crate) fn collect_transpiler_helpers(
     module: &Module,
 ) -> HashMap<BindingKey, TranspilerHelperKind> {
+    collect_transpiler_helpers_inner(module, None)
+}
+
+fn collect_transpiler_helpers_inner(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
     #[cfg(test)]
     COLLECT_TRANSPILER_HELPERS_CALLS.with(|calls| calls.set(calls.get() + 1));
 
@@ -351,7 +373,9 @@ pub(crate) fn collect_transpiler_helpers(
             // var _ird = function(obj) { ... }  OR  var _ird = require("@babel/runtime/...")
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
-                    if let Some((key, kind)) = detect_helper_from_var_decl(decl, has_sub_helpers) {
+                    if let Some((key, kind)) =
+                        detect_helper_from_var_decl(decl, has_sub_helpers, unresolved_mark)
+                    {
                         helpers.insert(key, kind);
                     }
                 }
@@ -405,7 +429,7 @@ pub(crate) fn collect_transpiler_helpers(
                 Decl::Var(var) => {
                     for decl in &var.decls {
                         if let Some((key, kind)) =
-                            detect_helper_from_var_decl(decl, has_sub_helpers)
+                            detect_helper_from_var_decl(decl, has_sub_helpers, unresolved_mark)
                         {
                             helpers.insert(key, kind);
                         }
@@ -422,6 +446,7 @@ pub(crate) fn collect_transpiler_helpers(
 fn collect_ts_helpers(
     module: &Module,
     tslib_namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> HashMap<BindingKey, TsHelperInfo> {
     let mut helpers = HashMap::new();
 
@@ -444,7 +469,7 @@ fn collect_ts_helpers(
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
                     if let Some((key, helper)) =
-                        collect_ts_helper_from_var_decl(decl, tslib_namespaces)
+                        collect_ts_helper_from_var_decl(decl, tslib_namespaces, unresolved_mark)
                     {
                         helpers.insert(key, helper);
                     }
@@ -493,7 +518,7 @@ fn collect_ts_helpers(
                 Decl::Var(var) => {
                     for decl in &var.decls {
                         if let Some((key, helper)) =
-                            collect_ts_helper_from_var_decl(decl, tslib_namespaces)
+                            collect_ts_helper_from_var_decl(decl, tslib_namespaces, unresolved_mark)
                         {
                             helpers.insert(key, helper);
                         }
@@ -511,6 +536,7 @@ fn collect_ts_helpers(
 fn collect_ts_helper_from_var_decl(
     decl: &VarDeclarator,
     tslib_namespaces: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Option<(BindingKey, TsHelperInfo)> {
     let init = decl.init.as_deref()?;
     let key = var_declarator_binding_key(decl)?;
@@ -534,7 +560,9 @@ fn collect_ts_helper_from_var_decl(
         ));
     }
 
-    if let Some(kind) = tslib_require_member_name(init).and_then(ts_helper_name_kind) {
+    if let Some(kind) =
+        tslib_require_member_name(init, unresolved_mark).and_then(ts_helper_name_kind)
+    {
         return Some((
             key,
             TsHelperInfo {
@@ -704,6 +732,7 @@ pub(crate) fn remove_helper_declarations(
 fn detect_helper_from_var_decl(
     decl: &VarDeclarator,
     has_sub_helpers: bool,
+    unresolved_mark: Option<Mark>,
 ) -> Option<(BindingKey, TranspilerHelperKind)> {
     let init = decl.init.as_ref()?;
     let key = var_declarator_binding_key(decl)?;
@@ -723,17 +752,17 @@ fn detect_helper_from_var_decl(
     }
 
     // var _ird = require("@babel/runtime/helpers/interopRequireDefault")
-    if let Some(kind) = detect_helper_from_require(init) {
+    if let Some(kind) = detect_helper_from_require(init, unresolved_mark) {
         return Some((key, kind));
     }
 
     // var _ird = require("@babel/runtime/helpers/interopRequireDefault").default
     if let Expr::Member(member) = init.as_ref() {
-        if let Some(kind) = detect_helper_from_tslib_require_member(member) {
+        if let Some(kind) = detect_helper_from_tslib_require_member(member, unresolved_mark) {
             return Some((key, kind));
         }
         if member_prop_name(&member.prop, "default") {
-            if let Some(kind) = detect_helper_from_require(&member.obj) {
+            if let Some(kind) = detect_helper_from_require(&member.obj, unresolved_mark) {
                 return Some((key, kind));
             }
         }
@@ -798,7 +827,10 @@ pub(crate) fn is_tslib_path(path: &str) -> bool {
     matches!(path, "tslib" | "tslib/tslib.es6.js" | "tslib/tslib.js")
 }
 
-pub(crate) fn collect_tslib_namespace_bindings(module: &Module) -> HashSet<BindingKey> {
+pub(crate) fn collect_tslib_namespace_bindings(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
 
     for item in &module.body {
@@ -823,7 +855,7 @@ pub(crate) fn collect_tslib_namespace_bindings(module: &Module) -> HashSet<Bindi
                     let Some(init) = decl.init.as_deref() else {
                         continue;
                     };
-                    if !is_tslib_require_call(init) {
+                    if !is_tslib_require_call(init, unresolved_mark) {
                         continue;
                     }
                     if let Some(key) = var_declarator_binding_key(decl) {
@@ -872,34 +904,44 @@ pub(crate) fn tslib_member_ts_helper_kind(
     ts_helper_name_kind(tslib_namespace_member_name(expr, namespaces)?)
 }
 
-pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
+pub(crate) fn tslib_require_member_name(
+    expr: &Expr,
+    unresolved_mark: Option<Mark>,
+) -> Option<&str> {
     let Expr::Member(member) = strip_parens(expr) else {
         return None;
     };
-    if !is_tslib_require_call(&member.obj) {
+    if !is_tslib_require_call(&member.obj, unresolved_mark) {
         return None;
     }
     static_member_prop_name(&member.prop)
 }
 
-pub(crate) fn tslib_require_ts_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
-    tslib_require_member_name(expr).and_then(ts_helper_name_kind)
+pub(crate) fn tslib_require_ts_helper_kind_with_mark(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<TsHelperKind> {
+    tslib_require_member_name(expr, Some(unresolved_mark)).and_then(ts_helper_name_kind)
 }
 
-pub(crate) fn is_tslib_require_expr(expr: &Expr) -> bool {
-    is_tslib_require_call(expr)
+pub(crate) fn is_tslib_require_expr_with_mark(expr: &Expr, unresolved_mark: Mark) -> bool {
+    is_tslib_require_call(expr, Some(unresolved_mark))
 }
 
-fn collect_tslib_require_member_calls(module: &Module) -> HashSet<TranspilerHelperKind> {
+fn collect_tslib_require_member_calls(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> HashSet<TranspilerHelperKind> {
     struct Finder {
         kinds: HashSet<TranspilerHelperKind>,
+        unresolved_mark: Option<Mark>,
     }
 
     impl Visit for Finder {
         fn visit_call_expr(&mut self, call: &CallExpr) {
             if let Callee::Expr(callee) = &call.callee {
-                if let Some(kind) =
-                    tslib_require_member_name(callee.as_ref()).and_then(tslib_helper_name_kind)
+                if let Some(kind) = tslib_require_member_name(callee.as_ref(), self.unresolved_mark)
+                    .and_then(tslib_helper_name_kind)
                 {
                     self.kinds.insert(kind);
                 }
@@ -910,13 +952,17 @@ fn collect_tslib_require_member_calls(module: &Module) -> HashSet<TranspilerHelp
 
     let mut finder = Finder {
         kinds: HashSet::new(),
+        unresolved_mark,
     };
     module.visit_with(&mut finder);
     finder.kinds
 }
 
-fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<TranspilerHelperKind> {
-    if !is_tslib_require_call(&member.obj) {
+fn detect_helper_from_tslib_require_member(
+    member: &MemberExpr,
+    unresolved_mark: Option<Mark>,
+) -> Option<TranspilerHelperKind> {
+    if !is_tslib_require_call(&member.obj, unresolved_mark) {
         return None;
     }
     tslib_helper_name_kind(static_member_prop_name(&member.prop)?)
@@ -971,7 +1017,10 @@ fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<Transpi
     }
 }
 
-fn detect_helper_from_require(expr: &Expr) -> Option<TranspilerHelperKind> {
+fn detect_helper_from_require(
+    expr: &Expr,
+    unresolved_mark: Option<Mark>,
+) -> Option<TranspilerHelperKind> {
     let Expr::Call(call) = expr else { return None };
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -979,7 +1028,7 @@ fn detect_helper_from_require(expr: &Expr) -> Option<TranspilerHelperKind> {
     let Expr::Ident(id) = callee.as_ref() else {
         return None;
     };
-    if id.sym.as_ref() != "require" || call.args.len() != 1 {
+    if !is_unresolved_or_unguarded_ident(id, "require", unresolved_mark) || call.args.len() != 1 {
         return None;
     }
     let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
@@ -1991,7 +2040,7 @@ fn prop_name_as_str(name: &PropName) -> Option<&str> {
     }
 }
 
-fn is_tslib_require_call(expr: &Expr) -> bool {
+fn is_tslib_require_call(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
     let Expr::Call(call) = strip_parens(expr) else {
         return false;
     };
@@ -2001,13 +2050,21 @@ fn is_tslib_require_call(expr: &Expr) -> bool {
     let Expr::Ident(id) = callee.as_ref() else {
         return false;
     };
-    if id.sym.as_ref() != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
+    if !is_unresolved_or_unguarded_ident(id, "require", unresolved_mark)
+        || call.args.len() != 1
+        || call.args[0].spread.is_some()
+    {
         return false;
     }
     let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
         return false;
     };
     is_tslib_path(s.value.as_str().unwrap_or(""))
+}
+
+fn is_unresolved_or_unguarded_ident(id: &Ident, name: &str, unresolved_mark: Option<Mark>) -> bool {
+    id.sym.as_ref() == name
+        && unresolved_mark.is_none_or(|unresolved_mark| id.ctxt.outer() == unresolved_mark)
 }
 
 fn extract_single_return(stmt: &Stmt) -> Option<&Expr> {

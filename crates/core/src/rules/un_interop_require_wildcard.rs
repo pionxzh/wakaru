@@ -82,7 +82,8 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     }
 
     let import_dependencies = collect_import_dependencies(module, &dependency_roots);
-    let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
+    let var_require_dependencies =
+        collect_var_require_dependencies(module, &dependency_roots, local_helpers);
     let removable_helpers: HashMap<BindingKey, TranspilerHelperKind> = dependency_roots
         .into_iter()
         .chain(
@@ -214,7 +215,9 @@ fn extract_wildcard_require(
     let Expr::Ident(require_id) = require_callee.as_ref() else {
         return None;
     };
-    if require_id.sym.as_ref() != "require" || require_call.args.len() != 1 {
+    if !local_helpers.is_unresolved_or_unguarded_ident(require_id, "require")
+        || require_call.args.len() != 1
+    {
         return None;
     }
     let Expr::Lit(Lit::Str(source)) = require_call.args[0].expr.as_ref() else {
@@ -253,13 +256,13 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
         }
 
         // Only unwrap when the first arg is require("...")
-        if is_require_call(&call.args[0].expr) {
+        if is_require_call(&call.args[0].expr, self.local_helpers) {
             *expr = *call.args[0].expr.clone();
         }
     }
 }
 
-fn is_require_call(expr: &Expr) -> bool {
+fn is_require_call(expr: &Expr, local_helpers: &LocalHelperContext) -> bool {
     let Expr::Call(call) = expr else { return false };
     let Callee::Expr(callee) = &call.callee else {
         return false;
@@ -267,7 +270,7 @@ fn is_require_call(expr: &Expr) -> bool {
     let Expr::Ident(id) = callee.as_ref() else {
         return false;
     };
-    id.sym.as_ref() == "require" && call.args.len() == 1
+    local_helpers.is_unresolved_or_unguarded_ident(id, "require") && call.args.len() == 1
 }
 
 fn collect_import_dependencies(
@@ -312,8 +315,9 @@ fn collect_import_dependencies(
 fn collect_var_require_dependencies(
     module: &Module,
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    local_helpers: &LocalHelperContext,
 ) -> HashSet<BindingKey> {
-    let var_require_bindings = collect_var_require_bindings(module);
+    let var_require_bindings = collect_var_require_bindings(module, local_helpers);
     if var_require_bindings.is_empty() {
         return HashSet::new();
     }
@@ -348,14 +352,21 @@ fn collect_var_require_dependencies(
     collector.dependencies
 }
 
-fn collect_var_require_bindings(module: &Module) -> HashSet<BindingKey> {
+fn collect_var_require_bindings(
+    module: &Module,
+    local_helpers: &LocalHelperContext,
+) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
         for decl in &var.decls {
-            if decl.init.as_deref().is_some_and(is_require_call) {
+            if decl
+                .init
+                .as_deref()
+                .is_some_and(|init| is_require_call(init, local_helpers))
+            {
                 if let Some(key) = var_declarator_binding_key(decl) {
                     bindings.insert(key);
                 }

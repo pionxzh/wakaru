@@ -148,7 +148,7 @@ impl Default for UnClassFields {
 
 impl VisitMut for UnClassFields {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let local_helpers = LocalHelperContext::collect(module);
+        let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
         self.run_with_helpers(module, &local_helpers);
     }
 

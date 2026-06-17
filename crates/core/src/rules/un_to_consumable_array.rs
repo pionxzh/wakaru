@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -19,11 +19,22 @@ use super::transpiler_helper_utils::{
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
 pub struct UnToConsumableArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    unresolved_mark: Option<Mark>,
 }
 
 impl UnToConsumableArray<'_> {
     pub fn new() -> Self {
-        Self { module_facts: None }
+        Self {
+            module_facts: None,
+            unresolved_mark: None,
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark) -> Self {
+        Self {
+            module_facts: None,
+            unresolved_mark: Some(unresolved_mark),
+        }
     }
 }
 
@@ -31,15 +42,17 @@ impl<'a> UnToConsumableArray<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            unresolved_mark: None,
         }
     }
 
     pub(crate) fn run_with_helpers(
         module: &mut Module,
+        unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
     ) {
-        run_un_to_consumable_array(module, local_helpers, module_facts);
+        run_un_to_consumable_array(module, Some(unresolved_mark), local_helpers, module_facts);
     }
 }
 
@@ -52,12 +65,18 @@ impl Default for UnToConsumableArray<'_> {
 impl VisitMut for UnToConsumableArray<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_to_consumable_array(module, &local_helpers, self.module_facts);
+        run_un_to_consumable_array(
+            module,
+            self.unresolved_mark,
+            &local_helpers,
+            self.module_facts,
+        );
     }
 }
 
 fn run_un_to_consumable_array(
     module: &mut Module,
+    unresolved_mark: Option<Mark>,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
 ) {
@@ -90,7 +109,7 @@ fn run_un_to_consumable_array(
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let maybe_array_like = collect_maybe_array_like_bindings(module);
     let has_inline_legacy_array_spread = has_inline_legacy_array_spread_call(module);
-    let has_direct_tslib_array_spread = has_direct_tslib_array_spread_call(module);
+    let has_direct_tslib_array_spread = has_direct_tslib_array_spread_call(module, unresolved_mark);
     if helpers.is_empty() {
         if ts_helpers.is_empty()
             && ts_legacy_array_spread_helpers.is_empty()
@@ -124,6 +143,7 @@ fn run_un_to_consumable_array(
             cross_module_ts_read_helpers: &cross_module_ts_read_helpers.direct,
             cross_module_ts_read_namespaces: &cross_module_ts_read_helpers.namespaces,
             tslib_namespaces,
+            unresolved_mark,
         };
         module.visit_mut_with(&mut replacer);
 
@@ -148,6 +168,7 @@ fn run_un_to_consumable_array(
         cross_module_ts_read_helpers: &cross_module_ts_read_helpers.direct,
         cross_module_ts_read_namespaces: &cross_module_ts_read_helpers.namespaces,
         tslib_namespaces,
+        unresolved_mark,
     };
     module.visit_mut_with(&mut replacer);
 
@@ -173,6 +194,7 @@ struct ToConsumableArrayReplacer<'a> {
     cross_module_ts_read_helpers: &'a HashSet<BindingKey>,
     cross_module_ts_read_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
     tslib_namespaces: &'a HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 }
 
 impl VisitMut for ToConsumableArrayReplacer<'_> {
@@ -247,7 +269,9 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             return;
         }
 
-        if tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::SpreadArray) {
+        if tslib_require_ts_helper_kind(callee, self.unresolved_mark)
+            == Some(TsHelperKind::SpreadArray)
+        {
             if let Some(array) = convert_ts_spread_array_call(call, self) {
                 *expr = Expr::Array(array);
             }
@@ -265,7 +289,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
         }
 
         if matches!(
-            tslib_require_ts_helper_kind(callee),
+            tslib_require_ts_helper_kind(callee, self.unresolved_mark),
             Some(TsHelperKind::Spread | TsHelperKind::SpreadArrays)
         ) {
             if let Some(array) = convert_ts_legacy_spread_call(call) {
@@ -331,8 +355,9 @@ fn has_inline_legacy_array_spread_call(module: &Module) -> bool {
     finder.found
 }
 
-fn has_direct_tslib_array_spread_call(module: &Module) -> bool {
+fn has_direct_tslib_array_spread_call(module: &Module, unresolved_mark: Option<Mark>) -> bool {
     struct Finder {
+        unresolved_mark: Option<Mark>,
         found: bool,
     }
 
@@ -345,7 +370,7 @@ fn has_direct_tslib_array_spread_call(module: &Module) -> bool {
                 return;
             };
             if matches!(
-                tslib_require_ts_helper_kind(callee),
+                tslib_require_ts_helper_kind(callee, self.unresolved_mark),
                 Some(TsHelperKind::SpreadArray | TsHelperKind::Spread | TsHelperKind::SpreadArrays)
             ) {
                 self.found = true;
@@ -357,7 +382,10 @@ fn has_direct_tslib_array_spread_call(module: &Module) -> bool {
 
     use swc_core::ecma::visit::VisitWith;
 
-    let mut finder = Finder { found: false };
+    let mut finder = Finder {
+        unresolved_mark,
+        found: false,
+    };
     module.visit_with(&mut finder);
     finder.found
 }
@@ -413,7 +441,7 @@ fn is_ts_read_callee(callee: &Expr, helpers: &ToConsumableArrayReplacer) -> bool
     matches!(
         tslib_member_ts_helper_kind(callee, helpers.tslib_namespaces),
         Some(TsHelperKind::Read)
-    ) || tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::Read)
+    ) || tslib_require_ts_helper_kind(callee, helpers.unresolved_mark) == Some(TsHelperKind::Read)
         || ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
         || cross_module_ts_member_helper(callee, helpers.cross_module_ts_read_namespaces)
 }

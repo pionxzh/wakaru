@@ -85,7 +85,10 @@ impl RuleRunContext<'_> {
             return Rc::clone(local_helpers);
         }
 
-        let local_helpers = Rc::new(LocalHelperContext::collect(module));
+        let local_helpers = Rc::new(LocalHelperContext::collect_with_mark(
+            module,
+            self.unresolved_mark,
+        ));
         *self.local_helpers.borrow_mut() = Some(Rc::clone(&local_helpers));
         local_helpers
     }
@@ -189,12 +192,22 @@ fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>)
 
 fn run_un_to_consumable_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnToConsumableArray::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
+    UnToConsumableArray::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        local_helpers.as_ref(),
+        ctx.module_facts,
+    );
 }
 
 fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnObjectSpread::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
+    UnObjectSpread::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        local_helpers.as_ref(),
+        ctx.module_facts,
+    );
 }
 
 fn run_un_object_spread_late(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -224,6 +237,7 @@ fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnSlicedToArray::run_with_helpers(
         module,
+        ctx.unresolved_mark,
         local_helpers.as_ref(),
         ctx.module_facts,
         ctx.rewrite_level,
@@ -383,7 +397,9 @@ runner!(run_un_export_rename, UnExportRename);
 runner!(run_un_destructuring, |ctx| {
     UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
 });
-runner!(run_un_to_array, UnToArray);
+runner!(run_un_to_array, |ctx| UnToArray::new_with_mark(
+    ctx.unresolved_mark
+));
 runner!(run_smart_inline, |ctx| SmartInline::new_with_mark(
     ctx.rewrite_level,
     ctx.unresolved_mark
