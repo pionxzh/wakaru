@@ -1,8 +1,8 @@
 ---
 source: crates/core/tests/webpack4_unpack.rs
+assertion_line: 133
 expression: code
 ---
-import "./module-13.js";
 import { ERROR, START, SUCCESS } from "./module-26.js";
 import { FETCH_DATA } from "./module-19.js";
 let r;

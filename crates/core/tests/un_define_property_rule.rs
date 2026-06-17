@@ -166,3 +166,19 @@ console.log(result);
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn rewrites_swc_external_define_property_import() {
+    let input = r#"
+import { _ as _define_property } from "@swc/helpers/_/_define_property";
+const obj = {};
+_define_property(obj, "k", 1);
+console.log(obj);
+"#;
+    let expected = r#"
+const obj = {};
+obj["k"] = 1;
+console.log(obj);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

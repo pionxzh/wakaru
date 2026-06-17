@@ -34,37 +34,53 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, Callee, ComputedPropName,
     Decl, Expr, ExprStmt, Function, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    ModuleDecl, ModuleItem, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helper_matcher::{
-    binding_key, fn_decl_binding_key, remaining_refs_outside_skipped_items,
-    remove_fn_decls_by_binding, BindingKey,
+    binding_key, fn_decl_binding_key, import_specifier_binding_key,
+    remaining_refs_outside_skipped_items, remove_fn_decls_by_binding,
+    remove_import_specifiers_by_binding, BindingKey,
 };
 use super::match_context::MatchContext;
+use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 
 pub struct UnDefineProperty;
 
+impl UnDefineProperty {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        let mut helpers = find_helpers(module);
+        for key in local_helpers
+            .helpers_of_kind(TranspilerHelperKind::DefineProperty)
+            .into_keys()
+        {
+            helpers.insert(key);
+        }
+        run_un_define_property(module, helpers);
+    }
+}
+
 impl VisitMut for UnDefineProperty {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        // Step 1: detect helper declarations at module top level.
         let helpers = find_helpers(module);
-        if helpers.is_empty() {
-            return;
-        }
+        run_un_define_property(module, helpers);
+    }
+}
 
-        // Step 2: rewrite expression-statement call sites.
-        let mut rewriter = CallSiteRewriter {
-            helpers: &helpers,
-            rewrote_any: false,
-        };
-        module.visit_mut_with(&mut rewriter);
+fn run_un_define_property(module: &mut Module, helpers: HelperSet) {
+    if helpers.is_empty() {
+        return;
+    }
 
-        // Step 3: if the helper has no remaining references, drop its decl.
-        if rewriter.rewrote_any {
-            remove_unused_helpers(module, &helpers);
-        }
+    let mut rewriter = CallSiteRewriter {
+        helpers: &helpers,
+        rewrote_any: false,
+    };
+    module.visit_mut_with(&mut rewriter);
+
+    if rewriter.rewrote_any {
+        remove_unused_helpers(module, &helpers);
     }
 }
 
@@ -336,8 +352,18 @@ impl VisitMut for CallSiteRewriter<'_> {
 
 fn remove_unused_helpers(module: &mut Module, helpers: &HelperSet) {
     let remaining = remaining_refs_outside_skipped_items(module, helpers, |item| {
-        fn_decl_binding_key(item).is_some_and(|key| helpers.contains(&key))
+        if fn_decl_binding_key(item).is_some_and(|key| helpers.contains(&key)) {
+            return true;
+        }
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+            if import.specifiers.len() == 1 {
+                let key = import_specifier_binding_key(&import.specifiers[0]);
+                return helpers.contains(&key);
+            }
+        }
+        false
     });
     let removable: HashSet<_> = helpers.difference(&remaining).cloned().collect();
     remove_fn_decls_by_binding(module, &removable);
+    remove_import_specifiers_by_binding(&mut module.body, &removable);
 }
