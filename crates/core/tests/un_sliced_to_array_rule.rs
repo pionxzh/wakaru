@@ -783,6 +783,12 @@ var x = resolve(items, 2);
 #[test]
 fn unwraps_maybe_array_like_sliced_to_array() {
     let input = r#"
+function _maybeArrayLike(r, a, e) {
+    if (a && !Array.isArray(a) && typeof a.length === "number") {
+        return a;
+    }
+    return r(a, e);
+}
 function _slicedToArray(r, e) {
     return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _nonIterableRest();
 }
@@ -804,4 +810,17 @@ use(a, b);
         !output.contains("_pair2[0]"),
         "should not have indexed access:\n{output}"
     );
+}
+
+#[test]
+fn preserves_local_maybe_array_like_parameter() {
+    let input = r#"
+function f(_maybeArrayLike, _slicedToArray, pair) {
+    const _pair2 = _maybeArrayLike(_slicedToArray, pair, 2);
+    const a = _pair2[0];
+    const b = _pair2[1];
+    use(a, b);
+}
+"#;
+    assert_eq_normalized(&render(input), input);
 }

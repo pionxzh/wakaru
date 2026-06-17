@@ -1135,8 +1135,7 @@ fn is_maybe_array_like_callee(callee: &Expr, maybe_array_like: &HashSet<BindingK
     let Expr::Ident(id) = callee else {
         return false;
     };
-    matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
-        || maybe_array_like.contains(&(id.sym.clone(), id.ctxt))
+    maybe_array_like.contains(&(id.sym.clone(), id.ctxt))
 }
 
 fn numeric_length(value: f64) -> Option<usize> {

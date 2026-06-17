@@ -96,6 +96,9 @@ const snippets = [
     name: "array-destructure-tuple",
     source:
       'import { useState } from "react";\nconst [current, setCurrent] = useState(value);\nuse(current, setCurrent);\n',
+    acceptForms: [
+      'import { useState } from "react";\nconst unused = undefined;\nconst [current, setCurrent] = useState(value);\nuse(current, setCurrent);\n',
+    ],
     expected: ["const [current, setCurrent]", "use(current, setCurrent)"],
     rejected: [...ARRAY_HELPER_REJECTED, "_useState[0]", "_useState[1]"],
   },

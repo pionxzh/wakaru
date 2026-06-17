@@ -365,3 +365,22 @@ use(out);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn preserves_local_maybe_array_like_parameter() {
+    let input = r#"
+function f(_maybeArrayLike, _toConsumableArray, items) {
+    const out = [head].concat(_maybeArrayLike(_toConsumableArray, items), [tail]);
+    use(out);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("..._maybeArrayLike(_toConsumableArray, items)"),
+        "should preserve local _maybeArrayLike call:\n{output}"
+    );
+    assert!(
+        !output.contains("...items"),
+        "should not unwrap local _maybeArrayLike parameter:\n{output}"
+    );
+}

@@ -145,8 +145,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             }
 
             // _maybeArrayLike(_toConsumableArray, arg) -> [...arg]
-            if (matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
-                || self.maybe_array_like.contains(&key))
+            if self.maybe_array_like.contains(&key)
                 && call.args.len() == 2
                 && call.args.iter().all(|a| a.spread.is_none())
             {
