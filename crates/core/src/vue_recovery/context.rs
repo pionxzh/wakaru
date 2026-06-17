@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, ImportSpecifier, Lit, Module,
-    ModuleDecl, ModuleItem, Pat, Stmt, VarDeclKind,
+    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
+    MemberExpr, Module, ModuleDecl, ModuleItem, Pat, Stmt, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -21,23 +21,42 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
                 let source = wtf8_to_string(&import.src.value);
+                let imported_component = vue_component_name_from_source(&source);
                 for specifier in &import.specifiers {
-                    if let ImportSpecifier::Named(named) = specifier {
-                        if source != "vue" {
-                            if source.contains("vue") {
-                                ctx.vue_helper_candidates.insert(named.local.sym.clone());
+                    match specifier {
+                        ImportSpecifier::Named(named) => {
+                            if let Some(component) = &imported_component {
+                                ctx.component_bindings
+                                    .insert(named.local.sym.clone(), component.clone());
                             }
-                            continue;
+                            if source != "vue" {
+                                if source.contains("vue") {
+                                    ctx.vue_helper_candidates.insert(named.local.sym.clone());
+                                }
+                                continue;
+                            }
+                            let imported = named
+                                .imported
+                                .as_ref()
+                                .map(module_export_name)
+                                .unwrap_or_else(|| named.local.sym.to_string());
+                            ctx.vue_helpers.insert(
+                                named.local.sym.clone(),
+                                VueHelper::from_imported_name(imported),
+                            );
                         }
-                        let imported = named
-                            .imported
-                            .as_ref()
-                            .map(module_export_name)
-                            .unwrap_or_else(|| named.local.sym.to_string());
-                        ctx.vue_helpers.insert(
-                            named.local.sym.clone(),
-                            VueHelper::from_imported_name(imported),
-                        );
+                        ImportSpecifier::Default(default) => {
+                            if let Some(component) = &imported_component {
+                                ctx.component_bindings
+                                    .insert(default.local.sym.clone(), component.clone());
+                            }
+                        }
+                        ImportSpecifier::Namespace(namespace) => {
+                            if let Some(component) = &imported_component {
+                                ctx.component_bindings
+                                    .insert(namespace.local.sym.clone(), component.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -69,6 +88,19 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
     ctx
 }
 
+fn vue_component_name_from_source(source: &str) -> Option<String> {
+    if !source.contains(".vue") {
+        return None;
+    }
+    let file = source
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(source)
+        .trim_start_matches("./");
+    let name = file.split(".vue").next()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecoveryContext) {
     if ctx.vue_helper_candidates.is_empty() {
         return;
@@ -98,6 +130,16 @@ struct HelperInference<'a> {
 }
 
 impl Visit for HelperInference<'_> {
+    fn visit_if_stmt(&mut self, if_stmt: &IfStmt) {
+        self.infer_unref_expr(if_stmt.test.as_ref());
+        if_stmt.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        self.infer_unref_expr(member.obj.as_ref());
+        member.visit_children_with(self);
+    }
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         if let Some(callee) = call_callee_ident(call) {
             if self.candidates.contains(&callee.sym) {
@@ -123,6 +165,31 @@ impl Visit for HelperInference<'_> {
         }
 
         call.visit_children_with(self);
+    }
+}
+
+impl HelperInference<'_> {
+    fn infer_unref_expr(&mut self, expr: &Expr) {
+        let Expr::Call(call) = unwrap_paren_expr(expr) else {
+            return;
+        };
+        if !is_display_string_call(&call.args) {
+            return;
+        }
+        let Some(callee) = call_callee_ident(call) else {
+            return;
+        };
+        if !self.candidates.contains(&callee.sym) {
+            return;
+        }
+        self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
+    }
+}
+
+fn unwrap_paren_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => unwrap_paren_expr(paren.expr.as_ref()),
+        _ => expr,
     }
 }
 

@@ -6,6 +6,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
+use super::helpers::VueHelper;
 use super::VueRecoveryContext;
 use crate::vue_template::{VueExpr, VueNode};
 
@@ -63,7 +64,71 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
             cleaned = cleaned.replace(&format!("{render_context}."), "");
         }
     }
+    for (local, helper) in &ctx.vue_helpers {
+        if matches!(helper, VueHelper::Unref) {
+            cleaned = strip_callee_wrappers(&cleaned, local.as_ref());
+        }
+    }
     cleaned
+}
+
+fn strip_callee_wrappers(input: &str, callee: &str) -> String {
+    let pattern = format!("{callee}(");
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = input[cursor..].find(&pattern) {
+        let start = cursor + relative_start;
+        output.push_str(&input[cursor..start]);
+        let open_paren = start + pattern.len() - 1;
+        let Some(close_paren) = matching_paren(input, open_paren) else {
+            output.push_str(&input[start..]);
+            return output;
+        };
+        output.push_str(&input[open_paren + 1..close_paren]);
+        cursor = close_paren + 1;
+    }
+
+    output.push_str(&input[cursor..]);
+    output
+}
+
+fn matching_paren(input: &str, open_paren: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in input[open_paren..].char_indices() {
+        let index = open_paren + index;
+        if let Some(current_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 pub(super) fn clean_attr_expr(expr: &str, ctx: &VueRecoveryContext) -> String {

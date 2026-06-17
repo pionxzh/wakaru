@@ -1,7 +1,7 @@
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, FnDecl, Lit, ObjectLit,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, Lit, ObjectLit,
     ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 
@@ -19,8 +19,8 @@ pub(super) fn recover_render_root(
     render: RenderSource<'_>,
     ctx: &VueRecoveryContext,
 ) -> Result<Option<VueNode>> {
-    if let RenderSource::Function(render_fn) = render {
-        if let Some(node) = recover_render_if_chain(render_fn, ctx)? {
+    if let Some(stmts) = render_stmts(render) {
+        if let Some(node) = recover_render_if_chain(stmts, ctx)? {
             return Ok(Some(node));
         }
     }
@@ -30,14 +30,11 @@ pub(super) fn recover_render_root(
     recover_node(root_expr, ctx)
 }
 
-fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
-    let Some(body) = render.function.body.as_ref() else {
-        return Ok(None);
-    };
+fn recover_render_if_chain(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     let mut branches = Vec::new();
     let mut in_chain = false;
 
-    for stmt in &body.stmts {
+    for stmt in stmts {
         match stmt {
             Stmt::If(if_stmt) => {
                 let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
@@ -72,6 +69,20 @@ fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<
     }
 
     Ok(None)
+}
+
+fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
+    match render {
+        RenderSource::Function(render) => render
+            .function
+            .body
+            .as_ref()
+            .map(|body| body.stmts.as_slice()),
+        RenderSource::Arrow(render) => match render.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
+            BlockStmtOrExpr::Expr(_) => None,
+        },
+    }
 }
 
 fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {

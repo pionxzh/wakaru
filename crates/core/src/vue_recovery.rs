@@ -4,8 +4,8 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr, FnDecl, Module,
-    ModuleDecl, ModuleItem, ObjectLit, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportSpecifier, Expr, FnDecl,
+    Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -27,7 +27,7 @@ use context::{
 use expressions::print_expr;
 use helpers::VueHelper;
 use nodes::recover_render_root;
-use syntax::prop_name;
+use syntax::{module_export_name, prop_name};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -135,11 +135,33 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
 }
 
 fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
+    if let Some(render) = direct_exported_setup_render_arrow(module) {
+        return Some(render);
+    }
+
+    for local in preferred_setup_export_names(module) {
+        if let Some(render) = setup_render_arrow_from_binding(module, &local) {
+            return Some(render);
+        }
+    }
+
     for item in &module.body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
                 if let Some(render) = setup_render_arrow_from_expr(export.expr.as_ref()) {
                     return Some(render);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Var(var) = &export.decl {
+                    for decl in &var.decls {
+                        let Some(init) = decl.init.as_deref() else {
+                            continue;
+                        };
+                        if let Some(render) = setup_render_arrow_from_expr(init) {
+                            return Some(render);
+                        }
+                    }
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
@@ -153,6 +175,81 @@ fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+fn direct_exported_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
+    for preferred_name in ["_", "default"] {
+        for item in &module.body {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
+                continue;
+            };
+            let Decl::Var(var) = &export.decl else {
+                continue;
+            };
+            for decl in &var.decls {
+                let Pat::Ident(binding) = &decl.name else {
+                    continue;
+                };
+                if binding.id.sym.as_ref() != preferred_name {
+                    continue;
+                }
+                let Some(init) = decl.init.as_deref() else {
+                    continue;
+                };
+                if let Some(render) = setup_render_arrow_from_expr(init) {
+                    return Some(render);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn preferred_setup_export_names(module: &Module) -> Vec<String> {
+    let mut names = Vec::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) = item else {
+            continue;
+        };
+        for specifier in &export.specifiers {
+            let ExportSpecifier::Named(named) = specifier else {
+                continue;
+            };
+            let local = module_export_name(&named.orig);
+            let exported = named
+                .exported
+                .as_ref()
+                .map(module_export_name)
+                .unwrap_or_else(|| local.clone());
+            if exported == "_" || exported == "default" {
+                names.push(local);
+            }
+        }
+    }
+    names
+}
+
+fn setup_render_arrow_from_binding<'a>(module: &'a Module, local: &str) -> Option<&'a ArrowExpr> {
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if binding.id.sym.as_ref() != local {
+                continue;
+            }
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if let Some(render) = setup_render_arrow_from_expr(init) {
+                return Some(render);
+            }
         }
     }
     None
@@ -483,6 +580,132 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Panel :title=\"title\">\n    <template v-slot:default>\n      <span>{{ message }}</span>\n    </template>\n  </Panel>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn prefers_vite_exported_component_when_chunk_has_multiple_setup_renders() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+const _sfc_banner = dc({
+  __name: "Banner",
+  setup() {
+    return () => (ob(), ce("aside", null, "Banner"));
+  }
+});
+const _sfc_main = dc({
+  __name: "Main",
+  setup() {
+    return () => (ob(), ce("main", null, "Main"));
+  }
+});
+export { _sfc_banner as T, _sfc_main as _ };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <main>Main</main>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn prefers_decompiled_vite_exported_component_decl() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+const _sfc_banner = dc({
+  __name: "Banner",
+  setup() {
+    return () => (ob(), ce("aside", null, "Banner"));
+  }
+});
+export const _ = dc({
+  __name: "Main",
+  setup() {
+    return () => (ob(), ce("main", null, "Main"));
+  }
+});
+export { _sfc_banner as T };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <main>Main</main>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_render_if_return_chain() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock, createElementVNode, createCommentVNode, withCtx } from "vue";
+const _sfc_main = defineComponent({
+  __name: "MaybeNotice",
+  setup() {
+    return (_ctx, _cache) => {
+      if (_ctx.isLoaded) {
+        return openBlock(), createBlock(Notice, { key: 0 }, {
+          default: withCtx(() => [
+            createElementVNode("span", { innerHTML: _ctx.message }, null, 8, ["innerHTML"])
+          ]),
+          _: 1
+        });
+      }
+      return createCommentVNode("", true);
+    };
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Notice v-if=\"isLoaded\" :key=\"0\">\n    <template v-slot:default>\n      <span v-html=\"message\" />\n    </template>\n  </Notice>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vue_file_component_import_alias() {
+        let input = r#"
+import { _ as __1 } from "./Notification.vue_vue_type_script_setup_true_lang-D4OJlsAz.js";
+import { d as dc, q as ob, aa as cb } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "UsesNotification",
+  setup() {
+    return () => (ob(), cb(__1, { key: 0 }, null));
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Notification :key=\"0\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_unref_helper_alias_in_conditions_and_expressions() {
+        let input = r#"
+import { d as dc, _ as ur, q as ob, aa as cb, X as ce, J as td, Z as cc } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "MaybeNotice",
+  setup() {
+    return () => {
+      if (ur(isLoaded)) {
+        return ob(), cb(Notice, null, {
+          default: () => [
+            ce("span", null, td(ur(i18n).t("loaded")), 1)
+          ],
+          _: 1
+        });
+      }
+      return cc("", true);
+    };
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Notice v-if=\"isLoaded\">\n    <template v-slot:default>\n      <span>{{ i18n.t(\"loaded\") }}</span>\n    </template>\n  </Notice>\n</template>\n"
         );
     }
 
