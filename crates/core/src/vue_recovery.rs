@@ -4,12 +4,10 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr,
-    ExprOrSpread, FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
-    VarDecl, VarDeclKind, VarDeclarator,
+    AssignOp, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr, ExprOrSpread,
+    FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -19,8 +17,12 @@ use crate::vue_template::{
     VueSfc, VueTemplate,
 };
 
+mod expressions;
 mod helpers;
 
+use expressions::{
+    clean_attr_expr, clean_expr, clean_vue_expr, print_expr, printed_vue_expr, raw_expr,
+};
 use helpers::{helper_call_name, helper_name, is_fragment_tag, VueHelper};
 
 #[derive(Default, Clone)]
@@ -1294,85 +1296,6 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
     }
     let printed = print_expr(&Expr::Object(options.clone()), ctx)?;
     Ok(Some(format!("export default {printed}")))
-}
-
-fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
-    let module = Module {
-        span: DUMMY_SP,
-        body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-            span: DUMMY_SP,
-            ctxt: Default::default(),
-            kind: VarDeclKind::Const,
-            declare: false,
-            decls: vec![VarDeclarator {
-                span: DUMMY_SP,
-                name: Pat::Ident(BindingIdent {
-                    id: Ident::new("__wakaru_expr".into(), DUMMY_SP, Default::default()),
-                    type_ann: None,
-                }),
-                init: Some(Box::new(expr.clone())),
-                definite: false,
-            }],
-        }))))],
-        shebang: None,
-    };
-    let mut output = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default().with_minify(false),
-            cm: ctx.cm.clone(),
-            comments: None,
-            wr: JsWriter::new(ctx.cm.clone(), "\n", &mut output, None),
-        };
-        emitter
-            .emit_module(&module)
-            .map_err(|error| anyhow!("failed to print Vue expression: {error:?}"))?;
-    }
-    let code = String::from_utf8(output)
-        .map(|s| s.trim().to_string())
-        .map_err(|error| anyhow!("printed Vue expression is not UTF-8: {error}"))?;
-    Ok(code
-        .strip_prefix("const __wakaru_expr = ")
-        .unwrap_or(&code)
-        .trim_end_matches(';')
-        .trim()
-        .to_string())
-}
-
-fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
-    let mut cleaned = expr
-        .replace("_ctx.", "")
-        .replace("$props.", "")
-        .replace("__props.", "");
-    if let Some(render_context) = &ctx.render_context {
-        if render_context.as_ref() != "_ctx" {
-            cleaned = cleaned.replace(&format!("{render_context}."), "");
-        }
-    }
-    cleaned
-}
-
-fn clean_attr_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
-    clean_expr(expr, ctx)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn clean_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> VueExpr {
-    VueExpr::new(clean_expr(expr, ctx))
-}
-
-fn clean_attr_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> VueExpr {
-    VueExpr::new(clean_attr_expr(expr, ctx))
-}
-
-fn printed_vue_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
-    Ok(clean_attr_vue_expr(&print_expr(expr, ctx)?, ctx))
-}
-
-fn raw_expr(expr: impl Into<String>) -> VueNode {
-    VueNode::RawExpr(VueExpr::new(expr))
 }
 
 fn prop_name(name: &PropName) -> Option<String> {
