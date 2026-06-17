@@ -5,7 +5,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportSpecifier, Expr, FnDecl,
-    Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    Ident, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -23,7 +23,7 @@ mod syntax;
 
 use context::{
     collect_context, collect_render_context, collect_setup_context, infer_render_helpers,
-    render_context_param,
+    render_context_param, setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -40,6 +40,7 @@ struct VueRecoveryContext {
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
+    setup_props_context: Option<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -49,6 +50,7 @@ pub(super) enum RenderSource<'a> {
     SetupArrow {
         render: &'a ArrowExpr,
         setup_stmts: &'a [Stmt],
+        setup_props: Option<&'a Ident>,
     },
 }
 
@@ -72,6 +74,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
+    ctx.setup_props_context = setup_props_param(render);
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
@@ -290,6 +293,11 @@ fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'
                     return Some(RenderSource::SetupArrow {
                         render,
                         setup_stmts: body.stmts.as_slice(),
+                        setup_props: method
+                            .function
+                            .params
+                            .first()
+                            .and_then(syntax::param_binding_ident),
                     });
                 }
             }
@@ -312,12 +320,14 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                 return_arrow_from_stmts(&block.stmts).map(|render| RenderSource::SetupArrow {
                     render,
                     setup_stmts: block.stmts.as_slice(),
+                    setup_props: arrow.params.first().and_then(pat_binding_ident),
                 })
             }
             BlockStmtOrExpr::Expr(expr) => {
                 arrow_expr(expr.as_ref()).map(|render| RenderSource::SetupArrow {
                     render,
                     setup_stmts: &[],
+                    setup_props: arrow.params.first().and_then(pat_binding_ident),
                 })
             }
         },
@@ -325,6 +335,11 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
             return_arrow_from_stmts(&body.stmts).map(|render| RenderSource::SetupArrow {
                 render,
                 setup_stmts: body.stmts.as_slice(),
+                setup_props: fn_expr
+                    .function
+                    .params
+                    .first()
+                    .and_then(syntax::param_binding_ident),
             })
         }),
         _ => None,
@@ -344,6 +359,13 @@ fn arrow_expr(expr: &Expr) -> Option<&ArrowExpr> {
     match expr {
         Expr::Paren(paren) => arrow_expr(paren.expr.as_ref()),
         Expr::Arrow(arrow) => Some(arrow),
+        _ => None,
+    }
+}
+
+fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
+    match pat {
+        Pat::Ident(binding) => Some(&binding.id),
         _ => None,
     }
 }
@@ -555,6 +577,30 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Panel :title=\"title\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_props_context() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "PropsInput",
+  setup(props) {
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("input", {
+        id: props.id,
+        disabled: props.disabled,
+        onInput: _cache[0] || (_cache[0] = (event) => props.onChange(event.target.value))
+      }, null, 40, ["id", "disabled", "onInput"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input :id=\"id\" :disabled=\"disabled\" @input=\"onChange($event.target.value)\" />\n</template>\n"
         );
     }
 
