@@ -435,6 +435,16 @@ pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
     }
 }
 
+pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
+    match render {
+        RenderSource::SetupArrow {
+            setup_props: Some(setup_props),
+            ..
+        } => Some(setup_props.sym.clone()),
+        _ => None,
+    }
+}
+
 fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
     match render {
         RenderSource::Function(render) => render

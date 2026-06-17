@@ -64,6 +64,9 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
             cleaned = cleaned.replace(&format!("{render_context}."), "");
         }
     }
+    if let Some(setup_props_context) = &ctx.setup_props_context {
+        cleaned = cleaned.replace(&format!("{setup_props_context}."), "");
+    }
     for (local, helper) in &ctx.vue_helpers {
         if matches!(helper, VueHelper::Unref) {
             cleaned = strip_callee_wrappers(&cleaned, local.as_ref());
