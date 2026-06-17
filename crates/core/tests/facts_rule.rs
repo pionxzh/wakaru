@@ -579,6 +579,9 @@ function __values(o) {
   };
   throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
 }
+function register(name, value) {
+  exports[name] = value;
+}
 register("__values", __values);
 "#,
     );
@@ -597,6 +600,9 @@ fn registered_nested_typescript_values_helper_fact() {
     let facts = collect_facts(
         r#"
 export function tslibModule() {
+  function register(name, value) {
+    exports[name] = value;
+  }
   function __values(o) {
     var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
     if (m) return m.call(o);
@@ -628,6 +634,10 @@ fn registered_assigned_typescript_values_helper_fact() {
     let facts = collect_facts(
         r#"
 export function tslibModule() {
+  let q;
+  q = (name, value) => {
+    module.exports[name] = value;
+  };
   let ZM8;
   ZM8 = (o) => {
     const s = typeof Symbol === "function" && Symbol.iterator;
@@ -663,6 +673,37 @@ export function tslibModule() {
             Some("ZM8"),
             TypeScriptHelperKind::Values
         )]
+    );
+}
+
+#[test]
+fn registered_typescript_values_helper_fact_requires_export_registrar() {
+    let facts = collect_facts(
+        r#"
+function __values(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function() {
+      if (o && i >= o.length) o = void 0;
+      return { value: o && o[i++], done: !o };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+function customValues(items) {
+  return { next: function() { return { done: true }; } };
+}
+function unrelatedFactory() {
+  return { __values: customValues };
+}
+logMetric("__values", __values);
+export { unrelatedFactory };
+"#,
+    );
+    assert!(
+        facts.ts_helper_exports.is_empty(),
+        "calls that do not write to exports must not register helper facts: {facts}"
     );
 }
 

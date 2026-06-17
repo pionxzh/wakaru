@@ -7,20 +7,27 @@
 //! These facts are the foundation for cross-module analysis in the multi-module
 //! `unpack()` path. Single-file `decompile()` does not use them.
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    AssignExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, Module,
-    ModuleDecl, ModuleItem, Prop, PropName,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
+    ExportSpecifier, Expr, Function, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, Prop, PropName, SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::helper_matcher::{binding_key, BindingKey};
+use crate::rules::helper_matcher::{
+    binding_key, binding_key_from_ident_pat, expr_matches_binding, BindingKey,
+};
 use crate::rules::transpiler_helper_utils::{
     collect_inline_ts_helpers_deep, collect_transpiler_helpers, LocalHelperContext,
     TranspilerHelperKind, TsHelperKind,
 };
+use crate::utils::paren::strip_parens;
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -667,13 +674,20 @@ fn collect_registered_ts_helper_exports(
     inline_helpers: &HashMap<BindingKey, TsHelperKind>,
     helper_exports: &mut Vec<TypeScriptHelperExportFact>,
 ) {
+    let registrars = collect_ts_helper_export_registrars(module);
+
     struct RegistrarExportCollector<'a, 'b> {
         inline_helpers: &'a HashMap<BindingKey, TsHelperKind>,
+        registrars: &'a HashSet<BindingKey>,
         helper_exports: &'b mut Vec<TypeScriptHelperExportFact>,
     }
 
     impl Visit for RegistrarExportCollector<'_, '_> {
         fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if !is_ts_helper_export_registration_call(call, self.registrars) {
+                call.visit_children_with(self);
+                return;
+            }
             let [export_arg, local_arg] = call.args.as_slice() else {
                 call.visit_children_with(self);
                 return;
@@ -721,9 +735,206 @@ fn collect_registered_ts_helper_exports(
 
     let mut collector = RegistrarExportCollector {
         inline_helpers,
+        registrars: &registrars,
         helper_exports,
     };
     module.visit_with(&mut collector);
+}
+
+fn collect_ts_helper_export_registrars(module: &Module) -> HashSet<BindingKey> {
+    struct RegistrarCollector {
+        registrars: HashSet<BindingKey>,
+    }
+
+    impl Visit for RegistrarCollector {
+        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
+            if function_is_ts_helper_export_registrar(&fn_decl.function) {
+                self.registrars.insert(binding_key(&fn_decl.ident));
+            }
+            fn_decl.visit_children_with(self);
+        }
+
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if declarator
+                .init
+                .as_deref()
+                .is_some_and(expr_is_ts_helper_export_registrar)
+            {
+                if let Some(key) = binding_key_from_ident_pat(&declarator.name) {
+                    self.registrars.insert(key);
+                }
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if assign.op == AssignOp::Assign
+                && expr_is_ts_helper_export_registrar(strip_parens(assign.right.as_ref()))
+            {
+                if let Some(key) = assign_target_binding_key(&assign.left) {
+                    self.registrars.insert(key);
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut collector = RegistrarCollector {
+        registrars: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.registrars
+}
+
+fn is_ts_helper_export_registration_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    registrars: &HashSet<BindingKey>,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(callee) = strip_parens(callee.as_ref()) else {
+        return false;
+    };
+    registrars.contains(&binding_key(callee))
+}
+
+fn expr_is_ts_helper_export_registrar(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => function_is_ts_helper_export_registrar(&fn_expr.function),
+        Expr::Arrow(arrow) => arrow_is_ts_helper_export_registrar(arrow),
+        _ => false,
+    }
+}
+
+fn function_is_ts_helper_export_registrar(function: &Function) -> bool {
+    if function.params.len() < 2 {
+        return false;
+    }
+    let Some(name_key) = binding_key_from_ident_pat(&function.params[0].pat) else {
+        return false;
+    };
+    let Some(value_key) = binding_key_from_ident_pat(&function.params[1].pat) else {
+        return false;
+    };
+    let Some(body) = &function.body else {
+        return false;
+    };
+    body_writes_helper_export(&body.stmts, &name_key, &value_key)
+}
+
+fn arrow_is_ts_helper_export_registrar(arrow: &ArrowExpr) -> bool {
+    if arrow.params.len() < 2 {
+        return false;
+    }
+    let Some(name_key) = binding_key_from_ident_pat(&arrow.params[0]) else {
+        return false;
+    };
+    let Some(value_key) = binding_key_from_ident_pat(&arrow.params[1]) else {
+        return false;
+    };
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::BlockStmt(body) => {
+            body_writes_helper_export(&body.stmts, &name_key, &value_key)
+        }
+        BlockStmtOrExpr::Expr(expr) => expr_writes_helper_export(expr, &name_key, &value_key),
+    }
+}
+
+fn body_writes_helper_export(
+    stmts: &[swc_core::ecma::ast::Stmt],
+    name_key: &BindingKey,
+    value_key: &BindingKey,
+) -> bool {
+    struct ExportWriteFinder<'a> {
+        name_key: &'a BindingKey,
+        value_key: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for ExportWriteFinder<'_> {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if is_helper_export_assignment(assign, self.name_key, self.value_key) {
+                self.found = true;
+                return;
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    }
+
+    let mut finder = ExportWriteFinder {
+        name_key,
+        value_key,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+fn expr_writes_helper_export(expr: &Expr, name_key: &BindingKey, value_key: &BindingKey) -> bool {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return false;
+    };
+    is_helper_export_assignment(assign, name_key, value_key)
+}
+
+fn is_helper_export_assignment(
+    assign: &AssignExpr,
+    name_key: &BindingKey,
+    value_key: &BindingKey,
+) -> bool {
+    if assign.op != AssignOp::Assign
+        || !expr_matches_binding(strip_parens(&assign.right), value_key)
+    {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return false;
+    };
+    exports_member_indexed_by(member, name_key)
+}
+
+fn exports_member_indexed_by(member: &MemberExpr, name_key: &BindingKey) -> bool {
+    if !matches!(
+        &member.prop,
+        MemberProp::Computed(computed) if expr_matches_binding(strip_parens(&computed.expr), name_key)
+    ) {
+        return false;
+    }
+    is_exports_object(strip_parens(&member.obj))
+}
+
+fn is_exports_object(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Ident(id) => id.sym.as_ref() == "exports",
+        Expr::Member(member) => {
+            matches!(strip_parens(&member.obj), Expr::Ident(id) if id.sym.as_ref() == "module")
+                && static_member_prop_name(&member.prop) == Some("exports")
+        }
+        _ => false,
+    }
+}
+
+fn assign_target_binding_key(target: &AssignTarget) -> Option<BindingKey> {
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = target else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+fn static_member_prop_name(prop: &MemberProp) -> Option<&str> {
+    match prop {
+        MemberProp::Ident(id) => Some(id.sym.as_ref()),
+        MemberProp::Computed(computed) => match strip_parens(&computed.expr) {
+            Expr::Lit(Lit::Str(value)) => value.value.as_str(),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
+    }
 }
 
 fn push_ts_helper_export(
