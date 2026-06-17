@@ -15,13 +15,6 @@ pub(super) fn param_binding_ident(param: &Param) -> Option<&Ident> {
     }
 }
 
-pub(super) fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
-    match pat {
-        Pat::Ident(binding) => Some(&binding.id),
-        _ => None,
-    }
-}
-
 pub(super) fn prop_name(name: &PropName) -> Option<String> {
     match name {
         PropName::Ident(ident) => Some(ident.sym.to_string()),

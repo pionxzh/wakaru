@@ -452,6 +452,44 @@ export function render(e, a) {
     }
 
     #[test]
+    fn recovers_render_list_index_param() {
+        let input = r#"
+import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("ol", null, [
+    (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.items, (e, i) => (
+      openBlock(), createElementBlock("li", { key: i, title: i }, toDisplayString(e.name), 9, ["title"])
+    )), 128))
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ol>\n    <li v-for=\"(item, index) in items\" :key=\"index\" :title=\"index\">{{ item.name }}</li>\n  </ol>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_render_list_destructured_param() {
+        let input = r#"
+import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", null, [
+    (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.entries, ([groupId, rows]) => (
+      openBlock(), createElementBlock("article", { key: groupId }, toDisplayString(rows.length), 1)
+    )), 128))
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <article v-for=\"[groupId, rows] in entries\" :key=\"groupId\">{{ rows.length }}</article>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_vnode_and_named_slot() {
         let input = r#"
 import { resolveComponent, createVNode, renderSlot, createTextVNode, openBlock, createElementBlock } from "vue";
