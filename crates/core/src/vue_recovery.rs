@@ -1605,6 +1605,27 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_computed_value_inside_template_literal() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "ComputedStyle",
+  setup() {
+    const height = cp(() => itemHeight.value + gap.value);
+    return () => (
+      ob(), ce("div", { style: { height: `${height.value}px` } }, null, 4)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :style=\"{ height: `${(itemHeight.value + gap.value)}px` }\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_ref_value_alias() {
         let input = r#"
 import { defineComponent, ref, toDisplayString, openBlock, createElementBlock } from "vue";

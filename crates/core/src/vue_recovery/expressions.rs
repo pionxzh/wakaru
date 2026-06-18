@@ -331,10 +331,19 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
             continue;
         }
 
-        if matches!(ch, '"' | '\'' | '`') {
+        if matches!(ch, '"' | '\'') {
             quote = Some(ch);
             output.push(ch);
             cursor += ch_len;
+            continue;
+        }
+
+        if ch == '`' {
+            let (template, template_changed, next_cursor) =
+                replace_template_literal_bindings_once(input, cursor, ctx);
+            output.push_str(&template);
+            cursor = next_cursor;
+            changed |= template_changed;
             continue;
         }
 
@@ -374,6 +383,54 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
     }
 
     (output, changed)
+}
+
+fn replace_template_literal_bindings_once(
+    input: &str,
+    start: usize,
+    ctx: &VueRecoveryContext,
+) -> (String, bool, usize) {
+    let mut output = String::new();
+    let mut cursor = start;
+    let mut changed = false;
+    let mut escaped = false;
+
+    while cursor < input.len() {
+        let Some(ch) = input[cursor..].chars().next() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+        output.push(ch);
+        cursor += ch_len;
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '`' && cursor > start + ch_len {
+            break;
+        }
+        if ch == '$' && input[cursor..].starts_with('{') {
+            output.push('{');
+            let open_brace = cursor;
+            let Some(close_brace) = matching_brace(input, open_brace) else {
+                output.push_str(&input[cursor + 1..]);
+                return (output, changed, input.len());
+            };
+            let (inner, inner_changed) =
+                replace_setup_value_bindings_once(&input[open_brace + 1..close_brace], ctx);
+            output.push_str(&inner);
+            output.push('}');
+            cursor = close_brace + 1;
+            changed |= inner_changed;
+        }
+    }
+
+    (output, changed, cursor)
 }
 
 fn is_reference_start(input: &str, cursor: usize) -> bool {
@@ -448,6 +505,44 @@ fn matching_paren(input: &str, open_paren: usize) -> Option<usize> {
             '"' | '\'' | '`' => quote = Some(ch),
             '(' => depth += 1,
             ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn matching_brace(input: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, ch) in input[open_brace..].char_indices() {
+        let index = open_brace + index;
+        if let Some(current_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '{' => depth += 1,
+            '}' => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
                     return Some(index);
