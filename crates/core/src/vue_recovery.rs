@@ -1261,6 +1261,30 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_nested_scoped_local_component_alias() {
+        let input = r#"
+import { d as dc, _ as scope, q as ob, aa as cb } from "./vendor-vue-C85wAS_L.js";
+const scoped = scope(dc({
+  __name: "MyBetRow",
+  setup() {
+    return () => null;
+  }
+}), [["__scopeId", "data-v-test"]]);
+export const _ = dc({
+  __name: "UsesMyBetRow",
+  setup() {
+    return () => (ob(), cb(scoped, { title: "Ready" }, null));
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <MyBetRow title=\"Ready\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_cross_module_component_export_alias() {
         let input = r#"
 import { q as ob, aa as cb, _ as rd } from "./vendor-vue.js";
