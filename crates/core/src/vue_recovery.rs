@@ -773,6 +773,31 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_scoped_local_component_alias() {
+        let input = r#"
+import { d as dc, _ as scope, q as ob, aa as cb } from "./vendor-vue-C85wAS_L.js";
+const local = dc({
+  __name: "LocalPanel",
+  setup() {
+    return () => (ob(), cb("section", null, "Local"));
+  }
+});
+const scoped = scope(local, [["__scopeId", "data-v-test"]]);
+export const _ = dc({
+  __name: "UsesLocalPanel",
+  setup() {
+    return () => (ob(), cb(scoped, { title: "Ready" }, null));
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <LocalPanel title=\"Ready\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_pascal_case_chunk_component_import_alias() {
         let input = r#"
 import { S as __1 } from "./SvgIcon-Dg6MjH_p.js";

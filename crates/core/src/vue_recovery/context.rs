@@ -5,13 +5,16 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDeclKind,
+    MemberExpr, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt,
+    Stmt, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::expressions::{clean_expr, print_expr};
 use super::helpers::{helper_name, VueHelper};
-use super::syntax::{module_export_name, param_binding_ident, string_lit, wtf8_to_string};
+use super::syntax::{
+    module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
+};
 use super::{RenderSource, VueRecoveryContext};
 
 pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
@@ -77,6 +80,10 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
                         ctx.object_bindings
                             .insert(binding.id.sym.clone(), object.clone());
                     }
+                    if let Some(component) = component_name_from_init(init, &ctx) {
+                        ctx.component_bindings
+                            .insert(binding.id.sym.clone(), component);
+                    }
                     if binding.id.sym.as_ref() == "__sfc__" {
                         if let Expr::Object(object) = init {
                             ctx.component_options = Some(object.clone());
@@ -88,6 +95,32 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
         }
     }
     ctx
+}
+
+fn component_name_from_init(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+    match unwrap_paren_expr(expr) {
+        Expr::Object(object) => component_name_from_options(object),
+        Expr::Call(call) => call.args.first().and_then(|arg| match arg.expr.as_ref() {
+            Expr::Object(object) => component_name_from_options(object),
+            Expr::Ident(ident) => ctx.component_bindings.get(&ident.sym).cloned(),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn component_name_from_options(object: &ObjectLit) -> Option<String> {
+    object.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        (prop_name(&key_value.key).as_deref() == Some("__name"))
+            .then(|| string_lit(key_value.value.as_ref()))
+            .flatten()
+    })
 }
 
 fn vue_component_name_from_source(source: &str) -> Option<String> {
