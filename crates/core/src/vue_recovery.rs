@@ -1285,6 +1285,37 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_exported_local_component_alias() {
+        let input = r#"
+import { d as dc, q as ob, aa as cb, X as ce, R as wc } from "./vendor-vue-C85wAS_L.js";
+export const r = dc({
+  __name: "NavbarRowItem",
+  setup() {
+    return () => null;
+  }
+});
+export const _ = dc({
+  __name: "Navbar",
+  setup() {
+    return () => (
+      ob(), cb(r, null, {
+        default: wc(() => [
+          ce("span", null, "Title")
+        ]),
+        _: 1
+      })
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <NavbarRowItem>\n    <template v-slot:default>\n      <span>Title</span>\n    </template>\n  </NavbarRowItem>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_cross_module_component_export_alias() {
         let input = r#"
 import { q as ob, aa as cb, _ as rd } from "./vendor-vue.js";
