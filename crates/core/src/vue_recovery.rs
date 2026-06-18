@@ -87,7 +87,16 @@ where
     F: FnMut(&str) -> Option<String>,
 {
     let preferred_component_name = component_name_from_filename(&options.filename);
-    let mut output = decompile(source, options.clone())?;
+    if let Some(output) = decompile_single_unpacked_vue_sfc(
+        source,
+        options.clone(),
+        preferred_component_name.as_deref(),
+        &mut resolve_import,
+    )? {
+        return Ok(output);
+    }
+
+    let mut output = decompile(source, options)?;
     if let Some(sfc) = recover_vue_sfc_from_js_inner(
         &output.code,
         Some(&mut resolve_import),
@@ -96,15 +105,6 @@ where
     .map(|sfc| sfc.print())
     {
         output.code = sfc;
-        return Ok(output);
-    }
-
-    if let Some(output) = decompile_single_unpacked_vue_sfc(
-        source,
-        options,
-        preferred_component_name.as_deref(),
-        &mut resolve_import,
-    )? {
         return Ok(output);
     }
 
@@ -263,9 +263,30 @@ fn collect_imported_component_bindings(
 
 fn component_exports_from_source(source: &str) -> Result<HashMap<String, String>> {
     let cm: Lrc<SourceMap> = Default::default();
-    let module = parse_module(source, cm)?;
-    let component_bindings = collect_local_component_bindings(&module);
-    Ok(collect_component_exports(&module, &component_bindings))
+    let exports = parse_module(source, cm)
+        .map(|module| component_exports_from_module(&module))
+        .unwrap_or_default();
+    if !exports.is_empty() {
+        return Ok(exports);
+    }
+
+    let Some(result) = crate::unpacker::unpack_bundle(source) else {
+        return Ok(exports);
+    };
+    if result.modules.len() != 1 {
+        return Ok(exports);
+    }
+    let Some(module) = result.modules.into_iter().next() else {
+        return Ok(exports);
+    };
+    let cm: Lrc<SourceMap> = Default::default();
+    let module = parse_module(&module.code, cm)?;
+    Ok(component_exports_from_module(&module))
+}
+
+fn component_exports_from_module(module: &Module) -> HashMap<String, String> {
+    let component_bindings = collect_local_component_bindings(module);
+    collect_component_exports(module, &component_bindings)
 }
 
 fn collect_local_component_bindings(module: &Module) -> HashMap<Atom, String> {
@@ -1246,6 +1267,117 @@ export { YP as B };
             .unwrap()
             .unwrap(),
             "<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cross_module_systemjs_component_export_alias() {
+        let input = r#"
+import { q as ob, aa as cb } from "./vendor-vue.js";
+import { V as V_1 } from "./main-legacy.js";
+export function render(_ctx, _cache) {
+  return ob(), cb(V_1, { flat: "" }, null, 8, ["flat"]);
+}
+"#;
+        let shared = r#"
+System.register(["./vendor-vue.js"], function (_export) {
+  var defineComponent;
+  return {
+    setters: [
+      function (module) {
+        defineComponent = module.d;
+      }
+    ],
+    execute: function () {
+      _export("V", defineComponent({
+        __name: "VButton",
+        setup: function () {
+          return function () {
+            return null;
+          };
+        }
+      }));
+    }
+  };
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./main-legacy.js").then(|| shared.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <VButton flat=\"\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn decompiles_single_system_register_with_component_export_alias() {
+        let input = r#"
+System.register(["./main-legacy.js", "./vendor-vue.js"], function (_export) {
+  var VButton, defineComponent, openBlock, createBlock;
+  return {
+    setters: [
+      function (module) {
+        VButton = module.V;
+      },
+      function (module) {
+        defineComponent = module.d;
+        openBlock = module.q;
+        createBlock = module.aa;
+      }
+    ],
+    execute: function () {
+      _export("_", defineComponent({
+        __name: "UsesButton",
+        setup: function () {
+          return function () {
+            return openBlock(), createBlock(VButton, { flat: "" }, null, 8, ["flat"]);
+          };
+        }
+      }));
+    }
+  };
+});
+"#;
+        let shared = r#"
+!function () {
+  function scope(component, attrs) {
+    return component;
+  }
+  System.register(["./side-effect.js", "./vendor-vue.js"], function (_export) {
+    var defineComponent;
+    return {
+      setters: [
+        null,
+        function (module) {
+          defineComponent = module.d;
+        }
+      ],
+      execute: function () {
+        var base = defineComponent({
+          __name: "VButton",
+          setup: function () {
+            return function () {
+              return null;
+            };
+          }
+        }), scoped = scope(base, [["__scopeId", "data-v-test"]]);
+        _export("V", scoped);
+      }
+    };
+  });
+}();
+"#;
+
+        assert_eq!(
+            decompile_vue_sfc_with_import_resolver(input, DecompileOptions::default(), |source| {
+                (source == "./main-legacy.js").then(|| shared.to_string())
+            })
+            .unwrap()
+            .code,
+            "<template>\n  <VButton flat=\"\" />\n</template>\n"
         );
     }
 
