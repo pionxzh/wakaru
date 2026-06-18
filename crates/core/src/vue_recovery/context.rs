@@ -5,8 +5,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt,
-    Stmt, VarDeclKind,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread,
+    ReturnStmt, Stmt, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -296,6 +296,9 @@ fn infer_call_helper(call: &CallExpr) -> Option<VueHelper> {
     if is_create_slots_call(&call.args) {
         return Some(VueHelper::CreateSlots);
     }
+    if is_render_slot_call(&call.args) {
+        return Some(VueHelper::RenderSlot);
+    }
     if is_render_list_call(&call.args) {
         return Some(VueHelper::RenderList);
     }
@@ -349,6 +352,31 @@ fn is_create_slots_call(args: &[ExprOrSpread]) -> bool {
         args.get(1).map(|arg| arg.expr.as_ref()),
         Some(Expr::Array(_))
     )
+}
+
+fn is_render_slot_call(args: &[ExprOrSpread]) -> bool {
+    args.len() >= 2
+        && args
+            .first()
+            .is_some_and(|arg| is_slots_source_expr(arg.expr.as_ref()))
+}
+
+fn is_slots_source_expr(expr: &Expr) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Ident(ident) => matches!(ident.sym.as_ref(), "$slots" | "slots"),
+        Expr::Member(member) => is_slots_member_prop(&member.prop),
+        _ => false,
+    }
+}
+
+fn is_slots_member_prop(prop: &MemberProp) -> bool {
+    match prop {
+        MemberProp::Ident(ident) => ident.sym.as_ref() == "$slots",
+        MemberProp::Computed(computed) => {
+            string_lit(computed.expr.as_ref()).as_deref() == Some("$slots")
+        }
+        MemberProp::PrivateName(_) => false,
+    }
 }
 
 fn is_render_list_call(args: &[ExprOrSpread]) -> bool {
