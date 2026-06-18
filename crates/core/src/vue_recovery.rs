@@ -39,6 +39,7 @@ struct VueRecoveryContext {
     object_bindings: HashMap<Atom, ObjectLit>,
     setup_value_bindings: HashMap<Atom, String>,
     setup_ref_bindings: HashSet<Atom>,
+    setup_ref_object_bindings: HashSet<Atom>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
@@ -1685,6 +1686,95 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <div :title='[ count ].map((count)=>count.value).join(\",\")' />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_store_to_refs_destructured_values() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+import { storeToRefs } from "pinia";
+export default defineComponent({
+  __name: "StoreStatus",
+  setup() {
+    const store = useStore();
+    const { currentUser, isLoaded } = storeToRefs(store);
+    return () => (
+      openBlock(), createElementBlock("p", { title: currentUser.value.name }, toDisplayString(isLoaded.value), 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"currentUser.name\">{{ isLoaded }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_store_to_refs_destructured_values() {
+        let input = r#"
+import { d as dc, K as sr, c as cp, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "StoreStatus",
+  setup() {
+    const { currentUser } = sr(useStore());
+    const label = cp(() => currentUser.value.name);
+    return () => (
+      ob(), ce("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_store_to_refs_destructured_alias_values() {
+        let input = r#"
+import { d as dc, K as sr, c as cp, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "StoreStatus",
+  setup() {
+    const refs = sr(useStore());
+    const { currentUser } = refs;
+    const label = cp(() => currentUser.value.name);
+    return () => (
+      ob(), ce("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_plain_destructured_value_members() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "PlainValue",
+  setup() {
+    const { currentUser } = usePlainStore();
+    return () => (
+      openBlock(), createElementBlock("p", { title: currentUser.value.name }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
         );
     }
 

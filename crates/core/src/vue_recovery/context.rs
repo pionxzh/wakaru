@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread,
-    ReturnStmt, Stmt, VarDecl, VarDeclKind,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
+    Pat, Prop, PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -39,17 +39,22 @@ pub(super) fn collect_context(
                                 ctx.component_bindings
                                     .insert(named.local.sym.clone(), component.clone());
                             }
+                            let imported = named
+                                .imported
+                                .as_ref()
+                                .map(module_export_name)
+                                .unwrap_or_else(|| named.local.sym.to_string());
+                            if source == "pinia" && imported == "storeToRefs" {
+                                ctx.vue_helpers
+                                    .insert(named.local.sym.clone(), VueHelper::Other(imported));
+                                continue;
+                            }
                             if source != "vue" {
                                 if source.contains("vue") {
                                     ctx.vue_helper_candidates.insert(named.local.sym.clone());
                                 }
                                 continue;
                             }
-                            let imported = named
-                                .imported
-                                .as_ref()
-                                .map(module_export_name)
-                                .unwrap_or_else(|| named.local.sym.to_string());
                             ctx.vue_helpers.insert(
                                 named.local.sym.clone(),
                                 VueHelper::from_imported_name(imported),
@@ -533,23 +538,33 @@ pub(super) fn collect_setup_context(
             continue;
         };
         for decl in &var.decls {
-            let Pat::Ident(binding) = &decl.name else {
-                continue;
-            };
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if is_setup_props_alias(init, ctx) {
-                ctx.setup_props_aliases.insert(binding.id.sym.clone());
-                continue;
-            }
-            if let Some(value) = computed_value_expr(init, ctx)? {
-                ctx.setup_value_bindings
-                    .insert(binding.id.sym.clone(), value);
-                continue;
-            }
-            if is_ref_like_value_expr(init, ctx) {
-                ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+            match &decl.name {
+                Pat::Ident(binding) => {
+                    if is_setup_props_alias(init, ctx) {
+                        ctx.setup_props_aliases.insert(binding.id.sym.clone());
+                        continue;
+                    }
+                    if is_ref_object_expr(init, ctx) {
+                        ctx.setup_ref_object_bindings.insert(binding.id.sym.clone());
+                    }
+                    if let Some(value) = computed_value_expr(init, ctx)? {
+                        ctx.setup_value_bindings
+                            .insert(binding.id.sym.clone(), value);
+                        continue;
+                    }
+                    if is_ref_like_value_expr(init, ctx) {
+                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                    }
+                }
+                Pat::Object(object)
+                    if is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx) =>
+                {
+                    collect_object_pat_bindings(object, &mut ctx.setup_ref_bindings);
+                }
+                _ => {}
             }
         }
     }
@@ -581,6 +596,59 @@ fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 
 fn is_ref_like_vue_helper(name: &str) -> bool {
     matches!(name, "ref" | "shallowRef" | "customRef" | "toRef")
+}
+
+fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    match helper_name(&call.callee, ctx) {
+        Some(VueHelper::Other(name)) if is_ref_object_helper(&name) => return true,
+        _ => {}
+    }
+    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+}
+
+fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    ctx.setup_ref_object_bindings.contains(&ident.sym)
+}
+
+fn is_ref_object_helper(name: &str) -> bool {
+    matches!(name, "toRefs" | "storeToRefs")
+}
+
+fn collect_object_pat_bindings(object: &ObjectPat, bindings: &mut HashSet<Atom>) {
+    for prop in &object.props {
+        match prop {
+            ObjectPatProp::KeyValue(key_value) => {
+                collect_pat_bindings(key_value.value.as_ref(), bindings);
+            }
+            ObjectPatProp::Assign(assign) => {
+                bindings.insert(assign.key.sym.clone());
+            }
+            ObjectPatProp::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+        }
+    }
+}
+
+fn collect_pat_bindings(pat: &Pat, bindings: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.insert(binding.id.sym.clone());
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_bindings(elem, bindings);
+            }
+        }
+        Pat::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+        Pat::Object(object) => collect_object_pat_bindings(object, bindings),
+        Pat::Assign(assign) => collect_pat_bindings(assign.left.as_ref(), bindings),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
 }
 
 pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
