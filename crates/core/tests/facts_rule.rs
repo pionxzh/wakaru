@@ -677,6 +677,55 @@ export function tslibModule() {
 }
 
 #[test]
+fn registered_typescript_values_helper_fact_from_umd_registrar_factory() {
+    let facts = collect_facts(
+        r#"
+(function(callback) {
+  const globalTarget = {};
+  const moduleExports = {};
+  function makeRegistrar(target, adapter) {
+    return (name, value) => target[name] = adapter ? adapter(name, value) : value;
+  }
+  callback(makeRegistrar(globalTarget, makeRegistrar(moduleExports)));
+})((register) => {
+  let ZM8;
+  ZM8 = (o) => {
+    const s = typeof Symbol === "function" && Symbol.iterator;
+    const m = s && o[s];
+    let i = 0;
+    if (m) {
+      return m.call(o);
+    }
+    if (o && typeof o.length === "number") {
+      return {
+        next() {
+          if (o && i >= o.length) {
+            o = undefined;
+          }
+          return {
+            value: o && o[i++],
+            done: !o
+          };
+        }
+      };
+    }
+    throw TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+  };
+  register("__values", ZM8);
+});
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__values",
+            Some("ZM8"),
+            TypeScriptHelperKind::Values
+        )]
+    );
+}
+
+#[test]
 fn registered_typescript_values_helper_fact_requires_export_registrar() {
     let facts = collect_facts(
         r#"
