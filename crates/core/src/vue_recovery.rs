@@ -1360,6 +1360,34 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_computed_if_return_chain() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as StatusTag } from "./StatusTag.vue";
+export const _ = dc({
+  __name: "BetStatusTag",
+  setup(props) {
+    const level = cp(() => {
+      if (props.status === 1) {
+        return "danger";
+      }
+      if (props.status === 2) {
+        return "warning";
+      }
+      return "info";
+    });
+    return () => (ob(), cb(StatusTag, { level: level.value }, null, 8, ["level"]));
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <StatusTag :level='status === 1 ? \"danger\" : status === 2 ? \"warning\" : \"info\"' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn ignores_setup_render_like_code_without_vue_import_signal() {
         let input = r#"
 import { x as element } from "./render-helpers.js";
