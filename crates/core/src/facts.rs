@@ -943,6 +943,10 @@ fn body_passes_registrar_to_param(stmts: &[Stmt], param: &BindingKey) -> bool {
             }
             call.visit_children_with(self);
         }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
     }
 
     let mut finder = RegistrarArgumentFinder {
@@ -990,11 +994,24 @@ fn expr_is_ts_helper_export_registrar_value(expr: &Expr, factories: &HashSet<Bin
         return false;
     };
     match strip_parens(callee.as_ref()) {
-        Expr::Ident(id) => factories.contains(&binding_key(id)),
+        Expr::Ident(id) => {
+            factories.contains(&binding_key(id))
+                && factory_call_arguments_are_registrar_safe(call, factories)
+        }
         Expr::Fn(fn_expr) => function_returns_ts_helper_export_registrar(&fn_expr.function),
         Expr::Arrow(arrow) => arrow_returns_ts_helper_export_registrar(arrow),
         _ => false,
     }
+}
+
+fn factory_call_arguments_are_registrar_safe(
+    call: &swc_core::ecma::ast::CallExpr,
+    factories: &HashSet<BindingKey>,
+) -> bool {
+    call.args.iter().skip(1).all(|arg| {
+        arg.spread.is_none()
+            && expr_is_ts_helper_export_registrar_value(arg.expr.as_ref(), factories)
+    })
 }
 
 fn collect_ts_helper_export_registrar_factories(stmts: &[Stmt]) -> HashSet<BindingKey> {
@@ -1210,7 +1227,7 @@ fn expr_produces_registered_value(expr: &Expr, value_key: &BindingKey) -> bool {
         expr if expr_matches_binding(expr, value_key) => true,
         Expr::Cond(cond) => {
             expr_produces_registered_value(&cond.cons, value_key)
-                || expr_produces_registered_value(&cond.alt, value_key)
+                && expr_produces_registered_value(&cond.alt, value_key)
         }
         Expr::Call(call) => call.args.iter().any(|arg| {
             arg.spread.is_none() && expr_matches_binding(strip_parens(&arg.expr), value_key)
