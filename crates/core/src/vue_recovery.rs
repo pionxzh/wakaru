@@ -38,6 +38,7 @@ struct VueRecoveryContext {
     vue_helper_candidates: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
     setup_value_bindings: HashMap<Atom, String>,
+    setup_ref_bindings: HashSet<Atom>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
@@ -1600,6 +1601,69 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <span v-html='t(\"max_payout_message\", { value: (format(total.value)) })' />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_ref_value_alias() {
+        let input = r#"
+import { defineComponent, ref, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "Counter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("button", { title: count.value }, toDisplayString(count.value), 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button :title=\"count\">{{ count }}</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_setup_ref_value_alias() {
+        let input = r#"
+import { d as dc, r as rf, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "Viewport",
+  setup() {
+    const height = rf(0);
+    return () => (
+      ob(), ce("div", { style: { height: `${height.value}px` } }, null, 4)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :style=\"{ height: `${height}px` }\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_shadowed_ref_value_member() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "ShadowedCounter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", { title: [count].map((count) => count.value).join(",") }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :title='[ count ].map((count)=>count.value).join(\",\")' />\n</template>\n"
         );
     }
 

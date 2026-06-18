@@ -14,6 +14,7 @@ use crate::vue_template::{VueExpr, VueNode};
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let mut expr = expr.clone();
     expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx));
 
     let module = Module {
         span: DUMMY_SP,
@@ -67,6 +68,101 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
     }
     cleaned = inline_setup_value_bindings(&cleaned, ctx);
     cleaned
+}
+
+struct SetupRefValueCleaner<'a> {
+    bindings: Vec<&'a str>,
+    shadow_depths: Vec<usize>,
+}
+
+impl<'a> SetupRefValueCleaner<'a> {
+    fn new(ctx: &'a VueRecoveryContext) -> Self {
+        let mut bindings = ctx
+            .setup_ref_bindings
+            .iter()
+            .map(|binding| binding.as_ref())
+            .collect::<Vec<_>>();
+        bindings.sort_unstable();
+        bindings.dedup();
+        let shadow_depths = vec![0; bindings.len()];
+        Self {
+            bindings,
+            shadow_depths,
+        }
+    }
+
+    fn active_binding(&self, name: &str) -> bool {
+        self.bindings
+            .iter()
+            .zip(self.shadow_depths.iter())
+            .any(|(binding, shadow_depth)| *binding == name && *shadow_depth == 0)
+    }
+
+    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
+        self.bindings
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| {
+                params
+                    .iter()
+                    .any(|pat| pat_binds_name(pat, binding))
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn enter_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] += 1;
+        }
+    }
+
+    fn exit_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] -= 1;
+        }
+    }
+}
+
+impl VisitMut for SetupRefValueCleaner<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let replacement = match expr {
+            Expr::Member(member) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") => {
+                match member.obj.as_ref() {
+                    Expr::Ident(object) if self.active_binding(object.sym.as_ref()) => {
+                        Some(object.clone())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            *expr = Expr::Ident(replacement);
+        }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let params = arrow.params.iter().collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        arrow.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| &param.pat)
+            .collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        function.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
 }
 
 struct ContextMemberCleaner<'a> {
