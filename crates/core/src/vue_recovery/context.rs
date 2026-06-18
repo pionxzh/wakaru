@@ -4,10 +4,11 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, Ident,
-    IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    Stmt, UpdateExpr, VarDecl, VarDeclKind,
+    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Callee,
+    ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
+    Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -16,7 +17,7 @@ use super::helpers::{helper_name, VueHelper};
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
-use super::{RenderSource, VueRecoveryContext};
+use super::{RenderSource, VueRecoveryContext, VueScriptImport};
 use crate::js_names::is_valid_identifier_name;
 
 pub(super) fn collect_context(
@@ -46,6 +47,15 @@ pub(super) fn collect_context(
                                 .as_ref()
                                 .map(module_export_name)
                                 .unwrap_or_else(|| named.local.sym.to_string());
+                            if source != "vue" {
+                                ctx.script_imports.insert(
+                                    named.local.sym.clone(),
+                                    VueScriptImport::Named {
+                                        source: source.clone(),
+                                        imported: imported.clone(),
+                                    },
+                                );
+                            }
                             if source == "pinia" && imported == "storeToRefs" {
                                 ctx.vue_helpers
                                     .insert(named.local.sym.clone(), VueHelper::Other(imported));
@@ -63,12 +73,28 @@ pub(super) fn collect_context(
                             );
                         }
                         ImportSpecifier::Default(default) => {
+                            if source != "vue" {
+                                ctx.script_imports.insert(
+                                    default.local.sym.clone(),
+                                    VueScriptImport::Default {
+                                        source: source.clone(),
+                                    },
+                                );
+                            }
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
                                     .insert(default.local.sym.clone(), component.clone());
                             }
                         }
                         ImportSpecifier::Namespace(namespace) => {
+                            if source != "vue" {
+                                ctx.script_imports.insert(
+                                    namespace.local.sym.clone(),
+                                    VueScriptImport::Namespace {
+                                        source: source.clone(),
+                                    },
+                                );
+                            }
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
                                     .insert(namespace.local.sym.clone(), component.clone());
@@ -568,6 +594,13 @@ pub(super) fn collect_setup_context(
                             .insert(binding.id.sym.clone(), value);
                         continue;
                     }
+                    if let Some((value, import_refs)) = computed_script_setup_expr(init, ctx)? {
+                        ctx.setup_script_import_refs.extend(import_refs);
+                        ctx.setup_script_bindings
+                            .push((binding.id.sym.clone(), value));
+                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                        continue;
+                    }
                     if is_ref_like_value_expr(init, ctx) {
                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                     }
@@ -927,6 +960,154 @@ fn computed_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<S
         return Ok(None);
     };
     computed_getter_expr(arg.expr.as_ref(), ctx)
+}
+
+fn computed_script_setup_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<(String, HashSet<Atom>)>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return Ok(None);
+    };
+    let Some(arg) = call.args.first() else {
+        return Ok(None);
+    };
+    if !is_computed_script_setup_call(call, arg.expr.as_ref(), ctx) {
+        return Ok(None);
+    }
+    let getter = clean_expr(&print_expr(arg.expr.as_ref(), ctx)?, ctx);
+    let import_refs = script_import_refs(arg.expr.as_ref(), &ctx.script_imports);
+    Ok(Some((format!("computed({getter})"), import_refs)))
+}
+
+fn is_computed_script_setup_call(call: &CallExpr, getter: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let is_getter = matches!(unwrap_paren_expr(getter), Expr::Arrow(_) | Expr::Fn(_));
+    if !is_getter {
+        return false;
+    }
+    helper_name(&call.callee, ctx) == Some(VueHelper::Computed)
+        || call_callee_ident(call)
+            .is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+}
+
+fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
+    let mut collector = ScriptImportRefCollector {
+        imports,
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    expr.visit_with(&mut collector);
+    collector.refs
+}
+
+struct ScriptImportRefCollector<'a> {
+    imports: &'a HashMap<Atom, VueScriptImport>,
+    scopes: Vec<HashSet<Atom>>,
+    refs: HashSet<Atom>,
+}
+
+impl ScriptImportRefCollector<'_> {
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, sym: &Atom) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(sym.clone());
+        }
+    }
+
+    fn declare_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.declare(&binding.id.sym),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.declare_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
+                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
+                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.declare_pat(&rest.arg),
+            Pat::Assign(assign) => self.declare_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+    }
+}
+
+impl Visit for ScriptImportRefCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self.imports.contains_key(&ident.sym) && !self.is_shadowed(&ident.sym) {
+            self.refs.insert(ident.sym.clone());
+        }
+    }
+
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        self.declare(&ident.id.sym);
+    }
+
+    fn visit_prop_name(&mut self, prop: &PropName) {
+        if let PropName::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.declare_pat(&declarator.name);
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.declare(&function.ident.sym);
+        self.visit_function(&function.function);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.push_scope();
+        for param in &function.params {
+            self.declare_pat(&param.pat);
+        }
+        if let Some(body) = &function.body {
+            body.visit_with(self);
+        }
+        self.pop_scope();
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.push_scope();
+        for param in &arrow.params {
+            self.declare_pat(param);
+        }
+        arrow.body.visit_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.declare(&class.ident.sym);
+        class.class.visit_with(self);
+    }
 }
 
 fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {

@@ -13,6 +13,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
+use crate::js_names::is_valid_identifier_name;
 use crate::vue_template::{VueSfc, VueTemplate};
 
 mod attrs;
@@ -36,18 +37,29 @@ use syntax::{module_export_name, prop_name};
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_helper_candidates: HashSet<Atom>,
+    script_imports: HashMap<Atom, VueScriptImport>,
+    setup_script_import_refs: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
     setup_value_bindings: HashMap<Atom, String>,
+    setup_script_bindings: Vec<(Atom, String)>,
     setup_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
+    setup_component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     setup_props_context: Option<Atom>,
     setup_props_aliases: HashSet<Atom>,
     cm: Lrc<SourceMap>,
+}
+
+#[derive(Clone)]
+enum VueScriptImport {
+    Named { source: String, imported: String },
+    Default { source: String },
+    Namespace { source: String },
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +69,7 @@ pub(super) enum RenderSource<'a> {
         render: &'a ArrowExpr,
         setup_stmts: &'a [Stmt],
         setup_props: Option<&'a Ident>,
+        component_options: Option<&'a ObjectLit>,
     },
 }
 
@@ -179,6 +192,9 @@ fn recover_vue_sfc_from_js_inner(
     let Some(render) = find_render_source(&module, preferred_component_name) else {
         return Ok(None);
     };
+    if let Some(options) = render_component_options(render) {
+        ctx.setup_component_options = Some(options.clone());
+    }
     ctx.render_context = render_context_param(render);
     ctx.setup_props_context = setup_props_param(render);
     infer_render_helpers(render, &mut ctx);
@@ -191,14 +207,20 @@ fn recover_vue_sfc_from_js_inner(
         return Ok(None);
     };
 
-    let script = ctx
-        .component_options
-        .as_ref()
-        .and_then(|options| component_script(options, &ctx).transpose())
-        .transpose()?;
+    let script_setup = setup_script(&ctx);
+
+    let script = if script_setup.is_none() {
+        ctx.component_options
+            .as_ref()
+            .and_then(|options| component_script(options, &ctx).transpose())
+            .transpose()?
+    } else {
+        None
+    };
 
     Ok(Some(VueSfc {
         script,
+        script_setup,
         template: VueTemplate {
             children: vec![root],
         },
@@ -451,6 +473,15 @@ fn find_render_source<'a>(
         .or_else(|| find_setup_render_source(module))
 }
 
+fn render_component_options(render: RenderSource<'_>) -> Option<&ObjectLit> {
+    match render {
+        RenderSource::SetupArrow {
+            component_options, ..
+        } => component_options,
+        RenderSource::Function(_) => None,
+    }
+}
+
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     for item in &module.body {
         match item {
@@ -681,12 +712,13 @@ fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'
                             .params
                             .first()
                             .and_then(syntax::param_binding_ident),
+                        component_options: Some(object),
                     });
                 }
             }
             Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("setup") => {
                 if let Some(render) = setup_return_source_from_expr(key_value.value.as_ref()) {
-                    return Some(render);
+                    return Some(with_component_options(render, object));
                 }
             }
             _ => {}
@@ -704,6 +736,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: block.stmts.as_slice(),
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    component_options: None,
                 })
             }
             BlockStmtOrExpr::Expr(expr) => {
@@ -711,6 +744,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: &[],
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    component_options: None,
                 })
             }
         },
@@ -723,9 +757,30 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     .params
                     .first()
                     .and_then(syntax::param_binding_ident),
+                component_options: None,
             })
         }),
         _ => None,
+    }
+}
+
+fn with_component_options<'a>(
+    render: RenderSource<'a>,
+    component_options: &'a ObjectLit,
+) -> RenderSource<'a> {
+    match render {
+        RenderSource::SetupArrow {
+            render,
+            setup_stmts,
+            setup_props,
+            ..
+        } => RenderSource::SetupArrow {
+            render,
+            setup_stmts,
+            setup_props,
+            component_options: Some(component_options),
+        },
+        RenderSource::Function(function) => RenderSource::Function(function),
     }
 }
 
@@ -800,6 +855,169 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
     }
     let printed = print_expr(&Expr::Object(options.clone()), ctx)?;
     Ok(Some(format!("export default {printed}")))
+}
+
+fn setup_script(ctx: &VueRecoveryContext) -> Option<String> {
+    if ctx.setup_script_bindings.is_empty() {
+        return None;
+    }
+
+    let mut body = String::new();
+
+    let prop_names = ctx
+        .setup_component_options
+        .as_ref()
+        .or(ctx.component_options.as_ref())
+        .map(component_prop_names)
+        .unwrap_or_default();
+    let valid_prop_names = prop_names
+        .iter()
+        .filter(|name| is_valid_identifier_name(name))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if let Some(binding) = setup_props_script_binding(ctx) {
+        if !prop_names.is_empty() {
+            body.push_str("const ");
+            body.push_str(&binding);
+            body.push_str(" = defineProps([");
+            body.push_str(
+                &prop_names
+                    .iter()
+                    .map(|name| quote_js_string(name))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            body.push_str("]);\n");
+            if !valid_prop_names.is_empty() {
+                body.push_str("const { ");
+                body.push_str(&valid_prop_names.join(", "));
+                body.push_str(" } = ");
+                body.push_str(&binding);
+                body.push_str(";\n");
+            }
+            body.push('\n');
+        }
+    }
+
+    let mut bindings = ctx.setup_script_bindings.clone();
+    bindings.sort_by(|(left, _), (right, _)| left.as_ref().cmp(right.as_ref()));
+    for (binding, expr) in bindings {
+        if !is_valid_identifier_name(binding.as_ref()) {
+            continue;
+        }
+        body.push_str("const ");
+        body.push_str(binding.as_ref());
+        body.push_str(" = ");
+        body.push_str(expr.trim());
+        body.push_str(";\n");
+    }
+
+    let mut out = String::new();
+    out.push_str("import { computed } from \"vue\";\n");
+    for import in referenced_script_imports(ctx) {
+        out.push_str(&import);
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str(&body);
+    Some(out)
+}
+
+fn referenced_script_imports(ctx: &VueRecoveryContext) -> Vec<String> {
+    let mut imports = ctx
+        .setup_script_import_refs
+        .iter()
+        .filter(|local| local.as_ref() != "$")
+        .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
+        .map(|(local, import)| script_import_line(local.as_ref(), import))
+        .collect::<Vec<_>>();
+    imports.sort();
+    imports.dedup();
+    imports
+}
+
+fn script_import_line(local: &str, import: &VueScriptImport) -> String {
+    match import {
+        VueScriptImport::Named { source, imported } if imported == local => {
+            format!("import {{ {imported} }} from {};", quote_js_string(source))
+        }
+        VueScriptImport::Named { source, imported } => {
+            format!(
+                "import {{ {imported} as {local} }} from {};",
+                quote_js_string(source)
+            )
+        }
+        VueScriptImport::Default { source } => {
+            format!("import {local} from {};", quote_js_string(source))
+        }
+        VueScriptImport::Namespace { source } => {
+            format!("import * as {local} from {};", quote_js_string(source))
+        }
+    }
+}
+
+fn setup_props_script_binding(ctx: &VueRecoveryContext) -> Option<String> {
+    let mut aliases = ctx
+        .setup_props_aliases
+        .iter()
+        .filter(|alias| is_valid_identifier_name(alias.as_ref()))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    aliases.sort();
+    aliases.into_iter().next().or_else(|| {
+        ctx.setup_props_context
+            .as_ref()
+            .filter(|binding| is_valid_identifier_name(binding.as_ref()))
+            .map(ToString::to_string)
+    })
+}
+
+fn component_prop_names(options: &ObjectLit) -> Vec<String> {
+    let Some(props_expr) = options.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("props") => {
+                Some(key_value.value.as_ref())
+            }
+            _ => None,
+        }
+    }) else {
+        return Vec::new();
+    };
+
+    let mut names = match props_expr {
+        Expr::Object(object) => object
+            .props
+            .iter()
+            .filter_map(|prop| {
+                let PropOrSpread::Prop(prop) = prop else {
+                    return None;
+                };
+                match prop.as_ref() {
+                    Prop::KeyValue(key_value) => prop_name(&key_value.key),
+                    Prop::Assign(assign) => Some(assign.key.sym.to_string()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>(),
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .filter_map(|elem| syntax::string_lit(elem.expr.as_ref()))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn quote_js_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -1719,7 +1937,70 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <div :style=\"style\" />\n</template>\n"
+            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn imports_helpers_used_by_script_setup_computed_bindings() {
+        let input = r#"
+import { normalizePadding } from "./format.js";
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+const _sfc_main = defineComponent({
+  props: {
+    padding: String,
+  },
+  setup(props) {
+    const style = computed(() => {
+      const result = {};
+      const value = normalizePadding(props.padding);
+      if (value) {
+        result.padding = value;
+      }
+      return result;
+    });
+    return () => (
+      openBlock(), createElementBlock("div", { style: style.value }, null, 4)
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_import_identifiers_used_only_as_props_or_properties() {
+        let input = r#"
+import { padding } from "./format.js";
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+const _sfc_main = defineComponent({
+  props: {
+    padding: String,
+  },
+  setup(props) {
+    const style = computed(() => {
+      const result = {};
+      if (props.padding) {
+        result.padding = props.padding;
+      }
+      return result;
+    });
+    return () => (
+      openBlock(), createElementBlock("div", { style: style.value }, null, 4)
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
         );
     }
 

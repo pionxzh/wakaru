@@ -19,6 +19,19 @@ impl VueSfc {
             }
             out.push_str("</script>\n\n");
         }
+        if let Some(script_setup) = self
+            .script_setup
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            out.push_str("<script setup>\n");
+            out.push_str(script_setup);
+            if !script_setup.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("</script>\n\n");
+        }
         out.push_str(&self.template.print());
         out
     }
