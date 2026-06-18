@@ -2,7 +2,7 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, Lit, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
@@ -135,6 +135,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             ctx,
         )
         .map(Some),
+        Expr::Tpl(tpl) => recover_template_literal(tpl, ctx).map(Some),
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
                 return Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))));
@@ -670,6 +671,9 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
     if let Some(text) = string_lit(text_arg.expr.as_ref()) {
         return Ok(VueNode::Text(text));
     }
+    if let Expr::Tpl(tpl) = text_arg.expr.as_ref() {
+        return recover_template_literal(tpl, ctx);
+    }
     if let Expr::Call(call) = text_arg.expr.as_ref() {
         if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) {
             let Some(arg) = call.args.first() else {
@@ -685,6 +689,56 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
         &print_expr(text_arg.expr.as_ref(), ctx)?,
         ctx,
     )))
+}
+
+fn recover_template_literal(tpl: &Tpl, ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let mut nodes = Vec::new();
+    for (index, quasi) in tpl.quasis.iter().enumerate() {
+        let text = quasi
+            .cooked
+            .as_ref()
+            .map(wtf8_to_string)
+            .unwrap_or_else(|| quasi.raw.to_string());
+        if keep_template_text(&text, index, tpl.quasis.len()) {
+            nodes.push(VueNode::Text(text));
+        }
+        if let Some(expr) = tpl.exprs.get(index) {
+            nodes.push(recover_template_literal_expr(expr.as_ref(), ctx)?);
+        }
+    }
+    Ok(nodes_to_node(nodes))
+}
+
+fn recover_template_literal_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let expr = if let Expr::Call(call) = expr {
+        if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) {
+            call.args
+                .first()
+                .map(|arg| arg.expr.as_ref())
+                .unwrap_or(expr)
+        } else {
+            expr
+        }
+    } else {
+        expr
+    };
+
+    Ok(VueNode::Interpolation(VueExpr::new(clean_expr(
+        &print_expr(expr, ctx)?,
+        ctx,
+    ))))
+}
+
+fn keep_template_text(text: &str, index: usize, quasi_count: usize) -> bool {
+    !text.is_empty() && !(text.trim().is_empty() && (index == 0 || index + 1 == quasi_count))
+}
+
+fn nodes_to_node(mut nodes: Vec<VueNode>) -> VueNode {
+    if nodes.len() == 1 {
+        nodes.remove(0)
+    } else {
+        VueNode::Fragment(nodes)
+    }
 }
 
 fn recover_static_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
@@ -984,12 +1038,27 @@ fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode
             let mut children = Vec::new();
             for elem in array.elems.iter().flatten() {
                 if let Some(child) = recover_node(elem.expr.as_ref(), ctx)? {
-                    children.push(child);
+                    push_child(&mut children, child);
                 }
             }
             Ok(children)
         }
-        _ => recover_node(expr, ctx).map(|node| node.into_iter().collect()),
+        _ => recover_node(expr, ctx).map(recovered_node_children),
+    }
+}
+
+fn recovered_node_children(node: Option<VueNode>) -> Vec<VueNode> {
+    match node {
+        Some(VueNode::Fragment(children)) => children,
+        Some(node) => vec![node],
+        None => Vec::new(),
+    }
+}
+
+fn push_child(children: &mut Vec<VueNode>, child: VueNode) {
+    match child {
+        VueNode::Fragment(grandchildren) => children.extend(grandchildren),
+        child => children.push(child),
     }
 }
 
