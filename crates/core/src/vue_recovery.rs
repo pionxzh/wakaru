@@ -40,6 +40,7 @@ struct VueRecoveryContext {
     setup_value_bindings: HashMap<Atom, String>,
     setup_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
+    provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
@@ -1775,6 +1776,163 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_provider_returned_ref_values() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as SummaryPanel } from "./SummaryPanel.vue";
+const state = createProvider("State", () => {
+  const visibleItems = cp(() => items.value.filter((item) => item.enabled));
+  const loaded = cp(() => ready.value);
+  return { visibleItems, loaded };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const { visibleItems, loaded } = state.provide();
+    const hasItems = cp(() => visibleItems.value.length > 0);
+    return () => (
+      ob(), cb(SummaryPanel, { hasItems: hasItems.value, loaded: loaded.value }, null, 8, ["hasItems", "loaded"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" :loaded=\"loaded\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_provider_returned_ref_alias_values() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as SummaryPanel } from "./SummaryPanel.vue";
+const state = createProvider("State", () => {
+  const loaded_1 = cp(() => ready.value);
+  return { loaded: loaded_1 };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const { loaded: isLoaded } = state.provide();
+    return () => (
+      ob(), cb(SummaryPanel, { loaded: isLoaded.value }, null, 8, ["loaded"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SummaryPanel :loaded=\"isLoaded\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_provider_returned_direct_ref_values() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as SummaryPanel } from "./SummaryPanel.vue";
+const state = createProvider("State", () => {
+  return { visibleItems: cp(() => items.value) };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const { visibleItems } = state.provide();
+    return () => (
+      ob(), cb(SummaryPanel, { hasItems: visibleItems.value.length > 0 }, null, 8, ["hasItems"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_provider_result_alias_ref_values() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as SummaryPanel } from "./SummaryPanel.vue";
+const state = createProvider("State", () => {
+  return { visibleItems: cp(() => items.value) };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const provided = state.provide();
+    const { visibleItems } = provided;
+    const hasItems = cp(() => visibleItems.value.length > 0);
+    return () => (
+      ob(), cb(SummaryPanel, { hasItems: hasItems.value }, null, 8, ["hasItems"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_provider_injected_ref_values() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
+import { S as SummaryPanel } from "./SummaryPanel.vue";
+const state = createProvider("State", () => {
+  return { items: cp(() => loadedItems.value) };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const injected = state.inject();
+    const { items } = injected;
+    return () => (
+      ob(), cb(SummaryPanel, { count: items.value.length }, null, 8, ["count"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <SummaryPanel :count=\"items.length\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_provider_returned_plain_value_members() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue.js";
+const state = createProvider("State", () => {
+  const value = { value: 1 };
+  return { value };
+});
+export const _ = dc({
+  __name: "UsesState",
+  setup() {
+    const { value } = state.provide();
+    return () => (
+      ob(), ce("p", { title: value.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"value.value\" />\n</template>\n"
         );
     }
 
