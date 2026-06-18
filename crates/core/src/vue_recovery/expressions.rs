@@ -1,16 +1,20 @@
 use anyhow::{anyhow, Result};
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    BindingIdent, Decl, Expr, Ident, Module, ModuleItem, Pat, Stmt, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ArrowExpr, BindingIdent, Decl, Expr, Function, Ident, MemberProp, Module, ModuleItem,
+    ObjectPatProp, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helpers::VueHelper;
 use super::VueRecoveryContext;
 use crate::vue_template::{VueExpr, VueNode};
 
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
+    let mut expr = expr.clone();
+    expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+
     let module = Module {
         span: DUMMY_SP,
         body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
@@ -24,7 +28,7 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
                     id: Ident::new("__wakaru_expr".into(), DUMMY_SP, Default::default()),
                     type_ann: None,
                 }),
-                init: Some(Box::new(expr.clone())),
+                init: Some(Box::new(expr)),
                 definite: false,
             }],
         }))))],
@@ -55,21 +59,7 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
 }
 
 pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
-    let mut cleaned = expr
-        .replace("_ctx.", "")
-        .replace("$props.", "")
-        .replace("__props.", "");
-    if let Some(render_context) = &ctx.render_context {
-        if render_context.as_ref() != "_ctx" {
-            cleaned = cleaned.replace(&format!("{render_context}."), "");
-        }
-    }
-    if let Some(setup_props_context) = &ctx.setup_props_context {
-        cleaned = cleaned.replace(&format!("{setup_props_context}."), "");
-    }
-    for setup_props_alias in &ctx.setup_props_aliases {
-        cleaned = cleaned.replace(&format!("{setup_props_alias}."), "");
-    }
+    let mut cleaned = expr.to_string();
     for (local, helper) in &ctx.vue_helpers {
         if matches!(helper, VueHelper::Unref) {
             cleaned = strip_callee_wrappers(&cleaned, local.as_ref());
@@ -77,6 +67,125 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
     }
     cleaned = inline_setup_value_bindings(&cleaned, ctx);
     cleaned
+}
+
+struct ContextMemberCleaner<'a> {
+    prefixes: Vec<&'a str>,
+    shadow_depths: Vec<usize>,
+}
+
+impl<'a> ContextMemberCleaner<'a> {
+    fn new(ctx: &'a VueRecoveryContext) -> Self {
+        let mut prefixes = vec!["_ctx", "$props", "__props"];
+        if let Some(render_context) = &ctx.render_context {
+            if render_context.as_ref() != "_ctx" {
+                prefixes.push(render_context.as_ref());
+            }
+        }
+        if let Some(setup_props_context) = &ctx.setup_props_context {
+            prefixes.push(setup_props_context.as_ref());
+        }
+        prefixes.extend(ctx.setup_props_aliases.iter().map(|alias| alias.as_ref()));
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        let shadow_depths = vec![0; prefixes.len()];
+        Self {
+            prefixes,
+            shadow_depths,
+        }
+    }
+
+    fn active_prefix(&self, name: &str) -> bool {
+        self.prefixes
+            .iter()
+            .zip(self.shadow_depths.iter())
+            .any(|(prefix, shadow_depth)| *prefix == name && *shadow_depth == 0)
+    }
+
+    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
+        self.prefixes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, prefix)| {
+                params
+                    .iter()
+                    .any(|pat| pat_binds_name(pat, prefix))
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn enter_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] += 1;
+        }
+    }
+
+    fn exit_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] -= 1;
+        }
+    }
+}
+
+impl VisitMut for ContextMemberCleaner<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let replacement = match expr {
+            Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
+                match &member.prop {
+                    MemberProp::Ident(prop) => {
+                        Some(Ident::new(prop.sym.clone(), prop.span, Default::default()))
+                    }
+                    MemberProp::Computed(_) | MemberProp::PrivateName(_) => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            *expr = Expr::Ident(replacement);
+        }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let params = arrow.params.iter().collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        arrow.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| &param.pat)
+            .collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        function.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+}
+
+fn pat_binds_name(pat: &Pat, name: &str) -> bool {
+    match pat {
+        Pat::Ident(binding) => binding.id.sym.as_ref() == name,
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| pat_binds_name(elem, name)),
+        Pat::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(key_value) => pat_binds_name(key_value.value.as_ref(), name),
+            ObjectPatProp::Assign(assign) => assign.key.sym.as_ref() == name,
+            ObjectPatProp::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
+        }),
+        Pat::Assign(assign) => pat_binds_name(assign.left.as_ref(), name),
+        Pat::Expr(_) | Pat::Invalid(_) => false,
+    }
 }
 
 fn inline_setup_value_bindings(input: &str, ctx: &VueRecoveryContext) -> String {

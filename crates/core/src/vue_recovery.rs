@@ -985,6 +985,24 @@ export function render(e, o) {
     }
 
     #[test]
+    fn preserves_value_member_after_minified_render_context() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(e, _cache) {
+  return openBlock(), createElementBlock("div", {
+    title: e.title,
+    count: items.value.filter((e) => e.ok).length
+  }, null, 8, ["title", "count"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :title=\"title\" :count=\"items.value.filter((e)=>e.ok).length\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_returned_render_arrow() {
         let input = r#"
 import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
