@@ -1628,6 +1628,56 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_computed_block_local_return_alias() {
+        let input = r#"
+import { defineComponent, ref, computed, openBlock, createVNode } from "vue";
+import { I as ItemPicker } from "./ItemPicker.vue";
+export default defineComponent({
+  __name: "ItemFilters",
+  setup() {
+    const sortedItems = ref([]);
+    const itemFilters = computed(() => {
+      const ids = sortedItems.value.map((item) => item.id);
+      return uniqueBy(ids, (id) => id);
+    });
+    return () => (
+      openBlock(), createVNode(ItemPicker, { itemFilters: itemFilters.value }, null, 8, ["itemFilters"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_computed_block_local_shadowing() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "ShadowedLocal",
+  setup() {
+    const label = computed(() => {
+      const values = items.value;
+      return values.map((values) => values.value).join(",");
+    });
+    return () => (
+      openBlock(), createElementBlock("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title='items.value.map((values)=>values.value).join(\",\")' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_ref_value_alias() {
         let input = r#"
 import { defineComponent, ref, toDisplayString, openBlock, createElementBlock } from "vue";
