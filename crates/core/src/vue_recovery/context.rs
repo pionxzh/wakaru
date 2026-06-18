@@ -543,11 +543,14 @@ pub(super) fn collect_setup_context(
                 ctx.setup_props_aliases.insert(binding.id.sym.clone());
                 continue;
             }
-            let Some(value) = computed_value_expr(init, ctx)? else {
+            if let Some(value) = computed_value_expr(init, ctx)? {
+                ctx.setup_value_bindings
+                    .insert(binding.id.sym.clone(), value);
                 continue;
-            };
-            ctx.setup_value_bindings
-                .insert(binding.id.sym.clone(), value);
+            }
+            if is_ref_like_value_expr(init, ctx) {
+                ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+            }
         }
     }
 
@@ -562,6 +565,22 @@ fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         .as_ref()
         .is_some_and(|setup_props| setup_props == &ident.sym)
         || ctx.setup_props_aliases.contains(&ident.sym)
+}
+
+fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    match helper_name(&call.callee, ctx) {
+        Some(VueHelper::Computed) => return true,
+        Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => return true,
+        _ => {}
+    }
+    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+}
+
+fn is_ref_like_vue_helper(name: &str) -> bool {
+    matches!(name, "ref" | "shallowRef" | "customRef" | "toRef")
 }
 
 pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {

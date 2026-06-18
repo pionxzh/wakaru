@@ -380,6 +380,9 @@ fn list_item_context(ctx: &VueRecoveryContext, params: &RecoveredForParams) -> V
         .setup_props_aliases
         .retain(|alias| !params.shadows(alias));
     item_ctx
+        .setup_ref_bindings
+        .retain(|binding| !params.shadows(binding));
+    item_ctx
 }
 
 fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) {
