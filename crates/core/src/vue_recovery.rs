@@ -1647,7 +1647,7 @@ export function render(_ctx, _cache) {
 import { openBlock, createElementBlock } from "vue";
 export function render(_ctx, _cache) {
   return openBlock(), createElementBlock("input", {
-    onInput: _cache[0] || (_cache[0] = (event) => _ctx.onChange(event.target.checked))
+    onInput: _cache[0] || (_cache[0] = (t) => _ctx.onChange(t.target.checked))
   }, null, 40);
 }
 "#;
@@ -1655,6 +1655,23 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <input @input=\"onChange($event.target.checked)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_nested_event_shadowing() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", {
+    onClick: _cache[0] || (_cache[0] = (e) => _ctx.report([1].map((e) => e + 1), e.target.checked))
+  }, null, 8, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click=\"report([ 1 ].map((e)=>e + 1), $event.target.checked)\" />\n</template>\n"
         );
     }
 
