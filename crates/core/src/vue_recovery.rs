@@ -216,7 +216,7 @@ fn recover_vue_sfc_from_js_inner(
         return Ok(None);
     };
 
-    let script_setup = setup_script(&ctx, &root, render);
+    let script_setup = setup_script(&ctx, &root, render)?;
 
     let script = if script_setup.is_none() {
         ctx.component_options
@@ -870,10 +870,10 @@ fn setup_script(
     ctx: &VueRecoveryContext,
     root: &VueNode,
     render: RenderSource<'_>,
-) -> Option<String> {
+) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
     if ctx.setup_script_bindings.is_empty() && ref_declarations.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut body = String::new();
@@ -891,18 +891,12 @@ fn setup_script(
         .collect::<Vec<_>>();
 
     if let Some(binding) = setup_props_script_binding(ctx) {
-        if !prop_names.is_empty() {
+        if let Some(props_source) = component_props_source(ctx)? {
             body.push_str("const ");
             body.push_str(&binding);
-            body.push_str(" = defineProps([");
-            body.push_str(
-                &prop_names
-                    .iter()
-                    .map(|name| quote_js_string(name))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            body.push_str("]);\n");
+            body.push_str(" = defineProps(");
+            body.push_str(&props_source);
+            body.push_str(");\n");
             if !valid_prop_names.is_empty() {
                 body.push_str("const { ");
                 body.push_str(&valid_prop_names.join(", "));
@@ -947,7 +941,20 @@ fn setup_script(
     }
     out.push('\n');
     out.push_str(&body);
-    Some(out)
+    Ok(Some(out))
+}
+
+fn component_props_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    let Some(props_expr) = ctx
+        .setup_component_options
+        .as_ref()
+        .or(ctx.component_options.as_ref())
+        .and_then(component_props_expr)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(print_expr(props_expr, ctx)?))
 }
 
 fn vue_script_import_line(
@@ -1321,17 +1328,7 @@ fn setup_props_script_binding(ctx: &VueRecoveryContext) -> Option<String> {
 }
 
 fn component_prop_names(options: &ObjectLit) -> Vec<String> {
-    let Some(props_expr) = options.props.iter().find_map(|prop| {
-        let PropOrSpread::Prop(prop) = prop else {
-            return None;
-        };
-        match prop.as_ref() {
-            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("props") => {
-                Some(key_value.value.as_ref())
-            }
-            _ => None,
-        }
-    }) else {
+    let Some(props_expr) = component_props_expr(options) else {
         return Vec::new();
     };
 
@@ -1361,6 +1358,20 @@ fn component_prop_names(options: &ObjectLit) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+fn component_props_expr(options: &ObjectLit) -> Option<&Expr> {
+    options.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("props") => {
+                Some(key_value.value.as_ref())
+            }
+            _ => None,
+        }
+    })
 }
 
 fn quote_js_string(value: &str) -> String {
@@ -2292,7 +2303,7 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
         );
     }
 
@@ -2324,7 +2335,7 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+            "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
         );
     }
 
@@ -2355,7 +2366,7 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps([\"padding\"]);\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+            "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
         );
     }
 
@@ -2365,7 +2376,7 @@ export default _sfc_main;
 import { defineComponent, ref, openBlock, createElementBlock, createElementVNode, normalizeStyle } from "vue";
 export default defineComponent({
   props: {
-    show: Boolean,
+    show: { type: Boolean, default: false },
   },
   setup(props) {
     const innerRef = ref(null);
@@ -2383,7 +2394,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { ref } from \"vue\";\n\nconst props = defineProps([\"show\"]);\nconst { show } = props;\n\nconst height = ref(0);\nconst innerRef = ref(null);\n</script>\n\n<template>\n  <section :style=\"{ height: show ? `${height}px` : 0 }\">\n    <div ref=\"innerRef\" />\n  </section>\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst props = defineProps({\n    show: {\n        type: Boolean,\n        default: false\n    }\n});\nconst { show } = props;\n\nconst height = ref(0);\nconst innerRef = ref(null);\n</script>\n\n<template>\n  <section :style=\"{ height: show ? `${height}px` : 0 }\">\n    <div ref=\"innerRef\" />\n  </section>\n</template>\n"
         );
     }
 
