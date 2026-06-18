@@ -112,6 +112,9 @@ pub(super) fn component_name_from_init(
         Expr::Call(call) => call.args.first().and_then(|arg| match arg.expr.as_ref() {
             Expr::Object(object) => component_name_from_options(object),
             Expr::Ident(ident) => component_bindings.get(&ident.sym).cloned(),
+            Expr::Call(_) | Expr::Paren(_) => {
+                component_name_from_init(arg.expr.as_ref(), component_bindings)
+            }
             _ => None,
         }),
         _ => None,
