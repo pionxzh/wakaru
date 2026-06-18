@@ -1215,7 +1215,7 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <Notice v-if=\"isLoaded\" :key=\"0\">\n    <template v-slot:default>\n      <span v-html=\"message\" />\n    </template>\n  </Notice>\n</template>\n"
+            "<template>\n  <Notice v-if=\"isLoaded\">\n    <template v-slot:default>\n      <span v-html=\"message\" />\n    </template>\n  </Notice>\n</template>\n"
         );
     }
 
@@ -2071,6 +2071,63 @@ export default __sfc__;
     }
 
     #[test]
+    fn omits_generated_numeric_if_branch_keys() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  openBlock();
+  return _ctx.ok
+    ? createElementBlock("p", { key: 0 }, "Ready")
+    : createElementBlock("span", { key: 1 }, "Waiting");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"ok\">Ready</p>\n  <span v-else>Waiting</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_non_numeric_if_branch_keys() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  openBlock();
+  return _ctx.ok
+    ? createElementBlock("p", { key: _ctx.item.id }, "Ready", 8, ["key"])
+    : createElementBlock("span", { key: "fallback" }, "Waiting");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"ok\" :key=\"item.id\">Ready</p>\n  <span v-else key=\"fallback\">Waiting</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_empty_if_branch_keys() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  openBlock();
+  return _ctx.ok
+    ? createElementBlock("p", { key: "" }, "Ready")
+    : createElementBlock("span", { key: 1 }, "Waiting");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"ok\" key=\"\">Ready</p>\n  <span v-else>Waiting</span>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn omits_template_ref_for_attrs() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
@@ -2254,7 +2311,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p v-if=\"status === 'loading'\" :key=\"0\">Loading</p>\n  <p v-else-if=\"status === 'error'\" :key=\"1\">{{ error }}</p>\n  <p v-else :key=\"2\">Ready</p>\n</template>\n"
+            "<template>\n  <p v-if=\"status === 'loading'\">Loading</p>\n  <p v-else-if=\"status === 'error'\">{{ error }}</p>\n  <p v-else>Ready</p>\n</template>\n"
         );
     }
 
@@ -2278,7 +2335,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p v-if=\"status === 'loading'\" :key=\"0\">Loading</p>\n  <p v-else-if=\"status === 'error'\" :key=\"1\">{{ error }}</p>\n  <p v-else :key=\"2\">Ready</p>\n</template>\n"
+            "<template>\n  <p v-if=\"status === 'loading'\">Loading</p>\n  <p v-else-if=\"status === 'error'\">{{ error }}</p>\n  <p v-else>Ready</p>\n</template>\n"
         );
     }
 
