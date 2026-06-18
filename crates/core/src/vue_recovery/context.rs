@@ -581,6 +581,10 @@ pub(super) fn collect_setup_context(
                         ctx.setup_props_aliases.insert(binding.id.sym.clone());
                         continue;
                     }
+                    if is_setup_emit_alias(init, ctx) {
+                        ctx.setup_emit_aliases.insert(binding.id.sym.clone());
+                        continue;
+                    }
                     if let Some(ref_props) =
                         setup_provider_ref_props(init, ctx, &provider_ref_object_bindings)
                     {
@@ -645,6 +649,16 @@ fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         .as_ref()
         .is_some_and(|setup_props| setup_props == &ident.sym)
         || ctx.setup_props_aliases.contains(&ident.sym)
+}
+
+fn is_setup_emit_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    ctx.setup_emit_context
+        .as_ref()
+        .is_some_and(|setup_emit| setup_emit == &ident.sym)
+        || ctx.setup_emit_aliases.contains(&ident.sym)
 }
 
 fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
@@ -976,6 +990,16 @@ pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
             setup_props: Some(setup_props),
             ..
         } => Some(setup_props.sym.clone()),
+        _ => None,
+    }
+}
+
+pub(super) fn setup_emit_param(render: RenderSource<'_>) -> Option<Atom> {
+    match render {
+        RenderSource::SetupArrow {
+            setup_emit: Some(setup_emit),
+            ..
+        } => Some(setup_emit.sym.clone()),
         _ => None,
     }
 }

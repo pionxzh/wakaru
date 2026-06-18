@@ -7,7 +7,7 @@ use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
     Expr, FnDecl, Ident, ImportSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -26,7 +26,7 @@ mod syntax;
 
 use context::{
     collect_context, collect_render_context, collect_setup_context, component_name_from_init,
-    infer_render_helpers, render_context_param, setup_props_param,
+    infer_render_helpers, render_context_param, setup_emit_param, setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -53,6 +53,8 @@ struct VueRecoveryContext {
     render_context: Option<Atom>,
     setup_props_context: Option<Atom>,
     setup_props_aliases: HashSet<Atom>,
+    setup_emit_context: Option<Atom>,
+    setup_emit_aliases: HashSet<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -78,6 +80,7 @@ pub(super) enum RenderSource<'a> {
         render: &'a ArrowExpr,
         setup_stmts: &'a [Stmt],
         setup_props: Option<&'a Ident>,
+        setup_emit: Option<&'a Ident>,
         component_options: Option<&'a ObjectLit>,
     },
 }
@@ -206,6 +209,7 @@ fn recover_vue_sfc_from_js_inner(
     }
     ctx.render_context = render_context_param(render);
     ctx.setup_props_context = setup_props_param(render);
+    ctx.setup_emit_context = setup_emit_param(render);
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
@@ -721,6 +725,11 @@ fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'
                             .params
                             .first()
                             .and_then(syntax::param_binding_ident),
+                        setup_emit: method
+                            .function
+                            .params
+                            .get(1)
+                            .and_then(|param| setup_emit_binding_ident(&param.pat)),
                         component_options: Some(object),
                     });
                 }
@@ -745,6 +754,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: block.stmts.as_slice(),
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
                     component_options: None,
                 })
             }
@@ -753,6 +763,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: &[],
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
                     component_options: None,
                 })
             }
@@ -766,6 +777,11 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     .params
                     .first()
                     .and_then(syntax::param_binding_ident),
+                setup_emit: fn_expr
+                    .function
+                    .params
+                    .get(1)
+                    .and_then(|param| setup_emit_binding_ident(&param.pat)),
                 component_options: None,
             })
         }),
@@ -782,11 +798,13 @@ fn with_component_options<'a>(
             render,
             setup_stmts,
             setup_props,
+            setup_emit,
             ..
         } => RenderSource::SetupArrow {
             render,
             setup_stmts,
             setup_props,
+            setup_emit,
             component_options: Some(component_options),
         },
         RenderSource::Function(function) => RenderSource::Function(function),
@@ -815,6 +833,22 @@ fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
         Pat::Ident(binding) => Some(&binding.id),
         _ => None,
     }
+}
+
+fn setup_emit_binding_ident(pat: &Pat) -> Option<&Ident> {
+    let Pat::Object(object) = pat else {
+        return None;
+    };
+
+    object.props.iter().find_map(|prop| match prop {
+        ObjectPatProp::KeyValue(key_value)
+            if prop_name(&key_value.key).as_deref() == Some("emit") =>
+        {
+            pat_binding_ident(key_value.value.as_ref())
+        }
+        ObjectPatProp::Assign(assign) if assign.key.sym.as_ref() == "emit" => Some(&assign.key),
+        _ => None,
+    })
 }
 
 fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> bool {
@@ -872,7 +906,11 @@ fn setup_script(
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
-    if ctx.setup_script_bindings.is_empty() && ref_declarations.is_empty() {
+    let emit_declaration = setup_emit_declaration(ctx, root)?;
+    if ctx.setup_script_bindings.is_empty()
+        && ref_declarations.is_empty()
+        && emit_declaration.is_none()
+    {
         return Ok(None);
     }
 
@@ -908,6 +946,17 @@ fn setup_script(
         }
     }
 
+    if let Some((binding, emits_source)) = &emit_declaration {
+        body.push_str("const ");
+        body.push_str(binding);
+        body.push_str(" = defineEmits(");
+        body.push_str(emits_source);
+        body.push_str(");\n");
+        if !ref_declarations.is_empty() || !ctx.setup_script_bindings.is_empty() {
+            body.push('\n');
+        }
+    }
+
     for (binding, expr, _) in &ref_declarations {
         body.push_str("const ");
         body.push_str(binding);
@@ -933,13 +982,17 @@ fn setup_script(
     }
 
     let mut out = String::new();
-    out.push_str(&vue_script_import_line(ctx, &ref_declarations));
-    out.push('\n');
+    if let Some(vue_import) = vue_script_import_line(ctx, &ref_declarations) {
+        out.push_str(&vue_import);
+        out.push('\n');
+    }
     for import in referenced_script_imports(ctx) {
         out.push_str(&import);
         out.push('\n');
     }
-    out.push('\n');
+    if !out.is_empty() {
+        out.push('\n');
+    }
     out.push_str(&body);
     Ok(Some(out))
 }
@@ -957,10 +1010,37 @@ fn component_props_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
     Ok(Some(print_expr(props_expr, ctx)?))
 }
 
+fn component_emits_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    let Some(emits_expr) = ctx
+        .setup_component_options
+        .as_ref()
+        .or(ctx.component_options.as_ref())
+        .and_then(component_emits_expr)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(print_expr(emits_expr, ctx)?))
+}
+
+fn setup_emit_declaration(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+) -> Result<Option<(String, String)>> {
+    let Some(binding) = setup_emit_script_binding(ctx, root) else {
+        return Ok(None);
+    };
+    let Some(emits_source) = component_emits_source(ctx)? else {
+        return Ok(None);
+    };
+
+    Ok(Some((binding, emits_source)))
+}
+
 fn vue_script_import_line(
     ctx: &VueRecoveryContext,
     ref_declarations: &[(String, String, String)],
-) -> String {
+) -> Option<String> {
     let mut imports = Vec::new();
     if !ctx.setup_script_bindings.is_empty() {
         imports.push("computed".to_string());
@@ -971,7 +1051,11 @@ fn vue_script_import_line(
         }
     }
     imports.sort();
-    format!("import {{ {} }} from \"vue\";", imports.join(", "))
+    if imports.is_empty() {
+        None
+    } else {
+        Some(format!("import {{ {} }} from \"vue\";", imports.join(", ")))
+    }
 }
 
 fn setup_ref_declarations(
@@ -1327,6 +1411,28 @@ fn setup_props_script_binding(ctx: &VueRecoveryContext) -> Option<String> {
     })
 }
 
+fn setup_emit_script_binding(ctx: &VueRecoveryContext, root: &VueNode) -> Option<String> {
+    let expr_refs = template_expr_refs(root);
+    let shadowed_names = template_expr_shadowed_names(root);
+    let mut aliases = ctx
+        .setup_emit_aliases
+        .iter()
+        .filter(|alias| is_valid_identifier_name(alias.as_ref()))
+        .filter(|alias| expr_refs.contains(*alias))
+        .filter(|alias| !shadowed_names.contains(*alias))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    aliases.sort();
+    aliases.into_iter().next().or_else(|| {
+        ctx.setup_emit_context
+            .as_ref()
+            .filter(|binding| is_valid_identifier_name(binding.as_ref()))
+            .filter(|binding| expr_refs.contains(*binding))
+            .filter(|binding| !shadowed_names.contains(*binding))
+            .map(ToString::to_string)
+    })
+}
+
 fn component_prop_names(options: &ObjectLit) -> Vec<String> {
     let Some(props_expr) = component_props_expr(options) else {
         return Vec::new();
@@ -1367,6 +1473,20 @@ fn component_props_expr(options: &ObjectLit) -> Option<&Expr> {
         };
         match prop.as_ref() {
             Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("props") => {
+                Some(key_value.value.as_ref())
+            }
+            _ => None,
+        }
+    })
+}
+
+fn component_emits_expr(options: &ObjectLit) -> Option<&Expr> {
+    options.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("emits") => {
                 Some(key_value.value.as_ref())
             }
             _ => None,
@@ -2395,6 +2515,68 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { ref } from \"vue\";\n\nconst props = defineProps({\n    show: {\n        type: Boolean,\n        default: false\n    }\n});\nconst { show } = props;\n\nconst height = ref(0);\nconst innerRef = ref(null);\n</script>\n\n<template>\n  <section :style=\"{ height: show ? `${height}px` : 0 }\">\n    <div ref=\"innerRef\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn emits_define_emits_for_setup_emit_alias() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  emits: ["click"],
+  setup(props, { emit }) {
+    const send = emit;
+    return () => (
+      openBlock(), createElementBlock("button", { onClick: () => send("click") }, "More", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst send = defineEmits([\n    \"click\"\n]);\n</script>\n\n<template>\n  <button @click='send(\"click\")'>More</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn emits_define_emits_for_direct_setup_emit() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  emits: ["click"],
+  setup(props, { emit }) {
+    return () => (
+      openBlock(), createElementBlock("button", { onClick: () => emit("click") }, "More", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst emit = defineEmits([\n    \"click\"\n]);\n</script>\n\n<template>\n  <button @click='emit(\"click\")'>More</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_emit_define_emits_for_unused_setup_emit() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  emits: ["click"],
+  setup(props, { emit }) {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("button", { title: count.value }, "More", 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst count = ref(0);\n</script>\n\n<template>\n  <button :title=\"count\">More</button>\n</template>\n"
         );
     }
 
