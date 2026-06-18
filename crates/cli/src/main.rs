@@ -10,8 +10,8 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, decompile_vue_sfc, extract_source_entries, format_trace_events, normalize,
-    parse_sourcemap, recover_vue_sfc_source_from_js, trace_rules, unpack, unpack_files,
+    decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
+    normalize, parse_sourcemap, recover_vue_sfc_source_from_js, trace_rules, unpack, unpack_files,
     unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
     RewriteLevel, RuleTraceOptions, UnpackInput,
 };
@@ -490,7 +490,9 @@ fn run_default(cli: Cli) -> Result<()> {
         };
         let start = Instant::now();
         let output = if cli.vue_sfc {
-            decompile_vue_sfc(&input, options)?
+            decompile_vue_sfc_with_import_resolver(&input, options, |specifier| {
+                read_relative_import_source(&output_filename, specifier)
+            })?
         } else {
             decompile(&input, options)?
         };
@@ -723,6 +725,18 @@ fn read_input(input: Option<&PathBuf>) -> Result<(String, String)> {
             bail!("no input specified; pass a file path or pipe code on stdin")
         }
     }
+}
+
+fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<String> {
+    if base_filename == "<stdin>" {
+        return None;
+    }
+    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+        return None;
+    }
+    let base = Path::new(base_filename);
+    let parent = base.parent()?;
+    fs::read_to_string(parent.join(specifier)).ok()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

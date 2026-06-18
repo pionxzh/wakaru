@@ -162,6 +162,60 @@ fn vue_sfc_writes_recovered_single_file_component() {
 }
 
 #[test]
+fn vue_sfc_relative_import_resolver_ignores_stdin_base() {
+    assert_eq!(read_relative_import_source("<stdin>", "./main.js"), None);
+}
+
+#[test]
+fn vue_sfc_resolves_relative_component_export_alias() {
+    let dir = temp_test_dir("vue-sfc-relative-component");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let shared_path = dir.join("main.js");
+    let output_path = dir.join("Recovered.vue");
+    fs::write(
+        &input_path,
+        r#"
+import { q as ob, aa as cb, _ as rd } from "./vendor-vue.js";
+import { B as B_1 } from "./main.js";
+export function render(_ctx, _cache) {
+  return ob(), cb(rd(B_1), { text: "Details" }, null, 8, ["text"]);
+}
+"#,
+    )
+    .expect("write vue render input");
+    fs::write(
+        &shared_path,
+        r#"
+import { defineComponent } from "vue";
+const YP = defineComponent({
+  name: "VTooltip",
+  props: { text: String }
+});
+export { YP as B };
+"#,
+    )
+    .expect("write shared component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");

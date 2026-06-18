@@ -4,8 +4,9 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportSpecifier, Expr, FnDecl,
-    Ident, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
+    Expr, FnDecl, Ident, ImportSpecifier, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -22,8 +23,8 @@ mod nodes;
 mod syntax;
 
 use context::{
-    collect_context, collect_render_context, collect_setup_context, infer_render_helpers,
-    render_context_param, setup_props_param,
+    collect_context, collect_render_context, collect_setup_context, component_name_from_init,
+    infer_render_helpers, render_context_param, setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -59,6 +60,19 @@ pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
     Ok(recover_vue_sfc_from_js(source)?.map(|sfc| sfc.print()))
 }
 
+pub fn recover_vue_sfc_source_from_js_with_import_resolver<F>(
+    source: &str,
+    mut resolve_import: F,
+) -> Result<Option<String>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    Ok(
+        recover_vue_sfc_from_js_with_import_resolver(source, &mut resolve_import)?
+            .map(|sfc| sfc.print()),
+    )
+}
+
 pub fn decompile_vue_sfc(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
     let mut output = decompile(source, options)?;
     if let Some(sfc) = recover_vue_sfc_source_from_js(&output.code)? {
@@ -67,10 +81,48 @@ pub fn decompile_vue_sfc(source: &str, options: DecompileOptions) -> Result<Deco
     Ok(output)
 }
 
+pub fn decompile_vue_sfc_with_import_resolver<F>(
+    source: &str,
+    options: DecompileOptions,
+    mut resolve_import: F,
+) -> Result<DecompileOutput>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let mut output = decompile(source, options)?;
+    if let Some(sfc) =
+        recover_vue_sfc_source_from_js_with_import_resolver(&output.code, &mut resolve_import)?
+    {
+        output.code = sfc;
+    }
+    Ok(output)
+}
+
 pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
+    recover_vue_sfc_from_js_inner(source, None)
+}
+
+pub fn recover_vue_sfc_from_js_with_import_resolver<F>(
+    source: &str,
+    mut resolve_import: F,
+) -> Result<Option<VueSfc>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    recover_vue_sfc_from_js_inner(source, Some(&mut resolve_import))
+}
+
+fn recover_vue_sfc_from_js_inner(
+    source: &str,
+    import_resolver: Option<&mut dyn FnMut(&str) -> Option<String>>,
+) -> Result<Option<VueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
-    let mut ctx = collect_context(&module, cm);
+    let component_bindings = import_resolver
+        .map(|resolver| collect_imported_component_bindings(&module, resolver))
+        .transpose()?
+        .unwrap_or_default();
+    let mut ctx = collect_context(&module, cm, component_bindings);
     let Some(render) = find_render_source(&module) else {
         return Ok(None);
     };
@@ -98,6 +150,176 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
             children: vec![root],
         },
     }))
+}
+
+fn collect_imported_component_bindings(
+    module: &Module,
+    resolve_import: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<HashMap<Atom, String>> {
+    let mut component_bindings = HashMap::new();
+    let mut export_cache: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        if import.specifiers.is_empty() {
+            continue;
+        }
+        let source = syntax::wtf8_to_string(&import.src.value);
+        if source == "vue" {
+            continue;
+        }
+
+        let source_exports = if let Some(exports) = export_cache.get(&source) {
+            exports
+        } else {
+            let exports = resolve_import(&source)
+                .and_then(|source| component_exports_from_source(&source).ok())
+                .unwrap_or_default();
+            export_cache.insert(source.clone(), exports);
+            export_cache
+                .get(&source)
+                .expect("inserted source export cache")
+        };
+        if source_exports.is_empty() {
+            continue;
+        }
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(module_export_name)
+                        .unwrap_or_else(|| named.local.sym.to_string());
+                    if let Some(component) = source_exports.get(&imported) {
+                        component_bindings.insert(named.local.sym.clone(), component.clone());
+                    }
+                }
+                ImportSpecifier::Default(default) => {
+                    if let Some(component) = source_exports.get("default") {
+                        component_bindings.insert(default.local.sym.clone(), component.clone());
+                    }
+                }
+                ImportSpecifier::Namespace(_) => {}
+            }
+        }
+    }
+
+    Ok(component_bindings)
+}
+
+fn component_exports_from_source(source: &str) -> Result<HashMap<String, String>> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let module = parse_module(source, cm)?;
+    let component_bindings = collect_local_component_bindings(&module);
+    Ok(collect_component_exports(&module, &component_bindings))
+}
+
+fn collect_local_component_bindings(module: &Module) -> HashMap<Atom, String> {
+    let mut component_bindings = HashMap::new();
+
+    for item in &module.body {
+        let (ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+        | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            decl: Decl::Var(var),
+            ..
+        }))) = item
+        else {
+            continue;
+        };
+
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if let Some(component) = component_name_from_init(init, &component_bindings) {
+                component_bindings.insert(binding.id.sym.clone(), component);
+            }
+        }
+    }
+
+    component_bindings
+}
+
+fn collect_component_exports(
+    module: &Module,
+    component_bindings: &HashMap<Atom, String>,
+) -> HashMap<String, String> {
+    let mut exports = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => {
+                if let Decl::Var(var) = &export.decl {
+                    for decl in &var.decls {
+                        let Pat::Ident(binding) = &decl.name else {
+                            continue;
+                        };
+                        if let Some(component) = component_bindings.get(&binding.id.sym) {
+                            exports.insert(binding.id.sym.to_string(), component.clone());
+                        }
+                    }
+                }
+            }
+            ModuleDecl::ExportDefaultExpr(export) => match export.expr.as_ref() {
+                Expr::Ident(ident) => {
+                    if let Some(component) = component_bindings.get(&ident.sym) {
+                        exports.insert("default".to_string(), component.clone());
+                    }
+                }
+                expr => {
+                    if let Some(component) = component_name_from_init(expr, component_bindings) {
+                        exports.insert("default".to_string(), component);
+                    }
+                }
+            },
+            ModuleDecl::ExportDefaultDecl(export) => {
+                let local = match &export.decl {
+                    DefaultDecl::Fn(function) => function.ident.as_ref().map(|ident| &ident.sym),
+                    DefaultDecl::Class(class) => class.ident.as_ref().map(|ident| &ident.sym),
+                    DefaultDecl::TsInterfaceDecl(_) => None,
+                };
+                if let Some(component) = local.and_then(|local| component_bindings.get(local)) {
+                    exports.insert("default".to_string(), component.clone());
+                }
+            }
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    match specifier {
+                        ExportSpecifier::Named(named) => {
+                            let local = Atom::from(module_export_name(&named.orig));
+                            let exported = named
+                                .exported
+                                .as_ref()
+                                .map(module_export_name)
+                                .unwrap_or_else(|| local.to_string());
+                            if let Some(component) = component_bindings.get(&local) {
+                                exports.insert(exported, component.clone());
+                            }
+                        }
+                        ExportSpecifier::Default(default) => {
+                            if let Some(component) = component_bindings.get(&default.exported.sym) {
+                                exports.insert("default".to_string(), component.clone());
+                            }
+                        }
+                        ExportSpecifier::Namespace(_) => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    exports
 }
 
 fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
@@ -794,6 +1016,54 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <LocalPanel title=\"Ready\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cross_module_component_export_alias() {
+        let input = r#"
+import { q as ob, aa as cb, _ as rd } from "./vendor-vue.js";
+import { B as B_1 } from "./main.js";
+export function render(_ctx, _cache) {
+  return ob(), cb(rd(B_1), { text: "Details" }, null, 8, ["text"]);
+}
+"#;
+        let shared = r#"
+import { defineComponent } from "vue";
+const YP = defineComponent({
+  name: "VTooltip",
+  props: { text: String }
+});
+export { YP as B };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./main.js").then(|| shared.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn ignores_unparseable_import_source_when_resolving_component_aliases() {
+        let input = r#"
+import data from "./config.json";
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("div", null, "Ready");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |_| {
+                Some("{ not javascript".to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <div>Ready</div>\n</template>\n"
         );
     }
 
