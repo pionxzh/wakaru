@@ -1135,7 +1135,7 @@ import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } 
 export function render(_ctx, _cache) {
   return openBlock(), createElementBlock("ol", null, [
     (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.items, (e, i) => (
-      openBlock(), createElementBlock("li", { key: i, title: i }, toDisplayString(e.name), 9, ["title"])
+      openBlock(), createElementBlock("li", { key: i, title: i, class: i % 2 === 0 ? "even" : "odd" }, toDisplayString(e.name), 9, ["title", "class"])
     )), 128))
   ]);
 }
@@ -1143,7 +1143,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <ol>\n    <li v-for=\"(item, index) in items\" :key=\"index\" :title=\"index\">{{ item.name }}</li>\n  </ol>\n</template>\n"
+            "<template>\n  <ol>\n    <li v-for=\"(item, index) in items\" :key=\"index\" :title=\"index\" :class=\"index % 2 === 0 ? &quot;even&quot; : &quot;odd&quot;\">{{ item.name }}</li>\n  </ol>\n</template>\n"
         );
     }
 
