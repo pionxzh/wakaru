@@ -104,6 +104,10 @@ fn collect_var_decl_context(var: &VarDecl, ctx: &mut VueRecoveryContext) {
             ctx.object_bindings
                 .insert(binding.id.sym.clone(), object.clone());
         }
+        if let Some(ref_props) = provider_ref_props_from_init(init, ctx) {
+            ctx.provider_ref_bindings
+                .insert(binding.id.sym.clone(), ref_props);
+        }
         if let Some(component) = component_name_from_init(init, &ctx.component_bindings) {
             ctx.component_bindings
                 .insert(binding.id.sym.clone(), component);
@@ -533,6 +537,8 @@ pub(super) fn collect_setup_context(
         return Ok(());
     };
 
+    let mut provider_ref_object_bindings = HashMap::new();
+
     for stmt in setup_stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
@@ -546,6 +552,11 @@ pub(super) fn collect_setup_context(
                     if is_setup_props_alias(init, ctx) {
                         ctx.setup_props_aliases.insert(binding.id.sym.clone());
                         continue;
+                    }
+                    if let Some(ref_props) =
+                        setup_provider_ref_props(init, ctx, &provider_ref_object_bindings)
+                    {
+                        provider_ref_object_bindings.insert(binding.id.sym.clone(), ref_props);
                     }
                     if is_ref_object_expr(init, ctx) {
                         ctx.setup_ref_object_bindings.insert(binding.id.sym.clone());
@@ -563,6 +574,17 @@ pub(super) fn collect_setup_context(
                     if is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx) =>
                 {
                     collect_object_pat_bindings(object, &mut ctx.setup_ref_bindings);
+                }
+                Pat::Object(object) => {
+                    if let Some(ref_props) =
+                        setup_provider_ref_props(init, ctx, &provider_ref_object_bindings)
+                    {
+                        collect_provider_object_pat_bindings(
+                            object,
+                            &ref_props,
+                            &mut ctx.setup_ref_bindings,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -620,6 +642,181 @@ fn is_ref_object_helper(name: &str) -> bool {
     matches!(name, "toRefs" | "storeToRefs")
 }
 
+fn provider_ref_props_from_init(expr: &Expr, ctx: &VueRecoveryContext) -> Option<HashSet<Atom>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+
+    call.args
+        .iter()
+        .filter_map(|arg| provider_ref_props_from_callback(arg.expr.as_ref(), ctx))
+        .find(|ref_props| !ref_props.is_empty())
+}
+
+fn provider_ref_props_from_callback(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Option<HashSet<Atom>> {
+    match unwrap_paren_expr(expr) {
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => {
+                provider_ref_props_from_stmts(block.stmts.as_slice(), ctx)
+            }
+            BlockStmtOrExpr::Expr(expr) => provider_ref_props_from_return_expr(expr.as_ref(), ctx),
+        },
+        Expr::Fn(function) => function
+            .function
+            .body
+            .as_ref()
+            .and_then(|body| provider_ref_props_from_stmts(body.stmts.as_slice(), ctx)),
+        _ => None,
+    }
+}
+
+fn provider_ref_props_from_stmts(
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> Option<HashSet<Atom>> {
+    let refs = collect_provider_ref_bindings(stmts, ctx);
+    let object = stmts.iter().rev().find_map(return_expr_from_stmt)?;
+    provider_ref_props_from_return_expr_with_refs(object, &refs, ctx)
+}
+
+fn provider_ref_props_from_return_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Option<HashSet<Atom>> {
+    let refs = HashSet::new();
+    provider_ref_props_from_return_expr_with_refs(expr, &refs, ctx)
+}
+
+fn provider_ref_props_from_return_expr_with_refs(
+    expr: &Expr,
+    refs: &HashSet<Atom>,
+    ctx: &VueRecoveryContext,
+) -> Option<HashSet<Atom>> {
+    let Expr::Object(object) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let mut ref_props = HashSet::new();
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        match prop.as_ref() {
+            Prop::Shorthand(ident) if refs.contains(&ident.sym) => {
+                ref_props.insert(ident.sym.clone());
+            }
+            Prop::KeyValue(key_value) => {
+                let value = unwrap_paren_expr(key_value.value.as_ref());
+                let is_ref_value = match value {
+                    Expr::Ident(value) => refs.contains(&value.sym),
+                    _ => is_ref_like_value_expr(value, ctx),
+                };
+                if !is_ref_value {
+                    continue;
+                }
+                if let Some(name) = prop_name(&key_value.key) {
+                    ref_props.insert(Atom::from(name));
+                }
+            }
+            _ => {}
+        }
+    }
+    (!ref_props.is_empty()).then_some(ref_props)
+}
+
+fn collect_provider_ref_bindings(stmts: &[Stmt], ctx: &VueRecoveryContext) -> HashSet<Atom> {
+    let mut ref_bindings = HashSet::new();
+    let mut ref_object_bindings = HashSet::new();
+
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            match &decl.name {
+                Pat::Ident(binding) => {
+                    if is_ref_object_expr(init, ctx) {
+                        ref_object_bindings.insert(binding.id.sym.clone());
+                    }
+                    if is_ref_like_value_expr(init, ctx)
+                        || ident_expr(unwrap_paren_expr(init))
+                            .is_some_and(|ident| ref_bindings.contains(&ident.sym))
+                    {
+                        ref_bindings.insert(binding.id.sym.clone());
+                    }
+                }
+                Pat::Object(object)
+                    if is_ref_object_expr(init, ctx)
+                        || is_provider_ref_object_alias(init, &ref_object_bindings) =>
+                {
+                    collect_object_pat_bindings(object, &mut ref_bindings);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    ref_bindings
+}
+
+fn is_provider_ref_object_alias(expr: &Expr, ref_object_bindings: &HashSet<Atom>) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    ref_object_bindings.contains(&ident.sym)
+}
+
+fn setup_provider_ref_props(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    bindings: &HashMap<Atom, HashSet<Atom>>,
+) -> Option<HashSet<Atom>> {
+    provider_ref_props_from_expr(expr, ctx)
+        .cloned()
+        .or_else(|| provider_ref_props_from_alias(expr, bindings).cloned())
+}
+
+fn provider_ref_props_from_expr<'a>(
+    expr: &Expr,
+    ctx: &'a VueRecoveryContext,
+) -> Option<&'a HashSet<Atom>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = unwrap_paren_expr(callee.as_ref()) else {
+        return None;
+    };
+    if !is_provider_ref_method(&member.prop) {
+        return None;
+    }
+    let Expr::Ident(provider) = unwrap_paren_expr(member.obj.as_ref()) else {
+        return None;
+    };
+    ctx.provider_ref_bindings.get(&provider.sym)
+}
+
+fn is_provider_ref_method(prop: &MemberProp) -> bool {
+    matches!(prop, MemberProp::Ident(prop) if matches!(prop.sym.as_ref(), "provide" | "inject"))
+}
+
+fn provider_ref_props_from_alias<'a>(
+    expr: &Expr,
+    bindings: &'a HashMap<Atom, HashSet<Atom>>,
+) -> Option<&'a HashSet<Atom>> {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    bindings.get(&ident.sym)
+}
+
 fn collect_object_pat_bindings(object: &ObjectPat, bindings: &mut HashSet<Atom>) {
     for prop in &object.props {
         match prop {
@@ -630,6 +827,31 @@ fn collect_object_pat_bindings(object: &ObjectPat, bindings: &mut HashSet<Atom>)
                 bindings.insert(assign.key.sym.clone());
             }
             ObjectPatProp::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+        }
+    }
+}
+
+fn collect_provider_object_pat_bindings(
+    object: &ObjectPat,
+    ref_props: &HashSet<Atom>,
+    bindings: &mut HashSet<Atom>,
+) {
+    for prop in &object.props {
+        match prop {
+            ObjectPatProp::KeyValue(key_value) => {
+                let Some(name) = prop_name(&key_value.key) else {
+                    continue;
+                };
+                if ref_props.iter().any(|prop| prop.as_ref() == name.as_str()) {
+                    collect_pat_bindings(key_value.value.as_ref(), bindings);
+                }
+            }
+            ObjectPatProp::Assign(assign) => {
+                if ref_props.contains(&assign.key.sym) {
+                    bindings.insert(assign.key.sym.clone());
+                }
+            }
+            ObjectPatProp::Rest(_) => {}
         }
     }
 }
