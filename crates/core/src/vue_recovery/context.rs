@@ -4,9 +4,10 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, Ident, IfStmt, ImportSpecifier,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat,
-    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind,
+    AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, Ident,
+    IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    Stmt, UpdateExpr, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -953,7 +954,23 @@ fn computed_block_value_expr(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result
     let Some((return_index, expr)) = computed_final_return_expr(stmts) else {
         return Ok(None);
     };
-    let expr = inline_computed_block_locals(expr, &stmts[..return_index]);
+    let prior_stmts = &stmts[..return_index];
+    let local_exprs = computed_block_local_exprs(prior_stmts);
+    let mutated_locals = computed_mutated_local_bindings(prior_stmts, &local_exprs);
+    if computed_local_ref_counts(expr, &mutated_locals)
+        .values()
+        .any(|count| *count > 0)
+    {
+        return Ok(None);
+    }
+    let expr = inline_computed_block_locals(expr, prior_stmts);
+    let local_exprs = computed_block_local_exprs(prior_stmts);
+    if computed_local_ref_counts(&expr, &local_exprs)
+        .values()
+        .any(|count| *count > 0)
+    {
+        return Ok(None);
+    }
     let expr = inline_computed_setup_prop_aliases(&expr, &stmts[..return_index], ctx);
     Ok(Some(clean_expr(&print_expr(&expr, ctx)?, ctx)))
 }
@@ -1148,10 +1165,154 @@ fn computed_block_local_exprs(stmts: &[Stmt]) -> HashMap<Atom, Expr> {
     locals
 }
 
+fn computed_mutated_local_bindings(
+    stmts: &[Stmt],
+    locals: &HashMap<Atom, Expr>,
+) -> HashMap<Atom, Expr> {
+    if locals.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut detector = ComputedLocalMutationDetector::new(locals.keys().cloned().collect());
+    for stmt in stmts {
+        stmt.visit_with(&mut detector);
+    }
+    let mutated = detector.finish();
+    locals
+        .iter()
+        .filter_map(|(name, expr)| {
+            mutated
+                .contains(name)
+                .then_some((name.clone(), expr.clone()))
+        })
+        .collect()
+}
+
 fn computed_local_ref_counts(expr: &Expr, locals: &HashMap<Atom, Expr>) -> HashMap<Atom, usize> {
     let mut counter = ComputedLocalRefCounter::new(locals.keys().cloned().collect());
     expr.visit_with(&mut counter);
     counter.finish()
+}
+
+struct ComputedLocalMutationDetector {
+    bindings: Vec<Atom>,
+    shadow_depths: Vec<usize>,
+    mutated: HashSet<Atom>,
+}
+
+impl ComputedLocalMutationDetector {
+    fn new(mut bindings: Vec<Atom>) -> Self {
+        bindings.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+        bindings.dedup();
+        let shadow_depths = vec![0; bindings.len()];
+        Self {
+            bindings,
+            shadow_depths,
+            mutated: HashSet::new(),
+        }
+    }
+
+    fn finish(self) -> HashSet<Atom> {
+        self.mutated
+    }
+
+    fn active_index(&self, name: &str) -> Option<usize> {
+        self.bindings
+            .iter()
+            .zip(self.shadow_depths.iter())
+            .position(|(binding, shadow_depth)| binding.as_ref() == name && *shadow_depth == 0)
+    }
+
+    fn mark_name(&mut self, name: &str) {
+        if let Some(index) = self.active_index(name) {
+            self.mutated.insert(self.bindings[index].clone());
+        }
+    }
+
+    fn mark_member_object(&mut self, member: &MemberExpr) {
+        if let Expr::Ident(object) = member.obj.as_ref() {
+            self.mark_name(object.sym.as_ref());
+        }
+    }
+
+    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
+        let mut param_bindings = HashSet::new();
+        for param in params {
+            collect_pat_bindings(param, &mut param_bindings);
+        }
+        self.bindings
+            .iter()
+            .enumerate()
+            .filter_map(|(index, binding)| param_bindings.contains(binding).then_some(index))
+            .collect()
+    }
+
+    fn enter_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] += 1;
+        }
+    }
+
+    fn exit_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] -= 1;
+        }
+    }
+}
+
+impl Visit for ComputedLocalMutationDetector {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                self.mark_name(binding.id.sym.as_ref());
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                self.mark_member_object(member);
+            }
+            _ => {}
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        match update.arg.as_ref() {
+            Expr::Ident(ident) => self.mark_name(ident.sym.as_ref()),
+            Expr::Member(member) => self.mark_member_object(member),
+            _ => {}
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = callee.as_ref() {
+                self.mark_member_object(member);
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        let params = arrow.params.iter().collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        arrow.body.visit_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| &param.pat)
+            .collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        if let Some(body) = function.body.as_ref() {
+            body.visit_with(self);
+        }
+        self.exit_shadowed(&shadowed);
+    }
 }
 
 struct ComputedLocalRefCounter {

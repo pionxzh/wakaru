@@ -1693,6 +1693,37 @@ export default _sfc_main;
     }
 
     #[test]
+    fn preserves_mutated_computed_block_local_binding() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+const _sfc_main = defineComponent({
+  props: {
+    padding: String,
+  },
+  setup(__props) {
+    const props = __props;
+    const style = computed(() => {
+      const result = {};
+      if (props.padding) {
+        result.padding = props.padding;
+      }
+      return result;
+    });
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("div", { style: style.value }, null, 4)
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_computed_block_local_shadowing() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock } from "vue";
