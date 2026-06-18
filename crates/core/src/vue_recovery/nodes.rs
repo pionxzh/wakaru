@@ -1,7 +1,7 @@
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, Lit, ObjectLit,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, ObjectLit,
     ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl,
 };
 
@@ -1072,29 +1072,16 @@ fn recover_component_tag(
     ctx: &VueRecoveryContext,
 ) -> Result<Option<RecoveredComponentTag>> {
     match expr {
-        Expr::Ident(ident) => Ok(ctx
-            .component_bindings
-            .get(&ident.sym)
-            .cloned()
-            .or_else(|| {
-                ctx.vue_helpers
-                    .get(&ident.sym)
-                    .and_then(|helper| match helper {
-                        VueHelper::Other(name) if is_builtin_component(name) => Some(name.clone()),
-                        _ => None,
-                    })
-            })
-            .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string()))
-            .map(|tag| RecoveredComponentTag {
-                tag,
-                attrs: Vec::new(),
-            })),
+        Expr::Ident(_) => Ok(recover_static_component_tag(expr, ctx)),
         Expr::Call(call)
             if helper_name(&call.callee, ctx) == Some(VueHelper::ResolveDynamicComponent) =>
         {
             let Some(target) = call.args.first() else {
                 return Ok(None);
             };
+            if let Some(component) = recover_static_component_tag(target.expr.as_ref(), ctx) {
+                return Ok(Some(component));
+            }
             Ok(Some(RecoveredComponentTag {
                 tag: "component".to_string(),
                 attrs: vec![VueAttr::Bind {
@@ -1103,8 +1090,53 @@ fn recover_component_tag(
                 }],
             }))
         }
+        Expr::Call(call) if is_vue_helper_candidate_call(call, ctx) => {
+            let Some(target) = call.args.first() else {
+                return Ok(None);
+            };
+            Ok(recover_static_component_tag(target.expr.as_ref(), ctx))
+        }
         _ => Ok(None),
     }
+}
+
+fn recover_static_component_tag(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Option<RecoveredComponentTag> {
+    let Expr::Ident(ident) = expr else {
+        return None;
+    };
+
+    ctx.component_bindings
+        .get(&ident.sym)
+        .cloned()
+        .or_else(|| {
+            ctx.vue_helpers
+                .get(&ident.sym)
+                .and_then(|helper| match helper {
+                    VueHelper::Other(name) if is_builtin_component(name) => Some(name.clone()),
+                    _ => None,
+                })
+        })
+        .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string()))
+        .map(|tag| RecoveredComponentTag {
+            tag,
+            attrs: Vec::new(),
+        })
+}
+
+fn is_vue_helper_candidate_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    ctx: &VueRecoveryContext,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(ident) = callee.as_ref() else {
+        return false;
+    };
+    ctx.vue_helper_candidates.contains(&ident.sym)
 }
 
 fn is_pascal_case(value: &str) -> bool {

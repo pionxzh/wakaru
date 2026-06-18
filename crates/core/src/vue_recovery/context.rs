@@ -17,9 +17,14 @@ use super::syntax::{
 };
 use super::{RenderSource, VueRecoveryContext};
 
-pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
+pub(super) fn collect_context(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    component_bindings: HashMap<Atom, String>,
+) -> VueRecoveryContext {
     let mut ctx = VueRecoveryContext {
         cm,
+        component_bindings,
         ..Default::default()
     };
     for item in &module.body {
@@ -80,7 +85,8 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
                         ctx.object_bindings
                             .insert(binding.id.sym.clone(), object.clone());
                     }
-                    if let Some(component) = component_name_from_init(init, &ctx) {
+                    if let Some(component) = component_name_from_init(init, &ctx.component_bindings)
+                    {
                         ctx.component_bindings
                             .insert(binding.id.sym.clone(), component);
                     }
@@ -97,12 +103,15 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
     ctx
 }
 
-fn component_name_from_init(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+pub(super) fn component_name_from_init(
+    expr: &Expr,
+    component_bindings: &HashMap<Atom, String>,
+) -> Option<String> {
     match unwrap_paren_expr(expr) {
         Expr::Object(object) => component_name_from_options(object),
         Expr::Call(call) => call.args.first().and_then(|arg| match arg.expr.as_ref() {
             Expr::Object(object) => component_name_from_options(object),
-            Expr::Ident(ident) => ctx.component_bindings.get(&ident.sym).cloned(),
+            Expr::Ident(ident) => component_bindings.get(&ident.sym).cloned(),
             _ => None,
         }),
         _ => None,
@@ -117,9 +126,12 @@ fn component_name_from_options(object: &ObjectLit) -> Option<String> {
         let Prop::KeyValue(key_value) = prop.as_ref() else {
             return None;
         };
-        (prop_name(&key_value.key).as_deref() == Some("__name"))
-            .then(|| string_lit(key_value.value.as_ref()))
-            .flatten()
+        matches!(
+            prop_name(&key_value.key).as_deref(),
+            Some("__name" | "name")
+        )
+        .then(|| string_lit(key_value.value.as_ref()))
+        .flatten()
     })
 }
 
