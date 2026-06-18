@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueSfc {
     pub script: Option<String>,
+    pub script_setup: Option<String>,
     pub template: VueTemplate,
 }
 
@@ -310,6 +311,7 @@ mod tests {
     fn prints_basic_sfc() {
         let sfc = VueSfc {
             script: Some("export default { props: { msg: String } }".into()),
+            script_setup: Some("const count = computed(() => 1)".into()),
             template: VueTemplate {
                 children: vec![VueNode::Element(
                     VueElement::new("div")
@@ -320,7 +322,7 @@ mod tests {
 
         assert_eq!(
             sfc.print(),
-            "<script>\nexport default { props: { msg: String } }\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+            "<script>\nexport default { props: { msg: String } }\n</script>\n\n<script setup>\nconst count = computed(() => 1)\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
         );
     }
 
