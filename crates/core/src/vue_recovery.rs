@@ -1400,6 +1400,45 @@ System.register(["./main-legacy.js", "./vendor-vue.js"], function (_export) {
     }
 
     #[test]
+    fn decompiles_system_register_style_sequence_direct_export() {
+        let input = r#"
+System.register(["./Badge.vue", "./vendor-vue.js"], function (_export) {
+  var Badge, defineComponent, openBlock, createBlock;
+  return {
+    setters: [
+      function (module) {
+        Badge = module.B;
+      },
+      function (module) {
+        defineComponent = module.d;
+        openBlock = module.q;
+        createBlock = module.aa;
+      }
+    ],
+    execute: function () {
+      var style = document.createElement("style");
+      style.textContent = ".badge{}", document.head.appendChild(style), _export("_", defineComponent({
+        __name: "TeamBadge",
+        setup: function (props) {
+          return function (_ctx, _cache) {
+            return openBlock(), createBlock(Badge, { text: props.team.name }, null, 8, ["text"]);
+          };
+        }
+      }));
+    }
+  };
+});
+"#;
+
+        assert_eq!(
+            decompile_vue_sfc(input, DecompileOptions::default())
+                .unwrap()
+                .code,
+            "<template>\n  <Badge :text=\"team.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn ignores_unparseable_import_source_when_resolving_component_aliases() {
         let input = r#"
 import data from "./config.json";
