@@ -6,7 +6,7 @@ use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread,
-    ReturnStmt, Stmt, VarDeclKind,
+    ReturnStmt, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -71,36 +71,44 @@ pub(super) fn collect_context(
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
-                    continue;
-                }
-                for decl in &var.decls {
-                    let Pat::Ident(binding) = &decl.name else {
-                        continue;
-                    };
-                    let Some(init) = decl.init.as_deref() else {
-                        continue;
-                    };
-                    if let Expr::Object(object) = init {
-                        ctx.object_bindings
-                            .insert(binding.id.sym.clone(), object.clone());
-                    }
-                    if let Some(component) = component_name_from_init(init, &ctx.component_bindings)
-                    {
-                        ctx.component_bindings
-                            .insert(binding.id.sym.clone(), component);
-                    }
-                    if binding.id.sym.as_ref() == "__sfc__" {
-                        if let Expr::Object(object) = init {
-                            ctx.component_options = Some(object.clone());
-                        }
-                    }
+                collect_var_decl_context(var, &mut ctx);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Var(var) = &export.decl {
+                    collect_var_decl_context(var, &mut ctx);
                 }
             }
             _ => {}
         }
     }
     ctx
+}
+
+fn collect_var_decl_context(var: &VarDecl, ctx: &mut VueRecoveryContext) {
+    if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
+        return;
+    }
+    for decl in &var.decls {
+        let Pat::Ident(binding) = &decl.name else {
+            continue;
+        };
+        let Some(init) = decl.init.as_deref() else {
+            continue;
+        };
+        if let Expr::Object(object) = init {
+            ctx.object_bindings
+                .insert(binding.id.sym.clone(), object.clone());
+        }
+        if let Some(component) = component_name_from_init(init, &ctx.component_bindings) {
+            ctx.component_bindings
+                .insert(binding.id.sym.clone(), component);
+        }
+        if binding.id.sym.as_ref() == "__sfc__" {
+            if let Expr::Object(object) = init {
+                ctx.component_options = Some(object.clone());
+            }
+        }
+    }
 }
 
 pub(super) fn component_name_from_init(
