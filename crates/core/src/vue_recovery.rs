@@ -2049,6 +2049,50 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_template_ref_key_attrs() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  openBlock();
+  return createElementBlock("div", {
+    ref_key: "innerRef",
+    ref: innerRef
+  }, null, 512);
+}
+__sfc__.render = render;
+export default __sfc__;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div ref=\"innerRef\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn omits_template_ref_for_attrs() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  openBlock();
+  return createElementBlock("div", {
+    ref_for: true,
+    ref: setItemRef
+  }, null, 512);
+}
+__sfc__.render = render;
+export default __sfc__;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :ref=\"setItemRef\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_html_and_text_directive_props() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";

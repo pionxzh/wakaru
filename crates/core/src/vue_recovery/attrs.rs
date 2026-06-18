@@ -169,7 +169,41 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
             },
         }
     }
-    Ok(attrs)
+    Ok(collapse_template_ref_attrs(attrs))
+}
+
+fn collapse_template_ref_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
+    let ref_key = attrs.iter().find_map(|attr| match attr {
+        VueAttr::Static {
+            name,
+            value: Some(value),
+        } if name == "ref_key" => Some(value.clone()),
+        _ => None,
+    });
+    let has_ref = attrs
+        .iter()
+        .any(|attr| matches!(attr, VueAttr::Bind { name, .. } | VueAttr::Static { name, .. } if name == "ref"));
+
+    let mut collapsed = Vec::new();
+    let mut emitted_ref = false;
+    for attr in attrs {
+        match attr {
+            VueAttr::Static { name, .. } if name == "ref_for" => {}
+            VueAttr::Static { name, .. } if name == "ref_key" && ref_key.is_some() && has_ref => {
+                if !emitted_ref {
+                    collapsed.push(VueAttr::Static {
+                        name: "ref".to_string(),
+                        value: ref_key.clone(),
+                    });
+                    emitted_ref = true;
+                }
+            }
+            VueAttr::Bind { name, .. } | VueAttr::Static { name, .. }
+                if name == "ref" && ref_key.is_some() => {}
+            _ => collapsed.push(attr),
+        }
+    }
+    collapsed
 }
 
 fn attrs_from_key_value(
