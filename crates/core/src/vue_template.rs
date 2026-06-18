@@ -438,6 +438,44 @@ mod tests {
     }
 
     #[test]
+    fn combines_nested_control_flow_conditions() {
+        let template = VueTemplate {
+            children: vec![VueNode::If(vec![
+                VueIfBranch {
+                    condition: Some("isLoaded".into()),
+                    node: Box::new(VueNode::If(vec![
+                        VueIfBranch {
+                            condition: Some("bets.length === 0".into()),
+                            node: Box::new(VueNode::Element(
+                                VueElement::new("p")
+                                    .with_children(vec![VueNode::Text("Empty".into())]),
+                            )),
+                        },
+                        VueIfBranch {
+                            condition: None,
+                            node: Box::new(VueNode::Element(
+                                VueElement::new("p")
+                                    .with_children(vec![VueNode::Text("Loaded".into())]),
+                            )),
+                        },
+                    ])),
+                },
+                VueIfBranch {
+                    condition: None,
+                    node: Box::new(VueNode::Element(
+                        VueElement::new("p").with_children(vec![VueNode::Text("Loading".into())]),
+                    )),
+                },
+            ])],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <p v-if=\"isLoaded &amp;&amp; bets.length === 0\">Empty</p>\n  <p v-else-if=\"isLoaded\">Loaded</p>\n  <p v-else>Loading</p>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn wraps_fragment_and_text_control_flow_in_template() {
         let template = VueTemplate {
             children: vec![
