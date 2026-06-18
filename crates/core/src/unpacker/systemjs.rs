@@ -7,8 +7,9 @@ use swc_core::ecma::ast::{
     ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
     ExprStmt, FnExpr, Function, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
     ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr,
-    MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
+    MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -327,7 +328,9 @@ fn extract_setters(expr: &Expr) -> Option<Vec<Option<Function>>> {
             setters.push(None);
             continue;
         };
-        if matches!(expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined") {
+        if matches!(expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined")
+            || matches!(expr.as_ref(), Expr::Lit(Lit::Null(_)))
+        {
             setters.push(None);
             continue;
         }
@@ -725,7 +728,7 @@ impl VisitMut for SystemExecuteTransformer {
                 if let Some(local) = exported_value_local(value.as_ref()) {
                     self.add_export(local, exported);
                 }
-                *expr = *value;
+                *expr = export_replacement_expr(value);
                 expr.visit_mut_children_with(self);
                 return;
             }
@@ -814,6 +817,17 @@ fn exported_value_local(expr: &Expr) -> Option<Atom> {
         Expr::Ident(id) => Some(id.sym.clone()),
         Expr::Assign(assign) => assign.left.as_simple()?.as_ident().map(|id| id.sym.clone()),
         _ => None,
+    }
+}
+
+fn export_replacement_expr(value: Box<Expr>) -> Expr {
+    if matches!(value.as_ref(), Expr::Assign(_)) {
+        Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: value,
+        })
+    } else {
+        *value
     }
 }
 
@@ -1068,6 +1082,45 @@ System.register(["./dep.js"], (_export) => {
     }
 
     #[test]
+    fn null_setters_reconstruct_imports() {
+        let result = unpack(
+            r#"
+!function () {
+  function decorate(value) {
+    return value;
+  }
+  System.register(["./side-effect.js", "./dep.js"], function (_export) {
+    var component;
+    return {
+      setters: [
+        null,
+        function (module) {
+          component = module.component;
+        }
+      ],
+      execute: function () {
+        const button = _export("V", decorate(component));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import "./side-effect.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import { component } from "./dep.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains("const button = decorate(component);"));
+        assert!(result.modules[0].code.contains("export { button as V };"));
+    }
+
+    #[test]
     fn sequence_export_calls_reconstruct_each_export() {
         let result = unpack(
             r#"
@@ -1087,6 +1140,28 @@ System.register([], function (_export) {
         assert_eq!(result.modules.len(), 1);
         assert!(result.modules[0].code.contains("export const C = make(1);"));
         assert!(result.modules[0].code.contains("export const _ = make(2);"));
+    }
+
+    #[test]
+    fn assignment_export_in_logical_member_object_is_parenthesized() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  var Kind;
+  return {
+    execute: function () {
+      (Kind || _export("Kind", Kind = {})).Ready = "Ready";
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains("(Kind || (Kind = {})).Ready = \"Ready\";"));
+        assert!(result.modules[0].code.contains("export { Kind };"));
     }
 
     #[test]
