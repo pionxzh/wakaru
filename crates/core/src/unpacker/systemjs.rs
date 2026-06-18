@@ -589,14 +589,25 @@ impl SystemExecuteTransformer {
             }
             Expr::Seq(seq) => {
                 let mut items = Vec::new();
+                let mut saw_export = false;
                 for expr in &seq.exprs {
-                    let Expr::Call(call) = expr.as_ref() else {
-                        return None;
+                    let export_call = match expr.as_ref() {
+                        Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                        _ => None,
                     };
-                    let export_call = parse_export_call(call, &self.export_sym)?;
-                    items.extend(self.export_call_items(export_call)?);
+                    if let Some(export_call) = export_call {
+                        items.extend(self.export_call_items(export_call)?);
+                        saw_export = true;
+                    } else {
+                        let mut stmt = Stmt::Expr(ExprStmt {
+                            span: DUMMY_SP,
+                            expr: expr.clone(),
+                        });
+                        stmt.visit_mut_with(self);
+                        items.push(ModuleItem::Stmt(stmt));
+                    }
                 }
-                Some(items)
+                saw_export.then_some(items)
             }
             _ => None,
         }
@@ -1140,6 +1151,34 @@ System.register([], function (_export) {
         assert_eq!(result.modules.len(), 1);
         assert!(result.modules[0].code.contains("export const C = make(1);"));
         assert!(result.modules[0].code.contains("export const _ = make(2);"));
+    }
+
+    #[test]
+    fn mixed_sequence_side_effects_preserve_direct_export_value() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  return {
+    execute: function () {
+      style.textContent = ".badge{}", document.head.appendChild(style), _export("_", defineComponent({
+        __name: "TeamBadge"
+      }));
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains("style.textContent = \".badge{}\";"));
+        assert!(result.modules[0]
+            .code
+            .contains("document.head.appendChild(style);"));
+        assert!(result.modules[0]
+            .code
+            .contains("export const _ = defineComponent({"));
     }
 
     #[test]
