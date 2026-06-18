@@ -907,15 +907,6 @@ fn setup_script(
 ) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
     let emit_declaration = setup_emit_declaration(ctx, root)?;
-    if ctx.setup_script_bindings.is_empty()
-        && ref_declarations.is_empty()
-        && emit_declaration.is_none()
-    {
-        return Ok(None);
-    }
-
-    let mut body = String::new();
-
     let prop_names = ctx
         .setup_component_options
         .as_ref()
@@ -927,23 +918,44 @@ fn setup_script(
         .filter(|name| is_valid_identifier_name(name))
         .cloned()
         .collect::<Vec<_>>();
+    let props_declaration = setup_props_script_binding(ctx)
+        .map(|binding| {
+            component_props_source(ctx).map(|source| source.map(|source| (binding, source)))
+        })
+        .transpose()?
+        .flatten();
+    let declared_bindings = script_setup_declared_bindings(
+        ctx,
+        &valid_prop_names,
+        props_declaration.as_ref(),
+        emit_declaration.as_ref(),
+        &ref_declarations,
+    );
+    let script_imports = referenced_script_imports(ctx, root, &declared_bindings);
+    if ctx.setup_script_bindings.is_empty()
+        && ref_declarations.is_empty()
+        && emit_declaration.is_none()
+        && script_imports.is_empty()
+    {
+        return Ok(None);
+    }
 
-    if let Some(binding) = setup_props_script_binding(ctx) {
-        if let Some(props_source) = component_props_source(ctx)? {
-            body.push_str("const ");
-            body.push_str(&binding);
-            body.push_str(" = defineProps(");
-            body.push_str(&props_source);
-            body.push_str(");\n");
-            if !valid_prop_names.is_empty() {
-                body.push_str("const { ");
-                body.push_str(&valid_prop_names.join(", "));
-                body.push_str(" } = ");
-                body.push_str(&binding);
-                body.push_str(";\n");
-            }
-            body.push('\n');
+    let mut body = String::new();
+
+    if let Some((binding, props_source)) = &props_declaration {
+        body.push_str("const ");
+        body.push_str(binding);
+        body.push_str(" = defineProps(");
+        body.push_str(props_source);
+        body.push_str(");\n");
+        if !valid_prop_names.is_empty() {
+            body.push_str("const { ");
+            body.push_str(&valid_prop_names.join(", "));
+            body.push_str(" } = ");
+            body.push_str(binding);
+            body.push_str(";\n");
         }
+        body.push('\n');
     }
 
     if let Some((binding, emits_source)) = &emit_declaration {
@@ -986,7 +998,7 @@ fn setup_script(
         out.push_str(&vue_import);
         out.push('\n');
     }
-    for import in referenced_script_imports(ctx) {
+    for import in script_imports {
         out.push_str(&import);
         out.push('\n');
     }
@@ -1337,19 +1349,26 @@ fn collect_js_arrow_param_names(source: &str, names: &mut HashSet<Atom>) {
     let mut cursor = 0;
     while let Some(offset) = source[cursor..].find("=>") {
         let arrow = cursor + offset;
-        if let Some(name) = arrow_param_name(&source[..arrow]) {
+        for name in arrow_param_names(&source[..arrow]) {
             names.insert(Atom::from(name));
         }
         cursor = arrow + 2;
     }
+    collect_js_declared_names(source, names);
 }
 
-fn arrow_param_name(left: &str) -> Option<String> {
+fn arrow_param_names(left: &str) -> Vec<String> {
     let left = left.trim_end();
     if let Some(params) = left.strip_suffix(')') {
-        let open = params.rfind('(')?;
-        let param = params[open + 1..].trim();
-        return is_valid_identifier_name(param).then(|| param.to_string());
+        let Some(open) = params.rfind('(') else {
+            return Vec::new();
+        };
+        return params[open + 1..]
+            .split(',')
+            .map(str::trim)
+            .filter(|param| is_valid_identifier_name(param))
+            .map(ToString::to_string)
+            .collect();
     }
 
     let end = left.len();
@@ -1359,12 +1378,91 @@ fn arrow_param_name(left: &str) -> Option<String> {
         .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index + ch.len_utf8()))
         .unwrap_or(0);
     let param = left[start..end].trim();
-    is_valid_identifier_name(param).then(|| param.to_string())
+    is_valid_identifier_name(param)
+        .then(|| param.to_string())
+        .into_iter()
+        .collect()
 }
 
-fn referenced_script_imports(ctx: &VueRecoveryContext) -> Vec<String> {
-    let mut imports = ctx
-        .setup_script_import_refs
+fn collect_js_declared_names(source: &str, names: &mut HashSet<Atom>) {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let Some(keyword_len) = declaration_keyword_len(&chars, index) else {
+            index += 1;
+            continue;
+        };
+        index += keyword_len;
+
+        loop {
+            while index < chars.len() && chars[index].is_whitespace() {
+                index += 1;
+            }
+            if index >= chars.len() || !is_ident_start(chars[index]) {
+                break;
+            }
+
+            let start = index;
+            index += 1;
+            while index < chars.len() && is_ident_continue(chars[index]) {
+                index += 1;
+            }
+            let ident = chars[start..index].iter().collect::<String>();
+            names.insert(Atom::from(ident));
+
+            let mut depth = 0usize;
+            while index < chars.len() {
+                match chars[index] {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                    ',' | ';' if depth == 0 => break,
+                    _ => {}
+                }
+                index += 1;
+            }
+            if index >= chars.len() || chars[index] != ',' {
+                break;
+            }
+            index += 1;
+        }
+    }
+}
+
+fn declaration_keyword_len(chars: &[char], index: usize) -> Option<usize> {
+    ["const", "let", "var"].iter().find_map(|keyword| {
+        let end = index + keyword.len();
+        if end > chars.len() {
+            return None;
+        }
+        let matches_keyword = keyword
+            .chars()
+            .enumerate()
+            .all(|(offset, ch)| chars[index + offset] == ch);
+        if !matches_keyword {
+            return None;
+        }
+        let before_ok =
+            index == 0 || (!is_ident_continue(chars[index - 1]) && chars[index - 1] != '$');
+        let after_ok = end == chars.len() || !is_ident_continue(chars[end]);
+        (before_ok && after_ok).then_some(keyword.len())
+    })
+}
+
+fn referenced_script_imports(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+    declared_bindings: &HashSet<Atom>,
+) -> Vec<String> {
+    let mut refs = ctx.setup_script_import_refs.clone();
+    let shadowed_names = template_expr_shadowed_names(root);
+    refs.extend(
+        template_expr_refs(root)
+            .into_iter()
+            .filter(|local| !declared_bindings.contains(local))
+            .filter(|local| !shadowed_names.contains(local)),
+    );
+
+    let mut imports = refs
         .iter()
         .filter(|local| local.as_ref() != "$")
         .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
@@ -1373,6 +1471,34 @@ fn referenced_script_imports(ctx: &VueRecoveryContext) -> Vec<String> {
     imports.sort();
     imports.dedup();
     imports
+}
+
+fn script_setup_declared_bindings(
+    ctx: &VueRecoveryContext,
+    valid_prop_names: &[String],
+    props_declaration: Option<&(String, String)>,
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+) -> HashSet<Atom> {
+    let mut declared = HashSet::new();
+    if let Some((binding, _)) = props_declaration {
+        declared.insert(Atom::from(binding.clone()));
+        declared.extend(valid_prop_names.iter().cloned().map(Atom::from));
+    }
+    if let Some((binding, _)) = emit_declaration {
+        declared.insert(Atom::from(binding.clone()));
+    }
+    declared.extend(
+        ref_declarations
+            .iter()
+            .map(|(binding, _, _)| Atom::from(binding.clone())),
+    );
+    declared.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|(binding, _)| binding.clone()),
+    );
+    declared
 }
 
 fn script_import_line(local: &str, import: &VueScriptImport) -> String {
@@ -2456,6 +2582,80 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn imports_template_expression_refs_into_script_setup() {
+        let input = r#"
+import { formatStatus } from "./status.js";
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    return () => (
+      openBlock(), createElementBlock("span", { title: formatStatus("ok") }, "Ok", 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { formatStatus } from \"./status.js\";\n</script>\n\n<template>\n  <span :title='formatStatus(\"ok\")'>Ok</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn imports_template_helpers_without_importing_component_tags() {
+        let input = r#"
+import { S as StatusTag } from "./StatusTag.vue";
+import { statusLevel } from "./status.js";
+import { defineComponent, openBlock, createVNode } from "vue";
+export default defineComponent({
+  props: {
+    status: String,
+  },
+  setup(props) {
+    return () => (
+      openBlock(), createVNode(StatusTag, { level: statusLevel(props.status) }, null, 8, ["level"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { statusLevel } from \"./status.js\";\n\nconst props = defineProps({\n    status: String\n});\nconst { status } = props;\n</script>\n\n<template>\n  <StatusTag :level=\"statusLevel(status)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_import_template_arrow_params() {
+        let input = r#"
+import { item } from "./format.js";
+import { next } from "./format.js";
+import { total } from "./format.js";
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    list: Array,
+  },
+  setup(props) {
+    return () => (
+      openBlock(), createElementBlock("span", {
+        title: props.list.reduce((total, item) => {
+          const next = item.count;
+          return total + next;
+        }, 0)
+      }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span :title=\"list.reduce((total, item)=>{ const next = item.count; return total + next; }, 0)\" />\n</template>\n"
         );
     }
 
