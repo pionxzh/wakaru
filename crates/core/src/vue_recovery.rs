@@ -1153,7 +1153,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <span v-html=\"t(&quot;max_payout_message&quot;, { value: (format(total.value)) })\" />\n</template>\n"
+            "<template>\n  <span v-html='t(\"max_payout_message\", { value: (format(total.value)) })' />\n</template>\n"
         );
     }
 
@@ -1413,7 +1413,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <ol>\n    <li v-for=\"(item, index) in items\" :key=\"index\" :title=\"index\" :class=\"index % 2 === 0 ? &quot;even&quot; : &quot;odd&quot;\">{{ item.name }}</li>\n  </ol>\n</template>\n"
+            "<template>\n  <ol>\n    <li v-for=\"(item, index) in items\" :key=\"index\" :title=\"index\" :class='index % 2 === 0 ? \"even\" : \"odd\"'>{{ item.name }}</li>\n  </ol>\n</template>\n"
         );
     }
 
