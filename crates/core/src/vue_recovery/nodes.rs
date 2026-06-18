@@ -2,7 +2,7 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl,
+    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl, UnaryOp,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
@@ -178,7 +178,8 @@ fn recover_conditional_chain(
     ctx: &VueRecoveryContext,
 ) -> Result<VueNode> {
     let mut branches = Vec::new();
-    if let Some(node) = recover_node(cons, ctx)? {
+    let cons_node = recover_node(cons, ctx)?;
+    if let Some(node) = cons_node {
         branches.push(VueIfBranch {
             condition: Some(VueExpr::new(clean_condition_expr(test, ctx)?)),
             node: Box::new(node),
@@ -204,7 +205,11 @@ fn recover_conditional_chain(
         _ => {
             if let Some(node) = recover_node(alt, ctx)? {
                 branches.push(VueIfBranch {
-                    condition: None,
+                    condition: branches
+                        .is_empty()
+                        .then(|| clean_negated_condition_expr(test, ctx))
+                        .transpose()?
+                        .map(VueExpr::new),
                     node: Box::new(node),
                 });
             }
@@ -1028,6 +1033,31 @@ fn clean_condition_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String>
         }
     }
     Ok(clean_attr_expr(&print_expr(expr, ctx)?, ctx))
+}
+
+fn clean_negated_condition_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
+    if let Expr::Paren(paren) = expr {
+        return clean_negated_condition_expr(paren.expr.as_ref(), ctx);
+    }
+    if let Expr::Unary(unary) = expr {
+        if unary.op == UnaryOp::Bang {
+            return clean_condition_expr(unary.arg.as_ref(), ctx);
+        }
+    }
+
+    let condition = clean_condition_expr(expr, ctx)?;
+    if can_prefix_not(&condition) {
+        Ok(format!("!{condition}"))
+    } else {
+        Ok(format!("!({condition})"))
+    }
+}
+
+fn can_prefix_not(condition: &str) -> bool {
+    !condition.is_empty()
+        && condition
+            .chars()
+            .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
 }
 
 fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
