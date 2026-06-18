@@ -170,11 +170,136 @@ impl VueElement {
 }
 
 fn rename_expr_prefix(expr: &str, from: &str, to: &str) -> String {
-    let mut renamed = expr.replace(&format!("{from}."), &format!("{to}."));
-    if renamed == from {
-        renamed = to.to_string();
+    if from.is_empty() {
+        return expr.to_string();
     }
-    renamed
+
+    let chars = expr.chars().collect::<Vec<_>>();
+    rename_code_segment(&chars, 0, from, to, false).0
+}
+
+fn rename_code_segment(
+    chars: &[char],
+    mut index: usize,
+    from: &str,
+    to: &str,
+    stop_on_closing_brace: bool,
+) -> (String, usize) {
+    let mut renamed = String::new();
+    let mut brace_depth = 0usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if stop_on_closing_brace && brace_depth == 0 && ch == '}' {
+            break;
+        }
+
+        match ch {
+            '\'' | '"' => copy_quoted(chars, &mut index, &mut renamed, ch),
+            '`' => copy_template(chars, &mut index, &mut renamed, from, to),
+            '{' => {
+                brace_depth += 1;
+                renamed.push(ch);
+                index += 1;
+            }
+            '}' if brace_depth > 0 => {
+                brace_depth -= 1;
+                renamed.push(ch);
+                index += 1;
+            }
+            _ if is_ident_start(ch) => {
+                let start = index;
+                index += 1;
+                while index < chars.len() && is_ident_continue(chars[index]) {
+                    index += 1;
+                }
+                let ident = chars[start..index].iter().collect::<String>();
+                if ident == from && !is_property_access_tail(&renamed) {
+                    renamed.push_str(to);
+                } else {
+                    renamed.push_str(&ident);
+                }
+            }
+            _ => {
+                renamed.push(ch);
+                index += 1;
+            }
+        }
+    }
+
+    (renamed, index)
+}
+
+fn copy_quoted(chars: &[char], index: &mut usize, output: &mut String, quote: char) {
+    output.push(chars[*index]);
+    *index += 1;
+
+    while *index < chars.len() {
+        let ch = chars[*index];
+        output.push(ch);
+        *index += 1;
+
+        if ch == '\\' && *index < chars.len() {
+            output.push(chars[*index]);
+            *index += 1;
+            continue;
+        }
+        if ch == quote {
+            break;
+        }
+    }
+}
+
+fn copy_template(chars: &[char], index: &mut usize, output: &mut String, from: &str, to: &str) {
+    output.push('`');
+    *index += 1;
+
+    while *index < chars.len() {
+        let ch = chars[*index];
+        match ch {
+            '\\' => {
+                output.push(ch);
+                *index += 1;
+                if *index < chars.len() {
+                    output.push(chars[*index]);
+                    *index += 1;
+                }
+            }
+            '`' => {
+                output.push(ch);
+                *index += 1;
+                break;
+            }
+            '$' if chars.get(*index + 1) == Some(&'{') => {
+                output.push_str("${");
+                *index += 2;
+                let (renamed, next_index) = rename_code_segment(chars, *index, from, to, true);
+                output.push_str(&renamed);
+                *index = next_index;
+                if *index < chars.len() && chars[*index] == '}' {
+                    output.push('}');
+                    *index += 1;
+                }
+            }
+            _ => {
+                output.push(ch);
+                *index += 1;
+            }
+        }
+    }
+}
+
+fn is_property_access_tail(expr: &str) -> bool {
+    let expr = expr.trim_end();
+    expr.ends_with('.') && !expr.ends_with("...")
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '$' || ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit()
 }
 
 #[cfg(test)]
@@ -235,6 +360,18 @@ mod tests {
         assert_eq!(
             template.print(),
             "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click.stop=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn renames_standalone_identifiers_in_expressions() {
+        let mut expr = VueExpr::new("isMyBets ? P % 2 === 0 ? \"P.\" : `${P.id}.${P}` : row.P");
+
+        expr.replace_prefix("P", "index");
+
+        assert_eq!(
+            expr.as_str(),
+            "isMyBets ? index % 2 === 0 ? \"P.\" : `${index.id}.${index}` : row.P"
         );
     }
 
