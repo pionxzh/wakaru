@@ -40,9 +40,10 @@ fn recover_render_if_chain(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<O
                 let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
                     return Ok(None);
                 };
-                let Some(node) = recover_node(expr, ctx)? else {
+                let Some(mut node) = recover_node(expr, ctx)? else {
                     continue;
                 };
+                strip_generated_branch_key(&mut node);
                 branches.push(VueIfBranch {
                     condition: Some(VueExpr::new(clean_condition_expr(
                         if_stmt.test.as_ref(),
@@ -55,7 +56,8 @@ fn recover_render_if_chain(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<O
             Stmt::Return(ReturnStmt {
                 arg: Some(expr), ..
             }) if in_chain => {
-                if let Some(node) = recover_node(expr.as_ref(), ctx)? {
+                if let Some(mut node) = recover_node(expr.as_ref(), ctx)? {
+                    strip_generated_branch_key(&mut node);
                     branches.push(VueIfBranch {
                         condition: None,
                         node: Box::new(node),
@@ -179,7 +181,8 @@ fn recover_conditional_chain(
 ) -> Result<VueNode> {
     let mut branches = Vec::new();
     let cons_node = recover_node(cons, ctx)?;
-    if let Some(node) = cons_node {
+    if let Some(mut node) = cons_node {
+        strip_generated_branch_key(&mut node);
         branches.push(VueIfBranch {
             condition: Some(VueExpr::new(clean_condition_expr(test, ctx)?)),
             node: Box::new(node),
@@ -196,14 +199,18 @@ fn recover_conditional_chain(
             )?;
             match node {
                 VueNode::If(mut nested_branches) => branches.append(&mut nested_branches),
-                node => branches.push(VueIfBranch {
-                    condition: None,
-                    node: Box::new(node),
-                }),
+                mut node => {
+                    strip_generated_branch_key(&mut node);
+                    branches.push(VueIfBranch {
+                        condition: None,
+                        node: Box::new(node),
+                    });
+                }
             }
         }
         _ => {
-            if let Some(node) = recover_node(alt, ctx)? {
+            if let Some(mut node) = recover_node(alt, ctx)? {
+                strip_generated_branch_key(&mut node);
                 branches.push(VueIfBranch {
                     condition: branches
                         .is_empty()
@@ -217,6 +224,38 @@ fn recover_conditional_chain(
     }
 
     Ok(VueNode::If(branches))
+}
+
+fn strip_generated_branch_key(node: &mut VueNode) {
+    match node {
+        VueNode::Element(element) => {
+            element.attrs.retain(|attr| !is_generated_branch_key(attr));
+        }
+        VueNode::Fragment(children) if children.len() == 1 => {
+            strip_generated_branch_key(&mut children[0]);
+        }
+        VueNode::Fragment(_)
+        | VueNode::If(_)
+        | VueNode::For(_)
+        | VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_) => {}
+    }
+}
+
+fn is_generated_branch_key(attr: &VueAttr) -> bool {
+    match attr {
+        VueAttr::Bind { name, expr } if name == "key" => {
+            !expr.as_str().is_empty() && expr.as_str().chars().all(|ch| ch.is_ascii_digit())
+        }
+        VueAttr::Static {
+            name,
+            value: Some(value),
+        } if name == "key" => !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit()),
+        _ => false,
+    }
 }
 
 fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
