@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap};
+use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
-    Pat, Prop, PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind,
+    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, Ident, IfStmt, ImportSpecifier,
+    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat,
+    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -16,6 +16,7 @@ use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{RenderSource, VueRecoveryContext};
+use crate::js_names::is_valid_identifier_name;
 
 pub(super) fn collect_context(
     module: &Module,
@@ -953,6 +954,7 @@ fn computed_block_value_expr(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result
         return Ok(None);
     };
     let expr = inline_computed_block_locals(expr, &stmts[..return_index]);
+    let expr = inline_computed_setup_prop_aliases(&expr, &stmts[..return_index], ctx);
     Ok(Some(clean_expr(&print_expr(&expr, ctx)?, ctx)))
 }
 
@@ -998,6 +1000,130 @@ fn inline_computed_block_locals(expr: &Expr, stmts: &[Stmt]) -> Expr {
     }
 
     expr
+}
+
+fn inline_computed_setup_prop_aliases(
+    expr: &Expr,
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> Expr {
+    let aliases = computed_setup_prop_alias_exprs(stmts, ctx);
+    if aliases.is_empty() {
+        return expr.clone();
+    }
+
+    inline_computed_alias_expr(expr, &aliases)
+}
+
+fn computed_setup_prop_alias_exprs(
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> HashMap<Atom, Expr> {
+    let mut aliases = HashMap::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        if var.kind != VarDeclKind::Const {
+            continue;
+        }
+        for decl in &var.decls {
+            let Pat::Object(object) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if !is_setup_props_alias(init, ctx) {
+                continue;
+            }
+            collect_computed_setup_prop_aliases(object, &mut aliases);
+        }
+    }
+    aliases
+}
+
+fn collect_computed_setup_prop_alias_var(
+    var: &VarDecl,
+    ctx: &VueRecoveryContext,
+    aliases: &mut HashMap<Atom, Expr>,
+) -> bool {
+    if var.kind != VarDeclKind::Const || var.decls.is_empty() {
+        return false;
+    }
+
+    let mut next_aliases = HashMap::new();
+    for decl in &var.decls {
+        let Pat::Object(object) = &decl.name else {
+            return false;
+        };
+        let Some(init) = decl.init.as_deref() else {
+            return false;
+        };
+        if !is_setup_props_alias(init, ctx) {
+            return false;
+        }
+        if !collect_computed_setup_prop_aliases(object, &mut next_aliases) {
+            return false;
+        }
+    }
+
+    aliases.extend(next_aliases);
+    true
+}
+
+fn collect_computed_setup_prop_aliases(
+    object: &ObjectPat,
+    aliases: &mut HashMap<Atom, Expr>,
+) -> bool {
+    let mut next_aliases = HashMap::new();
+    for prop in &object.props {
+        match prop {
+            ObjectPatProp::KeyValue(key_value) => {
+                let Some(name) =
+                    prop_name(&key_value.key).filter(|name| is_valid_identifier_name(name))
+                else {
+                    return false;
+                };
+                let Some(binding) = ident_binding_from_pat(key_value.value.as_ref()) else {
+                    return false;
+                };
+                next_aliases.insert(
+                    binding.sym.clone(),
+                    Expr::Ident(Ident::new(name.into(), DUMMY_SP, Default::default())),
+                );
+            }
+            ObjectPatProp::Assign(assign) => {
+                let name = assign.key.sym.as_ref();
+                if !is_valid_identifier_name(name) {
+                    return false;
+                }
+                next_aliases.insert(
+                    assign.key.sym.clone(),
+                    Expr::Ident(Ident::new(
+                        assign.key.sym.clone(),
+                        DUMMY_SP,
+                        Default::default(),
+                    )),
+                );
+            }
+            ObjectPatProp::Rest(_) => return false,
+        }
+    }
+    if next_aliases.is_empty() {
+        return false;
+    }
+
+    aliases.extend(next_aliases);
+    true
+}
+
+fn ident_binding_from_pat(pat: &Pat) -> Option<&Ident> {
+    match pat {
+        Pat::Ident(binding) => Some(&binding.id),
+        Pat::Assign(assign) => ident_binding_from_pat(assign.left.as_ref()),
+        _ => None,
+    }
 }
 
 fn computed_block_local_exprs(stmts: &[Stmt]) -> HashMap<Atom, Expr> {
@@ -1205,9 +1331,16 @@ fn computed_if_return_chain_expr(
     ctx: &VueRecoveryContext,
 ) -> Result<Option<String>> {
     let mut branches = Vec::new();
+    let mut aliases = HashMap::new();
 
     for stmt in stmts {
         match stmt {
+            Stmt::Decl(Decl::Var(var))
+                if branches.is_empty()
+                    && collect_computed_setup_prop_alias_var(var, ctx, &mut aliases) =>
+            {
+                continue;
+            }
             Stmt::If(if_stmt) => {
                 let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
                     return Ok(None);
@@ -1215,15 +1348,18 @@ fn computed_if_return_chain_expr(
                 if if_stmt.alt.is_some() {
                     return Ok(None);
                 }
+                let test = inline_computed_alias_expr(if_stmt.test.as_ref(), &aliases);
+                let expr = inline_computed_alias_expr(expr, &aliases);
                 branches.push((
-                    clean_expr(&print_expr(if_stmt.test.as_ref(), ctx)?, ctx),
-                    clean_expr(&print_expr(expr, ctx)?, ctx),
+                    clean_expr(&print_expr(&test, ctx)?, ctx),
+                    clean_expr(&print_expr(&expr, ctx)?, ctx),
                 ));
             }
             Stmt::Return(ReturnStmt {
                 arg: Some(expr), ..
             }) if !branches.is_empty() => {
-                let fallback = clean_expr(&print_expr(expr, ctx)?, ctx);
+                let expr = inline_computed_alias_expr(expr, &aliases);
+                let fallback = clean_expr(&print_expr(&expr, ctx)?, ctx);
                 return Ok(Some(format_conditional_expr(&branches, fallback)));
             }
             _ => return Ok(None),
@@ -1231,6 +1367,16 @@ fn computed_if_return_chain_expr(
     }
 
     Ok(None)
+}
+
+fn inline_computed_alias_expr(expr: &Expr, aliases: &HashMap<Atom, Expr>) -> Expr {
+    if aliases.is_empty() {
+        return expr.clone();
+    }
+
+    let mut expr = expr.clone();
+    expr.visit_mut_with(&mut ComputedLocalInliner::new(aliases.clone()));
+    expr
 }
 
 fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {

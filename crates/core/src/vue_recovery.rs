@@ -1654,6 +1654,45 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_computed_block_destructured_setup_props() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock, createCommentVNode } from "vue";
+const _sfc_main = defineComponent({
+  props: {
+    show: Boolean,
+    progressDuration: Number,
+  },
+  setup(__props) {
+    const props = __props;
+    const duration = computed(() => {
+      const { show: isShown, progressDuration: ms } = props;
+      if (isShown) {
+        return ms;
+      }
+      return 0;
+    });
+    return (_ctx, _cache) => (
+      openBlock(),
+      createElementBlock("div", null, [
+        duration.value !== void 0
+          ? (openBlock(), createElementBlock("div", {
+              style: `animation-duration: ${duration.value}ms;`
+            }, null, 4))
+          : createCommentVNode("", true)
+      ])
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div>\n    <div v-if=\"(show ? progressDuration : 0) !== void 0\" :style=\"`animation-duration: ${(show ? progressDuration : 0)}ms;`\" />\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_computed_block_local_shadowing() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock } from "vue";
