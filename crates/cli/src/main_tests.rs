@@ -167,6 +167,58 @@ fn vue_sfc_relative_import_resolver_ignores_stdin_base() {
 }
 
 #[test]
+fn vue_sfc_recovers_single_system_register_module() {
+    let dir = temp_test_dir("vue-sfc-system-register");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("legacy.js");
+    let output_path = dir.join("Recovered.vue");
+    fs::write(
+        &input_path,
+        r#"
+System.register(["./vendor-vue.js"], function (exports) {
+  "use strict";
+  var defineComponent, openBlock, createElementBlock;
+  return {
+    setters: [
+      function (module) {
+        defineComponent = module.d, openBlock = module.q, createElementBlock = module.X;
+      }
+    ],
+    execute: function () {
+      exports("_", defineComponent({
+        __name: "LegacyGreeting",
+        setup: function () {
+          return function () {
+            return openBlock(), createElementBlock("p", null, "Legacy");
+          };
+        }
+      }));
+    }
+  };
+});
+"#,
+    )
+    .expect("write vue system register input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<template>\n  <p>Legacy</p>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn vue_sfc_resolves_relative_component_export_alias() {
     let dir = temp_test_dir("vue-sfc-relative-component");
     fs::create_dir_all(&dir).expect("create temp dir");

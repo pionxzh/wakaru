@@ -74,11 +74,7 @@ where
 }
 
 pub fn decompile_vue_sfc(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
-    let mut output = decompile(source, options)?;
-    if let Some(sfc) = recover_vue_sfc_source_from_js(&output.code)? {
-        output.code = sfc;
-    }
-    Ok(output)
+    decompile_vue_sfc_with_import_resolver(source, options, |_| None)
 }
 
 pub fn decompile_vue_sfc_with_import_resolver<F>(
@@ -89,13 +85,51 @@ pub fn decompile_vue_sfc_with_import_resolver<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
-    let mut output = decompile(source, options)?;
+    let mut output = decompile(source, options.clone())?;
     if let Some(sfc) =
         recover_vue_sfc_source_from_js_with_import_resolver(&output.code, &mut resolve_import)?
     {
         output.code = sfc;
+        return Ok(output);
     }
+
+    if let Some(output) = decompile_single_unpacked_vue_sfc(source, options, &mut resolve_import)? {
+        return Ok(output);
+    }
+
     Ok(output)
+}
+
+fn decompile_single_unpacked_vue_sfc<F>(
+    source: &str,
+    mut options: DecompileOptions,
+    resolve_import: &mut F,
+) -> Result<Option<DecompileOutput>>
+where
+    F: FnMut(&str) -> Option<String> + ?Sized,
+{
+    let Some(result) = crate::unpacker::unpack_bundle(source) else {
+        return Ok(None);
+    };
+    if result.modules.len() != 1 {
+        return Ok(None);
+    }
+    let module = result
+        .modules
+        .into_iter()
+        .next()
+        .expect("checked single unpacked module");
+
+    options.filename = module.filename;
+    options.sourcemap = None;
+    let mut output = decompile(&module.code, options)?;
+    let Some(sfc) =
+        recover_vue_sfc_source_from_js_with_import_resolver(&output.code, resolve_import)?
+    else {
+        return Ok(None);
+    };
+    output.code = sfc;
+    Ok(Some(output))
 }
 
 pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
@@ -702,6 +736,40 @@ export default __sfc__;
                 .unwrap()
                 .code,
             "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn decompiles_single_system_register_vue_sfc() {
+        let input = r#"
+System.register(["./vendor-vue.js"], function (exports) {
+  "use strict";
+  var defineComponent, openBlock, createElementBlock;
+  return {
+    setters: [
+      function (module) {
+        defineComponent = module.d, openBlock = module.q, createElementBlock = module.X;
+      }
+    ],
+    execute: function () {
+      exports("_", defineComponent({
+        __name: "LegacyGreeting",
+        setup: function () {
+          return function () {
+            return openBlock(), createElementBlock("p", null, "Legacy");
+          };
+        }
+      }));
+    }
+  };
+});
+"#;
+
+        assert_eq!(
+            decompile_vue_sfc(input, DecompileOptions::default())
+                .unwrap()
+                .code,
+            "<template>\n  <p>Legacy</p>\n</template>\n"
         );
     }
 
