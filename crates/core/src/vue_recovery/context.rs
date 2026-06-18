@@ -17,7 +17,7 @@ use super::helpers::{helper_name, VueHelper};
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
-use super::{RenderSource, VueRecoveryContext, VueScriptImport};
+use super::{RenderSource, VueRecoveryContext, VueScriptImport, VueSetupRefBinding};
 use crate::js_names::is_valid_identifier_name;
 
 pub(super) fn collect_context(
@@ -602,6 +602,14 @@ pub(super) fn collect_setup_context(
                         continue;
                     }
                     if is_ref_like_value_expr(init, ctx) {
+                        if let Some((expr, helper, known_ref)) = ref_script_setup_expr(init, ctx)? {
+                            ctx.setup_ref_script_bindings.push(VueSetupRefBinding {
+                                binding: binding.id.sym.clone(),
+                                expr,
+                                helper,
+                                known_ref,
+                            });
+                        }
                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                     }
                 }
@@ -653,6 +661,43 @@ fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 
 fn is_ref_like_vue_helper(name: &str) -> bool {
     matches!(name, "ref" | "shallowRef" | "customRef" | "toRef")
+}
+
+fn ref_script_setup_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<(String, String, bool)>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return Ok(None);
+    };
+    let Some(helper) = ref_script_setup_helper(call, ctx) else {
+        return Ok(None);
+    };
+    let mut args = Vec::new();
+    for arg in &call.args {
+        let mut printed = clean_expr(&print_expr(arg.expr.as_ref(), ctx)?, ctx);
+        if arg.spread.is_some() {
+            printed = format!("...{printed}");
+        }
+        args.push(printed);
+    }
+    let known_ref = helper_name(&call.callee, ctx).is_some_and(
+        |helper| matches!(helper, VueHelper::Other(name) if is_ref_like_vue_helper(&name)),
+    );
+    Ok(Some((
+        format!("{helper}({})", args.join(", ")),
+        helper,
+        known_ref,
+    )))
+}
+
+fn ref_script_setup_helper(call: &CallExpr, ctx: &VueRecoveryContext) -> Option<String> {
+    match helper_name(&call.callee, ctx) {
+        Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => Some(name),
+        _ => call_callee_ident(call)
+            .filter(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+            .map(|_| "ref".to_string()),
+    }
 }
 
 fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {

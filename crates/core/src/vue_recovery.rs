@@ -6,15 +6,15 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
-    Expr, FnDecl, Ident, ImportSpecifier, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
-    PropOrSpread, ReturnStmt, Stmt,
+    Expr, FnDecl, Ident, ImportSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::js_names::is_valid_identifier_name;
-use crate::vue_template::{VueSfc, VueTemplate};
+use crate::vue_template::{VueAttr, VueDirectiveArg, VueNode, VueSfc, VueTemplate};
 
 mod attrs;
 mod context;
@@ -42,6 +42,7 @@ struct VueRecoveryContext {
     object_bindings: HashMap<Atom, ObjectLit>,
     setup_value_bindings: HashMap<Atom, String>,
     setup_script_bindings: Vec<(Atom, String)>,
+    setup_ref_script_bindings: Vec<VueSetupRefBinding>,
     setup_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
@@ -60,6 +61,14 @@ enum VueScriptImport {
     Named { source: String, imported: String },
     Default { source: String },
     Namespace { source: String },
+}
+
+#[derive(Clone)]
+struct VueSetupRefBinding {
+    binding: Atom,
+    expr: String,
+    helper: String,
+    known_ref: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -207,7 +216,7 @@ fn recover_vue_sfc_from_js_inner(
         return Ok(None);
     };
 
-    let script_setup = setup_script(&ctx);
+    let script_setup = setup_script(&ctx, &root, render);
 
     let script = if script_setup.is_none() {
         ctx.component_options
@@ -857,8 +866,13 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
     Ok(Some(format!("export default {printed}")))
 }
 
-fn setup_script(ctx: &VueRecoveryContext) -> Option<String> {
-    if ctx.setup_script_bindings.is_empty() {
+fn setup_script(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+    render: RenderSource<'_>,
+) -> Option<String> {
+    let ref_declarations = setup_ref_declarations(ctx, root, render);
+    if ctx.setup_script_bindings.is_empty() && ref_declarations.is_empty() {
         return None;
     }
 
@@ -900,6 +914,17 @@ fn setup_script(ctx: &VueRecoveryContext) -> Option<String> {
         }
     }
 
+    for (binding, expr, _) in &ref_declarations {
+        body.push_str("const ");
+        body.push_str(binding);
+        body.push_str(" = ");
+        body.push_str(expr.trim());
+        body.push_str(";\n");
+    }
+    if !ref_declarations.is_empty() && !ctx.setup_script_bindings.is_empty() {
+        body.push('\n');
+    }
+
     let mut bindings = ctx.setup_script_bindings.clone();
     bindings.sort_by(|(left, _), (right, _)| left.as_ref().cmp(right.as_ref()));
     for (binding, expr) in bindings {
@@ -914,7 +939,8 @@ fn setup_script(ctx: &VueRecoveryContext) -> Option<String> {
     }
 
     let mut out = String::new();
-    out.push_str("import { computed } from \"vue\";\n");
+    out.push_str(&vue_script_import_line(ctx, &ref_declarations));
+    out.push('\n');
     for import in referenced_script_imports(ctx) {
         out.push_str(&import);
         out.push('\n');
@@ -922,6 +948,327 @@ fn setup_script(ctx: &VueRecoveryContext) -> Option<String> {
     out.push('\n');
     out.push_str(&body);
     Some(out)
+}
+
+fn vue_script_import_line(
+    ctx: &VueRecoveryContext,
+    ref_declarations: &[(String, String, String)],
+) -> String {
+    let mut imports = Vec::new();
+    if !ctx.setup_script_bindings.is_empty() {
+        imports.push("computed".to_string());
+    }
+    for (_, _, helper) in ref_declarations {
+        if !imports.contains(helper) {
+            imports.push(helper.clone());
+        }
+    }
+    imports.sort();
+    format!("import {{ {} }} from \"vue\";", imports.join(", "))
+}
+
+fn setup_ref_declarations(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+    render: RenderSource<'_>,
+) -> Vec<(String, String, String)> {
+    let expr_refs = template_expr_refs(root);
+    let shadowed_refs = template_expr_shadowed_names(root);
+    let template_refs = template_static_ref_names(root);
+    let render_value_refs = render_value_member_refs(render, ctx);
+    let mut declared = HashSet::new();
+    let mut declarations = Vec::new();
+
+    let mut bindings = ctx.setup_ref_script_bindings.clone();
+    bindings.sort_by(|left, right| left.binding.as_ref().cmp(right.binding.as_ref()));
+    for binding in bindings {
+        let name = binding.binding.as_ref();
+        if !is_valid_identifier_name(name) {
+            continue;
+        }
+        if shadowed_refs.contains(&binding.binding) {
+            continue;
+        }
+        if !binding.known_ref
+            && !render_value_refs.contains(&binding.binding)
+            && !template_refs.iter().any(|ref_name| ref_name == name)
+        {
+            continue;
+        }
+        if !expr_refs.contains(&binding.binding)
+            && !template_refs.iter().any(|ref_name| ref_name == name)
+        {
+            continue;
+        }
+        if declared.insert(name.to_string()) {
+            declarations.push((name.to_string(), binding.expr, binding.helper));
+        }
+    }
+
+    for name in template_refs {
+        if declared.insert(name.clone()) {
+            declarations.push((name, "ref(null)".to_string(), "ref".to_string()));
+        }
+    }
+
+    declarations
+}
+
+fn render_value_member_refs(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> HashSet<Atom> {
+    let candidates = ctx
+        .setup_ref_script_bindings
+        .iter()
+        .map(|binding| binding.binding.clone())
+        .collect::<HashSet<_>>();
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut collector = ValueMemberRefCollector {
+        candidates: &candidates,
+        refs: HashSet::new(),
+    };
+    match render {
+        RenderSource::Function(function) => function.function.visit_with(&mut collector),
+        RenderSource::SetupArrow {
+            render,
+            setup_stmts,
+            ..
+        } => {
+            for stmt in setup_stmts {
+                stmt.visit_with(&mut collector);
+            }
+            render.visit_with(&mut collector);
+        }
+    }
+    collector.refs
+}
+
+struct ValueMemberRefCollector<'a> {
+    candidates: &'a HashSet<Atom>,
+    refs: HashSet<Atom>,
+}
+
+impl Visit for ValueMemberRefCollector<'_> {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
+            if let Expr::Ident(obj) = member.obj.as_ref() {
+                if self.candidates.contains(&obj.sym) {
+                    self.refs.insert(obj.sym.clone());
+                }
+            }
+        }
+        member.visit_children_with(self);
+    }
+}
+
+fn template_static_ref_names(root: &VueNode) -> Vec<String> {
+    let mut refs = HashSet::new();
+    collect_template_static_ref_names(root, &mut refs);
+    let mut refs = refs
+        .into_iter()
+        .filter(|name| is_valid_identifier_name(name))
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs
+}
+
+fn collect_template_static_ref_names(node: &VueNode, refs: &mut HashSet<String>) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &element.attrs {
+                if let VueAttr::Static {
+                    name,
+                    value: Some(value),
+                } = attr
+                {
+                    if name == "ref" {
+                        refs.insert(value.clone());
+                    }
+                }
+            }
+            for child in &element.children {
+                collect_template_static_ref_names(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_static_ref_names(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                collect_template_static_ref_names(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => collect_template_static_ref_names(&for_node.node, refs),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_) => {}
+    }
+}
+
+fn template_expr_refs(root: &VueNode) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    collect_template_expr_refs(root, &mut refs);
+    refs
+}
+
+fn template_expr_shadowed_names(root: &VueNode) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    collect_template_expr_shadowed_names(root, &mut names);
+    names
+}
+
+fn collect_template_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &element.attrs {
+                collect_attr_expr_refs(attr, refs);
+            }
+            for child in &element.children {
+                collect_template_expr_refs(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_expr_refs(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                if let Some(condition) = &branch.condition {
+                    collect_js_ident_refs(condition.as_str(), refs);
+                }
+                collect_template_expr_refs(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => {
+            collect_js_ident_refs(for_node.source.as_str(), refs);
+            collect_template_expr_refs(&for_node.node, refs);
+        }
+        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
+            collect_js_ident_refs(expr.as_str(), refs);
+        }
+        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
+    }
+}
+
+fn collect_template_expr_shadowed_names(node: &VueNode, names: &mut HashSet<Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &element.attrs {
+                collect_attr_expr_shadowed_names(attr, names);
+            }
+            for child in &element.children {
+                collect_template_expr_shadowed_names(child, names);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_expr_shadowed_names(child, names);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                if let Some(condition) = &branch.condition {
+                    collect_js_arrow_param_names(condition.as_str(), names);
+                }
+                collect_template_expr_shadowed_names(&branch.node, names);
+            }
+        }
+        VueNode::For(for_node) => {
+            collect_js_arrow_param_names(for_node.source.as_str(), names);
+            collect_template_expr_shadowed_names(&for_node.node, names);
+        }
+        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
+            collect_js_arrow_param_names(expr.as_str(), names);
+        }
+        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
+    }
+}
+
+fn collect_attr_expr_refs(attr: &VueAttr, refs: &mut HashSet<Atom>) {
+    match attr {
+        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
+            collect_js_ident_refs(expr.as_str(), refs);
+        }
+        VueAttr::Directive(directive) => {
+            if let Some(expr) = &directive.expr {
+                collect_js_ident_refs(expr.as_str(), refs);
+            }
+            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                collect_js_ident_refs(expr.as_str(), refs);
+            }
+        }
+        VueAttr::Static { .. } => {}
+    }
+}
+
+fn collect_attr_expr_shadowed_names(attr: &VueAttr, names: &mut HashSet<Atom>) {
+    match attr {
+        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
+            collect_js_arrow_param_names(expr.as_str(), names);
+        }
+        VueAttr::Directive(directive) => {
+            if let Some(expr) = &directive.expr {
+                collect_js_arrow_param_names(expr.as_str(), names);
+            }
+            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                collect_js_arrow_param_names(expr.as_str(), names);
+            }
+        }
+        VueAttr::Static { .. } => {}
+    }
+}
+
+fn collect_js_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if is_ident_start(chars[index]) {
+            let start = index;
+            index += 1;
+            while index < chars.len() && is_ident_continue(chars[index]) {
+                index += 1;
+            }
+            let ident = chars[start..index].iter().collect::<String>();
+            refs.insert(Atom::from(ident));
+            continue;
+        }
+        index += 1;
+    }
+}
+
+fn collect_js_arrow_param_names(source: &str, names: &mut HashSet<Atom>) {
+    let mut cursor = 0;
+    while let Some(offset) = source[cursor..].find("=>") {
+        let arrow = cursor + offset;
+        if let Some(name) = arrow_param_name(&source[..arrow]) {
+            names.insert(Atom::from(name));
+        }
+        cursor = arrow + 2;
+    }
+}
+
+fn arrow_param_name(left: &str) -> Option<String> {
+    let left = left.trim_end();
+    if let Some(params) = left.strip_suffix(')') {
+        let open = params.rfind('(')?;
+        let param = params[open + 1..].trim();
+        return is_valid_identifier_name(param).then(|| param.to_string());
+    }
+
+    let end = left.len();
+    let start = left
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    let param = left[start..end].trim();
+    is_valid_identifier_name(param).then(|| param.to_string())
 }
 
 fn referenced_script_imports(ctx: &VueRecoveryContext) -> Vec<String> {
@@ -1018,6 +1365,14 @@ fn component_prop_names(options: &ObjectLit) -> Vec<String> {
 
 fn quote_js_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit()
 }
 
 #[cfg(test)]
@@ -1867,7 +2222,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst sortedItems = ref([]);\n</script>\n\n<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
         );
     }
 
@@ -2005,6 +2360,77 @@ export default _sfc_main;
     }
 
     #[test]
+    fn emits_script_setup_refs_used_by_template() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock, createElementVNode, normalizeStyle } from "vue";
+export default defineComponent({
+  props: {
+    show: Boolean,
+  },
+  setup(props) {
+    const innerRef = ref(null);
+    const height = ref(0);
+    return () => (
+      openBlock(), createElementBlock("section", {
+        style: normalizeStyle({ height: props.show ? `${height.value}px` : 0 })
+      }, [
+        createElementVNode("div", { ref_key: "innerRef", ref: innerRef }, null, 512)
+      ], 4)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst props = defineProps([\"show\"]);\nconst { show } = props;\n\nconst height = ref(0);\nconst innerRef = ref(null);\n</script>\n\n<template>\n  <section :style=\"{ height: show ? `${height}px` : 0 }\">\n    <div ref=\"innerRef\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_emit_ref_for_candidate_without_value_usage() {
+        let input = r#"
+import { d as dc, x as useSlots, _ as unref, q as ob, X as ce } from "./vendor-vue.js";
+export const _ = dc({
+  __name: "SlotsPanel",
+  setup() {
+    const slots = useSlots();
+    return () => (
+      ob(), ce("div", { title: unref(slots).All }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :title=\"slots.All\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn emits_candidate_ref_used_by_inlined_setup_computed() {
+        let input = r#"
+import { d as dc, r as rf, c as cp, q as ob, X as ce } from "./vendor-vue.js";
+export const _ = dc({
+  __name: "HeightPanel",
+  setup() {
+    const height = rf(0);
+    const style = cp(() => ({ height: `${height.value}px` }));
+    return () => (
+      ob(), ce("div", { title: style.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst height = ref(0);\n</script>\n\n<template>\n  <div :title=\"{ height: `${height}px` }\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_computed_block_local_shadowing() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock } from "vue";
@@ -2045,7 +2471,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <button :title=\"count\">{{ count }}</button>\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst count = ref(0);\n</script>\n\n<template>\n  <button :title=\"count\">{{ count }}</button>\n</template>\n"
         );
     }
 
@@ -2066,7 +2492,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <div :style=\"{ height: `${height}px` }\" />\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst height = ref(0);\n</script>\n\n<template>\n  <div :style=\"{ height: `${height}px` }\" />\n</template>\n"
         );
     }
 
@@ -2417,7 +2843,7 @@ export default __sfc__;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <div ref=\"innerRef\" />\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst innerRef = ref(null);\n</script>\n\n<template>\n  <div ref=\"innerRef\" />\n</template>\n"
         );
     }
 
