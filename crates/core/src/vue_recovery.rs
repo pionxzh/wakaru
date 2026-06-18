@@ -1148,6 +1148,25 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_template_literal_text_children() {
+        let input = r#"
+import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", null, [
+    (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.items, (e, i) => (
+      openBlock(), createElementBlock("p", { key: e.id }, `${toDisplayString(e.name)} - ${i}`, 1)
+    )), 128))
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <p v-for=\"(item, index) in items\" :key=\"item.id\">{{ item.name }} - {{ index }}</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_render_list_destructured_param() {
         let input = r#"
 import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
