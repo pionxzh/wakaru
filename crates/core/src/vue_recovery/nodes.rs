@@ -252,8 +252,7 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
         &print_expr(source_arg.expr.as_ref(), ctx)?,
         ctx,
     ));
-    let mut item_ctx = ctx.clone();
-    item_ctx.render_context = None;
+    let item_ctx = list_item_context(ctx, &for_params);
     let Some(mut item_node) = recover_node(item_expr, &item_ctx)? else {
         return Ok(raw_expr(clean_expr(
             &print_expr(item_expr, &item_ctx)?,
@@ -272,6 +271,13 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
 struct RecoveredForParams {
     value: String,
     renames: Vec<(Atom, String)>,
+    bindings: Vec<Atom>,
+}
+
+impl RecoveredForParams {
+    fn shadows(&self, name: &Atom) -> bool {
+        self.bindings.iter().any(|binding| binding == name)
+    }
 }
 
 fn recover_for_params(
@@ -286,8 +292,10 @@ fn recover_for_params(
     let fallback_names = for_param_fallback_names(params.len(), first_fallback);
     let mut values = Vec::new();
     let mut renames = Vec::new();
+    let mut bindings = Vec::new();
 
     for (param, fallback) in params.iter().take(3).zip(fallback_names) {
+        collect_pat_bindings(param, &mut bindings);
         match param {
             Pat::Ident(binding) => {
                 values.push(fallback.to_string());
@@ -308,7 +316,11 @@ fn recover_for_params(
         format!("({})", values.join(", "))
     };
 
-    Ok(Some(RecoveredForParams { value, renames }))
+    Ok(Some(RecoveredForParams {
+        value,
+        renames,
+        bindings,
+    }))
 }
 
 fn for_param_fallback_names(count: usize, first: &'static str) -> Vec<&'static str> {
@@ -345,6 +357,53 @@ fn for_param_pat(pat: &Pat, ctx: &VueRecoveryContext) -> Result<Option<String>> 
 fn apply_for_param_renames(node: &mut VueNode, params: &RecoveredForParams) {
     for (from, to) in &params.renames {
         rename_node_expr_prefix(node, from.as_ref(), to);
+    }
+}
+
+fn list_item_context(ctx: &VueRecoveryContext, params: &RecoveredForParams) -> VueRecoveryContext {
+    let mut item_ctx = ctx.clone();
+    if item_ctx
+        .render_context
+        .as_ref()
+        .is_some_and(|name| params.shadows(name))
+    {
+        item_ctx.render_context = None;
+    }
+    if item_ctx
+        .setup_props_context
+        .as_ref()
+        .is_some_and(|name| params.shadows(name))
+    {
+        item_ctx.setup_props_context = None;
+    }
+    item_ctx
+        .setup_props_aliases
+        .retain(|alias| !params.shadows(alias));
+    item_ctx
+}
+
+fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) {
+    match pat {
+        Pat::Ident(binding) => bindings.push(binding.id.sym.clone()),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_bindings(elem, bindings);
+            }
+        }
+        Pat::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_pat_bindings(key_value.value.as_ref(), bindings);
+                    }
+                    ObjectPatProp::Assign(assign) => bindings.push(assign.key.sym.clone()),
+                    ObjectPatProp::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+                }
+            }
+        }
+        Pat::Assign(assign) => collect_pat_bindings(assign.left.as_ref(), bindings),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
     }
 }
 
@@ -494,8 +553,7 @@ fn recover_dynamic_slot_list(
         return Ok(None);
     };
 
-    let mut item_ctx = ctx.clone();
-    item_ctx.render_context = None;
+    let item_ctx = list_item_context(ctx, &for_params);
     let Some(mut slot) = recover_dynamic_slot(slot_expr, &item_ctx)? else {
         return Ok(None);
     };

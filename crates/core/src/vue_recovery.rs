@@ -1895,6 +1895,27 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_render_list_outer_context_member() {
+        let input = r#"
+import { renderList, Fragment, openBlock, createElementBlock, createCommentVNode } from "vue";
+export function render(e, _cache) {
+  return openBlock(), createElementBlock("ul", null, [
+    (openBlock(true), createElementBlock(Fragment, null, renderList(e.items, (t, i) => (
+      e.$slots.placeholder
+        ? (openBlock(), createElementBlock("li", { key: t.id, title: i }, "Placeholder", 8, ["title"]))
+        : createCommentVNode("", true)
+    )), 128))
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ul>\n    <template v-for=\"(item, index) in items\">\n      <li v-if=\"$slots.placeholder\" :key=\"item.id\" :title=\"index\">Placeholder</li>\n    </template>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_template_literal_text_children() {
         let input = r#"
 import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
