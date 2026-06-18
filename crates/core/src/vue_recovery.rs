@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
@@ -85,15 +86,25 @@ pub fn decompile_vue_sfc_with_import_resolver<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
+    let preferred_component_name = component_name_from_filename(&options.filename);
     let mut output = decompile(source, options.clone())?;
-    if let Some(sfc) =
-        recover_vue_sfc_source_from_js_with_import_resolver(&output.code, &mut resolve_import)?
+    if let Some(sfc) = recover_vue_sfc_from_js_inner(
+        &output.code,
+        Some(&mut resolve_import),
+        preferred_component_name.as_deref(),
+    )?
+    .map(|sfc| sfc.print())
     {
         output.code = sfc;
         return Ok(output);
     }
 
-    if let Some(output) = decompile_single_unpacked_vue_sfc(source, options, &mut resolve_import)? {
+    if let Some(output) = decompile_single_unpacked_vue_sfc(
+        source,
+        options,
+        preferred_component_name.as_deref(),
+        &mut resolve_import,
+    )? {
         return Ok(output);
     }
 
@@ -103,10 +114,11 @@ where
 fn decompile_single_unpacked_vue_sfc<F>(
     source: &str,
     mut options: DecompileOptions,
+    preferred_component_name: Option<&str>,
     resolve_import: &mut F,
 ) -> Result<Option<DecompileOutput>>
 where
-    F: FnMut(&str) -> Option<String> + ?Sized,
+    F: FnMut(&str) -> Option<String>,
 {
     let Some(result) = crate::unpacker::unpack_bundle(source) else {
         return Ok(None);
@@ -123,9 +135,12 @@ where
     options.filename = module.filename;
     options.sourcemap = None;
     let mut output = decompile(&module.code, options)?;
-    let Some(sfc) =
-        recover_vue_sfc_source_from_js_with_import_resolver(&output.code, resolve_import)?
-    else {
+    let Some(sfc) = recover_vue_sfc_from_js_inner(
+        &output.code,
+        Some(resolve_import),
+        preferred_component_name,
+    )?
+    .map(|sfc| sfc.print()) else {
         return Ok(None);
     };
     output.code = sfc;
@@ -133,7 +148,7 @@ where
 }
 
 pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
-    recover_vue_sfc_from_js_inner(source, None)
+    recover_vue_sfc_from_js_inner(source, None, None)
 }
 
 pub fn recover_vue_sfc_from_js_with_import_resolver<F>(
@@ -143,12 +158,13 @@ pub fn recover_vue_sfc_from_js_with_import_resolver<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
-    recover_vue_sfc_from_js_inner(source, Some(&mut resolve_import))
+    recover_vue_sfc_from_js_inner(source, Some(&mut resolve_import), None)
 }
 
 fn recover_vue_sfc_from_js_inner(
     source: &str,
     import_resolver: Option<&mut dyn FnMut(&str) -> Option<String>>,
+    preferred_component_name: Option<&str>,
 ) -> Result<Option<VueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
@@ -157,7 +173,7 @@ fn recover_vue_sfc_from_js_inner(
         .transpose()?
         .unwrap_or_default();
     let mut ctx = collect_context(&module, cm, component_bindings);
-    let Some(render) = find_render_source(&module) else {
+    let Some(render) = find_render_source(&module, preferred_component_name) else {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
@@ -356,6 +372,24 @@ fn collect_component_exports(
     exports
 }
 
+fn component_name_from_filename(filename: &str) -> Option<String> {
+    let leaf = Path::new(filename).file_name()?.to_str()?;
+    let name = leaf
+        .split(".vue")
+        .next()
+        .filter(|name| *name != leaf)
+        .or_else(|| leaf.rsplit_once('.').map(|(stem, _)| stem))
+        .unwrap_or(leaf)
+        .split('-')
+        .next()
+        .unwrap_or(leaf);
+    let starts_with_uppercase = name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase());
+    (starts_with_uppercase && !name.is_empty()).then(|| name.to_string())
+}
+
 fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
     let fm = cm.new_source_file(
         FileName::Custom("vue-recovery.js".into()).into(),
@@ -376,7 +410,18 @@ fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
         .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))
 }
 
-fn find_render_source(module: &Module) -> Option<RenderSource<'_>> {
+fn find_render_source<'a>(
+    module: &'a Module,
+    preferred_component_name: Option<&str>,
+) -> Option<RenderSource<'a>> {
+    if let Some(preferred_component_name) = preferred_component_name {
+        if let Some(render) =
+            setup_render_source_for_component_name(module, preferred_component_name)
+        {
+            return Some(render);
+        }
+    }
+
     find_render_fn(module)
         .map(RenderSource::Function)
         .or_else(|| find_setup_render_source(module))
@@ -398,6 +443,63 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
         }
     }
     None
+}
+
+fn setup_render_source_for_component_name<'a>(
+    module: &'a Module,
+    component_name: &str,
+) -> Option<RenderSource<'a>> {
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if let Some(render) =
+                    setup_render_source_from_component_expr(export.expr.as_ref(), component_name)
+                {
+                    return Some(render);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Var(var) = &export.decl {
+                    for decl in &var.decls {
+                        let Some(init) = decl.init.as_deref() else {
+                            continue;
+                        };
+                        if let Some(render) =
+                            setup_render_source_from_component_expr(init, component_name)
+                        {
+                            return Some(render);
+                        }
+                    }
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some(render) =
+                        setup_render_source_from_component_expr(init, component_name)
+                    {
+                        return Some(render);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn setup_render_source_from_component_expr<'a>(
+    expr: &'a Expr,
+    component_name: &str,
+) -> Option<RenderSource<'a>> {
+    let component_bindings = HashMap::new();
+    if component_name_from_init(expr, &component_bindings).as_deref() != Some(component_name) {
+        return None;
+    }
+    setup_render_source_from_expr(expr)
 }
 
 fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
@@ -770,6 +872,38 @@ System.register(["./vendor-vue.js"], function (exports) {
                 .unwrap()
                 .code,
             "<template>\n  <p>Legacy</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn decompiles_component_matching_vue_filename() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue.js";
+const InnerPanel = dc({
+  __name: "InnerPanel",
+  setup() {
+    return () => (ob(), ce("p", null, "Inner"));
+  }
+});
+export const Z = dc({
+  __name: "TargetPanel",
+  setup() {
+    return () => (ob(), ce("p", null, "Target"));
+  }
+});
+"#;
+
+        assert_eq!(
+            decompile_vue_sfc(
+                input,
+                DecompileOptions {
+                    filename: "TargetPanel.vue_vue_type_script_setup_true_lang.js".to_string(),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .code,
+            "<template>\n  <p>Target</p>\n</template>\n"
         );
     }
 
