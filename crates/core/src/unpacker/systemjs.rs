@@ -256,12 +256,15 @@ fn extract_register_descriptor(body: &BlockStmt) -> Option<RegisterDescriptor> {
         let PropOrSpread::Prop(prop) = prop else {
             continue;
         };
-        let Prop::KeyValue(key_value) = prop.as_ref() else {
-            continue;
-        };
-        match prop_name(&key_value.key).as_deref() {
-            Some("setters") => setters = Some(extract_setters(key_value.value.as_ref())?),
-            Some("execute") => execute = Some(extract_function(key_value.value.as_ref())?),
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) => match prop_name(&key_value.key).as_deref() {
+                Some("setters") => setters = Some(extract_setters(key_value.value.as_ref())?),
+                Some("execute") => execute = Some(extract_function(key_value.value.as_ref())?),
+                _ => {}
+            },
+            Prop::Method(method) if prop_name(&method.key).as_deref() == Some("execute") => {
+                execute = Some(*method.function.clone());
+            }
             _ => {}
         }
     }
@@ -416,11 +419,12 @@ fn collect_imports(deps: &[String], setters: &[Option<Function>]) -> Option<Vec<
         }
         let module_sym = module_sym?;
         for stmt in &body.stmts {
-            let (local, kind) = setter_assignment(stmt, &module_sym)?;
-            match kind {
-                SetterImportKind::Default => parts.default = Some(local),
-                SetterImportKind::Named(imported) => parts.named.push((imported, local)),
-                SetterImportKind::Namespace => parts.namespace = Some(local),
+            for (local, kind) in setter_assignments(stmt, &module_sym)? {
+                match kind {
+                    SetterImportKind::Default => parts.default = Some(local),
+                    SetterImportKind::Named(imported) => parts.named.push((imported, local)),
+                    SetterImportKind::Namespace => parts.namespace = Some(local),
+                }
             }
         }
         imports.push(parts);
@@ -434,11 +438,22 @@ enum SetterImportKind {
     Namespace,
 }
 
-fn setter_assignment(stmt: &Stmt, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
+fn setter_assignments(stmt: &Stmt, module_sym: &Atom) -> Option<Vec<(Atom, SetterImportKind)>> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
-    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+    match expr_stmt.expr.as_ref() {
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .map(|expr| setter_assignment_expr(expr.as_ref(), module_sym))
+            .collect(),
+        expr => setter_assignment_expr(expr, module_sym).map(|assignment| vec![assignment]),
+    }
+}
+
+fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
+    let Expr::Assign(assign) = expr else {
         return None;
     };
     let left = assign.left.as_simple()?.as_ident()?.sym.clone();
@@ -931,6 +946,37 @@ System.register("../chunks/main", [], function (exports) {
         );
 
         assert_eq!(result.modules[0].filename, "chunks/main.js");
+    }
+
+    #[test]
+    fn object_method_execute_reconstructs_module() {
+        let result = unpack(
+            r#"
+System.register(["./dep.js"], (_export) => {
+  let value;
+  let label;
+  return {
+    setters: [
+      (module) => {
+        value = module.value, label = module.label;
+      }
+    ],
+    execute () {
+      _export("default", `${label}:${value + 1}`);
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].filename, "entry.js");
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import { value, label } from "./dep.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains("export default `${label}:${value + 1}`;"));
     }
 
     #[test]
