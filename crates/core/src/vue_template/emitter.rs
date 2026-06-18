@@ -184,6 +184,10 @@ impl TemplateEmitter {
                 }
             }
             VueNode::If(branches) => {
+                if self.emit_nested_if_with_leading_condition(branches, depth, leading_attrs) {
+                    return;
+                }
+
                 for (index, branch) in branches.iter().enumerate() {
                     let directive = match (&branch.condition, index) {
                         (Some(condition), 0) => VueDirective::new("if").with_expr(condition),
@@ -213,6 +217,50 @@ impl TemplateEmitter {
         }
     }
 
+    fn emit_nested_if_with_leading_condition(
+        &mut self,
+        branches: &[VueIfBranch],
+        depth: usize,
+        leading_attrs: &[VueAttr],
+    ) -> bool {
+        let Some((condition_index, condition)) = leading_condition_directive(leading_attrs) else {
+            return false;
+        };
+
+        if condition.name == "else" {
+            self.emit_if_template_wrapper(depth, leading_attrs, branches);
+            return true;
+        }
+
+        let Some(outer_condition) = condition.expr.as_ref() else {
+            return false;
+        };
+
+        let non_condition_attrs = leading_attrs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attr)| (index != condition_index).then_some(attr.clone()))
+            .collect::<Vec<_>>();
+
+        for (index, branch) in branches.iter().enumerate() {
+            let directive_name = if condition.name == "if" && index == 0 {
+                "if"
+            } else {
+                "else-if"
+            };
+            let branch_condition = match &branch.condition {
+                Some(inner_condition) => combine_conditions(outer_condition, inner_condition),
+                None => outer_condition.clone(),
+            };
+            let mut attrs = non_condition_attrs.clone();
+            attrs.push(VueAttr::Directive(
+                VueDirective::new(directive_name).with_expr(branch_condition),
+            ));
+            self.emit_node_with_leading_attrs(&branch.node, depth, &attrs);
+        }
+        true
+    }
+
     fn emit_template_wrapper(&mut self, depth: usize, attrs: &[VueAttr], children: &[VueNode]) {
         self.indent(depth);
         self.out.push_str("<template");
@@ -224,6 +272,24 @@ impl TemplateEmitter {
         for child in children {
             self.emit_node(child, depth + 1);
         }
+        self.indent(depth);
+        self.out.push_str("</template>\n");
+    }
+
+    fn emit_if_template_wrapper(
+        &mut self,
+        depth: usize,
+        attrs: &[VueAttr],
+        branches: &[VueIfBranch],
+    ) {
+        self.indent(depth);
+        self.out.push_str("<template");
+        for attr in attrs {
+            self.out.push(' ');
+            self.emit_attr(attr);
+        }
+        self.out.push_str(">\n");
+        self.emit_if(branches, depth + 1);
         self.indent(depth);
         self.out.push_str("</template>\n");
     }
@@ -371,4 +437,39 @@ fn preferred_expr_attr_quote(value: &str) -> char {
 
 fn escape_comment(value: &str) -> String {
     value.replace("--", "- -")
+}
+
+fn leading_condition_directive(attrs: &[VueAttr]) -> Option<(usize, &VueDirective)> {
+    attrs.iter().enumerate().find_map(|(index, attr)| {
+        let VueAttr::Directive(directive) = attr else {
+            return None;
+        };
+        matches!(directive.name.as_str(), "if" | "else-if" | "else").then_some((index, directive))
+    })
+}
+
+fn combine_conditions(outer: &super::VueExpr, inner: &super::VueExpr) -> super::VueExpr {
+    let outer = outer.as_str().trim();
+    let inner = inner.as_str().trim();
+    format!(
+        "{} && {}",
+        condition_and_part(outer),
+        condition_and_part(inner)
+    )
+    .into()
+}
+
+fn condition_and_part(condition: &str) -> String {
+    if condition.is_empty() {
+        return condition.to_string();
+    }
+    if condition_needs_and_parens(condition) {
+        format!("({condition})")
+    } else {
+        condition.to_string()
+    }
+}
+
+fn condition_needs_and_parens(condition: &str) -> bool {
+    condition.contains("||") || condition.contains('?') || condition.contains("=>")
 }
