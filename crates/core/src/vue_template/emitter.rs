@@ -187,6 +187,10 @@ impl TemplateEmitter {
                 if self.emit_nested_if_with_leading_condition(branches, depth, leading_attrs) {
                     return;
                 }
+                if leading_directive(leading_attrs, "for").is_some() {
+                    self.emit_if_template_wrapper(depth, leading_attrs, branches);
+                    return;
+                }
 
                 for (index, branch) in branches.iter().enumerate() {
                     let directive = match (&branch.condition, index) {
@@ -226,6 +230,16 @@ impl TemplateEmitter {
         let Some((condition_index, condition)) = leading_condition_directive(leading_attrs) else {
             return false;
         };
+        if let Some((for_index, _)) = leading_directive(leading_attrs, "for") {
+            self.emit_if_with_split_leading_attrs(
+                branches,
+                depth,
+                leading_attrs,
+                condition_index,
+                for_index,
+            );
+            return true;
+        }
 
         if condition.name == "else" {
             self.emit_if_template_wrapper(depth, leading_attrs, branches);
@@ -259,6 +273,37 @@ impl TemplateEmitter {
             self.emit_node_with_leading_attrs(&branch.node, depth, &attrs);
         }
         true
+    }
+
+    fn emit_if_with_split_leading_attrs(
+        &mut self,
+        branches: &[VueIfBranch],
+        depth: usize,
+        leading_attrs: &[VueAttr],
+        condition_index: usize,
+        for_index: usize,
+    ) {
+        let outer_attrs = leading_attrs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attr)| (index != for_index).then_some(attr.clone()))
+            .collect::<Vec<_>>();
+        let inner_attrs = leading_attrs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attr)| (index != condition_index).then_some(attr.clone()))
+            .collect::<Vec<_>>();
+
+        self.indent(depth);
+        self.out.push_str("<template");
+        for attr in &outer_attrs {
+            self.out.push(' ');
+            self.emit_attr(attr);
+        }
+        self.out.push_str(">\n");
+        self.emit_if_template_wrapper(depth + 1, &inner_attrs, branches);
+        self.indent(depth);
+        self.out.push_str("</template>\n");
     }
 
     fn emit_template_wrapper(&mut self, depth: usize, attrs: &[VueAttr], children: &[VueNode]) {
@@ -445,6 +490,15 @@ fn leading_condition_directive(attrs: &[VueAttr]) -> Option<(usize, &VueDirectiv
             return None;
         };
         matches!(directive.name.as_str(), "if" | "else-if" | "else").then_some((index, directive))
+    })
+}
+
+fn leading_directive<'a>(attrs: &'a [VueAttr], name: &str) -> Option<(usize, &'a VueDirective)> {
+    attrs.iter().enumerate().find_map(|(index, attr)| {
+        let VueAttr::Directive(directive) = attr else {
+            return None;
+        };
+        (directive.name == name).then_some((index, directive))
     })
 }
 

@@ -476,6 +476,44 @@ mod tests {
     }
 
     #[test]
+    fn separates_conditional_and_loop_control_flow_wrappers() {
+        let template = VueTemplate {
+            children: vec![VueNode::If(vec![
+                VueIfBranch {
+                    condition: Some("hasAll".into()),
+                    node: Box::new(VueNode::Element(VueElement::new("slot").with_attrs(vec![
+                        VueAttr::Static {
+                            name: "name".into(),
+                            value: Some("All".into()),
+                        },
+                    ]))),
+                },
+                VueIfBranch {
+                    condition: None,
+                    node: Box::new(VueNode::For(VueFor {
+                        value: "item".into(),
+                        source: "tabs".into(),
+                        node: Box::new(VueNode::If(vec![VueIfBranch {
+                            condition: Some("item.name === currentTab".into()),
+                            node: Box::new(VueNode::Element(VueElement::new("slot").with_attrs(
+                                vec![VueAttr::Bind {
+                                    name: "key".into(),
+                                    expr: "item.name".into(),
+                                }],
+                            ))),
+                        }])),
+                    })),
+                },
+            ])],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <slot v-if=\"hasAll\" name=\"All\" />\n  <template v-else>\n    <template v-for=\"item in tabs\">\n      <slot v-if=\"item.name === currentTab\" :key=\"item.name\" />\n    </template>\n  </template>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn wraps_fragment_and_text_control_flow_in_template() {
         let template = VueTemplate {
             children: vec![
