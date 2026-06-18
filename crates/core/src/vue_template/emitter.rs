@@ -343,7 +343,7 @@ impl TemplateEmitter {
         match attr {
             VueAttr::Static { name, value } => {
                 self.out.push_str(name);
-                if let Some(value) = value {
+                if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
                     self.out.push_str("=\"");
                     self.out.push_str(&escape_attr(value));
                     self.out.push('"');

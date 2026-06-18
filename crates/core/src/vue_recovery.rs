@@ -1384,7 +1384,7 @@ System.register(["./vendor-vue.js"], function (_export) {
             })
             .unwrap()
             .unwrap(),
-            "<template>\n  <VButton flat=\"\" />\n</template>\n"
+            "<template>\n  <VButton flat />\n</template>\n"
         );
     }
 
@@ -1453,7 +1453,7 @@ System.register(["./main-legacy.js", "./vendor-vue.js"], function (_export) {
             })
             .unwrap()
             .code,
-            "<template>\n  <VButton flat=\"\" />\n</template>\n"
+            "<template>\n  <VButton flat />\n</template>\n"
         );
     }
 
@@ -2123,7 +2123,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p v-if=\"ok\" key=\"\">Ready</p>\n  <span v-else>Waiting</span>\n</template>\n"
+            "<template>\n  <p v-if=\"ok\" key>Ready</p>\n  <span v-else>Waiting</span>\n</template>\n"
         );
     }
 

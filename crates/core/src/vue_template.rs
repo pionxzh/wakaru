@@ -334,6 +334,10 @@ mod tests {
                             name: "class".into(),
                             value: Some("counter".into()),
                         },
+                        VueAttr::Static {
+                            name: "disabled".into(),
+                            value: Some("".into()),
+                        },
                         VueAttr::Bind {
                             name: "class".into(),
                             expr: "{ active: props.active }".into(),
@@ -359,7 +363,7 @@ mod tests {
 
         assert_eq!(
             template.print(),
-            "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click.stop=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
+            "<template>\n  <button class=\"counter\" disabled :class=\"{ active: props.active }\" @click.stop=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
         );
     }
 
