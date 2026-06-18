@@ -241,9 +241,7 @@ impl TemplateEmitter {
             VueAttr::Bind { name, expr } => {
                 self.out.push(':');
                 self.out.push_str(name);
-                self.out.push_str("=\"");
-                self.out.push_str(&escape_attr(expr.as_str().trim()));
-                self.out.push('"');
+                self.emit_expr_attr_value(expr.as_str().trim());
             }
             VueAttr::On {
                 name,
@@ -256,15 +254,12 @@ impl TemplateEmitter {
                     self.out.push('.');
                     self.out.push_str(modifier);
                 }
-                self.out.push_str("=\"");
-                self.out.push_str(&escape_attr(expr.as_str().trim()));
-                self.out.push('"');
+                self.emit_expr_attr_value(expr.as_str().trim());
             }
             VueAttr::Directive(directive) => self.emit_directive(directive),
             VueAttr::Spread(expr) => {
-                self.out.push_str("v-bind=\"");
-                self.out.push_str(&escape_attr(expr.as_str().trim()));
-                self.out.push('"');
+                self.out.push_str("v-bind");
+                self.emit_expr_attr_value(expr.as_str().trim());
             }
         }
     }
@@ -290,10 +285,16 @@ impl TemplateEmitter {
             self.out.push_str(modifier);
         }
         if let Some(expr) = &directive.expr {
-            self.out.push_str("=\"");
-            self.out.push_str(&escape_attr(expr.as_str().trim()));
-            self.out.push('"');
+            self.emit_expr_attr_value(expr.as_str().trim());
         }
+    }
+
+    fn emit_expr_attr_value(&mut self, value: &str) {
+        let quote = preferred_expr_attr_quote(value);
+        self.out.push('=');
+        self.out.push(quote);
+        self.out.push_str(&escape_attr_for_quote(value, quote));
+        self.out.push(quote);
     }
 
     fn emit_inline_children(&mut self, children: &[VueNode]) {
@@ -346,10 +347,26 @@ fn escape_text(value: &str) -> String {
 }
 
 fn escape_attr(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('"', "&quot;")
+    escape_attr_for_quote(value, '"')
+}
+
+fn escape_attr_for_quote(value: &str, quote: char) -> String {
+    let value = value.replace('&', "&amp;").replace('<', "&lt;");
+    match quote {
+        '"' => value.replace('"', "&quot;"),
+        '\'' => value.replace('\'', "&#39;"),
+        _ => value,
+    }
+}
+
+fn preferred_expr_attr_quote(value: &str) -> char {
+    let double_quotes = value.matches('"').count();
+    let single_quotes = value.matches('\'').count();
+    if double_quotes > single_quotes {
+        '\''
+    } else {
+        '"'
+    }
 }
 
 fn escape_comment(value: &str) -> String {

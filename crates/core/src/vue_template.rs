@@ -364,6 +364,32 @@ mod tests {
     }
 
     #[test]
+    fn prefers_single_quoted_expression_attrs_when_expr_contains_double_quotes() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("button").with_attrs(
+                vec![
+                    VueAttr::Bind {
+                        name: "class".into(),
+                        expr: "[ active ? \"is-active\" : \"\" ]".into(),
+                    },
+                    VueAttr::On {
+                        name: "click".into(),
+                        expr: "emit(\"select\")".into(),
+                        modifiers: Vec::new(),
+                    },
+                    VueAttr::Directive(VueDirective::new("if").with_expr("status === \"ready\"")),
+                    VueAttr::Spread("{ title: \"Ready\" }".into()),
+                ],
+            ))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <button :class='[ active ? \"is-active\" : \"\" ]' @click='emit(\"select\")' v-if='status === \"ready\"' v-bind='{ title: \"Ready\" }' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn renames_standalone_identifiers_in_expressions() {
         let mut expr = VueExpr::new("isMyBets ? P % 2 === 0 ? \"P.\" : `${P.id}.${P}` : row.P");
 
