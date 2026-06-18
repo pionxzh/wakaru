@@ -918,7 +918,13 @@ fn setup_script(
         .filter(|name| is_valid_identifier_name(name))
         .cloned()
         .collect::<Vec<_>>();
-    let props_declaration = setup_props_script_binding(ctx)
+    let props_binding_reserved = props_binding_reserved_names(
+        ctx,
+        &valid_prop_names,
+        emit_declaration.as_ref(),
+        &ref_declarations,
+    );
+    let props_declaration = setup_props_script_binding(ctx, &props_binding_reserved)
         .map(|binding| {
             component_props_source(ctx).map(|source| source.map(|source| (binding, source)))
         })
@@ -1521,11 +1527,22 @@ fn script_import_line(local: &str, import: &VueScriptImport) -> String {
     }
 }
 
-fn setup_props_script_binding(ctx: &VueRecoveryContext) -> Option<String> {
+fn setup_props_script_binding(
+    ctx: &VueRecoveryContext,
+    reserved_bindings: &HashSet<Atom>,
+) -> Option<String> {
+    if ctx.setup_props_context.is_some() || !ctx.setup_props_aliases.is_empty() {
+        let props = Atom::from("props");
+        if !reserved_bindings.contains(&props) {
+            return Some("props".to_string());
+        }
+    }
+
     let mut aliases = ctx
         .setup_props_aliases
         .iter()
         .filter(|alias| is_valid_identifier_name(alias.as_ref()))
+        .filter(|alias| !reserved_bindings.contains(*alias))
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     aliases.sort();
@@ -1533,8 +1550,37 @@ fn setup_props_script_binding(ctx: &VueRecoveryContext) -> Option<String> {
         ctx.setup_props_context
             .as_ref()
             .filter(|binding| is_valid_identifier_name(binding.as_ref()))
+            .filter(|binding| !reserved_bindings.contains(*binding))
             .map(ToString::to_string)
     })
+}
+
+fn props_binding_reserved_names(
+    ctx: &VueRecoveryContext,
+    valid_prop_names: &[String],
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+) -> HashSet<Atom> {
+    let mut reserved = valid_prop_names
+        .iter()
+        .cloned()
+        .map(Atom::from)
+        .collect::<HashSet<_>>();
+    if let Some((binding, _)) = emit_declaration {
+        reserved.insert(Atom::from(binding.clone()));
+    }
+    reserved.extend(
+        ref_declarations
+            .iter()
+            .map(|(binding, _, _)| Atom::from(binding.clone())),
+    );
+    reserved.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|(binding, _)| binding.clone()),
+    );
+    reserved.extend(ctx.script_imports.keys().cloned());
+    reserved
 }
 
 fn setup_emit_script_binding(ctx: &VueRecoveryContext, root: &VueNode) -> Option<String> {
@@ -2626,6 +2672,52 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { statusLevel } from \"./status.js\";\n\nconst props = defineProps({\n    status: String\n});\nconst { status } = props;\n</script>\n\n<template>\n  <StatusTag :level=\"statusLevel(status)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn uses_readable_define_props_binding_for_minified_setup_param() {
+        let input = r#"
+import { formatMsg } from "./format.js";
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    msg: String,
+  },
+  setup(e) {
+    return () => (
+      openBlock(), createElementBlock("div", { title: formatMsg(e.msg) }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { formatMsg } from \"./format.js\";\n\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <div :title=\"formatMsg(msg)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn avoids_props_binding_when_props_is_a_prop_name() {
+        let input = r#"
+import { formatMsg } from "./format.js";
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    props: String,
+  },
+  setup(e) {
+    return () => (
+      openBlock(), createElementBlock("div", { title: formatMsg(e.props) }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { formatMsg } from \"./format.js\";\n\nconst e = defineProps({\n    props: String\n});\nconst { props } = e;\n</script>\n\n<template>\n  <div :title=\"formatMsg(props)\" />\n</template>\n"
         );
     }
 
