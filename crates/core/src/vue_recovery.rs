@@ -1210,6 +1210,28 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_vite_render_slot_alias() {
+        let input = r#"
+import { d as dc, q as ob, X as ce, Y as rs } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "SlotForwarder",
+  setup() {
+    return (_ctx, _cache) => (
+      ob(), ce("div", null, [
+        rs(_ctx.$slots, "default")
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div>\n    <slot />\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_slot_object_children() {
         let input = r#"
 import { resolveComponent, createVNode, withCtx, createElementVNode, toDisplayString, openBlock, createElementBlock } from "vue";
