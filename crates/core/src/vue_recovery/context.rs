@@ -532,10 +532,9 @@ pub(super) fn collect_setup_context(
                 ctx.setup_props_aliases.insert(binding.id.sym.clone());
                 continue;
             }
-            let Some(value_expr) = computed_value_expr(init, ctx) else {
+            let Some(value) = computed_value_expr(init, ctx)? else {
                 continue;
             };
-            let value = clean_expr(&print_expr(value_expr, ctx)?, ctx);
             ctx.setup_value_bindings
                 .insert(binding.id.sym.clone(), value);
         }
@@ -595,16 +594,17 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
     }
 }
 
-fn computed_value_expr<'a>(expr: &'a Expr, ctx: &VueRecoveryContext) -> Option<&'a Expr> {
+fn computed_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
-        return None;
+        return Ok(None);
     };
     if !is_computed_call(call, ctx) {
-        return None;
+        return Ok(None);
     }
-    call.args
-        .first()
-        .and_then(|arg| arrow_body_expr(arg.expr.as_ref()))
+    let Some(arg) = call.args.first() else {
+        return Ok(None);
+    };
+    computed_getter_expr(arg.expr.as_ref(), ctx)
 }
 
 fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
@@ -614,19 +614,77 @@ fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
     call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
 }
 
-fn arrow_body_expr(expr: &Expr) -> Option<&Expr> {
+fn computed_getter_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     let Expr::Arrow(arrow) = unwrap_paren_expr(expr) else {
-        return None;
+        return Ok(None);
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => Some(expr.as_ref()),
-        BlockStmtOrExpr::BlockStmt(block) => block.stmts.iter().rev().find_map(|stmt| match stmt {
+        BlockStmtOrExpr::Expr(expr) => Ok(Some(clean_expr(&print_expr(expr.as_ref(), ctx)?, ctx))),
+        BlockStmtOrExpr::BlockStmt(block) => computed_block_value_expr(&block.stmts, ctx),
+    }
+}
+
+fn computed_block_value_expr(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    if let Some(expr) = computed_if_return_chain_expr(stmts, ctx)? {
+        return Ok(Some(expr));
+    }
+
+    let Some(expr) = stmts.iter().rev().find_map(return_expr_from_stmt) else {
+        return Ok(None);
+    };
+    Ok(Some(clean_expr(&print_expr(expr, ctx)?, ctx)))
+}
+
+fn computed_if_return_chain_expr(
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> Result<Option<String>> {
+    let mut branches = Vec::new();
+
+    for stmt in stmts {
+        match stmt {
+            Stmt::If(if_stmt) => {
+                let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
+                    return Ok(None);
+                };
+                if if_stmt.alt.is_some() {
+                    return Ok(None);
+                }
+                branches.push((
+                    clean_expr(&print_expr(if_stmt.test.as_ref(), ctx)?, ctx),
+                    clean_expr(&print_expr(expr, ctx)?, ctx),
+                ));
+            }
             Stmt::Return(ReturnStmt {
                 arg: Some(expr), ..
-            }) => Some(expr.as_ref()),
-            _ => None,
-        }),
+            }) if !branches.is_empty() => {
+                let fallback = clean_expr(&print_expr(expr, ctx)?, ctx);
+                return Ok(Some(format_conditional_expr(&branches, fallback)));
+            }
+            _ => return Ok(None),
+        }
     }
+
+    Ok(None)
+}
+
+fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => Some(expr.as_ref()),
+        Stmt::Block(block) => block.stmts.iter().find_map(return_expr_from_stmt),
+        _ => None,
+    }
+}
+
+fn format_conditional_expr(branches: &[(String, String)], fallback: String) -> String {
+    branches
+        .iter()
+        .rev()
+        .fold(fallback, |alternate, (condition, consequent)| {
+            format!("{condition} ? {consequent} : {alternate}")
+        })
 }
 
 fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
