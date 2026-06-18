@@ -998,8 +998,14 @@ fn expr_is_ts_helper_export_registrar_value(expr: &Expr, factories: &HashSet<Bin
             factories.contains(&binding_key(id))
                 && factory_call_arguments_are_registrar_safe(call, factories)
         }
-        Expr::Fn(fn_expr) => function_returns_ts_helper_export_registrar(&fn_expr.function),
-        Expr::Arrow(arrow) => arrow_returns_ts_helper_export_registrar(arrow),
+        Expr::Fn(fn_expr) => {
+            function_returns_ts_helper_export_registrar(&fn_expr.function)
+                && factory_call_arguments_are_registrar_safe(call, factories)
+        }
+        Expr::Arrow(arrow) => {
+            arrow_returns_ts_helper_export_registrar(arrow)
+                && factory_call_arguments_are_registrar_safe(call, factories)
+        }
         _ => false,
     }
 }

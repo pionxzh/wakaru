@@ -788,6 +788,37 @@ fn registered_typescript_values_helper_fact_requires_factory_adapter_to_return_v
 }
 
 #[test]
+fn registered_typescript_values_helper_fact_requires_inline_factory_adapter_to_return_value() {
+    let facts = collect_facts(
+        r#"
+(function(callback) {
+  const globalTarget = {};
+  callback(((target, adapter) =>
+    (name, value) => target[name] = adapter ? adapter(name, value) : value
+  )(globalTarget, (name, value) => null));
+})((register) => {
+  function __values(o) {
+    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+    if (m) return m.call(o);
+    if (o && typeof o.length === "number") return {
+      next: function() {
+        if (o && i >= o.length) o = void 0;
+        return { value: o && o[i++], done: !o };
+      }
+    };
+    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+  }
+  register("__values", __values);
+});
+"#,
+    );
+    assert!(
+        facts.ts_helper_exports.is_empty(),
+        "inline factory adapters that do not return the registered value must not become helper facts: {facts}"
+    );
+}
+
+#[test]
 fn registered_typescript_values_helper_fact_requires_export_registrar() {
     let facts = collect_facts(
         r#"
