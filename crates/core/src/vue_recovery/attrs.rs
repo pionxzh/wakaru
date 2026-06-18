@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Lit, ObjectLit, Pat, Prop, PropOrSpread,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Function, Lit, ObjectLit, Pat, Prop,
+    PropOrSpread,
 };
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::directives::directive_modifiers;
 use super::expressions::{
@@ -368,11 +370,12 @@ fn clean_event_handler_expr(
     ctx: &VueRecoveryContext,
     event_param: Option<&str>,
 ) -> Result<String> {
-    let mut handler = clean_attr_expr(&print_expr(expr, ctx)?, ctx);
     if let Some(param) = event_param {
-        handler = replace_event_param(&handler, param);
+        let mut expr = expr.clone();
+        expr.visit_mut_with(&mut EventParamRenamer::new(param));
+        return Ok(clean_attr_expr(&print_expr(&expr, ctx)?, ctx));
     }
-    Ok(handler)
+    Ok(clean_attr_expr(&print_expr(expr, ctx)?, ctx))
 }
 
 fn arrow_event_param(arrow: &ArrowExpr) -> Option<&str> {
@@ -382,12 +385,62 @@ fn arrow_event_param(arrow: &ArrowExpr) -> Option<&str> {
     Some(binding.id.sym.as_ref())
 }
 
-fn replace_event_param(expr: &str, param: &str) -> String {
-    let mut renamed = expr.replace(&format!("{param}."), "$event.");
-    if renamed == param {
-        renamed = "$event".to_string();
+struct EventParamRenamer<'a> {
+    param: &'a str,
+    shadow_depth: usize,
+}
+
+impl<'a> EventParamRenamer<'a> {
+    fn new(param: &'a str) -> Self {
+        Self {
+            param,
+            shadow_depth: 0,
+        }
     }
-    renamed
+
+    fn is_shadowing_pat(&self, pat: &Pat) -> bool {
+        matches!(pat, Pat::Ident(binding) if binding.id.sym.as_ref() == self.param)
+    }
+}
+
+impl VisitMut for EventParamRenamer<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if self.shadow_depth == 0 {
+            if let Expr::Ident(ident) = expr {
+                if ident.sym.as_ref() == self.param {
+                    ident.sym = "$event".into();
+                    return;
+                }
+            }
+        }
+
+        expr.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let shadows = arrow.params.iter().any(|pat| self.is_shadowing_pat(pat));
+        if shadows {
+            self.shadow_depth += 1;
+        }
+        arrow.visit_mut_children_with(self);
+        if shadows {
+            self.shadow_depth -= 1;
+        }
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let shadows = function
+            .params
+            .iter()
+            .any(|param| self.is_shadowing_pat(&param.pat));
+        if shadows {
+            self.shadow_depth += 1;
+        }
+        function.visit_mut_children_with(self);
+        if shadows {
+            self.shadow_depth -= 1;
+        }
+    }
 }
 
 fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
