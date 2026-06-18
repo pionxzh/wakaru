@@ -8,7 +8,7 @@ use swc_core::ecma::ast::{
     ExprStmt, FnExpr, Function, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
     ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr,
     MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, VarDecl, VarDeclarator,
+    Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -22,14 +22,13 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
-        let Expr::Call(call) = expr.as_ref() else {
-            continue;
-        };
-        if !is_system_register_call(call) {
+        if let Some(register) = register_from_expr(expr.as_ref()) {
+            registers.push(register);
             continue;
         }
-        let register = parse_register_call(call)?;
-        registers.push(register);
+        if let Some(wrapped_registers) = registers_from_iife_expr(expr.as_ref()) {
+            registers.extend(wrapped_registers);
+        }
     }
 
     if registers.is_empty() {
@@ -101,6 +100,7 @@ struct SystemRegister {
     name: Option<String>,
     deps: Vec<String>,
     declare: Function,
+    prelude: Vec<Stmt>,
 }
 
 fn is_system_register_call(call: &CallExpr) -> bool {
@@ -130,7 +130,60 @@ fn parse_register_call(call: &CallExpr) -> Option<SystemRegister> {
         name,
         deps,
         declare,
+        prelude: Vec::new(),
     })
+}
+
+fn register_from_expr(expr: &Expr) -> Option<SystemRegister> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if !is_system_register_call(call) {
+        return None;
+    }
+    parse_register_call(call)
+}
+
+fn registers_from_iife_expr(expr: &Expr) -> Option<Vec<SystemRegister>> {
+    let body = iife_body(expr)?;
+    let mut registers = Vec::new();
+
+    for (idx, stmt) in body.stmts.iter().enumerate() {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            continue;
+        };
+        let Some(mut register) = register_from_expr(expr_stmt.expr.as_ref()) else {
+            continue;
+        };
+        register.prelude = body.stmts[..idx]
+            .iter()
+            .filter(|stmt| !matches!(stmt, Stmt::Expr(expr) if is_use_strict(expr)))
+            .cloned()
+            .collect();
+        registers.push(register);
+    }
+
+    Some(registers)
+}
+
+fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
+    match expr {
+        Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => iife_body(unary.arg.as_ref()),
+        Expr::Call(call) => match &call.callee {
+            Callee::Expr(callee) => match callee.as_ref() {
+                Expr::Fn(function) => function.function.body.as_ref(),
+                Expr::Arrow(arrow) => match arrow.body.as_ref() {
+                    BlockStmtOrExpr::BlockStmt(body) => Some(body),
+                    BlockStmtOrExpr::Expr(_) => None,
+                },
+                Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn extract_string_array(expr: &Expr) -> Option<Vec<String>> {
@@ -205,6 +258,7 @@ fn emit_system_module(
     for import in &imports {
         items.extend(import.to_module_items());
     }
+    items.extend(register.prelude.iter().cloned().map(ModuleItem::Stmt));
 
     let mut transformer = SystemExecuteTransformer::new(export_sym, context_sym);
     for stmt in outer_hoisted_stmts(body, &imported_locals) {
@@ -525,10 +579,27 @@ impl SystemExecuteTransformer {
         let Stmt::Expr(expr_stmt) = stmt else {
             return None;
         };
-        let Expr::Call(call) = expr_stmt.expr.as_ref() else {
-            return None;
-        };
-        let export_call = parse_export_call(call, &self.export_sym)?;
+        match expr_stmt.expr.as_ref() {
+            Expr::Call(call) => {
+                let export_call = parse_export_call(call, &self.export_sym)?;
+                self.export_call_items(export_call)
+            }
+            Expr::Seq(seq) => {
+                let mut items = Vec::new();
+                for expr in &seq.exprs {
+                    let Expr::Call(call) = expr.as_ref() else {
+                        return None;
+                    };
+                    let export_call = parse_export_call(call, &self.export_sym)?;
+                    items.extend(self.export_call_items(export_call)?);
+                }
+                Some(items)
+            }
+            _ => None,
+        }
+    }
+
+    fn export_call_items(&mut self, export_call: ExportCall) -> Option<Vec<ModuleItem>> {
         match export_call {
             ExportCall::Single { exported, value } => {
                 if let Expr::Assign(assign) = value.as_ref() {
@@ -965,6 +1036,76 @@ System.register(["./dep.js"], (_export) => {
         assert!(result.modules[0]
             .code
             .contains("export default `${label}:${value + 1}`;"));
+    }
+
+    #[test]
+    fn iife_wrapped_register_preserves_helper_prelude() {
+        let result = unpack(
+            r#"
+!function () {
+  "use strict";
+  function decorate(value) {
+    return value + "!";
+  }
+  System.register([], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("ready"));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].filename, "entry.js");
+        assert!(result.modules[0].code.contains("function decorate(value)"));
+        assert!(result.modules[0]
+            .code
+            .contains("export default decorate(\"ready\");"));
+        assert!(!result.modules[0].code.contains("use strict"));
+    }
+
+    #[test]
+    fn sequence_export_calls_reconstruct_each_export() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  function make(value) {
+    return { value };
+  }
+  return {
+    execute: function () {
+      _export("C", make(1)), _export("_", make(2));
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0].code.contains("export const C = make(1);"));
+        assert!(result.modules[0].code.contains("export const _ = make(2);"));
+    }
+
+    #[test]
+    fn ignores_unrelated_top_level_expressions() {
+        let result = unpack(
+            r#"
+console.log("loading");
+System.register([], function (_export) {
+  return {
+    execute: function () {
+      _export("default", 1);
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0].code.contains("export default 1;"));
     }
 
     #[test]
