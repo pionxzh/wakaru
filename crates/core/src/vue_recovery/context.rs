@@ -253,21 +253,34 @@ fn push_script_local_binding(
     reserved_bindings: &HashSet<Atom>,
     used_bindings: &mut HashSet<Atom>,
 ) -> Result<()> {
+    let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    let mut source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
+    if is_transpiler_runtime_helper_source(&source) {
+        return Ok(());
+    }
+
     let import_aliases = colliding_import_aliases(&stmt, ctx, reserved_bindings, used_bindings);
     if !import_aliases.is_empty() {
         stmt.visit_mut_with(&mut ImportAliasRenamer::new(&import_aliases));
+        let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+        source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
     }
-    let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
-    let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
+
     if !source.is_empty() {
         ctx.script_local_bindings.push(VueSetupLocalBinding {
             bindings,
-            refs: stmt_ident_refs(&cleaned_stmt),
+            refs: stmt_ident_refs(&stmt),
             source,
-            import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
+            import_refs: stmt_import_refs(&stmt, &ctx.script_imports),
         });
     }
     Ok(())
+}
+
+fn is_transpiler_runtime_helper_source(source: &str) -> bool {
+    source.contains("suspendedStart")
+        && source.contains("_invoke")
+        && (source.contains("@@iterator") || source.contains("__await"))
 }
 
 fn colliding_import_aliases(
