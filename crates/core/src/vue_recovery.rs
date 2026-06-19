@@ -1326,11 +1326,27 @@ fn setup_local_declarations<'a>(
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
     let event_refs = template_event_expr_refs(root);
+    let expr_refs = template_expr_refs(root);
     let shadowed_names = template_expr_shadowed_names(root);
+    let expr_refs = expr_refs
+        .into_iter()
+        .filter(|local| !shadowed_names.contains(local))
+        .collect::<HashSet<_>>();
     let mut wanted_refs = event_refs
         .into_iter()
         .filter(|local| !shadowed_names.contains(local))
         .collect::<HashSet<_>>();
+    for declaration in &candidates {
+        if selects_safe_template_expr_local(ctx, declaration, &expr_refs) {
+            wanted_refs.extend(
+                declaration
+                    .bindings
+                    .iter()
+                    .filter(|binding| expr_refs.contains(*binding))
+                    .cloned(),
+            );
+        }
+    }
     wanted_refs.extend(setup_value_dependency_refs(ctx, root, &shadowed_names));
     wanted_refs.extend(
         setup_script_binding_refs(ctx)
@@ -1373,6 +1389,94 @@ fn setup_local_declarations<'a>(
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
         .collect()
+}
+
+fn selects_safe_template_expr_local(
+    ctx: &VueRecoveryContext,
+    declaration: &VueSetupLocalBinding,
+    expr_refs: &HashSet<Atom>,
+) -> bool {
+    if declaration
+        .bindings
+        .iter()
+        .all(|binding| !expr_refs.contains(binding))
+    {
+        return false;
+    }
+    if declaration.module_scope {
+        return true;
+    }
+    match &declaration.stmt {
+        Stmt::Decl(Decl::Fn(_)) | Stmt::Decl(Decl::Class(_)) => true,
+        Stmt::Decl(Decl::Var(var)) => var.decls.iter().any(|decl| {
+            let mut decl_bindings = HashSet::new();
+            collect_local_pat_bindings(&decl.name, &mut decl_bindings);
+            if decl_bindings
+                .iter()
+                .all(|binding| !expr_refs.contains(binding))
+            {
+                return false;
+            }
+            if matches!(decl.name, Pat::Ident(_))
+                && decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| is_opaque_vue_helper_candidate_call(init, ctx))
+            {
+                return false;
+            }
+            matches!(decl.name, Pat::Ident(_) | Pat::Array(_))
+        }),
+        _ => false,
+    }
+}
+
+fn is_opaque_vue_helper_candidate_call(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match expr {
+        Expr::Paren(paren) => is_opaque_vue_helper_candidate_call(paren.expr.as_ref(), ctx),
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            let Expr::Ident(ident) = callee.as_ref() else {
+                return false;
+            };
+            ctx.vue_helper_candidates.contains(&ident.sym)
+                && !ctx.vue_helpers.contains_key(&ident.sym)
+        }
+        _ => false,
+    }
+}
+
+fn collect_local_pat_bindings(pat: &Pat, bindings: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.insert(binding.id.sym.clone());
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_local_pat_bindings(elem, bindings);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_local_pat_bindings(key_value.value.as_ref(), bindings);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        bindings.insert(assign.key.sym.clone());
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        collect_local_pat_bindings(rest.arg.as_ref(), bindings);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_local_pat_bindings(rest.arg.as_ref(), bindings),
+        Pat::Assign(assign) => collect_local_pat_bindings(assign.left.as_ref(), bindings),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
 }
 
 fn setup_value_dependency_refs(
@@ -3388,6 +3492,31 @@ export const _ = dc({
     }
 
     #[test]
+    fn preserves_callable_vendor_helper_candidate_used_by_event() {
+        let input = r#"
+import { d as dc, _ as ur, h as debounce, q as ob, X as ce } from "./vendor-vue.js";
+import { submit } from "./api.js";
+export const _ = dc({
+  __name: "SubmitButton",
+  setup() {
+    const send = debounce(submit, 1000);
+    const payload = { kind: "save" };
+    return () => (
+      ob(), ce("button", {
+        onClick: () => ur(send)(payload)
+      }, "Save", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { h as debounce } from \"./vendor-vue.js\";\nimport { submit } from \"./api.js\";\n\nconst send = debounce(submit, 1000);\nconst payload = {\n    kind: \"save\"\n};\n</script>\n\n<template>\n  <button @click=\"send(payload)\">Save</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn emits_module_local_helpers_used_by_setup_declarations() {
         let input = r#"
 import { d as dc, r, c as cp, q as ob, X as ce } from "./vendor-vue.js";
@@ -4297,6 +4426,33 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_tuple_local_used_only_by_template_bindings() {
+        let input = r#"
+import { defineComponent, unref, openBlock, createElementBlock, createCommentVNode } from "vue";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const [open, setOpen] = useState(false);
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("section", {
+        disabled: !unref(open)
+      }, [
+        unref(open)
+          ? (openBlock(), createElementBlock("p", { key: 0 }, "Open"))
+          : createCommentVNode("", true)
+      ], 8, ["disabled"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [open, setOpen] = useState(false);\n</script>\n\n<template>\n  <section :disabled=\"!open\">\n    <p v-if=\"open\">Open</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_tuple_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";
@@ -5008,6 +5164,40 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <component :is=\"currentView\" class=\"panel\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_direct_dynamic_component_target() {
+        let input = r#"
+import { openBlock, createVNode } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createVNode(_ctx.currentView, {
+    class: "panel"
+  }, null, 512);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component :is=\"currentView\" class=\"panel\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_conditional_direct_dynamic_component_target() {
+        let input = r#"
+import { openBlock, createVNode, createCommentVNode } from "vue";
+export function render(_ctx, _cache) {
+  return _ctx.streamDisplay
+    ? (openBlock(), createVNode(_ctx.streamDisplay.component))
+    : createCommentVNode("", true);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component v-if=\"streamDisplay\" :is=\"streamDisplay.component\" />\n</template>\n"
         );
     }
 
