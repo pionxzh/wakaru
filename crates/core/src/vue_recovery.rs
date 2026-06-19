@@ -3743,6 +3743,32 @@ export default defineComponent({
     }
 
     #[test]
+    fn preserves_setup_ref_assignment_in_script_handler() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    const ready = ref(false);
+    function markReady() {
+      ready.value = true;
+    }
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("button", {
+        onClick: _cache[0] || (_cache[0] = (event) => ready.value = false),
+        onDblclick: markReady
+      }, "Go", 40, ["onClick", "onDblclick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst ready = ref(false);\n\nfunction markReady() {\n    ready.value = true;\n}\n</script>\n\n<template>\n  <button @click=\"ready = false\" @dblclick=\"markReady\">Go</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_nested_event_shadowing() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";

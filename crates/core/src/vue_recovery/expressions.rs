@@ -18,7 +18,7 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
     let mut expr = expr.clone();
     expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
     expr.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
-    expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx));
+    expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, true));
 
     let module = Module {
         span: DUMMY_SP,
@@ -67,7 +67,7 @@ pub(super) fn print_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Result<String
     let mut stmt = stmt.clone();
     stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
     stmt.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
-    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx));
+    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
 
     let module = Module {
         span: DUMMY_SP,
@@ -107,10 +107,11 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
 struct SetupRefValueCleaner<'a> {
     bindings: Vec<&'a str>,
     shadow_depths: Vec<usize>,
+    clean_assign_targets: bool,
 }
 
 impl<'a> SetupRefValueCleaner<'a> {
-    fn new(ctx: &'a VueRecoveryContext) -> Self {
+    fn new(ctx: &'a VueRecoveryContext, clean_assign_targets: bool) -> Self {
         let mut bindings = ctx
             .setup_ref_bindings
             .iter()
@@ -122,6 +123,7 @@ impl<'a> SetupRefValueCleaner<'a> {
         Self {
             bindings,
             shadow_depths,
+            clean_assign_targets,
         }
     }
 
@@ -251,6 +253,9 @@ impl VisitMut for SetupAliasCleaner<'_> {
 impl VisitMut for SetupRefValueCleaner<'_> {
     fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
         assign.visit_mut_children_with(self);
+        if !self.clean_assign_targets {
+            return;
+        }
 
         let replacement = match &assign.left {
             AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") => {
