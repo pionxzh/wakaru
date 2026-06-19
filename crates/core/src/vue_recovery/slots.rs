@@ -12,9 +12,9 @@ use super::nodes::{
     list_item_context, recover_children, recover_for_params,
 };
 use super::syntax::{prop_name, string_lit};
-use super::VueRecoveryContext;
+use super::{template_scope_from_pat, VueRecoveryContext};
 use crate::vue_template::{
-    VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
+    VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode, VueTemplateScope,
 };
 
 pub(super) fn recover_direct_slot(
@@ -180,13 +180,16 @@ fn recover_dynamic_slot_list(
     };
     apply_for_param_renames(&mut slot, &for_params);
 
+    let scope = for_params.template_scope();
+    let value = for_params.value;
     Ok(Some(VueNode::For(VueFor {
-        value: for_params.value,
+        value,
         source: VueExpr::new(clean_attr_expr(
             &print_expr(source_arg.expr.as_ref(), ctx)?,
             ctx,
         )),
         node: Box::new(slot),
+        scope,
     })))
 }
 
@@ -260,8 +263,8 @@ fn recover_component_slot(
         RecoveredSlotName::Static(name) => VueDirective::new("slot").with_arg(name.clone()),
         RecoveredSlotName::Dynamic(name) => VueDirective::new("slot").with_dynamic_arg(name),
     };
-    if let Some(scope) = slot_scope(arrow, ctx)? {
-        directive = directive.with_expr(scope);
+    if let Some((scope_expr, scope)) = slot_scope(arrow, ctx)? {
+        directive = directive.with_expr(scope_expr).with_scope(scope);
     }
     let mut attrs = vec![VueAttr::Directive(directive)];
     attrs.extend(extra_attrs);
@@ -282,11 +285,16 @@ fn slot_fn_expr<'a>(expr: &'a Expr, ctx: &VueRecoveryContext) -> Option<&'a Expr
     call.args.first().map(|arg| arg.expr.as_ref())
 }
 
-fn slot_scope(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Option<VueExpr>> {
+fn slot_scope(
+    arrow: &ArrowExpr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<(VueExpr, VueTemplateScope)>> {
     let Some(param) = arrow.params.first() else {
         return Ok(None);
     };
-    Ok(slot_pat(param, ctx)?.map(VueExpr::new))
+    Ok(slot_pat(param, ctx)?
+        .map(VueExpr::new)
+        .map(|expr| (expr, template_scope_from_pat(param))))
 }
 
 pub(super) fn slot_pat(pat: &Pat, ctx: &VueRecoveryContext) -> Result<Option<String>> {

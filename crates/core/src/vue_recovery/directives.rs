@@ -52,6 +52,7 @@ pub(super) fn recover_directive_tuple(
         }),
         expr,
         modifiers,
+        scope: Default::default(),
     })))
 }
 

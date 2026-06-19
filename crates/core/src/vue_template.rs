@@ -38,6 +38,7 @@ pub struct VueFor {
     pub value: String,
     pub source: VueExpr,
     pub node: Box<VueNode>,
+    pub scope: VueTemplateScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +53,7 @@ pub struct VueUnsupported {
     pub kind: VueUnsupportedKind,
     pub expr: VueExpr,
     pub source: Option<VueUnsupportedSource>,
+    pub scope: VueTemplateScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,12 +91,18 @@ pub struct VueDirective {
     pub arg: Option<VueDirectiveArg>,
     pub expr: Option<VueExpr>,
     pub modifiers: Vec<String>,
+    pub scope: VueTemplateScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueDirectiveArg {
     Static(String),
     Dynamic(VueExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VueTemplateScope {
+    pub locals: Vec<String>,
 }
 
 mod emitter;
@@ -144,6 +152,7 @@ impl VueDirective {
             arg: None,
             expr: None,
             modifiers: Vec::new(),
+            scope: VueTemplateScope::default(),
         }
     }
 
@@ -164,6 +173,11 @@ impl VueDirective {
 
     pub fn with_modifiers(mut self, modifiers: Vec<String>) -> Self {
         self.modifiers = modifiers;
+        self
+    }
+
+    pub fn with_scope(mut self, scope: VueTemplateScope) -> Self {
+        self.scope = scope;
         self
     }
 }
@@ -194,6 +208,7 @@ impl VueUnsupported {
             kind: VueUnsupportedKind::VNodeChildren,
             expr: expr.into(),
             source: None,
+            scope: VueTemplateScope::default(),
         }
     }
 
@@ -201,22 +216,30 @@ impl VueUnsupported {
         expr: impl Into<VueExpr>,
         binding: impl Into<String>,
     ) -> Self {
+        let binding = binding.into();
         Self {
             kind: VueUnsupportedKind::VNodeChildren,
             expr: expr.into(),
             source: Some(VueUnsupportedSource::RenderLocalSlotPartitionChildren {
-                binding: binding.into(),
+                binding: binding.clone(),
             }),
+            scope: VueTemplateScope::from_local(binding),
+        }
+    }
+}
+
+impl VueTemplateScope {
+    pub fn from_local(local: impl Into<String>) -> Self {
+        Self {
+            locals: vec![local.into()],
         }
     }
 
-    pub fn render_local_binding(&self) -> Option<&str> {
-        match &self.source {
-            Some(VueUnsupportedSource::RenderLocalSlotPartitionChildren { binding }) => {
-                Some(binding)
-            }
-            None => None,
-        }
+    pub fn from_locals(locals: impl IntoIterator<Item = String>) -> Self {
+        let mut locals = locals.into_iter().collect::<Vec<_>>();
+        locals.sort();
+        locals.dedup();
+        Self { locals }
     }
 }
 
@@ -483,6 +506,7 @@ mod tests {
                         VueElement::new("span")
                             .with_children(vec![VueNode::Interpolation("item.name".into())]),
                     )),
+                    scope: Default::default(),
                 }),
             ],
         };
@@ -558,6 +582,7 @@ mod tests {
                                 }],
                             ))),
                         }])),
+                        scope: Default::default(),
                     })),
                 },
             ])],
