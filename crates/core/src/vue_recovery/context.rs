@@ -2002,7 +2002,7 @@ fn ref_script_setup_helper(call: &CallExpr, ctx: &VueRecoveryContext) -> Option<
     }
 }
 
-fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+pub(super) fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
         return false;
     };
@@ -2013,7 +2013,7 @@ fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
 }
 
-fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+pub(super) fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
         return false;
     };
