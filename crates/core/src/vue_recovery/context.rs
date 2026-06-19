@@ -120,6 +120,307 @@ pub(super) fn collect_context(
     ctx
 }
 
+pub(super) fn collect_script_local_context(
+    module: &Module,
+    ctx: &mut VueRecoveryContext,
+) -> Result<()> {
+    let reserved_bindings = script_local_reserved_bindings(module, ctx);
+    let mut used_bindings = reserved_bindings.clone();
+    used_bindings.extend(ctx.script_imports.keys().cloned());
+
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => {
+                collect_script_local_decl(decl, ctx, &reserved_bindings, &mut used_bindings)?
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                collect_script_local_decl(
+                    &export.decl,
+                    ctx,
+                    &reserved_bindings,
+                    &mut used_bindings,
+                )?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn script_local_reserved_bindings(module: &Module, ctx: &VueRecoveryContext) -> HashSet<Atom> {
+    let mut reserved = HashSet::new();
+    reserved.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|(binding, _)| binding.clone()),
+    );
+    reserved.extend(
+        ctx.setup_local_bindings
+            .iter()
+            .flat_map(|binding| binding.bindings.iter().cloned()),
+    );
+    reserved.extend(
+        ctx.setup_ref_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
+    reserved.extend(ctx.setup_value_bindings.keys().cloned());
+
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => collect_decl_bindings(decl, &mut reserved),
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                collect_decl_bindings(&export.decl, &mut reserved);
+            }
+            _ => {}
+        }
+    }
+    reserved
+}
+
+fn collect_decl_bindings(decl: &Decl, bindings: &mut HashSet<Atom>) {
+    match decl {
+        Decl::Fn(function) => {
+            bindings.insert(function.ident.sym.clone());
+        }
+        Decl::Class(class) => {
+            bindings.insert(class.ident.sym.clone());
+        }
+        Decl::Var(var) => {
+            for declarator in &var.decls {
+                collect_pat_bindings(&declarator.name, bindings);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_script_local_decl(
+    decl: &Decl,
+    ctx: &mut VueRecoveryContext,
+    reserved_bindings: &HashSet<Atom>,
+    used_bindings: &mut HashSet<Atom>,
+) -> Result<()> {
+    match decl {
+        Decl::Fn(function) => push_script_local_binding(
+            ctx,
+            vec![function.ident.sym.clone()],
+            Stmt::Decl(Decl::Fn(function.clone())),
+            reserved_bindings,
+            used_bindings,
+        ),
+        Decl::Class(class) => push_script_local_binding(
+            ctx,
+            vec![class.ident.sym.clone()],
+            Stmt::Decl(Decl::Class(class.clone())),
+            reserved_bindings,
+            used_bindings,
+        ),
+        Decl::Var(var) => {
+            for declarator in &var.decls {
+                if declarator.init.as_deref().is_some_and(|init| {
+                    component_name_from_init(init, &ctx.component_bindings).is_some()
+                }) {
+                    continue;
+                }
+                let mut bindings = HashSet::new();
+                collect_pat_bindings(&declarator.name, &mut bindings);
+                if bindings.is_empty() {
+                    continue;
+                }
+                let mut single_var = var.as_ref().clone();
+                single_var.decls = vec![declarator.clone()];
+                let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+                bindings.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+                push_script_local_binding(
+                    ctx,
+                    bindings,
+                    Stmt::Decl(Decl::Var(Box::new(single_var))),
+                    reserved_bindings,
+                    used_bindings,
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn push_script_local_binding(
+    ctx: &mut VueRecoveryContext,
+    bindings: Vec<Atom>,
+    mut stmt: Stmt,
+    reserved_bindings: &HashSet<Atom>,
+    used_bindings: &mut HashSet<Atom>,
+) -> Result<()> {
+    let import_aliases = colliding_import_aliases(&stmt, ctx, reserved_bindings, used_bindings);
+    if !import_aliases.is_empty() {
+        stmt.visit_mut_with(&mut ImportAliasRenamer::new(&import_aliases));
+    }
+    let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
+    if !source.is_empty() {
+        ctx.script_local_bindings.push(VueSetupLocalBinding {
+            bindings,
+            refs: stmt_ident_refs(&cleaned_stmt),
+            source,
+            import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
+        });
+    }
+    Ok(())
+}
+
+fn colliding_import_aliases(
+    stmt: &Stmt,
+    ctx: &mut VueRecoveryContext,
+    reserved_bindings: &HashSet<Atom>,
+    used_bindings: &mut HashSet<Atom>,
+) -> HashMap<Atom, Atom> {
+    let import_refs = stmt_import_refs(stmt, &ctx.script_imports);
+    let mut aliases = HashMap::new();
+    for import_ref in import_refs {
+        if !reserved_bindings.contains(&import_ref) {
+            continue;
+        }
+        let Some(import) = ctx.script_imports.get(&import_ref).cloned() else {
+            continue;
+        };
+        let alias = unique_script_import_alias(&import_ref, used_bindings);
+        ctx.script_imports.insert(alias.clone(), import);
+        aliases.insert(import_ref, alias);
+    }
+    aliases
+}
+
+fn unique_script_import_alias(binding: &Atom, used_bindings: &mut HashSet<Atom>) -> Atom {
+    let mut index = 1;
+    loop {
+        let candidate = Atom::from(format!("{}_{index}", binding.as_ref()));
+        if used_bindings.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+struct ImportAliasRenamer<'a> {
+    aliases: &'a HashMap<Atom, Atom>,
+    scopes: Vec<HashSet<Atom>>,
+}
+
+impl<'a> ImportAliasRenamer<'a> {
+    fn new(aliases: &'a HashMap<Atom, Atom>) -> Self {
+        Self {
+            aliases,
+            scopes: vec![HashSet::new()],
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, sym: &Atom) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(sym.clone());
+        }
+    }
+
+    fn declare_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.declare(&binding.id.sym),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.declare_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
+                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
+                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.declare_pat(&rest.arg),
+            Pat::Assign(assign) => self.declare_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+    }
+}
+
+impl VisitMut for ImportAliasRenamer<'_> {
+    fn visit_mut_ident(&mut self, ident: &mut Ident) {
+        if !self.is_shadowed(&ident.sym) {
+            if let Some(alias) = self.aliases.get(&ident.sym) {
+                ident.sym = alias.clone();
+            }
+        }
+    }
+
+    fn visit_mut_binding_ident(&mut self, ident: &mut BindingIdent) {
+        self.declare(&ident.id.sym);
+    }
+
+    fn visit_mut_prop_name(&mut self, prop: &mut PropName) {
+        if let PropName::Computed(computed) = prop {
+            computed.visit_mut_with(self);
+        }
+    }
+
+    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_mut_with(self);
+        }
+    }
+
+    fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
+        self.declare_pat(&declarator.name);
+        if let Some(init) = &mut declarator.init {
+            init.visit_mut_with(self);
+        }
+    }
+
+    fn visit_mut_fn_decl(&mut self, function: &mut FnDecl) {
+        self.declare(&function.ident.sym);
+        self.visit_mut_function(&mut function.function);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        self.push_scope();
+        for param in &function.params {
+            self.declare_pat(&param.pat);
+        }
+        if let Some(body) = &mut function.body {
+            body.visit_mut_with(self);
+        }
+        self.pop_scope();
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        self.push_scope();
+        for param in &arrow.params {
+            self.declare_pat(param);
+        }
+        arrow.body.visit_mut_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_mut_class_decl(&mut self, class: &mut ClassDecl) {
+        self.declare(&class.ident.sym);
+        class.class.visit_mut_with(self);
+    }
+}
+
 fn collect_var_decl_context(var: &VarDecl, ctx: &mut VueRecoveryContext) {
     if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
         return;
