@@ -642,6 +642,7 @@ fn is_template_helper_name(name: &str) -> bool {
         "_taggedTemplateLiteral"
             | "_taggedTemplateLiteralLoose"
             | "_tagged_template_literal"
+            | "_tagged_template_literal_loose"
             | "__makeTemplateObject"
             | "__template"
     )

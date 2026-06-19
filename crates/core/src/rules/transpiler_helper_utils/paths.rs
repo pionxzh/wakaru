@@ -111,6 +111,7 @@ const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &[
     "@babel/runtime/helpers/taggedTemplateLiteralLoose",
     "@babel/runtime/helpers/esm/taggedTemplateLiteralLoose",
     "@swc/helpers/_/_tagged_template_literal",
+    "@swc/helpers/_/_tagged_template_literal_loose",
 ];
 
 const TYPEOF_PATHS: &[&str] = &[
@@ -246,12 +247,14 @@ mod tests {
     }
 
     #[test]
-    fn classifies_babel_runtime_tagged_template_imports() {
+    fn classifies_runtime_tagged_template_imports() {
         for path in [
             "@babel/runtime/helpers/taggedTemplateLiteral",
             "@babel/runtime/helpers/esm/taggedTemplateLiteral",
             "@babel/runtime/helpers/taggedTemplateLiteralLoose",
             "@babel/runtime/helpers/esm/taggedTemplateLiteralLoose",
+            "@swc/helpers/_/_tagged_template_literal",
+            "@swc/helpers/_/_tagged_template_literal_loose",
         ] {
             assert_eq!(
                 detect_helper_from_path(path),

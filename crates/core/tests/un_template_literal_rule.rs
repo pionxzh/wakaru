@@ -244,6 +244,20 @@ var out = tag`hello ${name}`;
 }
 
 #[test]
+fn restores_swc_imported_tagged_template_loose() {
+    let input = r#"
+import { _ as _tagged_template_literal_loose } from "@swc/helpers/_/_tagged_template_literal_loose";
+var _templateObject;
+var out = tag(_templateObject || (_templateObject = _tagged_template_literal_loose(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn restores_typescript_tagged_template() {
     let input = r#"
 var __makeTemplateObject = (this && this.__makeTemplateObject) || function (cooked, raw) { return cooked; };
