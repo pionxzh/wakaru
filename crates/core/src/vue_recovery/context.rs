@@ -617,10 +617,16 @@ pub(super) fn collect_setup_context(
     render: RenderSource<'_>,
     ctx: &mut VueRecoveryContext,
 ) -> Result<()> {
-    let RenderSource::SetupArrow { setup_stmts, .. } = render else {
+    let RenderSource::SetupArrow {
+        render,
+        setup_stmts,
+        ..
+    } = render
+    else {
         return Ok(());
     };
 
+    let setup_tuple_value_refs = setup_tuple_render_value_refs(render, setup_stmts);
     let mut provider_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
 
@@ -725,7 +731,7 @@ pub(super) fn collect_setup_context(
                     if consumed {
                         continue;
                     }
-                    if !matches!(decl.name, Pat::Ident(_)) {
+                    if !matches!(decl.name, Pat::Ident(_) | Pat::Array(_)) {
                         continue;
                     }
 
@@ -733,6 +739,14 @@ pub(super) fn collect_setup_context(
                     collect_pat_bindings(&decl.name, &mut decl_bindings);
                     if decl_bindings.is_empty() {
                         continue;
+                    }
+                    if matches!(decl.name, Pat::Array(_)) {
+                        ctx.setup_template_ref_bindings.extend(
+                            decl_bindings
+                                .iter()
+                                .filter(|binding| setup_tuple_value_refs.contains(*binding))
+                                .cloned(),
+                        );
                     }
 
                     local_bindings.extend(decl_bindings);
@@ -767,6 +781,166 @@ pub(super) fn collect_setup_context(
     }
 
     Ok(())
+}
+
+fn setup_tuple_render_value_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut candidates = HashSet::new();
+    for stmt in setup_stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            if decl.init.is_some() && matches!(decl.name, Pat::Array(_)) {
+                collect_pat_bindings(&decl.name, &mut candidates);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut collector = RenderValueMemberRefCollector {
+        candidates: &candidates,
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    render.visit_with(&mut collector);
+    collector.refs
+}
+
+struct RenderValueMemberRefCollector<'a> {
+    candidates: &'a HashSet<Atom>,
+    scopes: Vec<HashSet<Atom>>,
+    refs: HashSet<Atom>,
+}
+
+impl RenderValueMemberRefCollector<'_> {
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, sym: &Atom) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(sym.clone());
+        }
+    }
+
+    fn declare_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.declare(&binding.id.sym),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.declare_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
+                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
+                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.declare_pat(&rest.arg),
+            Pat::Assign(assign) => self.declare_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+    }
+
+    fn collect_value_member(&mut self, member: &MemberExpr) {
+        if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
+            return;
+        }
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            return;
+        };
+        if self.candidates.contains(&object.sym) && !self.is_shadowed(&object.sym) {
+            self.refs.insert(object.sym.clone());
+        }
+    }
+}
+
+impl Visit for RenderValueMemberRefCollector<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+            self.collect_value_member(member);
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if let Expr::Member(member) = update.arg.as_ref() {
+            self.collect_value_member(member);
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        self.collect_value_member(member);
+        member.visit_children_with(self);
+    }
+
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        self.declare(&ident.id.sym);
+    }
+
+    fn visit_prop_name(&mut self, prop: &PropName) {
+        if let PropName::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+        self.declare_pat(&declarator.name);
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.declare(&function.ident.sym);
+        self.visit_function(&function.function);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.push_scope();
+        for param in &function.params {
+            self.declare_pat(&param.pat);
+        }
+        if let Some(body) = &function.body {
+            body.visit_with(self);
+        }
+        self.pop_scope();
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.push_scope();
+        for param in &arrow.params {
+            self.declare_pat(param);
+        }
+        arrow.body.visit_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.declare(&class.ident.sym);
+        class.class.visit_with(self);
+    }
 }
 
 fn assign_setup_prop_bindings(

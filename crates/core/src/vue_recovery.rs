@@ -48,6 +48,7 @@ struct VueRecoveryContext {
     setup_local_bindings: Vec<VueSetupLocalBinding>,
     setup_ref_script_bindings: Vec<VueSetupRefBinding>,
     setup_ref_bindings: HashSet<Atom>,
+    setup_template_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
     component_bindings: HashMap<Atom, String>,
@@ -3739,6 +3740,57 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { ref } from \"vue\";\n\nconst ready = ref(false);\n</script>\n\n<template>\n  <button @click=\"ready = true\">Go</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_tuple_ref_event_assignment() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const [ready] = useState(false);
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("iframe", {
+        onLoad: _cache[0] || (_cache[0] = (event) => ready.value = true),
+        style: { height: ready.value ? "100px" : 0 }
+      }, null, 44, ["onLoad", "style"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [ready] = useState(false);\n</script>\n\n<template>\n  <iframe @load=\"ready = true\" :style='{ height: ready ? \"100px\" : 0 }' />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_tuple_ref_assignment_in_script_handler() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const [ready] = useState(false);
+    function markReady() {
+      ready.value = true;
+    }
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("button", {
+        onClick: _cache[0] || (_cache[0] = (event) => ready.value = false),
+        onDblclick: markReady
+      }, "Go", 40, ["onClick", "onDblclick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [ready] = useState(false);\nfunction markReady() {\n    ready.value = true;\n}\n</script>\n\n<template>\n  <button @click=\"ready = false\" @dblclick=\"markReady\">Go</button>\n</template>\n"
         );
     }
 

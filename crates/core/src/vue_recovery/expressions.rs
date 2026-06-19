@@ -117,6 +117,13 @@ impl<'a> SetupRefValueCleaner<'a> {
             .iter()
             .map(|binding| binding.as_ref())
             .collect::<Vec<_>>();
+        if clean_assign_targets {
+            bindings.extend(
+                ctx.setup_template_ref_bindings
+                    .iter()
+                    .map(|binding| binding.as_ref()),
+            );
+        }
         bindings.sort_unstable();
         bindings.dedup();
         let shadow_depths = vec![0; bindings.len()];
