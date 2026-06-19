@@ -3369,6 +3369,57 @@ export default defineComponent({
     }
 
     #[test]
+    fn emits_alias_dependencies_for_inlined_setup_computed_values() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock, Fragment, renderList } from "vue";
+import { a } from "./vendor-vue.js";
+export default defineComponent({
+  setup() {
+    const refs = a(useStore());
+    const { items } = refs;
+    const visibleItems = computed(() => items.value.filter((item) => item.visible));
+    return () => (
+      openBlock(), createElementBlock("ul", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(visibleItems.value, (item) => (
+          openBlock(), createElementBlock("li", { key: item.id }, item.name, 1)
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { a } from \"./vendor-vue.js\";\n\nconst refs = a(useStore());\nconst { items } = refs;\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items.filter((item)=>item.visible)\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn cleans_template_ref_alias_in_opaque_ref_object_dependency() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { c, r } from "./vendor-vue.js";
+export default defineComponent({
+  setup() {
+    const D = r(null);
+    const scroller = c(D, { offset: { left: 1 } });
+    const { x } = scroller;
+    const scroll = () => x.value;
+    return () => (
+      openBlock(), createElementBlock("div", { ref_key: "scrollContainer", ref: D, onClick: scroll }, null, 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\nimport { c } from \"./vendor-vue.js\";\n\nconst scrollContainer = ref(null);\n\nconst scroller = c(scrollContainer, {\n    offset: {\n        left: 1\n    }\n});\nconst { x } = scroller;\nconst scroll = ()=>x;\n</script>\n\n<template>\n  <div ref=\"scrollContainer\" @click=\"scroll\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_plain_destructured_value_members() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";

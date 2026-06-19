@@ -628,6 +628,11 @@ pub(super) fn collect_setup_context(
 
     let setup_template_ref_refs = setup_render_template_ref_refs(render, setup_stmts, ctx);
     let setup_template_ref_aliases = setup_render_template_ref_aliases(render);
+    let setup_template_ref_alias_sources = setup_template_ref_aliases
+        .iter()
+        .map(|(from, _)| from.clone())
+        .collect::<HashSet<_>>();
+    let setup_ref_object_alias_refs = setup_ref_object_alias_refs(setup_stmts);
     let setup_render_refs = render_ident_refs(render);
     let mut provider_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
@@ -667,10 +672,13 @@ pub(super) fn collect_setup_context(
                                         provider_ref_object_bindings
                                             .insert(binding.id.sym.clone(), ref_props);
                                     }
-                                    if is_ref_object_expr(init, ctx) {
+                                    let is_ref_object = is_ref_object_expr(init, ctx);
+                                    if is_ref_object {
                                         ctx.setup_ref_object_bindings
                                             .insert(binding.id.sym.clone());
                                     }
+                                    let is_ref_object_alias_source = is_ref_object
+                                        && setup_ref_object_alias_refs.contains(&binding.id.sym);
                                     if let Some(value) = computed_value_expr(init, ctx)? {
                                         ctx.setup_value_bindings
                                             .insert(binding.id.sym.clone(), value);
@@ -683,7 +691,11 @@ pub(super) fn collect_setup_context(
                                             .push((binding.id.sym.clone(), value));
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                                         true
-                                    } else if is_ref_like_value_expr(init, ctx) {
+                                    } else if (!is_ref_object_alias_source
+                                        || setup_template_ref_alias_sources
+                                            .contains(&binding.id.sym))
+                                        && is_ref_like_value_expr(init, ctx)
+                                    {
                                         if let Some((expr, helper, known_ref)) =
                                             ref_script_setup_expr(init, ctx)?
                                         {
@@ -811,6 +823,27 @@ pub(super) fn collect_setup_context(
     }
 
     Ok(())
+}
+
+fn setup_ref_object_alias_refs(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            if !matches!(decl.name, Pat::Object(_)) {
+                continue;
+            }
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if let Some(ident) = ident_expr(unwrap_paren_expr(init)) {
+                refs.insert(ident.sym.clone());
+            }
+        }
+    }
+    refs
 }
 
 fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, Atom)> {
