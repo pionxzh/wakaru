@@ -394,6 +394,9 @@ fn handler_expr_name(
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
             clean_event_handler_expr(bin.left.as_ref(), ctx, event_param).map(Some)
         }
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            clean_event_handler_expr(expr, ctx, event_param).map(Some)
+        }
         Expr::Call(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         _ => Ok(None),
     }

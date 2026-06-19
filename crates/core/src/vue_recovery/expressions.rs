@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, Decl, Expr, Function, Ident, IdentName, MemberProp, Module,
-    ModuleItem, ObjectPatProp, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, Decl, Expr, Function, Ident, IdentName,
+    MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -248,6 +249,28 @@ impl VisitMut for SetupAliasCleaner<'_> {
 }
 
 impl VisitMut for SetupRefValueCleaner<'_> {
+    fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
+        assign.visit_mut_children_with(self);
+
+        let replacement = match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") => {
+                match member.obj.as_ref() {
+                    Expr::Ident(object) if self.active_binding(object.sym.as_ref()) => {
+                        Some(object.clone())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            assign.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: replacement,
+                type_ann: None,
+            }));
+        }
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
