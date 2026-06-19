@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
+use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, Decl, Expr, Function, Ident, MemberProp, Module, ModuleItem,
-    ObjectPatProp, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, BindingIdent, Decl, Expr, Function, Ident, IdentName, MemberProp, Module,
+    ModuleItem, ObjectPatProp, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -14,6 +16,7 @@ use crate::vue_template::{VueExpr, VueNode};
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let mut expr = expr.clone();
     expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    expr.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
     expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx));
 
     let module = Module {
@@ -57,6 +60,36 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
         .trim_end_matches(';')
         .trim()
         .to_string())
+}
+
+pub(super) fn print_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Result<String> {
+    let mut stmt = stmt.clone();
+    stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    stmt.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
+    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx));
+
+    let module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(stmt)],
+        shebang: None,
+    };
+
+    let mut output = Vec::new();
+    {
+        let mut emitter = Emitter {
+            cfg: Config::default().with_minify(false),
+            cm: ctx.cm.clone(),
+            comments: None,
+            wr: JsWriter::new(ctx.cm.clone(), "\n", &mut output, None),
+        };
+        emitter
+            .emit_module(&module)
+            .map_err(|error| anyhow!("failed to print Vue setup statement: {error:?}"))?;
+    }
+    let code = String::from_utf8(output)
+        .map(|s| s.trim().to_string())
+        .map_err(|error| anyhow!("printed Vue setup statement is not UTF-8: {error}"))?;
+    Ok(clean_expr(&code, ctx))
 }
 
 pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
@@ -124,6 +157,96 @@ impl<'a> SetupRefValueCleaner<'a> {
     }
 }
 
+struct SetupAliasCleaner<'a> {
+    aliases: Vec<(&'a str, &'a Atom)>,
+    shadow_depths: Vec<usize>,
+}
+
+impl<'a> SetupAliasCleaner<'a> {
+    fn new(ctx: &'a VueRecoveryContext) -> Self {
+        let mut aliases = ctx
+            .setup_alias_bindings
+            .iter()
+            .map(|(from, to)| (from.as_ref(), to))
+            .collect::<Vec<_>>();
+        aliases.sort_by_key(|(from, _)| *from);
+        aliases.dedup_by(|(left, _), (right, _)| left == right);
+        let shadow_depths = vec![0; aliases.len()];
+        Self {
+            aliases,
+            shadow_depths,
+        }
+    }
+
+    fn active_alias(&self, name: &str) -> Option<&Atom> {
+        self.aliases
+            .iter()
+            .zip(self.shadow_depths.iter())
+            .find_map(|((from, to), shadow_depth)| {
+                (*from == name && *shadow_depth == 0).then_some(*to)
+            })
+    }
+
+    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
+        self.aliases
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (alias, _))| {
+                params
+                    .iter()
+                    .any(|pat| pat_binds_name(pat, alias))
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn enter_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] += 1;
+        }
+    }
+
+    fn exit_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] -= 1;
+        }
+    }
+}
+
+impl VisitMut for SetupAliasCleaner<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let replacement = match expr {
+            Expr::Ident(ident) => self.active_alias(ident.sym.as_ref()).cloned(),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            *expr = Expr::Ident(Ident::new(replacement, DUMMY_SP, Default::default()));
+        }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let params = arrow.params.iter().collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        arrow.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| &param.pat)
+            .collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        function.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+}
+
 impl VisitMut for SetupRefValueCleaner<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
@@ -167,6 +290,7 @@ impl VisitMut for SetupRefValueCleaner<'_> {
 
 struct ContextMemberCleaner<'a> {
     prefixes: Vec<&'a str>,
+    prop_bindings: &'a HashMap<Atom, Atom>,
     shadow_depths: Vec<usize>,
 }
 
@@ -187,6 +311,7 @@ impl<'a> ContextMemberCleaner<'a> {
         let shadow_depths = vec![0; prefixes.len()];
         Self {
             prefixes,
+            prop_bindings: &ctx.setup_prop_bindings,
             shadow_depths,
         }
     }
@@ -222,6 +347,15 @@ impl<'a> ContextMemberCleaner<'a> {
             self.shadow_depths[*index] -= 1;
         }
     }
+
+    fn replacement_ident(&self, prop: &IdentName) -> Ident {
+        let sym = self
+            .prop_bindings
+            .get(&prop.sym)
+            .cloned()
+            .unwrap_or_else(|| prop.sym.clone());
+        Ident::new(sym, prop.span, Default::default())
+    }
 }
 
 impl VisitMut for ContextMemberCleaner<'_> {
@@ -231,9 +365,7 @@ impl VisitMut for ContextMemberCleaner<'_> {
         let replacement = match expr {
             Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
                 match &member.prop {
-                    MemberProp::Ident(prop) => {
-                        Some(Ident::new(prop.sym.clone(), prop.span, Default::default()))
-                    }
+                    MemberProp::Ident(prop) => Some(self.replacement_ident(prop)),
                     MemberProp::Computed(_) | MemberProp::PrivateName(_) => None,
                 }
             }

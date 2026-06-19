@@ -12,12 +12,15 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::expressions::{clean_expr, print_expr};
+use super::expressions::{clean_expr, print_expr, print_stmt};
 use super::helpers::{helper_name, VueHelper};
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
-use super::{RenderSource, VueRecoveryContext, VueScriptImport, VueSetupRefBinding};
+use super::{
+    component_prop_names, RenderSource, VueRecoveryContext, VueScriptImport, VueSetupLocalBinding,
+    VueSetupRefBinding,
+};
 use crate::js_names::is_valid_identifier_name;
 
 pub(super) fn collect_context(
@@ -285,6 +288,13 @@ impl Visit for HelperInference<'_> {
             }
         }
 
+        if matches!(
+            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
+            Some(VueHelper::CreateBlock | VueHelper::CreateVNode)
+        ) {
+            self.infer_builtin_component_arg(call);
+        }
+
         call.visit_children_with(self);
     }
 }
@@ -329,6 +339,52 @@ impl HelperInference<'_> {
         }
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
     }
+
+    fn infer_builtin_component_arg(&mut self, call: &CallExpr) {
+        let Some(component) = call
+            .args
+            .first()
+            .and_then(|arg| ident_expr(arg.expr.as_ref()))
+            .filter(|ident| self.candidates.contains(&ident.sym))
+        else {
+            return;
+        };
+        let Some(props) = call.args.get(1).and_then(|arg| match arg.expr.as_ref() {
+            Expr::Object(object) => Some(object),
+            _ => None,
+        }) else {
+            return;
+        };
+        if is_transition_component_props(props) {
+            self.inferred
+                .entry(component.sym.clone())
+                .or_insert(VueHelper::Other("Transition".to_string()));
+        }
+    }
+}
+
+fn is_transition_component_props(object: &ObjectLit) -> bool {
+    object.props.iter().any(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return false;
+        };
+        matches!(
+            prop_name(&key_value.key).as_deref(),
+            Some(
+                "onBeforeEnter"
+                    | "onEnter"
+                    | "onAfterEnter"
+                    | "onEnterCancelled"
+                    | "onBeforeLeave"
+                    | "onLeave"
+                    | "onAfterLeave"
+                    | "onLeaveCancelled"
+            )
+        )
+    })
 }
 
 fn is_fragment_patch_flag(expr: Option<&Expr>) -> bool {
@@ -566,79 +622,217 @@ pub(super) fn collect_setup_context(
     };
 
     let mut provider_ref_object_bindings = HashMap::new();
+    let mut local_candidates = Vec::new();
 
     for stmt in setup_stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            continue;
-        };
-        for decl in &var.decls {
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            match &decl.name {
-                Pat::Ident(binding) => {
-                    if is_setup_props_alias(init, ctx) {
-                        ctx.setup_props_aliases.insert(binding.id.sym.clone());
-                        continue;
-                    }
-                    if is_setup_emit_alias(init, ctx) {
-                        ctx.setup_emit_aliases.insert(binding.id.sym.clone());
-                        continue;
-                    }
-                    if let Some(ref_props) =
-                        setup_provider_ref_props(init, ctx, &provider_ref_object_bindings)
-                    {
-                        provider_ref_object_bindings.insert(binding.id.sym.clone(), ref_props);
-                    }
-                    if is_ref_object_expr(init, ctx) {
-                        ctx.setup_ref_object_bindings.insert(binding.id.sym.clone());
-                    }
-                    if let Some(value) = computed_value_expr(init, ctx)? {
-                        ctx.setup_value_bindings
-                            .insert(binding.id.sym.clone(), value);
-                        continue;
-                    }
-                    if let Some((value, import_refs)) = computed_script_setup_expr(init, ctx)? {
-                        ctx.setup_script_import_refs.extend(import_refs);
-                        ctx.setup_script_bindings
-                            .push((binding.id.sym.clone(), value));
-                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
-                        continue;
-                    }
-                    if is_ref_like_value_expr(init, ctx) {
-                        if let Some((expr, helper, known_ref)) = ref_script_setup_expr(init, ctx)? {
-                            ctx.setup_ref_script_bindings.push(VueSetupRefBinding {
-                                binding: binding.id.sym.clone(),
-                                expr,
-                                helper,
-                                known_ref,
-                            });
-                        }
-                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
-                    }
-                }
-                Pat::Object(object)
-                    if is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx) =>
-                {
-                    collect_object_pat_bindings(object, &mut ctx.setup_ref_bindings);
-                }
-                Pat::Object(object) => {
-                    if let Some(ref_props) =
-                        setup_provider_ref_props(init, ctx, &provider_ref_object_bindings)
-                    {
-                        collect_provider_object_pat_bindings(
-                            object,
-                            &ref_props,
-                            &mut ctx.setup_ref_bindings,
-                        );
-                    }
-                }
-                _ => {}
+        match stmt {
+            Stmt::Decl(Decl::Fn(function)) => {
+                local_candidates.push((vec![function.ident.sym.clone()], stmt.clone()));
             }
+            Stmt::Decl(Decl::Class(class)) => {
+                local_candidates.push((vec![class.ident.sym.clone()], stmt.clone()));
+            }
+            Stmt::Decl(Decl::Var(var)) => {
+                let mut local_decls = Vec::new();
+                let mut local_bindings = HashSet::new();
+
+                for decl in &var.decls {
+                    let consumed = match decl.init.as_deref() {
+                        Some(init) => match &decl.name {
+                            Pat::Ident(binding) => {
+                                if is_setup_props_alias(init, ctx) {
+                                    ctx.setup_props_aliases.insert(binding.id.sym.clone());
+                                    true
+                                } else if is_setup_emit_alias(init, ctx) {
+                                    ctx.setup_emit_aliases.insert(binding.id.sym.clone());
+                                    true
+                                } else if let Some(alias) = ident_expr(unwrap_paren_expr(init)) {
+                                    ctx.setup_alias_bindings
+                                        .insert(binding.id.sym.clone(), alias.sym.clone());
+                                    true
+                                } else {
+                                    if let Some(ref_props) = setup_provider_ref_props(
+                                        init,
+                                        ctx,
+                                        &provider_ref_object_bindings,
+                                    ) {
+                                        provider_ref_object_bindings
+                                            .insert(binding.id.sym.clone(), ref_props);
+                                    }
+                                    if is_ref_object_expr(init, ctx) {
+                                        ctx.setup_ref_object_bindings
+                                            .insert(binding.id.sym.clone());
+                                    }
+                                    if let Some(value) = computed_value_expr(init, ctx)? {
+                                        ctx.setup_value_bindings
+                                            .insert(binding.id.sym.clone(), value);
+                                        true
+                                    } else if let Some((value, import_refs)) =
+                                        computed_script_setup_expr(init, ctx)?
+                                    {
+                                        ctx.setup_script_import_refs.extend(import_refs);
+                                        ctx.setup_script_bindings
+                                            .push((binding.id.sym.clone(), value));
+                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        true
+                                    } else if is_ref_like_value_expr(init, ctx) {
+                                        if let Some((expr, helper, known_ref)) =
+                                            ref_script_setup_expr(init, ctx)?
+                                        {
+                                            ctx.setup_ref_script_bindings.push(
+                                                VueSetupRefBinding {
+                                                    binding: binding.id.sym.clone(),
+                                                    expr,
+                                                    helper,
+                                                    known_ref,
+                                                },
+                                            );
+                                        }
+                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
+                            Pat::Object(_) if is_setup_props_alias(init, ctx) => true,
+                            Pat::Object(object)
+                                if is_ref_object_expr(init, ctx)
+                                    || is_ref_object_alias(init, ctx) =>
+                            {
+                                collect_object_pat_bindings(object, &mut ctx.setup_ref_bindings);
+                                false
+                            }
+                            Pat::Object(object) => {
+                                if let Some(ref_props) = setup_provider_ref_props(
+                                    init,
+                                    ctx,
+                                    &provider_ref_object_bindings,
+                                ) {
+                                    collect_provider_object_pat_bindings(
+                                        object,
+                                        &ref_props,
+                                        &mut ctx.setup_ref_bindings,
+                                    );
+                                }
+                                false
+                            }
+                            _ => false,
+                        },
+                        None => false,
+                    };
+
+                    if consumed {
+                        continue;
+                    }
+                    if !matches!(decl.name, Pat::Ident(_)) {
+                        continue;
+                    }
+
+                    let mut decl_bindings = HashSet::new();
+                    collect_pat_bindings(&decl.name, &mut decl_bindings);
+                    if decl_bindings.is_empty() {
+                        continue;
+                    }
+
+                    local_bindings.extend(decl_bindings);
+                    local_decls.push(decl.clone());
+                }
+
+                if !local_decls.is_empty() {
+                    let mut bindings = local_bindings.into_iter().collect::<Vec<_>>();
+                    bindings.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+                    bindings.dedup();
+                    let mut local_var = var.as_ref().clone();
+                    local_var.decls = local_decls;
+                    local_candidates.push((bindings, Stmt::Decl(Decl::Var(Box::new(local_var)))));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assign_setup_prop_bindings(ctx, &local_candidates);
+
+    for (bindings, stmt) in local_candidates {
+        let source = print_stmt(&stmt, ctx)?;
+        if !source.is_empty() {
+            ctx.setup_local_bindings.push(VueSetupLocalBinding {
+                bindings,
+                refs: stmt_ident_refs(&stmt),
+                source,
+                import_refs: stmt_import_refs(&stmt, &ctx.script_imports),
+            });
         }
     }
 
     Ok(())
+}
+
+fn assign_setup_prop_bindings(
+    ctx: &mut VueRecoveryContext,
+    local_candidates: &[(Vec<Atom>, Stmt)],
+) {
+    ctx.setup_prop_bindings.clear();
+    let prop_names = ctx
+        .setup_component_options
+        .as_ref()
+        .or(ctx.component_options.as_ref())
+        .map(component_prop_names)
+        .unwrap_or_default();
+    let valid_props = prop_names
+        .into_iter()
+        .filter(|name| is_valid_identifier_name(name))
+        .map(Atom::from)
+        .collect::<Vec<_>>();
+    if valid_props.is_empty() {
+        return;
+    }
+
+    let mut reserved = HashSet::new();
+    reserved.extend(ctx.setup_alias_bindings.keys().cloned());
+    reserved.extend(
+        local_candidates
+            .iter()
+            .flat_map(|(bindings, _)| bindings.iter().cloned()),
+    );
+    reserved.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|(binding, _)| binding.clone()),
+    );
+    reserved.extend(
+        ctx.setup_ref_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
+    reserved.extend(ctx.setup_emit_aliases.iter().cloned());
+    if let Some(binding) = &ctx.setup_emit_context {
+        reserved.insert(binding.clone());
+    }
+
+    let mut used = reserved.clone();
+    used.extend(valid_props.iter().cloned());
+    for prop in valid_props {
+        let binding = if reserved.contains(&prop) {
+            unique_setup_prop_binding(&prop, &mut used)
+        } else {
+            used.insert(prop.clone());
+            prop.clone()
+        };
+        ctx.setup_prop_bindings.insert(prop, binding);
+    }
+}
+
+fn unique_setup_prop_binding(prop: &Atom, used: &mut HashSet<Atom>) -> Atom {
+    let mut index = 1;
+    loop {
+        let candidate = Atom::from(format!("{}_{index}", prop.as_ref()));
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
@@ -652,13 +846,26 @@ fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 }
 
 fn is_setup_emit_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
-    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
-        return false;
-    };
-    ctx.setup_emit_context
-        .as_ref()
-        .is_some_and(|setup_emit| setup_emit == &ident.sym)
-        || ctx.setup_emit_aliases.contains(&ident.sym)
+    match unwrap_paren_expr(expr) {
+        Expr::Ident(ident) => {
+            ctx.setup_emit_context
+                .as_ref()
+                .is_some_and(|setup_emit| setup_emit == &ident.sym)
+                || ctx.setup_emit_aliases.contains(&ident.sym)
+        }
+        Expr::Member(member) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "emit") =>
+        {
+            matches!(
+                member.obj.as_ref(),
+                Expr::Ident(object)
+                    if ctx
+                        .setup_context
+                        .as_ref()
+                        .is_some_and(|setup_context| setup_context == &object.sym)
+            )
+        }
+        _ => false,
+    }
 }
 
 fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
@@ -994,6 +1201,16 @@ pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
     }
 }
 
+pub(super) fn setup_context_param(render: RenderSource<'_>) -> Option<Atom> {
+    match render {
+        RenderSource::SetupArrow {
+            setup_context: Some(setup_context),
+            ..
+        } => Some(setup_context.sym.clone()),
+        _ => None,
+    }
+}
+
 pub(super) fn setup_emit_param(render: RenderSource<'_>) -> Option<Atom> {
     match render {
         RenderSource::SetupArrow {
@@ -1067,6 +1284,134 @@ fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> 
     };
     expr.visit_with(&mut collector);
     collector.refs
+}
+
+fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
+    let mut collector = ScriptImportRefCollector {
+        imports,
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    stmt.visit_with(&mut collector);
+    collector.refs
+}
+
+fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
+    let mut collector = IdentRefCollector {
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    stmt.visit_with(&mut collector);
+    collector.refs
+}
+
+struct IdentRefCollector {
+    scopes: Vec<HashSet<Atom>>,
+    refs: HashSet<Atom>,
+}
+
+impl IdentRefCollector {
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, sym: &Atom) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(sym.clone());
+        }
+    }
+
+    fn declare_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.declare(&binding.id.sym),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.declare_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
+                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
+                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.declare_pat(&rest.arg),
+            Pat::Assign(assign) => self.declare_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+    }
+}
+
+impl Visit for IdentRefCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if !self.is_shadowed(&ident.sym) {
+            self.refs.insert(ident.sym.clone());
+        }
+    }
+
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        self.declare(&ident.id.sym);
+    }
+
+    fn visit_prop_name(&mut self, prop: &PropName) {
+        if let PropName::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.declare_pat(&declarator.name);
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.declare(&function.ident.sym);
+        self.visit_function(&function.function);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.push_scope();
+        for param in &function.params {
+            self.declare_pat(&param.pat);
+        }
+        if let Some(body) = &function.body {
+            body.visit_with(self);
+        }
+        self.pop_scope();
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.push_scope();
+        for param in &arrow.params {
+            self.declare_pat(param);
+        }
+        arrow.body.visit_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.declare(&class.ident.sym);
+        class.class.visit_with(self);
+    }
 }
 
 struct ScriptImportRefCollector<'a> {

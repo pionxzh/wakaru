@@ -26,7 +26,8 @@ mod syntax;
 
 use context::{
     collect_context, collect_render_context, collect_setup_context, component_name_from_init,
-    infer_render_helpers, render_context_param, setup_emit_param, setup_props_param,
+    infer_render_helpers, render_context_param, setup_context_param, setup_emit_param,
+    setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -41,7 +42,10 @@ struct VueRecoveryContext {
     setup_script_import_refs: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
     setup_value_bindings: HashMap<Atom, String>,
+    setup_prop_bindings: HashMap<Atom, Atom>,
+    setup_alias_bindings: HashMap<Atom, Atom>,
     setup_script_bindings: Vec<(Atom, String)>,
+    setup_local_bindings: Vec<VueSetupLocalBinding>,
     setup_ref_script_bindings: Vec<VueSetupRefBinding>,
     setup_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
@@ -53,6 +57,7 @@ struct VueRecoveryContext {
     render_context: Option<Atom>,
     setup_props_context: Option<Atom>,
     setup_props_aliases: HashSet<Atom>,
+    setup_context: Option<Atom>,
     setup_emit_context: Option<Atom>,
     setup_emit_aliases: HashSet<Atom>,
     cm: Lrc<SourceMap>,
@@ -73,6 +78,14 @@ struct VueSetupRefBinding {
     known_ref: bool,
 }
 
+#[derive(Clone)]
+struct VueSetupLocalBinding {
+    bindings: Vec<Atom>,
+    refs: HashSet<Atom>,
+    source: String,
+    import_refs: HashSet<Atom>,
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum RenderSource<'a> {
     Function(&'a FnDecl),
@@ -80,6 +93,7 @@ pub(super) enum RenderSource<'a> {
         render: &'a ArrowExpr,
         setup_stmts: &'a [Stmt],
         setup_props: Option<&'a Ident>,
+        setup_context: Option<&'a Ident>,
         setup_emit: Option<&'a Ident>,
         component_options: Option<&'a ObjectLit>,
     },
@@ -209,6 +223,7 @@ fn recover_vue_sfc_from_js_inner(
     }
     ctx.render_context = render_context_param(render);
     ctx.setup_props_context = setup_props_param(render);
+    ctx.setup_context = setup_context_param(render);
     ctx.setup_emit_context = setup_emit_param(render);
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
@@ -725,6 +740,11 @@ fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'
                             .params
                             .first()
                             .and_then(syntax::param_binding_ident),
+                        setup_context: method
+                            .function
+                            .params
+                            .get(1)
+                            .and_then(|param| pat_binding_ident(&param.pat)),
                         setup_emit: method
                             .function
                             .params
@@ -754,6 +774,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: block.stmts.as_slice(),
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    setup_context: arrow.params.get(1).and_then(pat_binding_ident),
                     setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
                     component_options: None,
                 })
@@ -763,6 +784,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     render,
                     setup_stmts: &[],
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
+                    setup_context: arrow.params.get(1).and_then(pat_binding_ident),
                     setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
                     component_options: None,
                 })
@@ -777,6 +799,11 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     .params
                     .first()
                     .and_then(syntax::param_binding_ident),
+                setup_context: fn_expr
+                    .function
+                    .params
+                    .get(1)
+                    .and_then(|param| pat_binding_ident(&param.pat)),
                 setup_emit: fn_expr
                     .function
                     .params
@@ -798,12 +825,14 @@ fn with_component_options<'a>(
             render,
             setup_stmts,
             setup_props,
+            setup_context,
             setup_emit,
             ..
         } => RenderSource::SetupArrow {
             render,
             setup_stmts,
             setup_props,
+            setup_context,
             setup_emit,
             component_options: Some(component_options),
         },
@@ -906,7 +935,8 @@ fn setup_script(
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
-    let emit_declaration = setup_emit_declaration(ctx, root)?;
+    let local_declarations = setup_local_declarations(ctx, root);
+    let emit_declaration = setup_emit_declaration(ctx, root, &local_declarations)?;
     let prop_names = ctx
         .setup_component_options
         .as_ref()
@@ -918,6 +948,7 @@ fn setup_script(
         .filter(|name| is_valid_identifier_name(name))
         .cloned()
         .collect::<Vec<_>>();
+    let prop_bindings = setup_prop_bindings(&valid_prop_names, ctx);
     let props_binding_reserved = props_binding_reserved_names(
         ctx,
         &valid_prop_names,
@@ -932,13 +963,16 @@ fn setup_script(
         .flatten();
     let declared_bindings = script_setup_declared_bindings(
         ctx,
-        &valid_prop_names,
+        &prop_bindings,
         props_declaration.as_ref(),
         emit_declaration.as_ref(),
         &ref_declarations,
+        &local_declarations,
     );
-    let script_imports = referenced_script_imports(ctx, root, &declared_bindings);
+    let script_imports =
+        referenced_script_imports(ctx, root, &declared_bindings, &local_declarations);
     if ctx.setup_script_bindings.is_empty()
+        && local_declarations.is_empty()
         && ref_declarations.is_empty()
         && emit_declaration.is_none()
         && script_imports.is_empty()
@@ -956,7 +990,7 @@ fn setup_script(
         body.push_str(");\n");
         if !valid_prop_names.is_empty() {
             body.push_str("const { ");
-            body.push_str(&valid_prop_names.join(", "));
+            body.push_str(&format_prop_destructure_bindings(&prop_bindings));
             body.push_str(" } = ");
             body.push_str(binding);
             body.push_str(";\n");
@@ -970,7 +1004,10 @@ fn setup_script(
         body.push_str(" = defineEmits(");
         body.push_str(emits_source);
         body.push_str(");\n");
-        if !ref_declarations.is_empty() || !ctx.setup_script_bindings.is_empty() {
+        if !ref_declarations.is_empty()
+            || !local_declarations.is_empty()
+            || !ctx.setup_script_bindings.is_empty()
+        {
             body.push('\n');
         }
     }
@@ -982,7 +1019,17 @@ fn setup_script(
         body.push_str(expr.trim());
         body.push_str(";\n");
     }
-    if !ref_declarations.is_empty() && !ctx.setup_script_bindings.is_empty() {
+    if !ref_declarations.is_empty()
+        && (!local_declarations.is_empty() || !ctx.setup_script_bindings.is_empty())
+    {
+        body.push('\n');
+    }
+
+    for declaration in &local_declarations {
+        body.push_str(declaration.source.trim());
+        body.push('\n');
+    }
+    if !local_declarations.is_empty() && !ctx.setup_script_bindings.is_empty() {
         body.push('\n');
     }
 
@@ -1044,8 +1091,9 @@ fn component_emits_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
 fn setup_emit_declaration(
     ctx: &VueRecoveryContext,
     root: &VueNode,
+    local_declarations: &[&VueSetupLocalBinding],
 ) -> Result<Option<(String, String)>> {
-    let Some(binding) = setup_emit_script_binding(ctx, root) else {
+    let Some(binding) = setup_emit_script_binding(ctx, root, local_declarations) else {
         return Ok(None);
     };
     let Some(emits_source) = component_emits_source(ctx)? else {
@@ -1121,6 +1169,58 @@ fn setup_ref_declarations(
     }
 
     declarations
+}
+
+fn setup_local_declarations<'a>(
+    ctx: &'a VueRecoveryContext,
+    root: &VueNode,
+) -> Vec<&'a VueSetupLocalBinding> {
+    if ctx.setup_local_bindings.is_empty() {
+        return Vec::new();
+    }
+
+    let expr_refs = template_event_expr_refs(root);
+    let shadowed_names = template_expr_shadowed_names(root);
+    let mut wanted_refs = expr_refs
+        .into_iter()
+        .filter(|local| !shadowed_names.contains(local))
+        .collect::<HashSet<_>>();
+    let mut selected = HashSet::new();
+
+    loop {
+        let mut changed = false;
+        for (index, declaration) in ctx.setup_local_bindings.iter().enumerate() {
+            if selected.contains(&index) {
+                continue;
+            }
+            let binds_wanted_ref = declaration.bindings.iter().any(|binding| {
+                is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
+            });
+            if !binds_wanted_ref {
+                continue;
+            }
+
+            selected.insert(index);
+            wanted_refs.extend(
+                declaration
+                    .refs
+                    .iter()
+                    .filter(|local| !shadowed_names.contains(*local))
+                    .cloned(),
+            );
+            changed = true;
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    ctx.setup_local_bindings
+        .iter()
+        .enumerate()
+        .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
+        .collect()
 }
 
 fn render_value_member_refs(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> HashSet<Atom> {
@@ -1225,6 +1325,12 @@ fn template_expr_refs(root: &VueNode) -> HashSet<Atom> {
     refs
 }
 
+fn template_event_expr_refs(root: &VueNode) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    collect_template_event_expr_refs(root, &mut refs);
+    refs
+}
+
 fn template_expr_shadowed_names(root: &VueNode) -> HashSet<Atom> {
     let mut names = HashSet::new();
     collect_template_expr_shadowed_names(root, &mut names);
@@ -1262,6 +1368,46 @@ fn collect_template_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
             collect_js_ident_refs(expr.as_str(), refs);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
+    }
+}
+
+fn collect_template_event_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &element.attrs {
+                match attr {
+                    VueAttr::On { expr, .. } => collect_js_ident_refs(expr.as_str(), refs),
+                    VueAttr::Directive(directive) if directive.name == "on" => {
+                        if let Some(expr) = &directive.expr {
+                            collect_js_ident_refs(expr.as_str(), refs);
+                        }
+                        if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                            collect_js_ident_refs(expr.as_str(), refs);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for child in &element.children {
+                collect_template_event_expr_refs(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_event_expr_refs(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                collect_template_event_expr_refs(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => collect_template_event_expr_refs(&for_node.node, refs),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_) => {}
     }
 }
 
@@ -1458,8 +1604,12 @@ fn referenced_script_imports(
     ctx: &VueRecoveryContext,
     root: &VueNode,
     declared_bindings: &HashSet<Atom>,
+    local_declarations: &[&VueSetupLocalBinding],
 ) -> Vec<String> {
     let mut refs = ctx.setup_script_import_refs.clone();
+    for declaration in local_declarations {
+        refs.extend(declaration.import_refs.iter().cloned());
+    }
     let shadowed_names = template_expr_shadowed_names(root);
     refs.extend(
         template_expr_refs(root)
@@ -1481,15 +1631,20 @@ fn referenced_script_imports(
 
 fn script_setup_declared_bindings(
     ctx: &VueRecoveryContext,
-    valid_prop_names: &[String],
+    prop_bindings: &[(String, String)],
     props_declaration: Option<&(String, String)>,
     emit_declaration: Option<&(String, String)>,
     ref_declarations: &[(String, String, String)],
+    local_declarations: &[&VueSetupLocalBinding],
 ) -> HashSet<Atom> {
     let mut declared = HashSet::new();
     if let Some((binding, _)) = props_declaration {
         declared.insert(Atom::from(binding.clone()));
-        declared.extend(valid_prop_names.iter().cloned().map(Atom::from));
+        declared.extend(
+            prop_bindings
+                .iter()
+                .map(|(_, binding)| Atom::from(binding.clone())),
+        );
     }
     if let Some((binding, _)) = emit_declaration {
         declared.insert(Atom::from(binding.clone()));
@@ -1504,7 +1659,43 @@ fn script_setup_declared_bindings(
             .iter()
             .map(|(binding, _)| binding.clone()),
     );
+    declared.extend(
+        local_declarations
+            .iter()
+            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+    );
     declared
+}
+
+fn setup_prop_bindings(
+    valid_prop_names: &[String],
+    ctx: &VueRecoveryContext,
+) -> Vec<(String, String)> {
+    valid_prop_names
+        .iter()
+        .map(|prop| {
+            let binding = ctx
+                .setup_prop_bindings
+                .get(&Atom::from(prop.clone()))
+                .map(ToString::to_string)
+                .unwrap_or_else(|| prop.clone());
+            (prop.clone(), binding)
+        })
+        .collect()
+}
+
+fn format_prop_destructure_bindings(prop_bindings: &[(String, String)]) -> String {
+    prop_bindings
+        .iter()
+        .map(|(prop, binding)| {
+            if prop == binding {
+                prop.clone()
+            } else {
+                format!("{prop}: {binding}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn script_import_line(local: &str, import: &VueScriptImport) -> String {
@@ -1579,12 +1770,25 @@ fn props_binding_reserved_names(
             .iter()
             .map(|(binding, _)| binding.clone()),
     );
+    reserved.extend(
+        ctx.setup_local_bindings
+            .iter()
+            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+    );
+    reserved.extend(ctx.setup_alias_bindings.keys().cloned());
     reserved.extend(ctx.script_imports.keys().cloned());
     reserved
 }
 
-fn setup_emit_script_binding(ctx: &VueRecoveryContext, root: &VueNode) -> Option<String> {
-    let expr_refs = template_expr_refs(root);
+fn setup_emit_script_binding(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+    local_declarations: &[&VueSetupLocalBinding],
+) -> Option<String> {
+    let mut expr_refs = template_expr_refs(root);
+    for declaration in local_declarations {
+        expr_refs.extend(declaration.refs.iter().cloned());
+    }
     let shadowed_names = template_expr_shadowed_names(root);
     let mut aliases = ctx
         .setup_emit_aliases
@@ -3892,6 +4096,77 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Teleport to=\"#portal\">\n    <div>Popup</div>\n  </Teleport>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vendor_vue_transition_component_alias() {
+        let input = r#"
+import { d as defineComponent, n as openBlock, aa as createBlock, $ as withCtx, Y as renderSlot, aj } from "./vendor-vue.js";
+export default defineComponent({
+  emits: ["after-enter"],
+  setup(props, context) {
+    const send = context.emit;
+    const cleanup = () => send("after-enter");
+    const afterEnter = cleanup;
+    return (ctx) => (
+      openBlock(),
+      createBlock(aj, {
+        name: "fade",
+        onAfterEnter: afterEnter
+      }, {
+        default: withCtx(() => [
+          renderSlot(ctx.$slots, "default")
+        ]),
+        _: 3
+      }, 8, ["onAfterEnter"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst send = defineEmits([\n    \"after-enter\"\n]);\n\nconst cleanup = ()=>send(\"after-enter\");\n</script>\n\n<template>\n  <Transition name=\"fade\" @afterEnter=\"cleanup\">\n    <template v-slot:default>\n      <slot />\n    </template>\n  </Transition>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn renames_setup_prop_when_consumed_alias_collides() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock, Transition, unref } from "vue";
+export default defineComponent({
+  props: {
+    x: {
+      type: Boolean
+    }
+  },
+  emits: ["done"],
+  setup(props, context) {
+    const p = props;
+    const emit = context.emit;
+    const mode = p.x ? "wide" : "tall";
+    function finish() {
+      if (mode) {
+        emit("done");
+      }
+    }
+    const x = finish;
+    return () => (
+      openBlock(),
+      createBlock(Transition, {
+        name: mode,
+        onAfterLeave: finish,
+        onLeaveCancelled: unref(x)
+      }, null, 8, ["name", "onLeaveCancelled"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst props = defineProps({\n    x: {\n        type: Boolean\n    }\n});\nconst { x: x_1 } = props;\n\nconst emit = defineEmits([\n    \"done\"\n]);\n\nconst mode = x_1 ? \"wide\" : \"tall\";\nfunction finish() {\n    if (mode) {\n        emit(\"done\");\n    }\n}\n</script>\n\n<template>\n  <Transition :name=\"mode\" @afterLeave=\"finish\" @leaveCancelled=\"finish\" />\n</template>\n"
         );
     }
 
