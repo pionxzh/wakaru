@@ -1051,6 +1051,7 @@ fn emit_clusters(
 ) -> Vec<UnpackedModule> {
     let dynamic_require_helpers = collect_dynamic_require_helpers(body);
     let esbuild_to_esm_helpers = collect_esbuild_to_esm_helpers(body);
+    let import_decls = collect_import_decls(body);
 
     // Pre-compute: which names does each cluster declare?
     let cluster_declared: Vec<HashSet<Atom>> = clusters
@@ -1094,6 +1095,13 @@ fn emit_clusters(
 
     for (ci, cluster) in clusters.iter().enumerate() {
         let mut module_items: Vec<ModuleItem> = Vec::new();
+
+        if !cluster.is_entry {
+            module_items.extend(imports_for_references(
+                &cluster_referenced[ci],
+                &import_decls,
+            ));
+        }
 
         // Synthesize imports: for each other cluster that declares names
         // this cluster references, emit `import { ... } from './chunk.js'`.
@@ -1211,6 +1219,56 @@ fn emit_clusters(
     }
 
     modules
+}
+
+fn collect_import_decls(body: &[ModuleItem]) -> Vec<ImportDecl> {
+    body.iter()
+        .filter_map(|item| match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Some(import.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn imports_for_references(
+    referenced_names: &HashSet<Atom>,
+    import_decls: &[ImportDecl],
+) -> Vec<ModuleItem> {
+    import_decls
+        .iter()
+        .filter_map(|import| import_for_references(import, referenced_names))
+        .map(|import| ModuleItem::ModuleDecl(ModuleDecl::Import(import)))
+        .collect()
+}
+
+fn import_for_references(
+    import: &ImportDecl,
+    referenced_names: &HashSet<Atom>,
+) -> Option<ImportDecl> {
+    let specifiers: Vec<ImportSpecifier> = import
+        .specifiers
+        .iter()
+        .filter(|specifier| {
+            import_specifier_local(specifier).is_some_and(|local| referenced_names.contains(local))
+        })
+        .cloned()
+        .collect();
+
+    if specifiers.is_empty() {
+        return None;
+    }
+
+    let mut import = import.clone();
+    import.specifiers = specifiers;
+    Some(import)
+}
+
+fn import_specifier_local(specifier: &ImportSpecifier) -> Option<&Atom> {
+    match specifier {
+        ImportSpecifier::Named(named) => Some(&named.local.sym),
+        ImportSpecifier::Default(default) => Some(&default.local.sym),
+        ImportSpecifier::Namespace(namespace) => Some(&namespace.local.sym),
+    }
 }
 
 enum ExportPromotion {
@@ -1662,6 +1720,52 @@ mod tests {
                 .contains("import { LogLevel, Logger } from \"./chunk_LogLevel.js\";"),
             "entry imports from Logger chunk should be sorted, got:\n{}",
             entry.1
+        );
+    }
+
+    #[test]
+    fn chunk_references_to_imported_bindings_keep_imports() {
+        let input = r#"
+            import { constants as ky5 } from "node:os";
+            import { value as zE7 } from "./dep.js";
+
+            function groupA1() { return ky5.signals.SIGTERM; }
+            function groupA2() { return zE7 + groupA1(); }
+            function groupA3() { return groupA2() + 1; }
+            function groupA4() { return groupA3() + 1; }
+            function publicA() { return groupA4(); }
+
+            function groupB1() { return 10; }
+            function groupB2() { return groupB1() + 1; }
+            function groupB3() { return groupB2() + 1; }
+            function groupB4() { return groupB3() + 1; }
+            function publicB() { return groupB4(); }
+
+            const result = publicA() + publicB();
+            console.log(result);
+        "#;
+
+        let modules = split(input).expect("should split");
+        let imported_consumer = modules
+            .iter()
+            .find(|(_, code, is_entry)| {
+                !*is_entry && code.contains("ky5.signals") && code.contains("zE7")
+            })
+            .expect("should have a non-entry chunk that consumes imported bindings");
+
+        assert!(
+            imported_consumer
+                .1
+                .contains("import { constants as ky5 } from \"node:os\";"),
+            "chunk should copy the node:os import for ky5:\n{}",
+            imported_consumer.1
+        );
+        assert!(
+            imported_consumer
+                .1
+                .contains("import { value as zE7 } from \"./dep.js\";"),
+            "chunk should copy the relative import for zE7:\n{}",
+            imported_consumer.1
         );
     }
 
