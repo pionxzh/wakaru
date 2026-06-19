@@ -919,3 +919,21 @@ function f(_maybeArrayLike, _slicedToArray, pair) {
 "#;
     assert_eq_normalized(&render(input), input);
 }
+
+#[test]
+fn removes_imported_sub_helper_when_parent_is_unwrapped() {
+    let input = r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+import { _ as _array_with_holes } from "@swc/helpers/_/_array_with_holes";
+import { _ as _iterable_to_array_limit } from "@swc/helpers/_/_iterable_to_array_limit";
+import { _ as _non_iterable_rest } from "@swc/helpers/_/_non_iterable_rest";
+var _ref = _sliced_to_array(iter(), 2);
+var a = _ref[0], b = _ref[1];
+use(a, b);
+"#;
+    let expected = r#"
+const [a, b] = iter();
+use(a, b);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

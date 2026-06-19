@@ -172,11 +172,61 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     if TYPEOF_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::Typeof);
     }
-    if path == "@swc/helpers/_/_array_with_holes" || path == "@swc/helpers/_/_set_prototype_of" {
+    if HELPER_DEPENDENCY_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::HelperDependency);
     }
     None
 }
+
+/// Sub-helper paths: internal dependencies of parent helpers that have no
+/// standalone semantic meaning. When a parent is unwrapped, these orphaned
+/// imports should be removed.
+const HELPER_DEPENDENCY_PATHS: &[&str] = &[
+    // --- array destructuring (from slicedToArray) ---
+    "@babel/runtime/helpers/arrayWithHoles",
+    "@babel/runtime/helpers/esm/arrayWithHoles",
+    "@swc/helpers/_/_array_with_holes",
+    "@babel/runtime/helpers/iterableToArrayLimit",
+    "@babel/runtime/helpers/esm/iterableToArrayLimit",
+    "@swc/helpers/_/_iterable_to_array_limit",
+    "@babel/runtime/helpers/nonIterableRest",
+    "@babel/runtime/helpers/esm/nonIterableRest",
+    "@swc/helpers/_/_non_iterable_rest",
+    // --- array spread (from toConsumableArray) ---
+    "@babel/runtime/helpers/arrayWithoutHoles",
+    "@babel/runtime/helpers/esm/arrayWithoutHoles",
+    "@swc/helpers/_/_array_without_holes",
+    "@babel/runtime/helpers/iterableToArray",
+    "@babel/runtime/helpers/esm/iterableToArray",
+    "@swc/helpers/_/_iterable_to_array",
+    "@babel/runtime/helpers/nonIterableSpread",
+    "@babel/runtime/helpers/esm/nonIterableSpread",
+    "@swc/helpers/_/_non_iterable_spread",
+    // --- shared array helpers (from slicedToArray + toConsumableArray) ---
+    "@babel/runtime/helpers/unsupportedIterableToArray",
+    "@babel/runtime/helpers/esm/unsupportedIterableToArray",
+    "@swc/helpers/_/_unsupported_iterable_to_array",
+    "@babel/runtime/helpers/arrayLikeToArray",
+    "@babel/runtime/helpers/esm/arrayLikeToArray",
+    "@swc/helpers/_/_array_like_to_array",
+    // --- inheritance (from inherits, callSuper) ---
+    "@babel/runtime/helpers/setPrototypeOf",
+    "@babel/runtime/helpers/esm/setPrototypeOf",
+    "@swc/helpers/_/_set_prototype_of",
+    "@babel/runtime/helpers/getPrototypeOf",
+    "@babel/runtime/helpers/esm/getPrototypeOf",
+    "@swc/helpers/_/_get_prototype_of",
+    "@babel/runtime/helpers/isNativeReflectConstruct",
+    "@babel/runtime/helpers/esm/isNativeReflectConstruct",
+    "@swc/helpers/_/_is_native_reflect_construct",
+    // --- property keys (from createClass, defineProperty) ---
+    "@babel/runtime/helpers/toPropertyKey",
+    "@babel/runtime/helpers/esm/toPropertyKey",
+    "@swc/helpers/_/_to_property_key",
+    "@babel/runtime/helpers/toPrimitive",
+    "@babel/runtime/helpers/esm/toPrimitive",
+    "@swc/helpers/_/_to_primitive",
+];
 
 fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) -> bool {
     match name {
@@ -259,6 +309,51 @@ mod tests {
             assert_eq!(
                 detect_helper_from_path(path),
                 Some(TranspilerHelperKind::TaggedTemplateLiteral),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_sub_helper_dependency_paths() {
+        let paths = [
+            // array destructuring
+            "@babel/runtime/helpers/arrayWithHoles",
+            "@babel/runtime/helpers/esm/arrayWithHoles",
+            "@swc/helpers/_/_array_with_holes",
+            "@babel/runtime/helpers/iterableToArrayLimit",
+            "@swc/helpers/_/_iterable_to_array_limit",
+            "@babel/runtime/helpers/nonIterableRest",
+            "@swc/helpers/_/_non_iterable_rest",
+            // array spread
+            "@babel/runtime/helpers/arrayWithoutHoles",
+            "@swc/helpers/_/_array_without_holes",
+            "@babel/runtime/helpers/iterableToArray",
+            "@swc/helpers/_/_iterable_to_array",
+            "@babel/runtime/helpers/nonIterableSpread",
+            "@swc/helpers/_/_non_iterable_spread",
+            // shared array
+            "@babel/runtime/helpers/unsupportedIterableToArray",
+            "@swc/helpers/_/_unsupported_iterable_to_array",
+            "@babel/runtime/helpers/arrayLikeToArray",
+            "@swc/helpers/_/_array_like_to_array",
+            // inheritance
+            "@babel/runtime/helpers/setPrototypeOf",
+            "@swc/helpers/_/_set_prototype_of",
+            "@babel/runtime/helpers/getPrototypeOf",
+            "@swc/helpers/_/_get_prototype_of",
+            "@babel/runtime/helpers/isNativeReflectConstruct",
+            "@swc/helpers/_/_is_native_reflect_construct",
+            // property keys
+            "@babel/runtime/helpers/toPropertyKey",
+            "@swc/helpers/_/_to_property_key",
+            "@babel/runtime/helpers/toPrimitive",
+            "@swc/helpers/_/_to_primitive",
+        ];
+        for path in paths {
+            assert_eq!(
+                detect_helper_from_path(path),
+                Some(TranspilerHelperKind::HelperDependency),
                 "{path}"
             );
         }

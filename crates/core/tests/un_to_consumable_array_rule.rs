@@ -619,3 +619,20 @@ function f(_maybeArrayLike, _toConsumableArray, items) {
         "should not unwrap local _maybeArrayLike parameter:\n{output}"
     );
 }
+
+#[test]
+fn removes_imported_sub_helpers_when_parent_is_unwrapped() {
+    let input = r#"
+import { _ as _to_consumable_array } from "@swc/helpers/_/_to_consumable_array";
+import { _ as _array_without_holes } from "@swc/helpers/_/_array_without_holes";
+import { _ as _iterable_to_array } from "@swc/helpers/_/_iterable_to_array";
+import { _ as _non_iterable_spread } from "@swc/helpers/_/_non_iterable_spread";
+var out = [head].concat(_to_consumable_array(items));
+use(out);
+"#;
+    let expected = r#"
+const out = [head, ...items];
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

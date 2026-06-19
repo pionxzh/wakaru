@@ -1826,6 +1826,27 @@ class Foo extends Bar {
 }
 
 #[test]
+fn removes_imported_inheritance_sub_helpers() {
+    let input = r#"
+import { _ as _call_super } from "@swc/helpers/_/_call_super";
+import { _ as _inherits } from "@swc/helpers/_/_inherits";
+import { _ as _set_prototype_of } from "@swc/helpers/_/_set_prototype_of";
+import { _ as _get_prototype_of } from "@swc/helpers/_/_get_prototype_of";
+import { _ as _is_native_reflect_construct } from "@swc/helpers/_/_is_native_reflect_construct";
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t() { return _call_super(this, t, arguments); }
+    return t;
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn test_call_super_unsafe_third_arg_bails_class_conversion() {
     // When the third arg to _callSuper is not `arguments` or an array literal,
     // the rewriter cannot safely convert it. The whole IIFE should stay unconverted.
