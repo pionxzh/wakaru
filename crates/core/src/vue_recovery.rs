@@ -25,9 +25,9 @@ mod nodes;
 mod syntax;
 
 use context::{
-    collect_context, collect_render_context, collect_setup_context, component_name_from_init,
-    infer_render_helpers, render_context_param, setup_context_param, setup_emit_param,
-    setup_props_param,
+    collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
+    component_name_from_init, infer_render_helpers, render_context_param, setup_context_param,
+    setup_emit_param, setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -45,6 +45,7 @@ struct VueRecoveryContext {
     setup_prop_bindings: HashMap<Atom, Atom>,
     setup_alias_bindings: HashMap<Atom, Atom>,
     setup_script_bindings: Vec<(Atom, String)>,
+    script_local_bindings: Vec<VueSetupLocalBinding>,
     setup_local_bindings: Vec<VueSetupLocalBinding>,
     setup_ref_script_bindings: Vec<VueSetupRefBinding>,
     setup_ref_bindings: HashSet<Atom>,
@@ -235,6 +236,7 @@ fn recover_vue_sfc_from_js_inner(
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
+    collect_script_local_context(&module, &mut ctx)?;
     if !render_uses_vue_helper(render, &ctx) {
         return Ok(None);
     }
@@ -1182,10 +1184,15 @@ fn setup_local_declarations<'a>(
     ctx: &'a VueRecoveryContext,
     root: &VueNode,
 ) -> Vec<&'a VueSetupLocalBinding> {
-    if ctx.setup_local_bindings.is_empty() {
+    if ctx.script_local_bindings.is_empty() && ctx.setup_local_bindings.is_empty() {
         return Vec::new();
     }
 
+    let candidates = ctx
+        .script_local_bindings
+        .iter()
+        .chain(ctx.setup_local_bindings.iter())
+        .collect::<Vec<_>>();
     let event_refs = template_event_expr_refs(root);
     let shadowed_names = template_expr_shadowed_names(root);
     let mut wanted_refs = event_refs
@@ -1202,7 +1209,7 @@ fn setup_local_declarations<'a>(
 
     loop {
         let mut changed = false;
-        for (index, declaration) in ctx.setup_local_bindings.iter().enumerate() {
+        for (index, declaration) in candidates.iter().enumerate() {
             if selected.contains(&index) {
                 continue;
             }
@@ -1229,8 +1236,8 @@ fn setup_local_declarations<'a>(
         }
     }
 
-    ctx.setup_local_bindings
-        .iter()
+    candidates
+        .into_iter()
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
         .collect()
@@ -3245,6 +3252,42 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { Q as useRouter } from \"./vendor-vue.js\";\nimport { sections } from \"./sections.js\";\n\nconst router = useRouter();\nfunction backToHome() {\n    router.push({\n        name: sections.Home\n    });\n}\n</script>\n\n<template>\n  <button @click=\"backToHome\">Back</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn emits_module_local_helpers_used_by_setup_declarations() {
+        let input = r#"
+import { d as dc, r, c as cp, q as ob, X as ce } from "./vendor-vue.js";
+import { n as normalize } from "./format.js";
+const decorate = (item) => normalize(item.name);
+function useItems(kind) {
+  return {
+    items: r([decorate(kind.value)]),
+    loaded: r(true)
+  };
+}
+export const _ = dc({
+  __name: "ItemsPanel",
+  setup() {
+    const kind = { value: "soccer" };
+    const r = [","];
+    const { items, loaded } = useItems(kind);
+    const label = cp(() => {
+      const names = [];
+      items.value.forEach((item) => names.push(item.name));
+      return names.join(r[0]);
+    });
+    return () => (
+      ob(), ce("p", { title: label.value }, loaded.value ? "Ready" : "Wait", 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { n as normalize } from \"./format.js\";\nimport { r as r_1 } from \"./vendor-vue.js\";\n\nconst decorate = (item)=>normalize(item.name);\nfunction useItems(kind) {\n    return {\n        items: r_1([\n            decorate(kind.value)\n        ]),\n        loaded: r_1(true)\n    };\n}\nconst kind = {\n    value: \"soccer\"\n};\nconst r = [\n    \",\"\n];\nconst { items, loaded } = useItems(kind);\n\nconst label = computed(()=>{\n    const names = [];\n    items.value.forEach((item)=>names.push(item.name));\n    return names.join(r[0]);\n});\n</script>\n\n<template>\n  <p :title=\"label\">\n    <template v-if=\"loaded.value\">\n      Ready\n    </template>\n    <template v-else>\n      Wait\n    </template>\n  </p>\n</template>\n"
         );
     }
 
