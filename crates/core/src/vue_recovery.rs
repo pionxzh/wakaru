@@ -1317,7 +1317,6 @@ fn setup_ref_declarations(
     render: RenderSource<'_>,
 ) -> Vec<(String, String, String)> {
     let expr_refs = template_expr_refs(root);
-    let shadowed_refs = template_expr_shadowed_names(root);
     let template_refs = template_static_ref_names(root);
     let render_value_refs = render_value_member_refs(render, ctx);
     let mut declared = HashSet::new();
@@ -1328,9 +1327,6 @@ fn setup_ref_declarations(
     for binding in bindings {
         let name = binding.binding.as_ref();
         if !is_valid_identifier_name(name) {
-            continue;
-        }
-        if shadowed_refs.contains(&binding.binding) {
             continue;
         }
         if !binding.known_ref
@@ -1374,19 +1370,7 @@ fn setup_local_declarations<'a>(
     let event_refs = template_event_expr_refs(root);
     let expr_refs = template_expr_refs(root);
     let expr_read_refs = template_expr_read_refs(root);
-    let shadowed_names = template_expr_shadowed_names(root);
-    let expr_refs = expr_refs
-        .into_iter()
-        .filter(|local| !shadowed_names.contains(local))
-        .collect::<HashSet<_>>();
-    let expr_read_refs = expr_read_refs
-        .into_iter()
-        .filter(|local| !shadowed_names.contains(local))
-        .collect::<HashSet<_>>();
-    let mut wanted_refs = event_refs
-        .into_iter()
-        .filter(|local| !shadowed_names.contains(local))
-        .collect::<HashSet<_>>();
+    let mut wanted_refs = event_refs;
     for declaration in &candidates {
         if selects_safe_template_expr_local(ctx, declaration, &expr_refs, &expr_read_refs) {
             wanted_refs.extend(
@@ -1398,12 +1382,8 @@ fn setup_local_declarations<'a>(
             );
         }
     }
-    wanted_refs.extend(setup_value_dependency_refs(ctx, root, &shadowed_names));
-    wanted_refs.extend(
-        setup_script_binding_refs(ctx)
-            .into_iter()
-            .filter(|local| !shadowed_names.contains(local)),
-    );
+    wanted_refs.extend(setup_value_dependency_refs(ctx, root));
+    wanted_refs.extend(setup_script_binding_refs(ctx));
     let mut selected = HashSet::new();
 
     loop {
@@ -1420,13 +1400,7 @@ fn setup_local_declarations<'a>(
             }
 
             selected.insert(index);
-            wanted_refs.extend(
-                declaration
-                    .refs
-                    .iter()
-                    .filter(|local| !shadowed_names.contains(*local))
-                    .cloned(),
-            );
+            wanted_refs.extend(declaration.refs.iter().cloned());
             changed = true;
         }
 
@@ -1544,11 +1518,7 @@ pub(super) fn template_scope_from_pat(pat: &Pat) -> VueTemplateScope {
     VueTemplateScope::from_locals(bindings.into_iter().map(|binding| binding.to_string()))
 }
 
-fn setup_value_dependency_refs(
-    ctx: &VueRecoveryContext,
-    root: &VueNode,
-    shadowed_names: &HashSet<Atom>,
-) -> HashSet<Atom> {
+fn setup_value_dependency_refs(ctx: &VueRecoveryContext, root: &VueNode) -> HashSet<Atom> {
     if ctx.setup_value_bindings.is_empty() {
         return HashSet::new();
     }
@@ -1557,11 +1527,7 @@ fn setup_value_dependency_refs(
     let mut refs = HashSet::new();
     for value in ctx.setup_value_bindings.values() {
         let mut value_refs = HashSet::new();
-        collect_js_ident_refs(&value.value, &mut value_refs);
-        let value_refs = value_refs
-            .into_iter()
-            .filter(|local| !shadowed_names.contains(local))
-            .collect::<HashSet<_>>();
+        collect_js_unshadowed_ident_refs(&value.value, &mut value_refs);
         if value_refs.iter().any(|local| template_refs.contains(local)) {
             refs.extend(value_refs);
         }
@@ -1571,14 +1537,10 @@ fn setup_value_dependency_refs(
 
 fn setup_script_binding_refs(ctx: &VueRecoveryContext) -> HashSet<Atom> {
     let mut refs = HashSet::new();
-    let mut shadowed_names = HashSet::new();
     for (_, expr) in &ctx.setup_script_bindings {
-        collect_js_ident_refs(expr, &mut refs);
-        collect_js_arrow_param_names(expr, &mut shadowed_names);
+        collect_js_unshadowed_ident_refs(expr, &mut refs);
     }
-    refs.into_iter()
-        .filter(|local| !shadowed_names.contains(local))
-        .collect()
+    refs
 }
 
 fn template_for_source_refs(root: &VueNode) -> HashSet<Atom> {
@@ -1706,12 +1668,6 @@ fn template_event_expr_refs(root: &VueNode) -> HashSet<Atom> {
     refs
 }
 
-fn template_expr_shadowed_names(root: &VueNode) -> HashSet<Atom> {
-    let mut names = HashSet::new();
-    collect_template_expr_shadowed_names(root, &mut names);
-    names
-}
-
 #[derive(Default)]
 struct TemplateLocalScopes {
     stack: Vec<HashSet<Atom>>,
@@ -1742,13 +1698,13 @@ impl TemplateLocalScopes {
 
     fn collect_ident_refs(&self, source: &str, refs: &mut HashSet<Atom>) {
         let mut scoped_refs = HashSet::new();
-        collect_js_ident_refs(source, &mut scoped_refs);
+        collect_js_unshadowed_ident_refs(source, &mut scoped_refs);
         refs.extend(scoped_refs.into_iter().filter(|name| !self.is_local(name)));
     }
 
     fn collect_read_refs(&self, source: &str, refs: &mut HashSet<Atom>) {
         let mut scoped_refs = HashSet::new();
-        collect_js_read_refs(source, &mut scoped_refs);
+        collect_js_unshadowed_read_refs(source, &mut scoped_refs);
         refs.extend(scoped_refs.into_iter().filter(|name| !self.is_local(name)));
     }
 }
@@ -1967,43 +1923,6 @@ fn attr_template_scope(attr: &VueAttr) -> Option<&VueTemplateScope> {
     }
 }
 
-fn collect_template_expr_shadowed_names(node: &VueNode, names: &mut HashSet<Atom>) {
-    match node {
-        VueNode::Element(element) => {
-            for attr in &element.attrs {
-                collect_attr_expr_shadowed_names(attr, names);
-            }
-            for child in &element.children {
-                collect_template_expr_shadowed_names(child, names);
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_expr_shadowed_names(child, names);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                if let Some(condition) = &branch.condition {
-                    collect_js_arrow_param_names(condition.as_str(), names);
-                }
-                collect_template_expr_shadowed_names(&branch.node, names);
-            }
-        }
-        VueNode::For(for_node) => {
-            collect_js_arrow_param_names(for_node.source.as_str(), names);
-            collect_template_expr_shadowed_names(&for_node.node, names);
-        }
-        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
-            collect_js_arrow_param_names(expr.as_str(), names);
-        }
-        VueNode::Unsupported(unsupported) => {
-            collect_js_arrow_param_names(unsupported.expr.as_str(), names);
-        }
-        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
-    }
-}
-
 fn collect_attr_expr_refs(attr: &VueAttr, refs: &mut HashSet<Atom>, scopes: &TemplateLocalScopes) {
     match attr {
         VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
@@ -2052,21 +1971,26 @@ fn collect_attr_expr_read_refs(
     }
 }
 
-fn collect_attr_expr_shadowed_names(attr: &VueAttr, names: &mut HashSet<Atom>) {
-    match attr {
-        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
-            collect_js_arrow_param_names(expr.as_str(), names);
-        }
-        VueAttr::Directive(directive) => {
-            if let Some(expr) = &directive.expr {
-                collect_js_arrow_param_names(expr.as_str(), names);
-            }
-            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                collect_js_arrow_param_names(expr.as_str(), names);
-            }
-        }
-        VueAttr::Static { .. } => {}
-    }
+fn collect_js_unshadowed_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
+    let mut scoped_refs = HashSet::new();
+    collect_js_ident_refs(source, &mut scoped_refs);
+    extend_unshadowed_expr_refs(source, scoped_refs, refs);
+}
+
+fn collect_js_unshadowed_read_refs(source: &str, refs: &mut HashSet<Atom>) {
+    let mut scoped_refs = HashSet::new();
+    collect_js_read_refs(source, &mut scoped_refs);
+    extend_unshadowed_expr_refs(source, scoped_refs, refs);
+}
+
+fn extend_unshadowed_expr_refs(source: &str, scoped_refs: HashSet<Atom>, refs: &mut HashSet<Atom>) {
+    let mut shadowed_names = HashSet::new();
+    collect_js_arrow_param_names(source, &mut shadowed_names);
+    refs.extend(
+        scoped_refs
+            .into_iter()
+            .filter(|name| !shadowed_names.contains(name)),
+    );
 }
 
 fn collect_js_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
@@ -2333,19 +2257,16 @@ fn referenced_script_imports(
     for declaration in local_declarations {
         refs.extend(declaration.import_refs.iter().cloned());
     }
-    let shadowed_names = template_expr_shadowed_names(root);
     refs.extend(
-        template_expr_refs(root)
+        template_expr_read_refs(root)
             .into_iter()
-            .filter(|local| !declared_bindings.contains(local))
-            .filter(|local| !shadowed_names.contains(local)),
+            .filter(|local| !declared_bindings.contains(local)),
     );
 
     let mut imports = refs
         .iter()
         .filter(|local| local.as_ref() != "$")
         .filter(|local| !declared_bindings.contains(*local))
-        .filter(|local| !shadowed_names.contains(*local))
         .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
         .map(|(local, import)| script_import_line(local.as_ref(), import))
         .collect::<Vec<_>>();
@@ -2514,13 +2435,11 @@ fn setup_emit_script_binding(
     for declaration in local_declarations {
         expr_refs.extend(declaration.refs.iter().cloned());
     }
-    let shadowed_names = template_expr_shadowed_names(root);
     let mut aliases = ctx
         .setup_emit_aliases
         .iter()
         .filter(|alias| is_valid_identifier_name(alias.as_ref()))
         .filter(|alias| expr_refs.contains(*alias))
-        .filter(|alias| !shadowed_names.contains(*alias))
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     aliases.sort();
@@ -2529,7 +2448,6 @@ fn setup_emit_script_binding(
             .as_ref()
             .filter(|binding| is_valid_identifier_name(binding.as_ref()))
             .filter(|binding| expr_refs.contains(*binding))
-            .filter(|binding| !shadowed_names.contains(*binding))
             .map(ToString::to_string)
     })
 }
@@ -3719,6 +3637,31 @@ export default defineComponent({
     }
 
     #[test]
+    fn template_arrow_param_does_not_hide_setup_local_elsewhere() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock, createElementVNode, toDisplayString } from "vue";
+export default defineComponent({
+  setup() {
+    const list = useList();
+    const item = useSelectedItem();
+    return () => (
+      openBlock(), createElementBlock("section", {
+        title: list.map(item => item.name).join(",")
+      }, [
+        createElementVNode("p", null, toDisplayString(item.label), 1)
+      ], 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst list = useList();\nconst item = useSelectedItem();\n</script>\n\n<template>\n  <section :title='list.map((item)=>item.name).join(\",\")'>\n    <p>{{ item.label }}</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn does_not_import_identifiers_used_only_as_props_or_properties() {
         let input = r#"
 import { padding } from "./format.js";
@@ -3746,6 +3689,26 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { computed } from \"vue\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    if (padding) {\n        result.padding = padding;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_import_member_property_names() {
+        let input = r#"
+import { i, t } from "./format.js";
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    return () => (
+      openBlock(), createElementBlock("span", null, toDisplayString(i.t("hello")), 1)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { i } from \"./format.js\";\n</script>\n\n<template>\n  <span>{{ i.t(\"hello\") }}</span>\n</template>\n"
         );
     }
 
