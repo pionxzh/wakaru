@@ -4,11 +4,11 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Callee,
-    ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
-    Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr,
+    Callee, ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier,
+    KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
+    ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    Stmt, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -267,14 +267,132 @@ fn push_script_local_binding(
     }
 
     if !source.is_empty() {
+        let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
         ctx.script_local_bindings.push(VueSetupLocalBinding {
             bindings,
-            refs: stmt_ident_refs(&stmt),
+            refs: stmt_ident_refs(&cleaned_stmt),
             source,
-            import_refs: stmt_import_refs(&stmt, &ctx.script_imports),
+            import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
+            stmt: cleaned_stmt,
+            module_scope: true,
         });
     }
     Ok(())
+}
+
+pub(super) fn render_local_declaration_with_aliases(
+    ctx: &VueRecoveryContext,
+    declaration: &VueSetupLocalBinding,
+    aliases: &HashMap<Atom, Atom>,
+) -> Result<VueSetupLocalBinding> {
+    let mut stmt = declaration.stmt.clone();
+    if declaration.module_scope && !aliases.is_empty() {
+        rename_top_level_decl_bindings(&mut stmt, aliases);
+        stmt.visit_mut_with(&mut ImportAliasRenamer::new(aliases));
+    }
+
+    let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
+    let bindings = if declaration.module_scope {
+        declaration
+            .bindings
+            .iter()
+            .map(|binding| {
+                aliases
+                    .get(binding)
+                    .cloned()
+                    .unwrap_or_else(|| binding.clone())
+            })
+            .collect()
+    } else {
+        declaration.bindings.clone()
+    };
+
+    Ok(VueSetupLocalBinding {
+        bindings,
+        refs: stmt_ident_refs(&cleaned_stmt),
+        source,
+        import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
+        stmt: cleaned_stmt,
+        module_scope: declaration.module_scope,
+    })
+}
+
+fn rename_top_level_decl_bindings(stmt: &mut Stmt, aliases: &HashMap<Atom, Atom>) {
+    let Stmt::Decl(decl) = stmt else {
+        return;
+    };
+
+    match decl {
+        Decl::Fn(function) => rename_binding_ident(&mut function.ident, aliases),
+        Decl::Class(class) => rename_binding_ident(&mut class.ident, aliases),
+        Decl::Var(var) => {
+            for declarator in &mut var.decls {
+                rename_pat_bindings(&mut declarator.name, aliases);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rename_binding_ident(ident: &mut Ident, aliases: &HashMap<Atom, Atom>) {
+    if let Some(alias) = aliases.get(&ident.sym) {
+        ident.sym = alias.clone();
+    }
+}
+
+fn rename_binding_binding_ident(binding: &mut BindingIdent, aliases: &HashMap<Atom, Atom>) {
+    if let Some(alias) = aliases.get(&binding.id.sym) {
+        binding.id.sym = alias.clone();
+    }
+}
+
+fn rename_pat_bindings(pat: &mut Pat, aliases: &HashMap<Atom, Atom>) {
+    match pat {
+        Pat::Ident(binding) => rename_binding_binding_ident(binding, aliases),
+        Pat::Array(array) => {
+            for elem in array.elems.iter_mut().flatten() {
+                rename_pat_bindings(elem, aliases);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &mut object.props {
+                rename_object_pat_prop_bindings(prop, aliases);
+            }
+        }
+        Pat::Rest(rest) => rename_pat_bindings(rest.arg.as_mut(), aliases),
+        Pat::Assign(assign) => rename_pat_bindings(assign.left.as_mut(), aliases),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
+}
+
+fn rename_object_pat_prop_bindings(prop: &mut ObjectPatProp, aliases: &HashMap<Atom, Atom>) {
+    match prop {
+        ObjectPatProp::KeyValue(key_value) => {
+            rename_pat_bindings(key_value.value.as_mut(), aliases)
+        }
+        ObjectPatProp::Assign(assign) => {
+            if let Some(alias) = aliases.get(&assign.key.id.sym) {
+                let key = PropName::Ident(assign.key.id.clone().into());
+                let mut binding = assign.key.clone();
+                binding.id.sym = alias.clone();
+                let value = if let Some(default) = assign.value.take() {
+                    Pat::Assign(AssignPat {
+                        span: binding.id.span,
+                        left: Box::new(Pat::Ident(binding)),
+                        right: default,
+                    })
+                } else {
+                    Pat::Ident(binding)
+                };
+                *prop = ObjectPatProp::KeyValue(KeyValuePatProp {
+                    key,
+                    value: Box::new(value),
+                });
+            }
+        }
+        ObjectPatProp::Rest(rest) => rename_pat_bindings(rest.arg.as_mut(), aliases),
+    }
 }
 
 fn is_transpiler_runtime_helper_source(source: &str) -> bool {
@@ -1143,6 +1261,8 @@ pub(super) fn collect_setup_context(
                 refs: stmt_ident_refs(&cleaned_stmt),
                 source,
                 import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
+                stmt: cleaned_stmt,
+                module_scope: false,
             });
         }
     }
