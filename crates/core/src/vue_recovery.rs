@@ -22,6 +22,7 @@ mod directives;
 mod expressions;
 mod helpers;
 mod nodes;
+mod slots;
 mod syntax;
 
 use context::{
