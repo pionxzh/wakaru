@@ -3292,6 +3292,39 @@ export const _ = dc({
     }
 
     #[test]
+    fn omits_transpiler_runtime_helpers_from_module_dependencies() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue.js";
+function runtime() {
+  const start = "suspendedStart";
+  const iterator = "@@iterator";
+  function invoke() {
+    return "_invoke";
+  }
+  return { start, iterator, invoke };
+}
+function useLabel() {
+  return runtime().invoke();
+}
+export const _ = dc({
+  setup() {
+    function onClick() {
+      return useLabel();
+    }
+    return () => (
+      ob(), ce("button", { onClick: onClick }, "Ready", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nfunction useLabel() {\n    return runtime().invoke();\n}\nfunction onClick() {\n    return useLabel();\n}\n</script>\n\n<template>\n  <button @click=\"onClick\">Ready</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn emits_candidate_ref_used_by_inlined_setup_computed() {
         let input = r#"
 import { d as dc, r as rf, c as cp, q as ob, X as ce } from "./vendor-vue.js";
