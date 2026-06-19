@@ -1,6 +1,6 @@
 use super::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueFor, VueIfBranch, VueNode, VueSfc,
-    VueTemplate,
+    VueTemplate, VueUnsupported, VueUnsupportedKind,
 };
 
 impl VueSfc {
@@ -106,7 +106,19 @@ impl TemplateEmitter {
                 self.out.push_str(&escape_comment(expr.as_str().trim()));
                 self.out.push_str(" -->\n");
             }
+            VueNode::Unsupported(unsupported) => self.emit_unsupported(unsupported, depth),
         }
+    }
+
+    fn emit_unsupported(&mut self, unsupported: &VueUnsupported, depth: usize) {
+        self.indent(depth);
+        self.out.push_str("<!-- wakaru: ");
+        self.out.push_str(match unsupported.kind {
+            VueUnsupportedKind::VNodeChildren => "vnode-children: ",
+        });
+        self.out
+            .push_str(&escape_comment(unsupported.expr.as_str().trim()));
+        self.out.push_str(" -->\n");
     }
 
     fn emit_element(&mut self, element: &VueElement, depth: usize) {
@@ -228,7 +240,8 @@ impl TemplateEmitter {
             | VueNode::Interpolation(_)
             | VueNode::Comment(_)
             | VueNode::RawHtml(_)
-            | VueNode::RawExpr(_) => {
+            | VueNode::RawExpr(_)
+            | VueNode::Unsupported(_) => {
                 self.emit_template_wrapper(depth, leading_attrs, std::slice::from_ref(node));
             }
         }
@@ -438,7 +451,8 @@ impl TemplateEmitter {
                 VueNode::Element(_)
                 | VueNode::Fragment(_)
                 | VueNode::Comment(_)
-                | VueNode::RawHtml(_) => {
+                | VueNode::RawHtml(_)
+                | VueNode::Unsupported(_) => {
                     unreachable!("checked by is_inline_children")
                 }
                 VueNode::If(_) | VueNode::For(_) => unreachable!("checked by is_inline_children"),

@@ -12,7 +12,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helpers::VueHelper;
 use super::VueRecoveryContext;
-use crate::vue_template::{VueExpr, VueNode};
+use crate::vue_template::{VueExpr, VueNode, VueUnsupported};
 
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let mut expr = expr.clone();
@@ -800,4 +800,8 @@ pub(super) fn printed_vue_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<
 
 pub(super) fn raw_expr(expr: impl Into<String>) -> VueNode {
     VueNode::RawExpr(VueExpr::new(expr))
+}
+
+pub(super) fn unsupported_vnode_children_expr(expr: impl Into<String>) -> VueNode {
+    VueNode::Unsupported(VueUnsupported::vnode_children(VueExpr::new(expr)))
 }

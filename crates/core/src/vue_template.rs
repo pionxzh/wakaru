@@ -24,6 +24,7 @@ pub enum VueNode {
     Comment(String),
     RawHtml(String),
     RawExpr(VueExpr),
+    Unsupported(VueUnsupported),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +45,17 @@ pub struct VueElement {
     pub tag: String,
     pub attrs: Vec<VueAttr>,
     pub children: Vec<VueNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VueUnsupported {
+    pub kind: VueUnsupportedKind,
+    pub expr: VueExpr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VueUnsupportedKind {
+    VNodeChildren,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +179,15 @@ impl VueElement {
     pub fn with_children(mut self, children: Vec<VueNode>) -> Self {
         self.children = children;
         self
+    }
+}
+
+impl VueUnsupported {
+    pub fn vnode_children(expr: impl Into<VueExpr>) -> Self {
+        Self {
+            kind: VueUnsupportedKind::VNodeChildren,
+            expr: expr.into(),
+        }
     }
 }
 
@@ -583,6 +604,22 @@ mod tests {
         assert_eq!(
             template.print(),
             "<template>\n  <div title=\"&quot;quoted&quot; &lt;tag>\">Tom &amp; &lt;Jerry&gt;{{ a--b }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn labels_unsupported_vnode_children() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("div").with_children(
+                vec![VueNode::Unsupported(VueUnsupported::vnode_children(
+                    "renderSlides(slides)",
+                ))],
+            ))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <div>\n    <!-- wakaru: vnode-children: renderSlides(slides) -->\n  </div>\n</template>\n"
         );
     }
 }
