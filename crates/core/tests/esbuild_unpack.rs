@@ -1247,6 +1247,66 @@ export { a_exports, b_exports };
     );
 }
 
+/// If a scope-hoisted module also writes state initialized by a lazy factory,
+/// the factory must merge into that scope module. Otherwise the scope module
+/// would assign to a read-only ESM import.
+#[test]
+fn scope_writer_claims_factory_owned_state_and_init() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { shared = { count: 0 }; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { read: () => read, write: () => write });
+var shared;
+function read() { return shared; }
+function write(value) { shared = value; }
+init_state();
+console.log(shared);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.iter().all(|(name, _)| name != "init_state.js"),
+        "init factory should merge into the scope writer module: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+
+    let (writer_name, writer_code) = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function write"))
+        .expect("scope writer module should exist");
+    assert!(
+        writer_code.contains("var shared")
+            && writer_code.contains("export { shared }")
+            && writer_code.contains("export function init_state")
+            && writer_code.contains("shared = value")
+            && !writer_code.contains("import { shared"),
+        "writer module should own the shared mutable state and init factory:\n{writer_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    let writer_import = format!("from \"./{writer_name}\"");
+    assert!(
+        entry_code.contains(&writer_import) && !entry_code.contains("from \"./init_state.js\""),
+        "entry should import claimed factory state from the scope writer:\n{entry_code}"
+    );
+}
+
 /// Split init factories remain callable guarded functions so other modules can
 /// trigger the original lazy initializer without running the body at ESM
 /// evaluation time.

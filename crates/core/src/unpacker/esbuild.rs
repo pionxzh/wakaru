@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CallExpr, Callee, ClassDecl, Decl,
-    ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnDecl,
-    ForInStmt, Function, Ident, IdentName, ImportDecl, ImportNamedSpecifier, ImportSpecifier,
-    KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    NamedExport, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str, VarDeclarator,
+    ArrowExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool,
+    CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr,
+    ExprOrSpread, ExprStmt, FnDecl, ForInStmt, Function, Ident, IdentName, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, ObjectPatProp, Pat, Prop,
+    PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
@@ -135,6 +136,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
                 .or_insert_with(|| (index, source_item.clone(), analysis_item.clone()));
         }
     }
+    let top_level_decl_binding_by_atom = atom_binding_map_from_keys(&top_level_decl_items);
 
     struct PendingFactory {
         binding: BindingId,
@@ -252,6 +254,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         module_already_imports,
         module_local_atoms,
         module_referenced_atoms,
+        scope_claimed_factory_bindings,
     ) = {
         let span = tracing::info_span!("esbuild: extract scope-hoisted modules");
         let _enter = span.enter();
@@ -288,12 +291,9 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 
     let mut merged_factories: HashMap<String, Vec<MergedFactory>> = HashMap::new();
     let mut standalone_factories: Vec<PendingFactory> = Vec::new();
+    let mut factory_owned_bindings: HashMap<String, HashSet<BindingId>> = HashMap::new();
 
     for factory in pending_factories {
-        if factory.cjs_params.is_none() {
-            standalone_factories.push(factory);
-            continue;
-        }
         if factory.write_bindings.is_empty() {
             standalone_factories.push(factory);
             continue;
@@ -318,10 +318,28 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             }
         }
 
-        if let (true, Some(fname)) = (is_single_target, target_filename) {
-            binding_to_filename
-                .entry(factory.binding.clone())
-                .or_insert_with(|| fname.clone());
+        let is_scope_claimed_init = factory
+            .write_bindings
+            .iter()
+            .any(|binding| scope_claimed_factory_bindings.contains_key(binding));
+        let can_merge = factory.cjs_params.is_some() || is_scope_claimed_init;
+
+        if let (true, Some(fname), true) = (is_single_target, target_filename, can_merge) {
+            binding_to_filename.insert(factory.binding.clone(), fname.clone());
+            for write_binding in &factory.write_bindings {
+                let owned_binding = top_level_decl_binding_by_atom
+                    .get(&write_binding.0)
+                    .unwrap_or(write_binding);
+                if scope_claimed_factory_bindings.contains_key(write_binding)
+                    || scope_claimed_factory_bindings.contains_key(owned_binding)
+                {
+                    binding_to_filename.insert(owned_binding.clone(), fname.clone());
+                    factory_owned_bindings
+                        .entry(fname.clone())
+                        .or_default()
+                        .insert(owned_binding.clone());
+                }
+            }
             merged_factories
                 .entry(fname)
                 .or_default()
@@ -337,7 +355,6 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         }
     }
 
-    let mut factory_owned_bindings: HashMap<String, HashSet<BindingId>> = HashMap::new();
     for factory in &standalone_factories {
         binding_to_filename
             .entry(factory.binding.clone())
@@ -426,6 +443,18 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             for mf in factories {
                 if mf.cjs_params.is_some() {
                     continue;
+                }
+                for write_binding in &mf.write_bindings {
+                    let owned_binding = top_level_decl_binding_by_atom
+                        .get(&write_binding.0)
+                        .unwrap_or(write_binding);
+                    if binding_to_filename
+                        .get(owned_binding)
+                        .is_some_and(|filename| filename == &module.filename)
+                        && top_level_decl_items.contains_key(owned_binding)
+                    {
+                        extra_owned_bindings.insert(owned_binding.clone());
+                    }
                 }
                 for ref_binding in &mf.referenced_bindings {
                     if mf.write_bindings.contains(ref_binding) {
@@ -560,12 +589,17 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
                 import_items.push(make_scope_import_stmt(names, &rel_path));
             }
 
+            let module_factory_owned = factory_owned_bindings
+                .get(&module.filename)
+                .cloned()
+                .unwrap_or_default();
             let mut extra_owned_items: Vec<(usize, ModuleItem)> = extra_owned_bindings
                 .into_iter()
                 .filter(|binding| {
-                    module_local_atoms
-                        .get(&module.filename)
-                        .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
+                    module_factory_owned.contains(binding)
+                        || module_local_atoms
+                            .get(&module.filename)
+                            .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
                 })
                 .filter_map(|binding| {
                     top_level_decl_items
@@ -578,6 +612,10 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             let body_items: Vec<ModuleItem> = import_items
                 .into_iter()
                 .chain(extra_owned_items.into_iter().map(|(_, item)| item))
+                .chain(factory_owned_export_items(
+                    &module.filename,
+                    &factory_owned_bindings,
+                ))
                 .collect();
             let extra_code = emit_items(body_items, module.filename.clone(), cm.clone());
             module.code.push('\n');
@@ -1432,6 +1470,7 @@ struct ScopeModuleMeta {
     declared_bindings: HashSet<BindingId>,
     local_import_bindings: HashSet<BindingId>,
     referenced_bindings: HashSet<BindingId>,
+    written_atoms: HashSet<Atom>,
     referenced_atoms: HashSet<Atom>,
     filename: String,
     id: String,
@@ -1473,6 +1512,7 @@ fn extract_scope_hoisted_modules(
     HashMap<String, HashSet<BindingId>>,
     HashMap<String, HashSet<Atom>>,
     HashMap<String, HashSet<Atom>>,
+    HashMap<BindingId, String>,
 ) {
     debug_assert_eq!(analysis_items.len(), source_items.len());
     let ScopeExtractionRefs {
@@ -1487,6 +1527,7 @@ fn extract_scope_hoisted_modules(
         return (
             vec![],
             source_items,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -1511,6 +1552,7 @@ fn extract_scope_hoisted_modules(
         return (
             vec![],
             source_items,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -1584,6 +1626,7 @@ fn extract_scope_hoisted_modules(
         let mut declared_bindings: HashSet<BindingId> = HashSet::new();
         let mut local_import_bindings: HashSet<BindingId> = HashSet::new();
         let mut referenced_bindings: HashSet<BindingId> = HashSet::new();
+        let mut written_atoms: HashSet<Atom> = HashSet::new();
         let mut referenced_atoms: HashSet<Atom> = HashSet::new();
 
         for i in start..end {
@@ -1621,6 +1664,10 @@ fn extract_scope_hoisted_modules(
             declared_bindings.extend(info.declared.iter().cloned());
             local_import_bindings.extend(module_item_import_binding_ids(&filtered_analysis_item));
             referenced_bindings.extend(info.references.iter().cloned());
+            written_atoms.extend(scope_write_atoms_for_item(
+                &filtered_analysis_item,
+                &top_level_bindings,
+            ));
             referenced_atoms.extend(atom_collector.references);
         }
 
@@ -1653,6 +1700,7 @@ fn extract_scope_hoisted_modules(
             declared_bindings,
             local_import_bindings,
             referenced_bindings,
+            written_atoms,
             referenced_atoms,
             filename,
             id,
@@ -1816,13 +1864,48 @@ fn extract_scope_hoisted_modules(
         }
     }
 
+    let factory_preassigned_by_atom = atom_to_filename_binding_map(factory_preassigned_bindings);
+    let mut claimed_factory_filenames: HashMap<String, String> = HashMap::new();
+    let mut conflicted_factory_filenames: HashSet<String> = HashSet::new();
+    for meta in &metas {
+        for atom in &meta.written_atoms {
+            let Some((_, factory_filename)) = factory_preassigned_by_atom.get(atom) else {
+                continue;
+            };
+            if *factory_filename == meta.filename {
+                continue;
+            }
+            match claimed_factory_filenames.get(factory_filename) {
+                Some(existing) if existing != &meta.filename => {
+                    conflicted_factory_filenames.insert(factory_filename.clone());
+                }
+                Some(_) => {}
+                None => {
+                    claimed_factory_filenames
+                        .insert(factory_filename.clone(), meta.filename.clone());
+                }
+            }
+        }
+    }
+    for filename in &conflicted_factory_filenames {
+        claimed_factory_filenames.remove(filename);
+    }
+
     // Build binding→filename map so callers can synthesize imports in factory modules.
     let mut binding_to_filename: HashMap<BindingId, String> = binding_to_module
         .iter()
         .map(|(binding, &mi)| (binding.clone(), metas[mi].filename.clone()))
         .collect();
+    let mut scope_claimed_factory_bindings: HashMap<BindingId, String> = HashMap::new();
     for (binding, filename) in factory_preassigned_bindings {
-        binding_to_filename.insert(binding.clone(), filename.clone());
+        let owner_filename = claimed_factory_filenames
+            .get(filename)
+            .unwrap_or(filename)
+            .clone();
+        if &owner_filename != filename {
+            scope_claimed_factory_bindings.insert(binding.clone(), owner_filename.clone());
+        }
+        binding_to_filename.insert(binding.clone(), owner_filename);
     }
     let factory_binding_filename_by_atom =
         atom_to_filename_binding_map(factory_importable_bindings);
@@ -1884,7 +1967,10 @@ fn extract_scope_hoisted_modules(
                         .or_default()
                         .push(source_binding.clone());
                 }
-            } else if let Some(source_filename) = factory_preassigned_bindings.get(ref_binding) {
+            } else if factory_preassigned_bindings.contains_key(ref_binding) {
+                let source_filename = binding_to_filename
+                    .get(ref_binding)
+                    .expect("factory preassigned binding should have an owner filename");
                 if *source_filename != meta.filename {
                     imports_by_filename
                         .entry(source_filename.clone())
@@ -1978,7 +2064,10 @@ fn extract_scope_hoisted_modules(
                         .or_default()
                         .push(source_binding.clone());
                 }
-            } else if let Some(source_filename) = factory_preassigned_bindings.get(export_binding) {
+            } else if factory_preassigned_bindings.contains_key(export_binding) {
+                let source_filename = binding_to_filename
+                    .get(export_binding)
+                    .expect("factory preassigned binding should have an owner filename");
                 if *source_filename != meta.filename {
                     imports_by_filename
                         .entry(source_filename.clone())
@@ -2318,6 +2407,12 @@ fn extract_scope_hoisted_modules(
     let mut entry_factory_imports: HashMap<String, Vec<BindingId>> = HashMap::new();
     for ref_binding in &entry_referenced {
         if let Some(source_filename) = factory_preassigned_bindings.get(ref_binding) {
+            let source_filename = binding_to_filename
+                .get(ref_binding)
+                .unwrap_or(source_filename);
+            if source_filename == "entry.js" {
+                continue;
+            }
             entry_factory_imports
                 .entry(source_filename.clone())
                 .or_default()
@@ -2355,6 +2450,7 @@ fn extract_scope_hoisted_modules(
         module_already_imports,
         module_local_atoms,
         module_referenced_atoms,
+        scope_claimed_factory_bindings,
     )
 }
 
@@ -3145,6 +3241,138 @@ fn collect_write_bindings(
         writes: out,
     };
     stmt.visit_with(&mut collector);
+}
+
+fn scope_write_atoms_for_item(
+    item: &ModuleItem,
+    top_level_bindings: &HashSet<BindingId>,
+) -> HashSet<Atom> {
+    let top_level_atoms: HashSet<Atom> = top_level_bindings
+        .iter()
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    let mut local_collector = NonTopLevelBindingCollector {
+        top_level_bindings,
+        local_bindings: HashSet::new(),
+    };
+    item.visit_with(&mut local_collector);
+
+    let mut write_collector = ScopeWriteAtomCollector {
+        top_level_bindings,
+        top_level_atoms: &top_level_atoms,
+        local_bindings: &local_collector.local_bindings,
+        writes: HashSet::new(),
+    };
+    item.visit_with(&mut write_collector);
+    write_collector.writes
+}
+
+struct NonTopLevelBindingCollector<'a> {
+    top_level_bindings: &'a HashSet<BindingId>,
+    local_bindings: HashSet<BindingId>,
+}
+
+impl Visit for NonTopLevelBindingCollector<'_> {
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        let binding = (ident.id.sym.clone(), ident.id.ctxt);
+        if !self.top_level_bindings.contains(&binding) {
+            self.local_bindings.insert(binding);
+        }
+    }
+}
+
+struct ScopeWriteAtomCollector<'a> {
+    top_level_bindings: &'a HashSet<BindingId>,
+    top_level_atoms: &'a HashSet<Atom>,
+    local_bindings: &'a HashSet<BindingId>,
+    writes: HashSet<Atom>,
+}
+
+impl ScopeWriteAtomCollector<'_> {
+    fn record_ident(&mut self, ident: &Ident) {
+        let binding = (ident.sym.clone(), ident.ctxt);
+        if self.top_level_bindings.contains(&binding)
+            || (self.top_level_atoms.contains(&ident.sym)
+                && !self.local_bindings.contains(&binding))
+        {
+            self.writes.insert(ident.sym.clone());
+        }
+    }
+}
+
+impl Visit for ScopeWriteAtomCollector<'_> {
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        collect_scope_write_target(&assign.left, self);
+        assign.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(ident) = update.arg.as_ref() {
+            self.record_ident(ident);
+        }
+    }
+}
+
+fn collect_scope_write_target(target: &AssignTarget, collector: &mut ScopeWriteAtomCollector<'_>) {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) => {
+            collector.record_ident(&ident.id);
+        }
+        AssignTarget::Simple(simple) => {
+            simple.visit_with(collector);
+        }
+        AssignTarget::Pat(pat) => collect_scope_write_pat_target(pat, collector),
+    }
+}
+
+fn collect_scope_write_pat_target(
+    target: &AssignTargetPat,
+    collector: &mut ScopeWriteAtomCollector<'_>,
+) {
+    match target {
+        AssignTargetPat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_scope_write_pat(elem, collector);
+            }
+        }
+        AssignTargetPat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_scope_write_pat(&kv.value, collector),
+                    ObjectPatProp::Assign(assign) => collector.record_ident(&assign.key),
+                    ObjectPatProp::Rest(rest) => collect_scope_write_pat(&rest.arg, collector),
+                }
+            }
+        }
+        AssignTargetPat::Invalid(_) => {}
+    }
+}
+
+fn collect_scope_write_pat(pat: &Pat, collector: &mut ScopeWriteAtomCollector<'_>) {
+    match pat {
+        Pat::Ident(ident) => collector.record_ident(&ident.id),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_scope_write_pat(elem, collector);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::Assign(assign) => collector.record_ident(&assign.key),
+                    ObjectPatProp::KeyValue(kv) => collect_scope_write_pat(&kv.value, collector),
+                    ObjectPatProp::Rest(rest) => collect_scope_write_pat(&rest.arg, collector),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_scope_write_pat(&rest.arg, collector),
+        Pat::Assign(assign) => {
+            collect_scope_write_pat(&assign.left, collector);
+            assign.right.visit_with(collector);
+        }
+        Pat::Expr(expr) => expr.visit_with(collector),
+        Pat::Invalid(_) => {}
+    }
 }
 
 // ---------------------------------------------------------------------------
