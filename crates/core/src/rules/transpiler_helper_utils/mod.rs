@@ -289,11 +289,9 @@ impl LocalHelperContext {
         }
 
         let helper_dependencies = self.helper_dependencies(module, &removable_roots);
-        let context_dependencies = self.helpers_of_kind(TranspilerHelperKind::HelperDependency);
         removable_roots
             .into_iter()
             .chain(helper_dependencies)
-            .chain(context_dependencies)
             .collect()
     }
 

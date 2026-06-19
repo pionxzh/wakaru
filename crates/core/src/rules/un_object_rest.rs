@@ -7,8 +7,8 @@ use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
     BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, CondExpr, Decl, Expr,
     ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget,
+    Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -20,8 +20,7 @@ use super::cross_module_helper_refs::{
     cross_module_member_helper_kind,
 };
 use super::transpiler_helper_utils::{
-    helpers_with_remaining_refs, remove_helpers_without_remaining_refs, tslib_member_helper_kind,
-    BindingKey, LocalHelperContext, TranspilerHelperKind,
+    tslib_member_helper_kind, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
@@ -304,23 +303,17 @@ fn run_un_object_rest(
 
     // Remove named helper declarations if all call sites were replaced
     if !local_named_helpers.is_empty() {
-        let remaining_roots = helpers_with_remaining_refs(module, &local_named_helpers);
-        let removable_roots = local_named_helpers
-            .iter()
-            .filter(|(key, _)| !remaining_roots.contains(*key))
-            .map(|(key, kind)| (key.clone(), *kind))
+        let import_bindings = super::helper_matcher::collect_import_binding_keys(module);
+        let define_property_helpers: HashMap<BindingKey, TranspilerHelperKind> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::DefineProperty)
+            .into_iter()
+            .filter(|(key, _)| !import_bindings.contains(key))
+            .collect();
+        let root_helpers = local_named_helpers
+            .into_iter()
+            .chain(define_property_helpers)
             .collect::<HashMap<_, _>>();
-        if !removable_roots.is_empty() {
-            let mut helper_dependencies =
-                local_helpers.helpers_of_kind(TranspilerHelperKind::HelperDependency);
-            helper_dependencies
-                .extend(local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty));
-            let removable_helpers = removable_roots
-                .into_iter()
-                .chain(helper_dependencies)
-                .collect::<HashMap<_, _>>();
-            remove_helpers_without_remaining_refs(module, removable_helpers);
-        }
+        local_helpers.remove_helpers_with_dependencies(module, root_helpers);
     }
 }
 
@@ -434,8 +427,6 @@ impl VisitMut for ObjectRestProcessor<'_> {
         *stmts = new_stmts;
     }
 }
-
-use swc_core::ecma::ast::ModuleItem;
 
 fn reattach_elided_object_rest_in_module_items(
     items: &mut [ModuleItem],

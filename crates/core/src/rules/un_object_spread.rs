@@ -20,8 +20,7 @@ use super::helper_matcher::{
     binding_key, member_prop_name, static_member_prop_name, var_declarator_binding_key,
 };
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
-    LocalHelperContext, TranspilerHelperKind,
+    tslib_member_helper_kind, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 use crate::utils::paren::strip_parens;
@@ -177,19 +176,21 @@ fn run_un_object_spread(
         })
         .map(|(key, kind)| (key.clone(), *kind))
         .collect();
-    let removable_roots = local_helper_context
-        .helper_cleanup_candidates_with_dependencies(module, local_root_helpers);
-    let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
-        matches!(
-            kind,
-            TranspilerHelperKind::DefineProperty | TranspilerHelperKind::HelperDependency
-        )
-    });
-    let removable_helpers: HashMap<BindingKey, TranspilerHelperKind> = removable_roots
+    let import_bindings = super::helper_matcher::collect_import_binding_keys(module);
+    let standalone_dependencies: HashMap<BindingKey, TranspilerHelperKind> = local_helpers
+        .into_iter()
+        .filter(|(key, kind)| {
+            matches!(
+                kind,
+                TranspilerHelperKind::DefineProperty | TranspilerHelperKind::HelperDependency
+            ) && !import_bindings.contains(key)
+        })
+        .collect();
+    let all_roots = local_root_helpers
         .into_iter()
         .chain(standalone_dependencies)
         .collect();
-    remove_helpers_without_remaining_refs(module, removable_helpers);
+    local_helper_context.remove_helpers_with_dependencies(module, all_roots);
 }
 
 impl Default for UnObjectSpread<'_> {

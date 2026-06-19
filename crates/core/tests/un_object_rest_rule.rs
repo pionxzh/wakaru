@@ -1294,3 +1294,22 @@ const rest = m(obj, ["a"]);
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn preserves_unrelated_imported_define_property_helper() {
+    let input = r#"
+import d from "@babel/runtime/helpers/defineProperty";
+import owp from "@babel/runtime/helpers/objectWithoutProperties";
+var name = app_info.name, rest_info = owp(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("...rest_info"),
+        "should destructure: {output}"
+    );
+    assert!(
+        output.contains("@babel/runtime/helpers/defineProperty"),
+        "unrelated defineProperty import should survive: {output}"
+    );
+}

@@ -15,8 +15,7 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, tslib_member_ts_helper_kind,
-    tslib_require_ts_helper_kind, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, LocalHelperContext, TsHelperKind,
 };
 use super::RewriteLevel;
 
@@ -351,10 +350,6 @@ impl VisitMut for UnForOf<'_> {
         );
         let previous = std::mem::replace(&mut self.helper_context, helper_context);
         module.visit_mut_children_with(self);
-        let deps = local_helpers.helpers_of_kind(TranspilerHelperKind::HelperDependency);
-        if !deps.is_empty() {
-            remove_helpers_without_remaining_refs(module, deps);
-        }
         self.helper_context = previous;
     }
 

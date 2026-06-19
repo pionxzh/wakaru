@@ -17,7 +17,7 @@ use super::helper_matcher::{
     remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
     var_declarator_binding_key, BindingKey,
 };
-use super::transpiler_helper_utils::TranspilerHelperKind;
+use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::RewriteLevel;
 use crate::facts::ModuleFactsMap;
 use crate::utils::paren::strip_parens;
@@ -83,10 +83,17 @@ impl VisitMut for UnTemplateLiteral<'_> {
                 })
             })
             .unwrap_or_default();
-        let factories = collect_template_factories(module, &cross_module_helpers);
+        let local_helpers = LocalHelperContext::collect(module);
+        let detected_helpers: HashSet<BindingKey> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::TaggedTemplateLiteral)
+            .into_keys()
+            .collect();
+        let factories =
+            collect_template_factories(module, &cross_module_helpers, &detected_helpers);
         let mut replacer = TaggedTemplateReplacer {
             factories: &factories,
             cross_module_helpers: &cross_module_helpers,
+            detected_helpers: &detected_helpers,
             consumed_helpers: HashSet::new(),
             consumed_caches: HashSet::new(),
             consumed_factories: HashSet::new(),
@@ -121,6 +128,7 @@ impl VisitMut for UnTemplateLiteral<'_> {
 struct TaggedTemplateReplacer<'a> {
     factories: &'a HashMap<BindingKey, TemplateData>,
     cross_module_helpers: &'a CrossModuleHelperRefs,
+    detected_helpers: &'a HashSet<BindingKey>,
     consumed_helpers: HashSet<BindingKey>,
     consumed_caches: HashSet<BindingKey>,
     consumed_factories: HashSet<BindingKey>,
@@ -137,6 +145,7 @@ impl VisitMut for TaggedTemplateReplacer<'_> {
             call,
             self.factories,
             self.cross_module_helpers,
+            self.detected_helpers,
             &mut self.consumed_helpers,
             &mut self.consumed_caches,
             &mut self.consumed_factories,
@@ -199,6 +208,7 @@ fn rewrite_tagged_template_call(
     call: &CallExpr,
     factories: &HashMap<BindingKey, TemplateData>,
     cross_module_helpers: &CrossModuleHelperRefs,
+    detected_helpers: &HashSet<BindingKey>,
     consumed_helpers: &mut HashSet<BindingKey>,
     consumed_caches: &mut HashSet<BindingKey>,
     consumed_factories: &mut HashSet<BindingKey>,
@@ -207,8 +217,12 @@ fn rewrite_tagged_template_call(
         return None;
     }
 
-    let template_match =
-        extract_template_match(call.args[0].expr.as_ref(), factories, cross_module_helpers)?;
+    let template_match = extract_template_match(
+        call.args[0].expr.as_ref(),
+        factories,
+        cross_module_helpers,
+        detected_helpers,
+    )?;
     if template_match.data.cooked.len() != call.args.len() {
         return None;
     }
@@ -248,10 +262,13 @@ fn extract_template_match(
     expr: &Expr,
     factories: &HashMap<BindingKey, TemplateData>,
     cross_module_helpers: &CrossModuleHelperRefs,
+    detected_helpers: &HashSet<BindingKey>,
 ) -> Option<TemplateMatch> {
     let expr = strip_parens(expr);
 
-    if let Some((data, helper)) = extract_direct_template_helper_call(expr, cross_module_helpers) {
+    if let Some((data, helper)) =
+        extract_direct_template_helper_call(expr, cross_module_helpers, detected_helpers)
+    {
         return Some(TemplateMatch {
             data: TemplateData { helper, ..data },
             cache: None,
@@ -290,8 +307,11 @@ fn extract_template_match(
     if target_key != cache {
         return None;
     }
-    let (data, helper) =
-        extract_direct_template_helper_call(strip_parens(&assign.right), cross_module_helpers)?;
+    let (data, helper) = extract_direct_template_helper_call(
+        strip_parens(&assign.right),
+        cross_module_helpers,
+        detected_helpers,
+    )?;
 
     Some(TemplateMatch {
         data: TemplateData { helper, ..data },
@@ -322,6 +342,7 @@ fn extract_template_factory_call<'a>(
 fn extract_direct_template_helper_call(
     expr: &Expr,
     cross_module_helpers: &CrossModuleHelperRefs,
+    detected_helpers: &HashSet<BindingKey>,
 ) -> Option<(TemplateData, Option<BindingKey>)> {
     let Expr::Call(call) = expr else {
         return None;
@@ -339,6 +360,7 @@ fn extract_direct_template_helper_call(
             if let Some(helper) = expr_binding_key(callee) {
                 if !is_template_helper_name(helper.0.as_ref())
                     && !cross_module_helpers.direct.contains_key(&helper)
+                    && !detected_helpers.contains(&helper)
                 {
                     return None;
                 }
@@ -551,6 +573,7 @@ fn normalize_newline_escapes(raw: &str) -> Option<String> {
 fn collect_template_factories(
     module: &Module,
     cross_module_helpers: &CrossModuleHelperRefs,
+    detected_helpers: &HashSet<BindingKey>,
 ) -> HashMap<BindingKey, TemplateData> {
     module
         .body
@@ -560,7 +583,11 @@ fn collect_template_factories(
                 return None;
             };
             let body = func.function.body.as_ref()?;
-            let data = extract_template_from_factory_body(&body.stmts, cross_module_helpers)?;
+            let data = extract_template_from_factory_body(
+                &body.stmts,
+                cross_module_helpers,
+                detected_helpers,
+            )?;
             Some((binding_key(&func.ident), data))
         })
         .collect()
@@ -569,6 +596,7 @@ fn collect_template_factories(
 fn extract_template_from_factory_body(
     stmts: &[Stmt],
     cross_module_helpers: &CrossModuleHelperRefs,
+    detected_helpers: &HashSet<BindingKey>,
 ) -> Option<TemplateData> {
     let mut locals: HashMap<BindingKey, TemplateData> = HashMap::new();
 
@@ -582,9 +610,11 @@ fn extract_template_from_factory_body(
                     let Some(init) = decl.init.as_deref() else {
                         continue;
                     };
-                    if let Some((data, helper)) =
-                        extract_direct_template_helper_call(init, cross_module_helpers)
-                    {
+                    if let Some((data, helper)) = extract_direct_template_helper_call(
+                        init,
+                        cross_module_helpers,
+                        detected_helpers,
+                    ) {
                         locals.insert(key, TemplateData { helper, ..data });
                     }
                 }
@@ -597,7 +627,7 @@ fn extract_template_from_factory_body(
                     }
                 }
                 if let Some((data, helper)) =
-                    extract_direct_template_helper_call(arg, cross_module_helpers)
+                    extract_direct_template_helper_call(arg, cross_module_helpers, detected_helpers)
                 {
                     return Some(TemplateData { helper, ..data });
                 }

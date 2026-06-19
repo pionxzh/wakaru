@@ -619,7 +619,9 @@ for (const item of items) {
 }
 
 #[test]
-fn removes_imported_create_for_of_iterator_helper() {
+fn recovers_for_of_from_imported_iterator_helper() {
+    // The for-of loop is recovered by shape matching. The helper import
+    // becomes dead — DeadImports removes it when DceMode is enabled.
     let input = r#"
 import _createForOfIteratorHelper from "@babel/runtime/helpers/createForOfIteratorHelper";
 let step;
@@ -636,6 +638,7 @@ try {
 }
 "#;
     let expected = r#"
+import _createForOfIteratorHelper from "@babel/runtime/helpers/createForOfIteratorHelper";
 for (const item of items) {
   use(item);
 }

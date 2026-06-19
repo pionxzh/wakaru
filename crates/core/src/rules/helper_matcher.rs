@@ -282,6 +282,19 @@ pub(crate) fn remove_import_specifiers_by_binding(
     });
 }
 
+pub(crate) fn collect_import_binding_keys(module: &Module) -> HashSet<BindingKey> {
+    let mut keys = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for spec in &import.specifiers {
+            keys.insert(import_specifier_binding_key(spec));
+        }
+    }
+    keys
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

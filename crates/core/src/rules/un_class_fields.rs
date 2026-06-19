@@ -93,6 +93,9 @@ impl UnClassFields {
         );
         let previous_consumed_private_maps = std::mem::take(&mut self.consumed_private_maps);
 
+        let referenced_helpers =
+            super::transpiler_helper_utils::helpers_with_remaining_refs(module, &helpers);
+
         module.visit_mut_children_with(self);
 
         if !self.consumed_private_maps.is_empty() {
@@ -129,7 +132,13 @@ impl UnClassFields {
         }
 
         if !helpers.is_empty() {
-            local_helpers.remove_helpers_with_dependencies(module, helpers);
+            let consumed_helpers = helpers
+                .into_iter()
+                .filter(|(key, _)| referenced_helpers.contains(key))
+                .collect::<HashMap<_, _>>();
+            if !consumed_helpers.is_empty() {
+                local_helpers.remove_helpers_with_dependencies(module, consumed_helpers);
+            }
         }
         self.define_property_helpers = previous_helpers;
         self.private_maps = previous_private_maps;

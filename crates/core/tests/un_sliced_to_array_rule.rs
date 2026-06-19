@@ -921,7 +921,11 @@ function f(_maybeArrayLike, _slicedToArray, pair) {
 }
 
 #[test]
-fn removes_imported_sub_helper_when_parent_is_unwrapped() {
+fn unwraps_parent_with_imported_sub_helpers_present() {
+    // Sub-helper imports are pre-existing dead code (no references in the
+    // consumer module). The parent _sliced_to_array import is removed because
+    // UnSlicedToArray consumed it. The sub-helpers stay — DeadImports handles
+    // them when DceMode is enabled.
     let input = r#"
 import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
 import { _ as _array_with_holes } from "@swc/helpers/_/_array_with_holes";
@@ -931,9 +935,17 @@ var _ref = _sliced_to_array(iter(), 2);
 var a = _ref[0], b = _ref[1];
 use(a, b);
 "#;
-    let expected = r#"
-const [a, b] = iter();
-use(a, b);
-"#;
-    assert_eq_normalized(&render(input), expected);
+    let output = render(input);
+    assert!(
+        output.contains("const [a, b] = iter()"),
+        "should destructure: {output}"
+    );
+    assert!(
+        !output.contains("_sliced_to_array"),
+        "consumed helper should be removed: {output}"
+    );
+    assert!(
+        output.contains("@swc/helpers/_/_array_with_holes"),
+        "pre-existing dead sub-helper imports should survive: {output}"
+    );
 }

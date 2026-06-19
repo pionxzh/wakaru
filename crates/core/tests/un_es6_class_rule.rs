@@ -1866,7 +1866,7 @@ class Foo extends Bar {
 }
 
 #[test]
-fn removes_imported_inheritance_sub_helpers() {
+fn unwraps_class_with_imported_sub_helpers_present() {
     let input = r#"
 import { _ as _call_super } from "@swc/helpers/_/_call_super";
 import { _ as _inherits } from "@swc/helpers/_/_inherits";
@@ -1879,11 +1879,19 @@ var Foo = (function(_Bar) {
     return t;
 }(Bar));
 "#;
-    let expected = r#"
-class Foo extends Bar {
-}
-"#;
-    assert_eq_normalized(&render(input), expected);
+    let output = render(input);
+    assert!(
+        output.contains("class Foo extends Bar"),
+        "should convert to class: {output}"
+    );
+    assert!(
+        !output.contains("_call_super") && !output.contains("_inherits"),
+        "consumed helpers should be removed: {output}"
+    );
+    assert!(
+        output.contains("@swc/helpers/_/_set_prototype_of"),
+        "pre-existing dead sub-helper imports should survive: {output}"
+    );
 }
 
 #[test]

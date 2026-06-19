@@ -244,6 +244,22 @@ var out = tag`hello ${name}`;
 }
 
 #[test]
+fn restores_aliased_babel_runtime_imported_tagged_template() {
+    // The local name is not a known helper name — detection must go through
+    // LocalHelperContext path classification, not is_template_helper_name.
+    let input = r#"
+import t from "@babel/runtime/helpers/taggedTemplateLiteral";
+var _templateObject;
+var out = tag(_templateObject || (_templateObject = t(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn restores_swc_imported_tagged_template_loose() {
     let input = r#"
 import { _ as _tagged_template_literal_loose } from "@swc/helpers/_/_tagged_template_literal_loose";
