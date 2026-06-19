@@ -4026,12 +4026,18 @@ export default defineComponent({
 import { defineComponent, ref, openBlock, createElementBlock } from "vue";
 import { useScroll } from "@vueuse/core";
 export default defineComponent({
-  setup() {
+  props: {
+    disabled: { type: Boolean, default: false }
+  },
+  setup(t) {
     const target = ref(null);
     const { x, arrivedState } = useScroll(target);
     const scrollLeft = () => {
+      let t;
       if (!arrivedState.left) {
-        scroll({ left: x - 200 });
+        if (!((t = target.value) === null || t === undefined)) {
+          t.scroll({ left: x.value - 200 });
+        }
       }
     };
     return () => (
@@ -4040,7 +4046,7 @@ export default defineComponent({
         ref: target
       }, [
         createElementBlock("button", {
-          disabled: arrivedState.left,
+          disabled: t.disabled || arrivedState.left,
           onClick: scrollLeft
         }, "Left", 8, ["disabled", "onClick"])
       ], 512)
@@ -4051,7 +4057,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    if (!arrivedState.left) {\n        scroll({\n            left: x - 200\n        });\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst props = defineProps({\n    disabled: {\n        type: Boolean,\n        default: false\n    }\n});\nconst { disabled } = props;\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    let t;\n    if (!arrivedState.left) {\n        if (!((t = scrollContainer.value) === null || t === undefined)) {\n            t.scroll({\n                left: x - 200\n            });\n        }\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"disabled || arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
         );
     }
 

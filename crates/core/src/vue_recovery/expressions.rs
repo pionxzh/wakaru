@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, Decl, Expr, Function, Ident, IdentName,
-    MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
+    IdentName, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -384,6 +384,29 @@ impl<'a> ContextMemberCleaner<'a> {
             .collect()
     }
 
+    fn block_shadowing_indices(&self, block: &BlockStmt) -> Vec<usize> {
+        let mut indices = block
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::Decl(decl) => Some(decl),
+                _ => None,
+            })
+            .flat_map(|decl| self.decl_shadowing_indices(decl))
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+    }
+
+    fn decl_shadowing_indices(&self, decl: &Decl) -> Vec<usize> {
+        self.prefixes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, prefix)| decl_binds_name(decl, prefix).then_some(index))
+            .collect()
+    }
+
     fn enter_shadowed(&mut self, indices: &[usize]) {
         for index in indices {
             self.shadow_depths[*index] += 1;
@@ -442,6 +465,25 @@ impl VisitMut for ContextMemberCleaner<'_> {
         self.enter_shadowed(&shadowed);
         function.visit_mut_children_with(self);
         self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        let shadowed = self.block_shadowing_indices(block);
+        self.enter_shadowed(&shadowed);
+        block.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+}
+
+fn decl_binds_name(decl: &Decl, name: &str) -> bool {
+    match decl {
+        Decl::Class(class) => class.ident.sym.as_ref() == name,
+        Decl::Fn(function) => function.ident.sym.as_ref() == name,
+        Decl::Var(var) => var
+            .decls
+            .iter()
+            .any(|decl| pat_binds_name(&decl.name, name)),
+        _ => false,
     }
 }
 
