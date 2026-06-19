@@ -759,9 +759,18 @@ pub(super) fn collect_setup_context(
                     let is_ref_object_local = decl.init.as_deref().is_some_and(|init| {
                         is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx)
                     });
+                    let is_imported_call_local = decl
+                        .init
+                        .as_deref()
+                        .is_some_and(|init| is_script_import_call_expr(init, ctx));
                     let is_local_candidate = match &decl.name {
                         Pat::Ident(_) | Pat::Array(_) => true,
-                        Pat::Object(_) => has_template_ref || has_render_ref || is_ref_object_local,
+                        Pat::Object(_) => {
+                            has_template_ref
+                                || has_render_ref
+                                || is_ref_object_local
+                                || is_imported_call_local
+                        }
                         _ => false,
                     };
                     if !is_local_candidate {
@@ -1313,6 +1322,13 @@ fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 
 fn is_ref_object_helper(name: &str) -> bool {
     matches!(name, "toRefs" | "storeToRefs")
+}
+
+fn is_script_import_call_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    call_callee_ident(call).is_some_and(|callee| ctx.script_imports.contains_key(&callee.sym))
 }
 
 fn provider_ref_props_from_init(expr: &Expr, ctx: &VueRecoveryContext) -> Option<HashSet<Atom>> {

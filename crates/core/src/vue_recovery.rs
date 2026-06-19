@@ -1193,6 +1193,11 @@ fn setup_local_declarations<'a>(
         .filter(|local| !shadowed_names.contains(local))
         .collect::<HashSet<_>>();
     wanted_refs.extend(setup_value_dependency_refs(ctx, root, &shadowed_names));
+    wanted_refs.extend(
+        setup_script_binding_refs(ctx)
+            .into_iter()
+            .filter(|local| !shadowed_names.contains(local)),
+    );
     let mut selected = HashSet::new();
 
     loop {
@@ -1254,6 +1259,18 @@ fn setup_value_dependency_refs(
         }
     }
     refs
+}
+
+fn setup_script_binding_refs(ctx: &VueRecoveryContext) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    let mut shadowed_names = HashSet::new();
+    for (_, expr) in &ctx.setup_script_bindings {
+        collect_js_ident_refs(expr, &mut refs);
+        collect_js_arrow_param_names(expr, &mut shadowed_names);
+    }
+    refs.into_iter()
+        .filter(|local| !shadowed_names.contains(local))
+        .collect()
 }
 
 fn template_for_source_refs(root: &VueNode) -> HashSet<Atom> {
@@ -1675,6 +1692,7 @@ fn referenced_script_imports(
     local_declarations: &[&VueSetupLocalBinding],
 ) -> Vec<String> {
     let mut refs = ctx.setup_script_import_refs.clone();
+    refs.extend(setup_script_binding_refs(ctx));
     for declaration in local_declarations {
         refs.extend(declaration.import_refs.iter().cloned());
     }
@@ -1689,6 +1707,8 @@ fn referenced_script_imports(
     let mut imports = refs
         .iter()
         .filter(|local| local.as_ref() != "$")
+        .filter(|local| !declared_bindings.contains(*local))
+        .filter(|local| !shadowed_names.contains(*local))
         .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
         .map(|(local, import)| script_import_line(local.as_ref(), import))
         .collect::<Vec<_>>();
@@ -2900,6 +2920,44 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn imports_inlined_computed_script_setup_dependencies() {
+        let input = r#"
+import { sections } from "./sections.js";
+import { useViewState } from "./state.js";
+import { defineComponent, computed, openBlock, createElementBlock, Fragment, renderList, toDisplayString } from "vue";
+export default defineComponent({
+  setup() {
+    const { page } = useViewState();
+    const labels = computed(() => ({
+      [sections.Home]: {
+        title: page.name
+      }
+    }));
+    const links = computed(() => {
+      const list = page.meta.steps ?? [];
+      return list.map((name, index) => ({
+        title: labels.value[name]?.title ?? "",
+        enabled: index < list.length - 1
+      }));
+    });
+    return () => (
+      openBlock(), createElementBlock("ul", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(links.value, (item) => (
+          openBlock(), createElementBlock("li", { key: item.title }, toDisplayString(item.title), 1)
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { sections } from \"./sections.js\";\nimport { useViewState } from \"./state.js\";\n\nconst { page } = useViewState();\n\nconst links = computed(()=>{\n    const list = page.meta.steps ?? [];\n    return list.map((name, index)=>({\n            title: (({\n    [sections.Home]: {\n        title: page.name\n    }\n}))[name]?.title ?? \"\",\n            enabled: index < list.length - 1\n        }));\n});\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in links\" :key=\"item.title\">{{ item.title }}</li>\n  </ul>\n</template>\n"
         );
     }
 
