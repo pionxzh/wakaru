@@ -226,6 +226,12 @@ const HELPER_DEPENDENCY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/isNativeReflectConstruct",
     "@babel/runtime/helpers/esm/isNativeReflectConstruct",
     "@swc/helpers/_/_is_native_reflect_construct",
+    // --- for-of iteration (from UnForOf shape-match; cleanup only) ---
+    "@babel/runtime/helpers/createForOfIteratorHelper",
+    "@babel/runtime/helpers/esm/createForOfIteratorHelper",
+    "@babel/runtime/helpers/createForOfIteratorHelperLoose",
+    "@babel/runtime/helpers/esm/createForOfIteratorHelperLoose",
+    "@swc/helpers/_/_create_for_of_iterator_helper_loose",
     // --- property keys (from createClass, defineProperty) ---
     "@babel/runtime/helpers/toPropertyKey",
     "@babel/runtime/helpers/esm/toPropertyKey",
@@ -371,6 +377,10 @@ mod tests {
             "@swc/helpers/_/_to_property_key",
             "@babel/runtime/helpers/toPrimitive",
             "@swc/helpers/_/_to_primitive",
+            // for-of iteration
+            "@babel/runtime/helpers/createForOfIteratorHelper",
+            "@babel/runtime/helpers/createForOfIteratorHelperLoose",
+            "@swc/helpers/_/_create_for_of_iterator_helper_loose",
         ];
         for path in paths {
             assert_eq!(

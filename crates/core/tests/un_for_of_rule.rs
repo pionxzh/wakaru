@@ -617,3 +617,28 @@ for (const item of items) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn removes_imported_create_for_of_iterator_helper() {
+    let input = r#"
+import _createForOfIteratorHelper from "@babel/runtime/helpers/createForOfIteratorHelper";
+let step;
+const iterator = _createForOfIteratorHelper(items);
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const item = step.value;
+    use(item);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
