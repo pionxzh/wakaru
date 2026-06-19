@@ -19,7 +19,7 @@ use super::syntax::{
 };
 use super::{
     component_prop_names, RenderSource, VueRecoveryContext, VueScriptImport, VueSetupLocalBinding,
-    VueSetupRefBinding,
+    VueSetupRefBinding, VueSetupValueBinding,
 };
 use crate::js_names::is_valid_identifier_name;
 
@@ -744,20 +744,28 @@ pub(super) fn collect_setup_context(
                     let has_render_ref = decl_bindings
                         .iter()
                         .any(|binding| setup_render_refs.contains(binding));
+                    let is_ref_object_local = decl.init.as_deref().is_some_and(|init| {
+                        is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx)
+                    });
                     let is_local_candidate = match &decl.name {
                         Pat::Ident(_) | Pat::Array(_) => true,
-                        Pat::Object(_) => has_template_ref || has_render_ref,
+                        Pat::Object(_) => has_template_ref || has_render_ref || is_ref_object_local,
                         _ => false,
                     };
                     if !is_local_candidate {
                         continue;
                     }
-                    ctx.setup_template_ref_bindings.extend(
-                        decl_bindings
-                            .iter()
-                            .filter(|binding| setup_template_ref_refs.contains(*binding))
-                            .cloned(),
-                    );
+                    if has_template_ref && matches!(decl.name, Pat::Object(_)) {
+                        ctx.setup_template_ref_bindings
+                            .extend(decl_bindings.iter().cloned());
+                    } else {
+                        ctx.setup_template_ref_bindings.extend(
+                            decl_bindings
+                                .iter()
+                                .filter(|binding| setup_template_ref_refs.contains(*binding))
+                                .cloned(),
+                        );
+                    }
 
                     local_bindings.extend(decl_bindings);
                     local_decls.push(decl.clone());
@@ -785,6 +793,7 @@ pub(super) fn collect_setup_context(
             ctx.setup_alias_bindings.insert(from, to);
         }
     }
+    refresh_setup_value_binding_sources(ctx)?;
 
     assign_setup_prop_bindings(ctx, &local_candidates);
 
@@ -1565,7 +1574,24 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
     }
 }
 
-fn computed_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn refresh_setup_value_binding_sources(ctx: &mut VueRecoveryContext) -> Result<()> {
+    let bindings = ctx.setup_value_bindings.clone();
+    for (binding, value) in bindings {
+        let Some(expr) = value.expr else {
+            continue;
+        };
+        let value = clean_expr(&print_expr(&expr, ctx)?, ctx);
+        if let Some(binding) = ctx.setup_value_bindings.get_mut(&binding) {
+            binding.value = value;
+        }
+    }
+    Ok(())
+}
+
+fn computed_value_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueSetupValueBinding>> {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
         return Ok(None);
     };
@@ -1861,19 +1887,31 @@ fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
     call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
 }
 
-fn computed_getter_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn computed_getter_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueSetupValueBinding>> {
     let Expr::Arrow(arrow) = unwrap_paren_expr(expr) else {
         return Ok(None);
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => Ok(Some(clean_expr(&print_expr(expr.as_ref(), ctx)?, ctx))),
+        BlockStmtOrExpr::Expr(expr) => Ok(Some(VueSetupValueBinding {
+            value: clean_expr(&print_expr(expr.as_ref(), ctx)?, ctx),
+            expr: Some(*expr.clone()),
+        })),
         BlockStmtOrExpr::BlockStmt(block) => computed_block_value_expr(&block.stmts, ctx),
     }
 }
 
-fn computed_block_value_expr(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn computed_block_value_expr(
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueSetupValueBinding>> {
     if let Some(expr) = computed_if_return_chain_expr(stmts, ctx)? {
-        return Ok(Some(expr));
+        return Ok(Some(VueSetupValueBinding {
+            value: expr,
+            expr: None,
+        }));
     }
 
     let Some((return_index, expr)) = computed_final_return_expr(stmts) else {
@@ -1897,7 +1935,10 @@ fn computed_block_value_expr(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result
         return Ok(None);
     }
     let expr = inline_computed_setup_prop_aliases(&expr, &stmts[..return_index], ctx);
-    Ok(Some(clean_expr(&print_expr(&expr, ctx)?, ctx)))
+    Ok(Some(VueSetupValueBinding {
+        value: clean_expr(&print_expr(&expr, ctx)?, ctx),
+        expr: Some(expr),
+    }))
 }
 
 fn computed_final_return_expr(stmts: &[Stmt]) -> Option<(usize, &Expr)> {

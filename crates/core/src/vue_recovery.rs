@@ -41,7 +41,7 @@ struct VueRecoveryContext {
     script_imports: HashMap<Atom, VueScriptImport>,
     setup_script_import_refs: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
-    setup_value_bindings: HashMap<Atom, String>,
+    setup_value_bindings: HashMap<Atom, VueSetupValueBinding>,
     setup_prop_bindings: HashMap<Atom, Atom>,
     setup_alias_bindings: HashMap<Atom, Atom>,
     setup_script_bindings: Vec<(Atom, String)>,
@@ -77,6 +77,12 @@ struct VueSetupRefBinding {
     expr: String,
     helper: String,
     known_ref: bool,
+}
+
+#[derive(Clone)]
+struct VueSetupValueBinding {
+    value: String,
+    expr: Option<Expr>,
 }
 
 #[derive(Clone)]
@@ -1180,12 +1186,13 @@ fn setup_local_declarations<'a>(
         return Vec::new();
     }
 
-    let expr_refs = template_event_expr_refs(root);
+    let event_refs = template_event_expr_refs(root);
     let shadowed_names = template_expr_shadowed_names(root);
-    let mut wanted_refs = expr_refs
+    let mut wanted_refs = event_refs
         .into_iter()
         .filter(|local| !shadowed_names.contains(local))
         .collect::<HashSet<_>>();
+    wanted_refs.extend(setup_value_dependency_refs(ctx, root, &shadowed_names));
     let mut selected = HashSet::new();
 
     loop {
@@ -1222,6 +1229,37 @@ fn setup_local_declarations<'a>(
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
         .collect()
+}
+
+fn setup_value_dependency_refs(
+    ctx: &VueRecoveryContext,
+    root: &VueNode,
+    shadowed_names: &HashSet<Atom>,
+) -> HashSet<Atom> {
+    if ctx.setup_value_bindings.is_empty() {
+        return HashSet::new();
+    }
+
+    let template_refs = template_for_source_refs(root);
+    let mut refs = HashSet::new();
+    for value in ctx.setup_value_bindings.values() {
+        let mut value_refs = HashSet::new();
+        collect_js_ident_refs(&value.value, &mut value_refs);
+        let value_refs = value_refs
+            .into_iter()
+            .filter(|local| !shadowed_names.contains(local))
+            .collect::<HashSet<_>>();
+        if value_refs.iter().any(|local| template_refs.contains(local)) {
+            refs.extend(value_refs);
+        }
+    }
+    refs
+}
+
+fn template_for_source_refs(root: &VueNode) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    collect_template_for_source_refs(root, &mut refs);
+    refs
 }
 
 fn render_value_member_refs(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> HashSet<Atom> {
@@ -1404,6 +1442,35 @@ fn collect_template_event_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
             }
         }
         VueNode::For(for_node) => collect_template_event_expr_refs(&for_node.node, refs),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_) => {}
+    }
+}
+
+fn collect_template_for_source_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            for child in &element.children {
+                collect_template_for_source_refs(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_for_source_refs(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                collect_template_for_source_refs(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => {
+            collect_js_ident_refs(for_node.source.as_str(), refs);
+            collect_template_for_source_refs(&for_node.node, refs);
+        }
         VueNode::Text(_)
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
@@ -3276,6 +3343,32 @@ export const _ = dc({
     }
 
     #[test]
+    fn emits_dependencies_for_inlined_setup_computed_values() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock, Fragment, renderList } from "vue";
+import { storeToRefs } from "pinia";
+export default defineComponent({
+  setup() {
+    const { items, selected } = storeToRefs(useStore());
+    const visibleItems = computed(() => items.value.filter((item) => selected.value.includes(item.id)));
+    return () => (
+      openBlock(), createElementBlock("ul", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(visibleItems.value, (item) => (
+          openBlock(), createElementBlock("li", { key: item.id }, item.name, 1)
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { storeToRefs } from \"pinia\";\n\nconst { items, selected } = storeToRefs(useStore());\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items.filter((item)=>selected.includes(item.id))\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_plain_destructured_value_members() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";
@@ -3847,6 +3940,36 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_object_destructured_sibling_ref_in_inlined_computed() {
+        let input = r#"
+import { defineComponent, computed, unref, openBlock, createElementBlock, Fragment, renderList } from "vue";
+import { C as AppContext } from "./context.js";
+export default defineComponent({
+  setup() {
+    const { selected, isReady } = AppContext.inject();
+    const visibleItems = computed(() => isReady.value ? ["one"] : []);
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("div", null, [
+        createElementBlock("button", {
+          class: unref(selected) === "one" ? "active" : "",
+          onClick: _cache[0] || (_cache[0] = (event) => selected.value = "one")
+        }, "One", 42, ["class", "onClick"]),
+        (openBlock(true), createElementBlock(Fragment, null, renderList(visibleItems.value, (item) => (
+          openBlock(), createElementBlock("span", { key: item }, item, 1)
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { C as AppContext } from \"./context.js\";\n\nconst { selected, isReady } = AppContext.inject();\n</script>\n\n<template>\n  <div>\n    <button :class='selected === \"one\" ? \"active\" : \"\"' @click='selected = \"one\"'>One</button>\n    <span v-for='item in isReady ? [ \"one\" ] : []' :key=\"item\">{{ item }}</span>\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_object_destructure_depending_on_template_ref_key() {
         let input = r#"
 import { defineComponent, ref, openBlock, createElementBlock } from "vue";
@@ -3878,6 +4001,30 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    if (!arrivedState.left) {\n        scroll({\n            left: x - 200\n        });\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn cleans_template_ref_key_alias_value_in_template_expression() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    const target = ref(null);
+    return () => (
+      openBlock(), createElementBlock("div", {
+        ref_key: "scrollContainer",
+        ref: target,
+        title: target.value ? "ready" : "idle"
+      }, null, 520, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst scrollContainer = ref(null);\n</script>\n\n<template>\n  <div ref=\"scrollContainer\" :title='scrollContainer ? \"ready\" : \"idle\"' />\n</template>\n"
         );
     }
 
