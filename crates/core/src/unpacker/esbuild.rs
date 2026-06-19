@@ -1460,9 +1460,15 @@ fn item_has_helper_factory_declarator(
 // ---------------------------------------------------------------------------
 
 /// Metadata collected during the first pass over scope-hoisted boundaries.
-struct ScopeModuleMeta {
+#[derive(Clone)]
+struct ScopeNamespaceExport {
     namespace_binding: BindingId,
     export_entries: Vec<(Atom, BindingId)>,
+}
+
+#[derive(Clone)]
+struct ScopeModuleMeta {
+    namespaces: Vec<ScopeNamespaceExport>,
     body_indices: Vec<usize>,
     owned_support_bindings: HashSet<BindingId>,
     exported_bindings: HashSet<BindingId>,
@@ -1481,6 +1487,145 @@ struct ScopeExtractionRefs<'a> {
     factory_preassigned_bindings: &'a HashMap<BindingId, String>,
     factory_importable_bindings: &'a HashMap<BindingId, String>,
     drop_unowned_helper_sibling_indices: &'a HashSet<usize>,
+}
+
+fn merge_conflicting_factory_scope_metas(
+    metas: &mut Vec<ScopeModuleMeta>,
+    factory_preassigned_by_atom: &HashMap<Atom, (BindingId, String)>,
+) {
+    if metas.len() < 2 {
+        return;
+    }
+
+    // A lazy init factory can seed mutable bindings that are later assigned by
+    // different scope modules. Those modules must stay in one synthetic ESM
+    // file with the factory, otherwise one writer would assign to an import.
+    let mut writer_modules_by_factory: HashMap<String, Vec<usize>> = HashMap::new();
+    for (mi, meta) in metas.iter().enumerate() {
+        let mut factories = HashSet::new();
+        for atom in &meta.written_atoms {
+            let Some((_, factory_filename)) = factory_preassigned_by_atom.get(atom) else {
+                continue;
+            };
+            if *factory_filename != meta.filename {
+                factories.insert(factory_filename.clone());
+            }
+        }
+        for factory_filename in factories {
+            writer_modules_by_factory
+                .entry(factory_filename)
+                .or_default()
+                .push(mi);
+        }
+    }
+
+    let mut adjacency: Vec<HashSet<usize>> = vec![HashSet::new(); metas.len()];
+    for writers in writer_modules_by_factory.values_mut() {
+        writers.sort_unstable();
+        writers.dedup();
+        if writers.len() < 2 {
+            continue;
+        }
+        let first = writers[0];
+        for &writer in &writers[1..] {
+            adjacency[first].insert(writer);
+            adjacency[writer].insert(first);
+        }
+    }
+
+    if adjacency.iter().all(HashSet::is_empty) {
+        return;
+    }
+
+    let mut group_by_first: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut member_to_first: HashMap<usize, usize> = HashMap::new();
+    let mut visited = vec![false; metas.len()];
+    for start in 0..metas.len() {
+        if visited[start] {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut group = Vec::new();
+        visited[start] = true;
+        while let Some(current) = stack.pop() {
+            group.push(current);
+            for &next in &adjacency[current] {
+                if visited[next] {
+                    continue;
+                }
+                visited[next] = true;
+                stack.push(next);
+            }
+        }
+        if group.len() < 2 {
+            continue;
+        }
+        group.sort_unstable();
+        let first = group[0];
+        for &member in &group {
+            member_to_first.insert(member, first);
+        }
+        group_by_first.insert(first, group);
+    }
+
+    if group_by_first.is_empty() {
+        return;
+    }
+
+    let original = metas.clone();
+    let mut merged = Vec::new();
+    for index in 0..original.len() {
+        if member_to_first
+            .get(&index)
+            .is_some_and(|first| *first != index)
+        {
+            continue;
+        }
+        if let Some(group) = group_by_first.get(&index) {
+            merged.push(merge_scope_meta_group(&original, group));
+        } else {
+            merged.push(original[index].clone());
+        }
+    }
+    *metas = merged;
+}
+
+fn merge_scope_meta_group(metas: &[ScopeModuleMeta], group: &[usize]) -> ScopeModuleMeta {
+    let mut merged = metas[group[0]].clone();
+    for &index in &group[1..] {
+        let meta = &metas[index];
+        merged.namespaces.extend(meta.namespaces.clone());
+        merged
+            .body_indices
+            .extend(meta.body_indices.iter().copied());
+        merged
+            .owned_support_bindings
+            .extend(meta.owned_support_bindings.iter().cloned());
+        merged
+            .exported_bindings
+            .extend(meta.exported_bindings.iter().cloned());
+        merged
+            .exported_atoms
+            .extend(meta.exported_atoms.iter().cloned());
+        merged
+            .declared_bindings
+            .extend(meta.declared_bindings.iter().cloned());
+        merged
+            .local_import_bindings
+            .extend(meta.local_import_bindings.iter().cloned());
+        merged
+            .referenced_bindings
+            .extend(meta.referenced_bindings.iter().cloned());
+        merged
+            .written_atoms
+            .extend(meta.written_atoms.iter().cloned());
+        merged
+            .referenced_atoms
+            .extend(meta.referenced_atoms.iter().cloned());
+    }
+    merged.body_indices.sort_unstable();
+    merged.body_indices.dedup();
+    merged
 }
 
 /// Extract scope-hoisted modules from entry items.
@@ -1691,8 +1836,10 @@ fn extract_scope_hoisted_modules(
             .to_string();
 
         metas.push(ScopeModuleMeta {
-            namespace_binding: boundary.ns_binding.clone(),
-            export_entries: boundary.export_entries.clone(),
+            namespaces: vec![ScopeNamespaceExport {
+                namespace_binding: boundary.ns_binding.clone(),
+                export_entries: boundary.export_entries.clone(),
+            }],
             body_indices,
             owned_support_bindings: HashSet::new(),
             exported_bindings: boundary.exported_bindings.clone(),
@@ -1707,11 +1854,16 @@ fn extract_scope_hoisted_modules(
         });
     }
 
+    let factory_preassigned_by_atom = atom_to_filename_binding_map(factory_preassigned_bindings);
+    merge_conflicting_factory_scope_metas(&mut metas, &factory_preassigned_by_atom);
+
     // Build binding → module index map for all scope-hoisted modules.
     let mut binding_to_module: HashMap<BindingId, usize> = HashMap::new();
     let mut module_local_atoms: HashMap<String, HashSet<Atom>> = HashMap::new();
     for (mi, meta) in metas.iter().enumerate() {
-        binding_to_module.insert(meta.namespace_binding.clone(), mi);
+        for namespace in &meta.namespaces {
+            binding_to_module.insert(namespace.namespace_binding.clone(), mi);
+        }
         for binding in &meta.declared_bindings {
             binding_to_module.insert(binding.clone(), mi);
         }
@@ -1864,7 +2016,6 @@ fn extract_scope_hoisted_modules(
         }
     }
 
-    let factory_preassigned_by_atom = atom_to_filename_binding_map(factory_preassigned_bindings);
     let mut claimed_factory_filenames: HashMap<String, String> = HashMap::new();
     let mut conflicted_factory_filenames: HashSet<String> = HashSet::new();
     for meta in &metas {
@@ -2170,10 +2321,14 @@ fn extract_scope_hoisted_modules(
         );
         module_local_atoms.insert(meta.filename.clone(), local_atoms);
         module_referenced_atoms.insert(meta.filename.clone(), meta.referenced_atoms.clone());
-        let namespace_exported = effective_exports[mi].contains(&meta.namespace_binding.0);
+        let namespace_atoms: HashSet<Atom> = meta
+            .namespaces
+            .iter()
+            .map(|namespace| namespace.namespace_binding.0.clone())
+            .collect();
         let exports: HashSet<Atom> = effective_exports[mi]
             .iter()
-            .filter(|atom| **atom != meta.namespace_binding.0)
+            .filter(|atom| !namespace_atoms.contains(*atom))
             .filter(|atom| declared_atoms.contains(*atom) || imported_atoms.contains(*atom))
             .cloned()
             .collect();
@@ -2227,11 +2382,14 @@ fn extract_scope_hoisted_modules(
 
         rename_bindings(&mut module_items, &import_renames);
         let mut code = emit_items(module_items, meta.filename.clone(), cm.clone());
-        if namespace_exported {
+        for namespace in &meta.namespaces {
+            if !effective_exports[mi].contains(&namespace.namespace_binding.0) {
+                continue;
+            }
             code.push('\n');
             code.push_str(&make_namespace_export_code(
-                &meta.namespace_binding.0,
-                &meta.export_entries,
+                &namespace.namespace_binding.0,
+                &namespace.export_entries,
             ));
         }
         modules.push(UnpackedModule {

@@ -1307,6 +1307,80 @@ export { ns_writer };
     );
 }
 
+/// If a lazy init factory seeds mutable state written by multiple scope
+/// modules, those writer modules must merge into one synthetic module. Keeping
+/// them split would force at least one scope module to assign to an imported
+/// binding, which is invalid ESM.
+#[test]
+fn conflicting_scope_writers_merge_with_shared_init_factory() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_state = y(() => { sharedA = 1; sharedB = 2; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { readA: () => readA, writeA: () => writeA });
+var sharedA;
+function readA() { return sharedA; }
+function writeA(value) { sharedA = value; }
+var ns_b = {};
+__export(ns_b, { readB: () => readB, writeB: () => writeB });
+var sharedB;
+function readB() { return sharedB; }
+function writeB(value) { sharedB = value; }
+init_state();
+console.log(readA(), readB());
+export { ns_a, ns_b };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    assert!(
+        raw_pairs.iter().all(|(name, _)| name != "init_state.js"),
+        "shared init factory should merge into the combined writer module: {:?}",
+        raw_pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+
+    let (combined_name, combined_code) = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function writeA") && code.contains("function writeB"))
+        .expect("combined writer module should exist");
+    assert!(
+        combined_code.contains("var sharedA")
+            && combined_code.contains("var sharedB")
+            && combined_code.contains("export function init_state")
+            && combined_code.contains("sharedA = 1")
+            && combined_code.contains("sharedB = 2")
+            && combined_code.contains("sharedA = value")
+            && combined_code.contains("sharedB = value")
+            && combined_code.contains("export var ns_a")
+            && combined_code.contains("export var ns_b"),
+        "combined module should own both namespaces, mutable state, and init factory:\n{combined_code}"
+    );
+    assert!(
+        !combined_code.contains("import { sharedA") && !combined_code.contains("import { sharedB"),
+        "combined writer module must not assign to imported mutable state:\n{combined_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains(&format!("from \"./{combined_name}\""))
+            && !entry_code.contains("from \"./init_state.js\""),
+        "entry should import init/state references from the combined writer module:\n{entry_code}"
+    );
+}
+
 /// Split init factories remain callable guarded functions so other modules can
 /// trigger the original lazy initializer without running the body at ESM
 /// evaluation time.
