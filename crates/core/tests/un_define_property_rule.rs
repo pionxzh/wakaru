@@ -1,6 +1,7 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::rules::UnDefineProperty;
 
 // Body of the _defineProperty helper:
 //   function X(e, t, n) {
@@ -165,6 +166,34 @@ console.log(result);
     // `a` must still be called somehow; helper not removed (still referenced).
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn standalone_rule_detects_to_property_key_normalized_helper() {
+    // Regression: the standalone `VisitMut` path now classifies helpers through
+    // the shared `LocalHelperContext` instead of a private copy of the matcher.
+    // The shared matcher tolerates modern Babel/SWC key normalization
+    // (`(t = _toPropertyKey(t)) in e`); the old rule-local copy only accepted a
+    // bare `t in e` and missed this form when the rule ran standalone.
+    let input = r#"
+function _defineProperty(e, t, n) {
+    if ((t = _toPropertyKey(t)) in e) {
+        Object.defineProperty(e, t, { value: n, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[t] = n;
+    }
+    return e;
+}
+const obj = {};
+_defineProperty(obj, "k", 1);
+console.log(obj);
+"#;
+    let expected = r#"
+const obj = {};
+obj["k"] = 1;
+console.log(obj);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| UnDefineProperty), expected.trim());
 }
 
 #[test]
