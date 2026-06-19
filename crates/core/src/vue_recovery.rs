@@ -3820,6 +3820,55 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_object_destructured_ref_event_assignment() {
+        let input = r#"
+import { defineComponent, unref, openBlock, createElementBlock } from "vue";
+import { C as AppContext } from "./context.js";
+export default defineComponent({
+  setup() {
+    const { selectedKind, isGrouped } = AppContext.inject();
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("div", null, [
+        createElementBlock("button", {
+          class: unref(selectedKind) === "primary" ? "active" : "",
+          title: unref(isGrouped) ? "grouped" : "single",
+          onClick: _cache[0] || (_cache[0] = (event) => selectedKind.value = "primary")
+        }, "Primary", 42, ["class", "title", "onClick"])
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { C as AppContext } from \"./context.js\";\n\nconst { selectedKind, isGrouped } = AppContext.inject();\n</script>\n\n<template>\n  <div>\n    <button :class='selectedKind === \"primary\" ? \"active\" : \"\"' :title='isGrouped ? \"grouped\" : \"single\"' @click='selectedKind = \"primary\"'>Primary</button>\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_emit_object_destructure_for_unref_read_only() {
+        let input = r#"
+import { defineComponent, unref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    const { status } = useStatus();
+    return () => (
+      openBlock(), createElementBlock("p", {
+        title: unref(status).label
+      }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"status.label\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_setup_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, ref, openBlock, createElementBlock } from "vue";

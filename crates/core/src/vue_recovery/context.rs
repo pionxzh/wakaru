@@ -626,7 +626,7 @@ pub(super) fn collect_setup_context(
         return Ok(());
     };
 
-    let setup_tuple_value_refs = setup_tuple_render_value_refs(render, setup_stmts);
+    let setup_template_ref_refs = setup_render_template_ref_refs(render, setup_stmts, ctx);
     let mut provider_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
 
@@ -731,19 +731,26 @@ pub(super) fn collect_setup_context(
                     if consumed {
                         continue;
                     }
-                    if !matches!(decl.name, Pat::Ident(_) | Pat::Array(_)) {
-                        continue;
-                    }
-
                     let mut decl_bindings = HashSet::new();
                     collect_pat_bindings(&decl.name, &mut decl_bindings);
                     if decl_bindings.is_empty() {
                         continue;
                     }
+                    let has_template_ref = decl_bindings
+                        .iter()
+                        .any(|binding| setup_template_ref_refs.contains(binding));
+                    let is_local_candidate = match &decl.name {
+                        Pat::Ident(_) | Pat::Array(_) => true,
+                        Pat::Object(_) => has_template_ref,
+                        _ => false,
+                    };
+                    if !is_local_candidate {
+                        continue;
+                    }
                     ctx.setup_template_ref_bindings.extend(
                         decl_bindings
                             .iter()
-                            .filter(|binding| setup_tuple_value_refs.contains(*binding))
+                            .filter(|binding| setup_template_ref_refs.contains(*binding))
                             .cloned(),
                     );
 
@@ -781,8 +788,14 @@ pub(super) fn collect_setup_context(
     Ok(())
 }
 
-fn setup_tuple_render_value_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<Atom> {
-    let mut candidates = HashSet::new();
+fn setup_render_template_ref_refs(
+    render: &ArrowExpr,
+    setup_stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+) -> HashSet<Atom> {
+    let mut tuple_value_candidates = HashSet::new();
+    let mut object_value_candidates = HashSet::new();
+    let mut unref_candidates = HashSet::new();
     for stmt in setup_stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
@@ -792,34 +805,57 @@ fn setup_tuple_render_value_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> Ha
                 continue;
             };
             match &decl.name {
-                Pat::Array(_) => collect_pat_bindings(&decl.name, &mut candidates),
+                Pat::Array(_) => collect_pat_bindings(&decl.name, &mut tuple_value_candidates),
                 Pat::Ident(binding) if is_tuple_element_expr(init) => {
-                    candidates.insert(binding.id.sym.clone());
+                    tuple_value_candidates.insert(binding.id.sym.clone());
+                }
+                Pat::Object(_) => {
+                    collect_pat_bindings(&decl.name, &mut object_value_candidates);
+                    collect_pat_bindings(&decl.name, &mut unref_candidates);
                 }
                 _ => {}
             }
         }
     }
-    if candidates.is_empty() {
+    if tuple_value_candidates.is_empty()
+        && (object_value_candidates.is_empty() || unref_candidates.is_empty())
+    {
         return HashSet::new();
     }
 
-    let mut collector = RenderValueMemberRefCollector {
-        candidates: &candidates,
+    let mut collector = RenderTemplateRefCollector {
+        tuple_value_candidates: &tuple_value_candidates,
+        object_value_candidates: &object_value_candidates,
+        unref_candidates: &unref_candidates,
+        ctx,
         scopes: vec![HashSet::new()],
-        refs: HashSet::new(),
+        tuple_value_refs: HashSet::new(),
+        object_value_refs: HashSet::new(),
+        unref_refs: HashSet::new(),
     };
     render.visit_with(&mut collector);
-    collector.refs
+    let mut refs = collector.tuple_value_refs;
+    refs.extend(
+        collector
+            .object_value_refs
+            .intersection(&collector.unref_refs)
+            .cloned(),
+    );
+    refs
 }
 
-struct RenderValueMemberRefCollector<'a> {
-    candidates: &'a HashSet<Atom>,
+struct RenderTemplateRefCollector<'a> {
+    tuple_value_candidates: &'a HashSet<Atom>,
+    object_value_candidates: &'a HashSet<Atom>,
+    unref_candidates: &'a HashSet<Atom>,
+    ctx: &'a VueRecoveryContext,
     scopes: Vec<HashSet<Atom>>,
-    refs: HashSet<Atom>,
+    tuple_value_refs: HashSet<Atom>,
+    object_value_refs: HashSet<Atom>,
+    unref_refs: HashSet<Atom>,
 }
 
-impl RenderValueMemberRefCollector<'_> {
+impl RenderTemplateRefCollector<'_> {
     fn push_scope(&mut self) {
         self.scopes.push(HashSet::new());
     }
@@ -868,13 +904,34 @@ impl RenderValueMemberRefCollector<'_> {
         let Expr::Ident(object) = member.obj.as_ref() else {
             return;
         };
-        if self.candidates.contains(&object.sym) && !self.is_shadowed(&object.sym) {
-            self.refs.insert(object.sym.clone());
+        if self.is_shadowed(&object.sym) {
+            return;
+        }
+        if self.tuple_value_candidates.contains(&object.sym) {
+            self.tuple_value_refs.insert(object.sym.clone());
+        }
+        if self.object_value_candidates.contains(&object.sym) {
+            self.object_value_refs.insert(object.sym.clone());
+        }
+    }
+
+    fn collect_unref_call(&mut self, call: &CallExpr) {
+        if helper_name(&call.callee, self.ctx) != Some(VueHelper::Unref) {
+            return;
+        }
+        let Some(arg) = call.args.first() else {
+            return;
+        };
+        let Expr::Ident(object) = unwrap_paren_expr(arg.expr.as_ref()) else {
+            return;
+        };
+        if self.unref_candidates.contains(&object.sym) && !self.is_shadowed(&object.sym) {
+            self.unref_refs.insert(object.sym.clone());
         }
     }
 }
 
-impl Visit for RenderValueMemberRefCollector<'_> {
+impl Visit for RenderTemplateRefCollector<'_> {
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
             self.collect_value_member(member);
@@ -892,6 +949,11 @@ impl Visit for RenderValueMemberRefCollector<'_> {
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         self.collect_value_member(member);
         member.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        self.collect_unref_call(call);
+        call.visit_children_with(self);
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
