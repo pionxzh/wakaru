@@ -927,6 +927,19 @@ fn is_slots_member_prop(prop: &MemberProp) -> bool {
     }
 }
 
+fn is_setup_slots_member_prop(prop: &MemberProp) -> bool {
+    match prop {
+        MemberProp::Ident(ident) => matches!(ident.sym.as_ref(), "$slots" | "slots"),
+        MemberProp::Computed(computed) => {
+            matches!(
+                string_lit(computed.expr.as_ref()).as_deref(),
+                Some("$slots" | "slots")
+            )
+        }
+        MemberProp::PrivateName(_) => false,
+    }
+}
+
 fn is_render_list_call(args: &[ExprOrSpread]) -> bool {
     matches!(
         args.get(1).map(|arg| arg.expr.as_ref()),
@@ -1022,24 +1035,39 @@ pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueReco
     let Some(stmts) = render_stmts(render) else {
         return;
     };
+    let mut slot_partition_bindings = HashSet::new();
     for stmt in stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
         };
         for decl in &var.decls {
-            let Pat::Ident(binding) = &decl.name else {
-                continue;
-            };
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if let Some(component) = resolve_component_name(init, ctx) {
-                ctx.component_bindings
-                    .insert(binding.id.sym.clone(), component);
-            }
-            if let Some(directive) = resolve_directive_name(init, ctx) {
-                ctx.directive_bindings
-                    .insert(binding.id.sym.clone(), directive);
+            match &decl.name {
+                Pat::Ident(binding) => {
+                    if let Some(component) = resolve_component_name(init, ctx) {
+                        ctx.component_bindings
+                            .insert(binding.id.sym.clone(), component);
+                    }
+                    if let Some(directive) = resolve_directive_name(init, ctx) {
+                        ctx.directive_bindings
+                            .insert(binding.id.sym.clone(), directive);
+                    }
+                    if is_slot_partition_expr(init, ctx) {
+                        slot_partition_bindings.insert(binding.id.sym.clone());
+                    }
+                    if is_slot_partition_slots_alias(init, &slot_partition_bindings) {
+                        ctx.slot_bindings.insert(binding.id.sym.clone());
+                    }
+                }
+                Pat::Object(object)
+                    if is_slot_partition_expr(init, ctx)
+                        || is_slot_partition_alias(init, &slot_partition_bindings) =>
+                {
+                    collect_named_object_pat_bindings(object, "slots", &mut ctx.slot_bindings);
+                }
+                _ => {}
             }
         }
     }
@@ -1052,11 +1080,15 @@ pub(super) fn collect_setup_context(
     let RenderSource::SetupArrow {
         render,
         setup_stmts,
+        setup_slots,
         ..
     } = render
     else {
         return Ok(());
     };
+    if let Some(setup_slots) = setup_slots {
+        ctx.slot_bindings.insert(setup_slots.sym.clone());
+    }
 
     let setup_template_ref_refs = setup_render_template_ref_refs(render, setup_stmts, ctx);
     let setup_template_ref_aliases = setup_render_template_ref_aliases(render);
@@ -1092,6 +1124,9 @@ pub(super) fn collect_setup_context(
                                     true
                                 } else if is_setup_emit_alias(init, ctx) {
                                     ctx.setup_emit_aliases.insert(binding.id.sym.clone());
+                                    true
+                                } else if is_setup_slot_alias(init, ctx) {
+                                    ctx.slot_bindings.insert(binding.id.sym.clone());
                                     true
                                 } else if let Some(alias) = ident_expr(unwrap_paren_expr(init)) {
                                     ctx.setup_alias_bindings
@@ -1156,6 +1191,14 @@ pub(super) fn collect_setup_context(
                                         false
                                     }
                                 }
+                            }
+                            Pat::Object(object) if is_setup_context_alias(init, ctx) => {
+                                collect_named_object_pat_bindings(
+                                    object,
+                                    "slots",
+                                    &mut ctx.slot_bindings,
+                                );
+                                false
                             }
                             Pat::Object(_) if is_setup_props_alias(init, ctx) => true,
                             Pat::Object(object)
@@ -1931,6 +1974,82 @@ fn is_setup_emit_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     }
 }
 
+fn is_setup_context_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    ctx.setup_context
+        .as_ref()
+        .is_some_and(|setup_context| setup_context == &ident.sym)
+}
+
+fn is_setup_slot_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Ident(ident) => ctx.slot_bindings.contains(&ident.sym),
+        Expr::Member(member) if is_setup_slots_member_prop(&member.prop) => {
+            matches!(
+                member.obj.as_ref(),
+                Expr::Ident(object)
+                    if ctx
+                        .setup_context
+                        .as_ref()
+                        .is_some_and(|setup_context| setup_context == &object.sym)
+            )
+        }
+        _ => false,
+    }
+}
+
+fn is_slot_partition_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    call.args
+        .first()
+        .is_some_and(|arg| is_slot_source_expr(arg.expr.as_ref(), ctx))
+}
+
+fn is_slot_partition_slots_alias(expr: &Expr, slot_partition_bindings: &HashSet<Atom>) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    if !is_setup_slots_member_prop(&member.prop) {
+        return false;
+    }
+    matches!(
+        member.obj.as_ref(),
+        Expr::Ident(object) if slot_partition_bindings.contains(&object.sym)
+    )
+}
+
+fn is_slot_partition_alias(expr: &Expr, slot_partition_bindings: &HashSet<Atom>) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    slot_partition_bindings.contains(&ident.sym)
+}
+
+fn is_slot_source_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Ident(ident) => {
+            matches!(ident.sym.as_ref(), "$slots" | "slots")
+                || ctx.slot_bindings.contains(&ident.sym)
+        }
+        Expr::Member(member) if is_slots_member_prop(&member.prop) => true,
+        Expr::Member(member) if is_setup_slots_member_prop(&member.prop) => {
+            matches!(
+                member.obj.as_ref(),
+                Expr::Ident(object)
+                    if ctx
+                        .setup_context
+                        .as_ref()
+                        .is_some_and(|setup_context| setup_context == &object.sym)
+            )
+        }
+        _ => false,
+    }
+}
+
 fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
         return false;
@@ -2216,6 +2335,22 @@ fn collect_object_pat_bindings(object: &ObjectPat, bindings: &mut HashSet<Atom>)
                 bindings.insert(assign.key.sym.clone());
             }
             ObjectPatProp::Rest(rest) => collect_pat_bindings(rest.arg.as_ref(), bindings),
+        }
+    }
+}
+
+fn collect_named_object_pat_bindings(object: &ObjectPat, name: &str, bindings: &mut HashSet<Atom>) {
+    for prop in &object.props {
+        match prop {
+            ObjectPatProp::KeyValue(key_value)
+                if prop_name(&key_value.key).as_deref() == Some(name) =>
+            {
+                collect_pat_bindings(key_value.value.as_ref(), bindings);
+            }
+            ObjectPatProp::Assign(assign) if assign.key.sym.as_ref() == name => {
+                bindings.insert(assign.key.sym.clone());
+            }
+            _ => {}
         }
     }
 }

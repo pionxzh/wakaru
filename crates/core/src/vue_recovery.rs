@@ -63,6 +63,7 @@ struct VueRecoveryContext {
     setup_context: Option<Atom>,
     setup_emit_context: Option<Atom>,
     setup_emit_aliases: HashSet<Atom>,
+    slot_bindings: HashSet<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -106,6 +107,7 @@ pub(super) enum RenderSource<'a> {
         setup_props: Option<&'a Ident>,
         setup_context: Option<&'a Ident>,
         setup_emit: Option<&'a Ident>,
+        setup_slots: Option<&'a Ident>,
         component_options: Option<&'a ObjectLit>,
     },
 }
@@ -762,6 +764,11 @@ fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'
                             .params
                             .get(1)
                             .and_then(|param| setup_emit_binding_ident(&param.pat)),
+                        setup_slots: method
+                            .function
+                            .params
+                            .get(1)
+                            .and_then(|param| setup_slots_binding_ident(&param.pat)),
                         component_options: Some(object),
                     });
                 }
@@ -788,6 +795,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
                     setup_context: arrow.params.get(1).and_then(pat_binding_ident),
                     setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
+                    setup_slots: arrow.params.get(1).and_then(setup_slots_binding_ident),
                     component_options: None,
                 })
             }
@@ -798,6 +806,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     setup_props: arrow.params.first().and_then(pat_binding_ident),
                     setup_context: arrow.params.get(1).and_then(pat_binding_ident),
                     setup_emit: arrow.params.get(1).and_then(setup_emit_binding_ident),
+                    setup_slots: arrow.params.get(1).and_then(setup_slots_binding_ident),
                     component_options: None,
                 })
             }
@@ -821,6 +830,11 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     .params
                     .get(1)
                     .and_then(|param| setup_emit_binding_ident(&param.pat)),
+                setup_slots: fn_expr
+                    .function
+                    .params
+                    .get(1)
+                    .and_then(|param| setup_slots_binding_ident(&param.pat)),
                 component_options: None,
             })
         }),
@@ -839,6 +853,7 @@ fn with_component_options<'a>(
             setup_props,
             setup_context,
             setup_emit,
+            setup_slots,
             ..
         } => RenderSource::SetupArrow {
             render,
@@ -846,6 +861,7 @@ fn with_component_options<'a>(
             setup_props,
             setup_context,
             setup_emit,
+            setup_slots,
             component_options: Some(component_options),
         },
         RenderSource::Function(function) => RenderSource::Function(function),
@@ -888,6 +904,22 @@ fn setup_emit_binding_ident(pat: &Pat) -> Option<&Ident> {
             pat_binding_ident(key_value.value.as_ref())
         }
         ObjectPatProp::Assign(assign) if assign.key.sym.as_ref() == "emit" => Some(&assign.key),
+        _ => None,
+    })
+}
+
+fn setup_slots_binding_ident(pat: &Pat) -> Option<&Ident> {
+    let Pat::Object(object) = pat else {
+        return None;
+    };
+
+    object.props.iter().find_map(|prop| match prop {
+        ObjectPatProp::KeyValue(key_value)
+            if prop_name(&key_value.key).as_deref() == Some("slots") =>
+        {
+            pat_binding_ident(key_value.value.as_ref())
+        }
+        ObjectPatProp::Assign(assign) if assign.key.sym.as_ref() == "slots" => Some(&assign.key),
         _ => None,
     })
 }
@@ -5202,6 +5234,40 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <div>\n    <slot />\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_slot_bucket_children_and_logical_vnodes() {
+        let input = r#"
+import { h } from "./vendor-vue.js";
+export default {
+  setup(props, context) {
+    const slots = context.slots;
+    return () => {
+      const slotState = partitionSlots(slots);
+      const { slots: namedSlots } = slotState;
+      return h(props.tag, null, [
+        namedSlots["container-start"],
+        h("main", null, [
+          namedSlots["wrapper-start"],
+          namedSlots["wrapper-end"]
+        ]),
+        props.showControls && [
+          h("button", { class: "prev" }),
+          h("button", { class: "next" })
+        ],
+        props.showBar && h("div", { class: "bar" }),
+        namedSlots["container-end"]
+      ]);
+    };
+  }
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component :is=\"tag\">\n    <slot name=\"container-start\" />\n    <main>\n      <slot name=\"wrapper-start\" />\n      <slot name=\"wrapper-end\" />\n    </main>\n    <template v-if=\"showControls\">\n      <button class=\"prev\" />\n      <button class=\"next\" />\n    </template>\n    <div v-if=\"showBar\" class=\"bar\" />\n    <slot name=\"container-end\" />\n  </component>\n</template>\n"
         );
     }
 
