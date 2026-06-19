@@ -903,7 +903,7 @@ function tt(e) {
                 r = i;
             } else {
                 let u = false;
-                for(let l = o.child; l;){
+                for(var l = o.child; l;){
                     if (l === n) {
                         u = true;
                         n = o;
@@ -1481,7 +1481,7 @@ function Kt(e, t, n, r) {
                         Et = _t(Et, e, t, n, r, o);
                         return true;
                     case "pointerover":
-                        let i = o.pointerId;
+                        var i = o.pointerId;
                         xt.set(i, _t(xt.get(i) || null, e, t, n, r, o));
                         return true;
                     case "gotpointercapture":
@@ -1727,7 +1727,7 @@ function cn(e, t) {
     }
 }
 function sn() {
-    for(let e = window, t = un(); t instanceof e.HTMLIFrameElement;){
+    for(var e = window, t = un(); t instanceof e.HTMLIFrameElement;){
         try {
             var n = typeof t.contentWindow.location.href === "string";
         } catch (e) {
@@ -1887,7 +1887,7 @@ function An(e, t, n) {
 function Ln(e) {
     if (e && e.dispatchConfig.phasedRegistrationNames) {
         const n = [];
-        for(let t = e._targetInst; t;){
+        for(var t = e._targetInst; t;){
             n.push(t);
             t = Nn(t);
         }
@@ -3233,8 +3233,7 @@ function ii(e, t) {
                 responders: null
             };
         } else {
-            Zo = t;
-            Zo.next = t;
+            Zo = Zo.next = t;
         }
     }
     return e._currentValue;
@@ -3338,8 +3337,7 @@ function di(e, t, n, r) {
                         p = m;
                         f = c;
                     } else {
-                        p = m;
-                        p.next = m;
+                        p = p.next = m;
                     }
                     if (pending > s) {
                         s = pending;
@@ -3799,7 +3797,7 @@ function Si(e) {
         let c = null;
         let s = null;
         let y = null;
-        for(let f = a, m = a = 0; f !== null && m < u.length; m++){
+        for(var f = a, m = a = 0; f !== null && m < u.length; m++){
             if (f.index > m) {
                 y = f;
                 f = null;
@@ -3872,7 +3870,7 @@ function Si(e) {
         }
         let f = s = null;
         let v = null;
-        for(let m = u, y = u = 0, b = l.next(); m !== null && !b.done; y++, b = l.next()){
+        for(var m = u, y = u = 0, b = l.next(); m !== null && !b.done; y++, b = l.next()){
             if (m.index > y) {
                 v = m;
                 m = null;
@@ -4204,8 +4202,7 @@ function Gi() {
         Wi.memoizedState = e;
         Bi = e;
     } else {
-        Bi = e;
-        Bi.next = e;
+        Bi = Bi.next = e;
     }
     return Bi;
 }
@@ -4235,8 +4232,7 @@ function Xi() {
             Wi.memoizedState = e;
             Bi = e;
         } else {
-            Bi = e;
-            Bi.next = e;
+            Bi = Bi.next = e;
         }
     }
     return Bi;
@@ -4288,8 +4284,7 @@ function Zi(e) {
                     l = f;
                     n_pending = r;
                 } else {
-                    l = f;
-                    l.next = f;
+                    l = l.next = f;
                 }
                 if (s > Wi.expirationTime) {
                     Wi.expirationTime = s;
@@ -5320,7 +5315,7 @@ function Xa(e, t) {
     switch(e.tailMode){
         case "hidden":
             t = e.tail;
-            let n = null;
+            var n = null;
             while(t !== null){
                 if (t.alternate !== null) {
                     n = t;
@@ -5388,7 +5383,7 @@ function Ja(e, t, n) {
         case 5:
             Ii(t);
             n = Ni(Ri.current);
-            let i = t.type;
+            var i = t.type;
             if (e !== null && t.stateNode != null) {
                 Wa(e, t, i, t_pendingProps, n);
                 if (e.ref !== t.ref) {
@@ -5825,7 +5820,7 @@ function Za(e) {
             if (vo(e.type)) {
                 bo();
             }
-            let t = e.effectTag;
+            var t = e.effectTag;
             if (4096 & t) {
                 e.effectTag = -4097 & t | 64;
                 return e;
@@ -6353,7 +6348,7 @@ function du(e, t, n) {
             u = true;
         }
         if (i.tag === 5 || i.tag === 6) {
-            e: for(let l = e, c = i, s = n, f = c;;){
+            e: for(var l = e, c = i, s = n, f = c;;){
                 lu(l, f, s);
                 if (f.child !== null && f.tag !== 4) {
                     f.child.return = f;
@@ -6425,7 +6420,7 @@ function pu(e, t) {
         case 1:
             return;
         case 5:
-            let n = t.stateNode;
+            var n = t.stateNode;
             if (n != null) {
                 var r = t.memoizedProps;
                 var o = e !== null ? e.memoizedProps : r;

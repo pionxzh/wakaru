@@ -371,6 +371,53 @@ function f(xs) {
 }
 
 #[test]
+fn for_head_var_referenced_after_loop_stays_var() {
+    let input = r#"
+function walk(node) {
+    for (var parent = node.parent; parent !== null;) {
+        node = parent;
+        parent = parent.parent;
+    }
+    if (node.kind === "root") {
+        parent = node.state;
+        return parent;
+    }
+    return null;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn for_in_head_var_referenced_after_loop_stays_var() {
+    let input = r#"
+function lastKey(obj) {
+    for (var key in obj) {
+        visit(key);
+    }
+    return key;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn for_of_head_var_referenced_after_loop_stays_var() {
+    let input = r#"
+function lastValue(values) {
+    for (var value of values) {
+        visit(value);
+    }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn var_used_by_lexical_decl_before_for_head_stays_var() {
     let input = r#"
 const re = new RegExp(`[${items.map((item) => item.name).join("")}]`);
@@ -1296,6 +1343,51 @@ function f(tag) {
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_inside_switch_case_referenced_by_other_case_stays_var() {
+    let input = r#"
+function recover(kind, state) {
+    switch (kind) {
+        case 1:
+            var status = state.status;
+            handle(status);
+            break;
+        default:
+            status = state.fallback;
+            handle(status);
+    }
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_inside_switch_case_used_only_in_same_case_can_be_const() {
+    let input = r#"
+function recover(kind, state) {
+    switch (kind) {
+        case 1:
+            var status = state.status;
+            handle(status);
+            break;
+    }
+}
+"#;
+    let expected = r#"
+function recover(kind, state) {
+    switch (kind) {
+        case 1:
+            const status = state.status;
+            handle(status);
+            break;
+    }
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

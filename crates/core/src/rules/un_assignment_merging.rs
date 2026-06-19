@@ -1,6 +1,11 @@
-use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, ModuleItem, Stmt};
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use std::collections::HashSet;
+
+use swc_core::atoms::Atom;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::{
+    AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, ModuleItem, SimpleAssignTarget, Stmt,
+};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub struct UnAssignmentMerging;
 
@@ -61,12 +66,71 @@ fn should_split(stmt: &Stmt) -> bool {
         }
         cur = &a2.right;
     }
-    is_simple_value(cur)
+    is_simple_value(cur) && targets_can_be_split(a)
 }
 
 /// A "simple" value is an identifier or any literal.
 fn is_simple_value(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(_) | Expr::Lit(_))
+}
+
+type BindingKey = (Atom, SyntaxContext);
+
+fn targets_can_be_split(assign: &AssignExpr) -> bool {
+    let mut assigned_bindings = HashSet::new();
+    let mut current = assign;
+
+    loop {
+        let refs = target_reference_bindings(&current.left);
+        if refs
+            .iter()
+            .any(|reference| assigned_bindings.contains(reference))
+        {
+            return false;
+        }
+
+        if let Some(binding) = target_ident_binding(&current.left) {
+            assigned_bindings.insert(binding);
+        }
+
+        match current.right.as_ref() {
+            Expr::Assign(next) if next.op == AssignOp::Assign => {
+                current = next;
+            }
+            _ => return true,
+        }
+    }
+}
+
+fn target_ident_binding(target: &AssignTarget) -> Option<BindingKey> {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+            Some((binding.id.sym.clone(), binding.id.ctxt))
+        }
+        _ => None,
+    }
+}
+
+fn target_reference_bindings(target: &AssignTarget) -> HashSet<BindingKey> {
+    if matches!(target, AssignTarget::Simple(SimpleAssignTarget::Ident(_))) {
+        return HashSet::new();
+    }
+
+    let mut collector = IdentReferenceCollector {
+        references: HashSet::new(),
+    };
+    target.visit_with(&mut collector);
+    collector.references
+}
+
+struct IdentReferenceCollector {
+    references: HashSet<BindingKey>,
+}
+
+impl Visit for IdentReferenceCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.references.insert((ident.sym.clone(), ident.ctxt));
+    }
 }
 
 /// Splits a chained assignment statement into individual assignment statements,

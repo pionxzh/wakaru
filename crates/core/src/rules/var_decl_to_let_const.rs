@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Class, Decl, DefaultDecl, ExportSpecifier,
     Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl,
-    VarDeclKind, WithStmt,
+    ModuleDecl, ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, SwitchStmt,
+    UpdateExpr, VarDecl, VarDeclKind, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -436,14 +436,43 @@ impl Visit for BlockDeclaredVarCollector {
         self.block_stack.pop();
     }
 
-    fn visit_switch_stmt(&mut self, stmt: &swc_core::ecma::ast::SwitchStmt) {
+    fn visit_switch_stmt(&mut self, stmt: &SwitchStmt) {
         stmt.discriminant.visit_with(self);
+        for case in &stmt.cases {
+            if let Some(test) = &case.test {
+                test.visit_with(self);
+            }
+            let block_id = self.next_block_id;
+            self.next_block_id += 1;
+            self.block_stack.push(block_id);
+            for stmt in &case.cons {
+                stmt.visit_with(self);
+            }
+            self.block_stack.pop();
+        }
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
         let block_id = self.next_block_id;
         self.next_block_id += 1;
         self.block_stack.push(block_id);
-        for case in &stmt.cases {
-            case.visit_with(self);
-        }
+        stmt.visit_children_with(self);
+        self.block_stack.pop();
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
+        stmt.visit_children_with(self);
+        self.block_stack.pop();
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
+        stmt.visit_children_with(self);
         self.block_stack.pop();
     }
 
@@ -517,14 +546,63 @@ impl Visit for RefOutsideDeclBlockCollector<'_> {
         self.block_stack.pop();
     }
 
-    fn visit_switch_stmt(&mut self, stmt: &swc_core::ecma::ast::SwitchStmt) {
+    fn visit_switch_stmt(&mut self, stmt: &SwitchStmt) {
+        if self.nested_scope_depth > 0 {
+            stmt.visit_children_with(self);
+            return;
+        }
+
         stmt.discriminant.visit_with(self);
+        for case in &stmt.cases {
+            if let Some(test) = &case.test {
+                test.visit_with(self);
+            }
+            let block_id = self.next_block_id;
+            self.next_block_id += 1;
+            self.block_stack.push(block_id);
+            for stmt in &case.cons {
+                stmt.visit_with(self);
+            }
+            self.block_stack.pop();
+        }
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        if self.nested_scope_depth > 0 {
+            stmt.visit_children_with(self);
+            return;
+        }
+
         let block_id = self.next_block_id;
         self.next_block_id += 1;
         self.block_stack.push(block_id);
-        for case in &stmt.cases {
-            case.visit_with(self);
+        stmt.visit_children_with(self);
+        self.block_stack.pop();
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        if self.nested_scope_depth > 0 {
+            stmt.visit_children_with(self);
+            return;
         }
+
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
+        stmt.visit_children_with(self);
+        self.block_stack.pop();
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        if self.nested_scope_depth > 0 {
+            stmt.visit_children_with(self);
+            return;
+        }
+
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
+        stmt.visit_children_with(self);
         self.block_stack.pop();
     }
 

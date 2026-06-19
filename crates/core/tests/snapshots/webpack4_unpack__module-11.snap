@@ -11,7 +11,7 @@ function u(e) {
     if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
         return false;
     }
-    for(let t = e; Object.getPrototypeOf(t) !== null;){
+    for(var t = e; Object.getPrototypeOf(t) !== null;){
         t = Object.getPrototypeOf(t);
     }
     return Object.getPrototypeOf(e) === t;
