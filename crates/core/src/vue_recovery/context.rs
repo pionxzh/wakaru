@@ -18,8 +18,9 @@ use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
-    component_prop_names, RenderSource, VueRecoveryContext, VueScriptImport, VueSetupLocalBinding,
-    VueSetupRefBinding, VueSetupValueBinding,
+    component_prop_names, RenderSource, VueRecoveryContext, VueRenderChildListBinding,
+    VueRenderChildListSource, VueScriptImport, VueSetupLocalBinding, VueSetupRefBinding,
+    VueSetupValueBinding,
 };
 use crate::js_names::is_valid_identifier_name;
 
@@ -1060,12 +1061,18 @@ pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueReco
                     if is_slot_partition_slots_alias(init, &slot_partition_bindings) {
                         ctx.slot_bindings.insert(binding.id.sym.clone());
                     }
+                    if let Some(source) =
+                        slot_partition_child_list_alias_source(init, &slot_partition_bindings)
+                    {
+                        insert_render_child_list_binding(ctx, binding.id.sym.clone(), source);
+                    }
                 }
                 Pat::Object(object)
                     if is_slot_partition_expr(init, ctx)
                         || is_slot_partition_alias(init, &slot_partition_bindings) =>
                 {
                     collect_named_object_pat_bindings(object, "slots", &mut ctx.slot_bindings);
+                    collect_slot_partition_child_list_bindings(object, ctx);
                 }
                 _ => {}
             }
@@ -2022,6 +2029,23 @@ fn is_slot_partition_slots_alias(expr: &Expr, slot_partition_bindings: &HashSet<
     )
 }
 
+fn slot_partition_child_list_alias_source(
+    expr: &Expr,
+    slot_partition_bindings: &HashSet<Atom>,
+) -> Option<VueRenderChildListSource> {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    if !member_prop_is_named(&member.prop, "slides") {
+        return None;
+    }
+    matches!(
+        member.obj.as_ref(),
+        Expr::Ident(object) if slot_partition_bindings.contains(&object.sym)
+    )
+    .then_some(VueRenderChildListSource::SlotPartitionChildren)
+}
+
 fn is_slot_partition_alias(expr: &Expr, slot_partition_bindings: &HashSet<Atom>) -> bool {
     let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
         return false;
@@ -2047,6 +2071,37 @@ fn is_slot_source_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
             )
         }
         _ => false,
+    }
+}
+
+fn collect_slot_partition_child_list_bindings(object: &ObjectPat, ctx: &mut VueRecoveryContext) {
+    let mut bindings = HashSet::new();
+    collect_named_object_pat_bindings(object, "slides", &mut bindings);
+    for binding in bindings {
+        insert_render_child_list_binding(
+            ctx,
+            binding,
+            VueRenderChildListSource::SlotPartitionChildren,
+        );
+    }
+}
+
+fn insert_render_child_list_binding(
+    ctx: &mut VueRecoveryContext,
+    binding: Atom,
+    source: VueRenderChildListSource,
+) {
+    ctx.render_child_list_bindings
+        .insert(binding, VueRenderChildListBinding { source });
+}
+
+fn member_prop_is_named(prop: &MemberProp, name: &str) -> bool {
+    match prop {
+        MemberProp::Ident(ident) => ident.sym.as_ref() == name,
+        MemberProp::Computed(computed) => {
+            string_lit(computed.expr.as_ref()).as_deref() == Some(name)
+        }
+        MemberProp::PrivateName(_) => false,
     }
 }
 

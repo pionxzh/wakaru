@@ -64,6 +64,7 @@ struct VueRecoveryContext {
     setup_emit_context: Option<Atom>,
     setup_emit_aliases: HashSet<Atom>,
     slot_bindings: HashSet<Atom>,
+    render_child_list_bindings: HashMap<Atom, VueRenderChildListBinding>,
     cm: Lrc<SourceMap>,
 }
 
@@ -96,6 +97,16 @@ struct VueSetupLocalBinding {
     import_refs: HashSet<Atom>,
     stmt: Stmt,
     module_scope: bool,
+}
+
+#[derive(Clone)]
+struct VueRenderChildListBinding {
+    source: VueRenderChildListSource,
+}
+
+#[derive(Clone, Copy)]
+enum VueRenderChildListSource {
+    SlotPartitionChildren,
 }
 
 #[derive(Clone, Copy)]
@@ -1719,7 +1730,12 @@ fn collect_template_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
             collect_js_ident_refs(expr.as_str(), refs);
         }
         VueNode::Unsupported(unsupported) => {
-            collect_js_ident_refs(unsupported.expr.as_str(), refs);
+            let mut unsupported_refs = HashSet::new();
+            collect_js_ident_refs(unsupported.expr.as_str(), &mut unsupported_refs);
+            if let Some(binding) = unsupported.render_local_binding() {
+                unsupported_refs.remove(&Atom::from(binding.to_string()));
+            }
+            refs.extend(unsupported_refs);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
@@ -1756,7 +1772,12 @@ fn collect_template_expr_read_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
             collect_js_read_refs(expr.as_str(), refs);
         }
         VueNode::Unsupported(unsupported) => {
-            collect_js_read_refs(unsupported.expr.as_str(), refs);
+            let mut unsupported_refs = HashSet::new();
+            collect_js_read_refs(unsupported.expr.as_str(), &mut unsupported_refs);
+            if let Some(binding) = unsupported.render_local_binding() {
+                unsupported_refs.remove(&Atom::from(binding.to_string()));
+            }
+            refs.extend(unsupported_refs);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
@@ -5280,6 +5301,34 @@ export default {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <component :is=\"tag\">\n    <slot name=\"container-start\" />\n    <main>\n      <slot name=\"wrapper-start\" />\n      <slot name=\"wrapper-end\" />\n    </main>\n    <template v-if=\"showControls\">\n      <button class=\"prev\" />\n      <button class=\"next\" />\n    </template>\n    <div v-if=\"showBar\" class=\"bar\" />\n    <slot name=\"container-end\" />\n  </component>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn labels_render_local_slot_partition_vnode_children() {
+        let input = r#"
+import { h } from "./vendor-vue.js";
+export default {
+  setup(props, context) {
+    const slots = context.slots;
+    return () => {
+      const slotState = partitionSlots(slots);
+      const { slides, slots: namedSlots } = slotState;
+      return h(props.tag, null, [
+        h(props.wrapperTag, null, [
+          namedSlots["wrapper-start"],
+          renderSlides(slides),
+          namedSlots["wrapper-end"]
+        ])
+      ]);
+    };
+  }
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component :is=\"tag\">\n    <component :is=\"wrapperTag\">\n      <slot name=\"wrapper-start\" />\n      <!-- wakaru: vnode-children: renderSlides(slides); source: render-local slot-partition children \"slides\" -->\n      <slot name=\"wrapper-end\" />\n    </component>\n  </component>\n</template>\n"
         );
     }
 
