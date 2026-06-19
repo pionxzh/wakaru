@@ -1,6 +1,6 @@
 use super::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueFor, VueIfBranch, VueNode, VueSfc,
-    VueTemplate, VueUnsupported, VueUnsupportedKind,
+    VueTemplate, VueUnsupported, VueUnsupportedKind, VueUnsupportedSource,
 };
 
 impl VueSfc {
@@ -118,7 +118,21 @@ impl TemplateEmitter {
         });
         self.out
             .push_str(&escape_comment(unsupported.expr.as_str().trim()));
+        if let Some(source) = &unsupported.source {
+            self.emit_unsupported_source(source);
+        }
         self.out.push_str(" -->\n");
+    }
+
+    fn emit_unsupported_source(&mut self, source: &VueUnsupportedSource) {
+        match source {
+            VueUnsupportedSource::RenderLocalSlotPartitionChildren { binding } => {
+                self.out
+                    .push_str("; source: render-local slot-partition children \"");
+                self.out.push_str(&escape_comment(binding));
+                self.out.push('"');
+            }
+        }
     }
 
     fn emit_element(&mut self, element: &VueElement, depth: usize) {

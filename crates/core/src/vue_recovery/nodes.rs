@@ -13,9 +13,10 @@ use super::expressions::{
 };
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
 use super::syntax::{prop_name, string_lit, wtf8_to_string};
-use super::{RenderSource, VueRecoveryContext};
+use super::{RenderSource, VueRecoveryContext, VueRenderChildListSource};
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
+    VueUnsupported,
 };
 
 pub(super) fn recover_render_root(
@@ -146,10 +147,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         Expr::Tpl(tpl) => recover_template_literal(tpl, ctx).map(Some),
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
-                return Ok(Some(unsupported_vnode_children_expr(clean_expr(
-                    &print_expr(expr, ctx)?,
-                    ctx,
-                ))));
+                return recover_unsupported_vnode_children(expr, ctx).map(Some);
             };
             match helper {
                 VueHelper::CreateElementBlock | VueHelper::CreateElementVNode => {
@@ -182,11 +180,11 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                         ctx,
                     )))))
                 }
-                _ => Ok(Some(unsupported_vnode_children_expr(clean_expr(
-                    &print_expr(expr, ctx)?,
-                    ctx,
-                )))),
+                _ => recover_unsupported_vnode_children(expr, ctx).map(Some),
             }
+        }
+        Expr::Ident(ident) if ctx.render_child_list_bindings.contains_key(&ident.sym) => {
+            recover_unsupported_vnode_children(expr, ctx).map(Some)
         }
         Expr::Member(member) => {
             if let Some(slot) = recover_direct_slot(member, ctx)? {
@@ -196,6 +194,54 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         }
         Expr::Lit(Lit::Str(str)) => Ok(Some(VueNode::Text(wtf8_to_string(&str.value)))),
         _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
+    }
+}
+
+fn recover_unsupported_vnode_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let printed = clean_expr(&print_expr(expr, ctx)?, ctx);
+    if let Some((binding, source)) = render_child_list_source_expr(expr, ctx) {
+        return Ok(unsupported_render_local_vnode_children_expr(
+            printed, binding, source,
+        ));
+    }
+    Ok(unsupported_vnode_children_expr(printed))
+}
+
+fn render_child_list_source_expr<'a>(
+    expr: &Expr,
+    ctx: &'a VueRecoveryContext,
+) -> Option<(&'a Atom, VueRenderChildListSource)> {
+    match expr {
+        Expr::Paren(paren) => render_child_list_source_expr(paren.expr.as_ref(), ctx),
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .and_then(|expr| render_child_list_source_expr(expr.as_ref(), ctx)),
+        Expr::Assign(assign) => render_child_list_source_expr(assign.right.as_ref(), ctx),
+        Expr::Ident(ident) => ctx
+            .render_child_list_bindings
+            .get_key_value(&ident.sym)
+            .map(|(binding, source)| (binding, source.source)),
+        Expr::Call(call) => call
+            .args
+            .iter()
+            .find_map(|arg| render_child_list_source_expr(arg.expr.as_ref(), ctx)),
+        _ => None,
+    }
+}
+
+fn unsupported_render_local_vnode_children_expr(
+    expr: String,
+    binding: &Atom,
+    source: VueRenderChildListSource,
+) -> VueNode {
+    match source {
+        VueRenderChildListSource::SlotPartitionChildren => VueNode::Unsupported(
+            VueUnsupported::vnode_children_from_render_local_slot_partition(
+                expr,
+                binding.to_string(),
+            ),
+        ),
     }
 }
 

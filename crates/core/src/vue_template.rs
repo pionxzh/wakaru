@@ -51,11 +51,17 @@ pub struct VueElement {
 pub struct VueUnsupported {
     pub kind: VueUnsupportedKind,
     pub expr: VueExpr,
+    pub source: Option<VueUnsupportedSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueUnsupportedKind {
     VNodeChildren,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VueUnsupportedSource {
+    RenderLocalSlotPartitionChildren { binding: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +193,29 @@ impl VueUnsupported {
         Self {
             kind: VueUnsupportedKind::VNodeChildren,
             expr: expr.into(),
+            source: None,
+        }
+    }
+
+    pub fn vnode_children_from_render_local_slot_partition(
+        expr: impl Into<VueExpr>,
+        binding: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: VueUnsupportedKind::VNodeChildren,
+            expr: expr.into(),
+            source: Some(VueUnsupportedSource::RenderLocalSlotPartitionChildren {
+                binding: binding.into(),
+            }),
+        }
+    }
+
+    pub fn render_local_binding(&self) -> Option<&str> {
+        match &self.source {
+            Some(VueUnsupportedSource::RenderLocalSlotPartitionChildren { binding }) => {
+                Some(binding)
+            }
+            None => None,
         }
     }
 }
