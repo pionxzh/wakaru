@@ -1,8 +1,8 @@
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl, UnaryOp,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, MemberExpr,
+    MemberProp, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt, Tpl, UnaryOp,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
@@ -127,6 +127,9 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             recover_node(last.as_ref(), ctx)
         }
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => recover_node(bin.right.as_ref(), ctx),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+            recover_logical_and_node(bin.left.as_ref(), bin.right.as_ref(), ctx)
+        }
         Expr::Assign(assign) if assign.op == AssignOp::Assign => {
             recover_node(assign.right.as_ref(), ctx)
         }
@@ -144,6 +147,14 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             match helper {
                 VueHelper::CreateElementBlock | VueHelper::CreateElementVNode => {
+                    recover_element(&call.args, ctx)
+                }
+                VueHelper::CreateBlock | VueHelper::CreateVNode
+                    if call
+                        .args
+                        .first()
+                        .is_some_and(|arg| string_lit(arg.expr.as_ref()).is_some()) =>
+                {
                     recover_element(&call.args, ctx)
                 }
                 VueHelper::CreateBlock | VueHelper::CreateVNode => {
@@ -168,9 +179,36 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                 _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
             }
         }
+        Expr::Member(member) => {
+            if let Some(slot) = recover_direct_slot(member, ctx)? {
+                return Ok(Some(slot));
+            }
+            Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))))
+        }
         Expr::Lit(Lit::Str(str)) => Ok(Some(VueNode::Text(wtf8_to_string(&str.value)))),
         _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
     }
+}
+
+fn recover_logical_and_node(
+    test: &Expr,
+    value: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueNode>> {
+    let mut node = match value {
+        Expr::Array(_) => nodes_to_node(recover_children(value, ctx)?),
+        _ => {
+            let Some(node) = recover_node(value, ctx)? else {
+                return Ok(None);
+            };
+            node
+        }
+    };
+    strip_generated_branch_key(&mut node);
+    Ok(Some(VueNode::If(vec![VueIfBranch {
+        condition: Some(VueExpr::new(clean_condition_expr(test, ctx)?)),
+        node: Box::new(node),
+    }])))
 }
 
 fn recover_conditional_chain(
@@ -224,6 +262,45 @@ fn recover_conditional_chain(
     }
 
     Ok(VueNode::If(branches))
+}
+
+fn recover_direct_slot(member: &MemberExpr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    if !is_slot_object_expr(member.obj.as_ref(), ctx) {
+        return Ok(None);
+    }
+    let Some(slot_name) = slot_member_name(&member.prop) else {
+        return Ok(None);
+    };
+    let mut attrs = Vec::new();
+    if slot_name != "default" {
+        attrs.push(VueAttr::Static {
+            name: "name".to_string(),
+            value: Some(slot_name),
+        });
+    }
+    Ok(Some(VueNode::Element(
+        VueElement::new("slot").with_attrs(attrs),
+    )))
+}
+
+fn is_slot_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match expr {
+        Expr::Paren(paren) => is_slot_object_expr(paren.expr.as_ref(), ctx),
+        Expr::Ident(ident) => {
+            matches!(ident.sym.as_ref(), "$slots" | "slots")
+                || ctx.slot_bindings.contains(&ident.sym)
+        }
+        Expr::Member(member) => slot_member_name(&member.prop).as_deref() == Some("$slots"),
+        _ => false,
+    }
+}
+
+fn slot_member_name(prop: &MemberProp) -> Option<String> {
+    match prop {
+        MemberProp::Ident(ident) => Some(ident.sym.to_string()),
+        MemberProp::Computed(computed) => string_lit(computed.expr.as_ref()),
+        MemberProp::PrivateName(_) => None,
+    }
 }
 
 fn strip_generated_branch_key(node: &mut VueNode) {
