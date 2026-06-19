@@ -7,7 +7,10 @@ use swc_core::ecma::ast::{
 
 use super::attrs::{recover_attrs, recover_component_attrs};
 use super::directives::recover_directive_tuple;
-use super::expressions::{clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr};
+use super::expressions::{
+    clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr,
+    unsupported_vnode_children_expr,
+};
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
 use super::syntax::{prop_name, string_lit, wtf8_to_string};
 use super::{RenderSource, VueRecoveryContext};
@@ -143,7 +146,10 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         Expr::Tpl(tpl) => recover_template_literal(tpl, ctx).map(Some),
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
-                return Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))));
+                return Ok(Some(unsupported_vnode_children_expr(clean_expr(
+                    &print_expr(expr, ctx)?,
+                    ctx,
+                ))));
             };
             match helper {
                 VueHelper::CreateElementBlock | VueHelper::CreateElementVNode => {
@@ -176,7 +182,10 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                         ctx,
                     )))))
                 }
-                _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
+                _ => Ok(Some(unsupported_vnode_children_expr(clean_expr(
+                    &print_expr(expr, ctx)?,
+                    ctx,
+                )))),
             }
         }
         Expr::Member(member) => {
@@ -318,7 +327,8 @@ fn strip_generated_branch_key(node: &mut VueNode) {
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_) => {}
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
     }
 }
 
@@ -337,7 +347,7 @@ fn is_generated_branch_key(attr: &VueAttr) -> bool {
 
 fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
     let Some(source_arg) = args.first() else {
-        return Ok(VueNode::RawExpr("renderList()".into()));
+        return Ok(unsupported_vnode_children_expr("renderList()"));
     };
     let Some(callback_arg) = args.get(1) else {
         return Ok(raw_expr(clean_expr(
@@ -531,7 +541,7 @@ fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) {
 
 fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
     let Some(component_arg) = args.first() else {
-        return Ok(VueNode::RawExpr("createVNode()".into()));
+        return Ok(unsupported_vnode_children_expr("createVNode()"));
     };
     let Some(component) = recover_component_tag(component_arg.expr.as_ref(), ctx)? else {
         return Ok(raw_expr(clean_expr(
@@ -928,7 +938,7 @@ fn nodes_to_node(mut nodes: Vec<VueNode>) -> VueNode {
 
 fn recover_static_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
     let Some(html_arg) = args.first() else {
-        return Ok(VueNode::RawExpr("createStaticVNode()".into()));
+        return Ok(unsupported_vnode_children_expr("createStaticVNode()"));
     };
     if let Some(html) = string_lit(html_arg.expr.as_ref()) {
         return Ok(VueNode::RawHtml(html));
@@ -989,7 +999,7 @@ fn recover_slot_fallback(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<Vu
 
 fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
     let Some(base_arg) = args.first() else {
-        return Ok(VueNode::RawExpr("withDirectives()".into()));
+        return Ok(unsupported_vnode_children_expr("withDirectives()"));
     };
     let Some(mut node) = recover_node(base_arg.expr.as_ref(), ctx)? else {
         return Ok(raw_expr(clean_expr(
@@ -1016,7 +1026,7 @@ fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
 
 fn recover_with_memo(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
     let Some(deps_arg) = args.first() else {
-        return Ok(VueNode::RawExpr("withMemo()".into()));
+        return Ok(unsupported_vnode_children_expr("withMemo()"));
     };
     let Some(render_arg) = args.get(1) else {
         return Ok(raw_expr(clean_expr(
@@ -1069,7 +1079,8 @@ fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_) => {}
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
     }
 }
 
@@ -1137,6 +1148,7 @@ fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
             rename_node_expr_prefix(&mut for_node.node, from, to);
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => expr.replace_prefix(from, to),
+        VueNode::Unsupported(unsupported) => unsupported.expr.replace_prefix(from, to),
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
 }

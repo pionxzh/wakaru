@@ -1659,7 +1659,8 @@ fn collect_template_static_ref_names(node: &VueNode, refs: &mut HashSet<String>)
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_) => {}
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
     }
 }
 
@@ -1717,6 +1718,9 @@ fn collect_template_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
             collect_js_ident_refs(expr.as_str(), refs);
         }
+        VueNode::Unsupported(unsupported) => {
+            collect_js_ident_refs(unsupported.expr.as_str(), refs);
+        }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
 }
@@ -1750,6 +1754,9 @@ fn collect_template_expr_read_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
             collect_js_read_refs(expr.as_str(), refs);
+        }
+        VueNode::Unsupported(unsupported) => {
+            collect_js_read_refs(unsupported.expr.as_str(), refs);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
@@ -1791,7 +1798,8 @@ fn collect_template_event_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_) => {}
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
     }
 }
 
@@ -1820,7 +1828,8 @@ fn collect_template_for_source_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_) => {}
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
     }
 }
 
@@ -1853,6 +1862,9 @@ fn collect_template_expr_shadowed_names(node: &VueNode, names: &mut HashSet<Atom
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
             collect_js_arrow_param_names(expr.as_str(), names);
+        }
+        VueNode::Unsupported(unsupported) => {
+            collect_js_arrow_param_names(unsupported.expr.as_str(), names);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
