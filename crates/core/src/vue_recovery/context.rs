@@ -740,14 +740,12 @@ pub(super) fn collect_setup_context(
                     if decl_bindings.is_empty() {
                         continue;
                     }
-                    if matches!(decl.name, Pat::Array(_)) {
-                        ctx.setup_template_ref_bindings.extend(
-                            decl_bindings
-                                .iter()
-                                .filter(|binding| setup_tuple_value_refs.contains(*binding))
-                                .cloned(),
-                        );
-                    }
+                    ctx.setup_template_ref_bindings.extend(
+                        decl_bindings
+                            .iter()
+                            .filter(|binding| setup_tuple_value_refs.contains(*binding))
+                            .cloned(),
+                    );
 
                     local_bindings.extend(decl_bindings);
                     local_decls.push(decl.clone());
@@ -790,8 +788,15 @@ fn setup_tuple_render_value_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> Ha
             continue;
         };
         for decl in &var.decls {
-            if decl.init.is_some() && matches!(decl.name, Pat::Array(_)) {
-                collect_pat_bindings(&decl.name, &mut candidates);
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            match &decl.name {
+                Pat::Array(_) => collect_pat_bindings(&decl.name, &mut candidates),
+                Pat::Ident(binding) if is_tuple_element_expr(init) => {
+                    candidates.insert(binding.id.sym.clone());
+                }
+                _ => {}
             }
         }
     }
@@ -941,6 +946,23 @@ impl Visit for RenderValueMemberRefCollector<'_> {
         self.declare(&class.ident.sym);
         class.class.visit_with(self);
     }
+}
+
+fn is_tuple_element_expr(expr: &Expr) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    if !is_zero_member_prop(&member.prop) {
+        return false;
+    }
+    matches!(unwrap_paren_expr(member.obj.as_ref()), Expr::Call(_))
+}
+
+fn is_zero_member_prop(prop: &MemberProp) -> bool {
+    let MemberProp::Computed(computed) = prop else {
+        return false;
+    };
+    matches!(unwrap_paren_expr(computed.expr.as_ref()), Expr::Lit(Lit::Num(number)) if number.value == 0.0)
 }
 
 fn assign_setup_prop_bindings(
