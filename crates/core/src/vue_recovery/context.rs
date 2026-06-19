@@ -12,7 +12,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::expressions::{clean_expr, print_expr, print_stmt};
+use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
 use super::helpers::{helper_name, VueHelper};
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
@@ -627,6 +627,8 @@ pub(super) fn collect_setup_context(
     };
 
     let setup_template_ref_refs = setup_render_template_ref_refs(render, setup_stmts, ctx);
+    let setup_template_ref_aliases = setup_render_template_ref_aliases(render);
+    let setup_render_refs = render_ident_refs(render);
     let mut provider_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
 
@@ -739,9 +741,12 @@ pub(super) fn collect_setup_context(
                     let has_template_ref = decl_bindings
                         .iter()
                         .any(|binding| setup_template_ref_refs.contains(binding));
+                    let has_render_ref = decl_bindings
+                        .iter()
+                        .any(|binding| setup_render_refs.contains(binding));
                     let is_local_candidate = match &decl.name {
                         Pat::Ident(_) | Pat::Array(_) => true,
-                        Pat::Object(_) => has_template_ref,
+                        Pat::Object(_) => has_template_ref || has_render_ref,
                         _ => false,
                     };
                     if !is_local_candidate {
@@ -771,21 +776,88 @@ pub(super) fn collect_setup_context(
         }
     }
 
+    for (from, to) in setup_template_ref_aliases {
+        if ctx
+            .setup_ref_script_bindings
+            .iter()
+            .any(|binding| binding.binding == from)
+        {
+            ctx.setup_alias_bindings.insert(from, to);
+        }
+    }
+
     assign_setup_prop_bindings(ctx, &local_candidates);
 
     for (bindings, stmt) in local_candidates {
-        let source = print_stmt(&stmt, ctx)?;
+        let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+        let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
         if !source.is_empty() {
             ctx.setup_local_bindings.push(VueSetupLocalBinding {
                 bindings,
-                refs: stmt_ident_refs(&stmt),
+                refs: stmt_ident_refs(&cleaned_stmt),
                 source,
-                import_refs: stmt_import_refs(&stmt, &ctx.script_imports),
+                import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
             });
         }
     }
 
     Ok(())
+}
+
+fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, Atom)> {
+    let mut collector = TemplateRefAliasCollector {
+        aliases: Vec::new(),
+    };
+    render.visit_with(&mut collector);
+    collector.aliases
+}
+
+struct TemplateRefAliasCollector {
+    aliases: Vec<(Atom, Atom)>,
+}
+
+impl Visit for TemplateRefAliasCollector {
+    fn visit_object_lit(&mut self, object: &ObjectLit) {
+        let mut ref_key = None;
+        let mut ref_binding = None;
+
+        for prop in &object.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                continue;
+            };
+            let Prop::KeyValue(key_value) = prop.as_ref() else {
+                continue;
+            };
+            match prop_name(&key_value.key).as_deref() {
+                Some("ref_key") => {
+                    ref_key = string_lit(key_value.value.as_ref())
+                        .filter(|name| is_valid_identifier_name(name))
+                        .map(Atom::from);
+                }
+                Some("ref") => {
+                    if let Expr::Ident(ident) = unwrap_paren_expr(key_value.value.as_ref()) {
+                        ref_binding = Some(ident.sym.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let (Some(from), Some(to)) = (ref_binding, ref_key) {
+            self.aliases.push((from, to));
+        }
+
+        object.visit_children_with(self);
+    }
+}
+
+fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
+    let mut collector = IdentRefCollector {
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    render.visit_with(&mut collector);
+    collector.refs
 }
 
 fn setup_render_template_ref_refs(

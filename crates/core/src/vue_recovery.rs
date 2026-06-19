@@ -3847,6 +3847,41 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_object_destructure_depending_on_template_ref_key() {
+        let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+import { useScroll } from "@vueuse/core";
+export default defineComponent({
+  setup() {
+    const target = ref(null);
+    const { x, arrivedState } = useScroll(target);
+    const scrollLeft = () => {
+      if (!arrivedState.left) {
+        scroll({ left: x - 200 });
+      }
+    };
+    return () => (
+      openBlock(), createElementBlock("div", {
+        ref_key: "scrollContainer",
+        ref: target
+      }, [
+        createElementBlock("button", {
+          disabled: arrivedState.left,
+          onClick: scrollLeft
+        }, "Left", 8, ["disabled", "onClick"])
+      ], 512)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    if (!arrivedState.left) {\n        scroll({\n            left: x - 200\n        });\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn does_not_emit_object_destructure_for_unref_read_only() {
         let input = r#"
 import { defineComponent, unref, openBlock, createElementBlock } from "vue";
