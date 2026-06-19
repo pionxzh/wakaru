@@ -1807,6 +1807,25 @@ class Foo extends Bar {
 }
 
 #[test]
+fn babel_runtime_call_super_import() {
+    // transform-runtime output imports the helper from @babel/runtime.
+    let input = r#"
+import _callSuper from "@babel/runtime/helpers/callSuper";
+import _inherits from "@babel/runtime/helpers/inherits";
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t() { return _callSuper(this, t, arguments); }
+    return t;
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn test_call_super_unsafe_third_arg_bails_class_conversion() {
     // When the third arg to _callSuper is not `arguments` or an array literal,
     // the rewriter cannot safely convert it. The whole IIFE should stay unconverted.

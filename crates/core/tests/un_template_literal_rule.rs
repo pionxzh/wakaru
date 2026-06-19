@@ -229,6 +229,21 @@ var out = tag`hello ${name}`;
 }
 
 #[test]
+fn restores_babel_runtime_imported_tagged_template() {
+    // transform-runtime imports the helper from @babel/runtime.
+    let input = r#"
+import _taggedTemplateLiteral from "@babel/runtime/helpers/taggedTemplateLiteral";
+var _templateObject;
+var out = tag(_templateObject || (_templateObject = _taggedTemplateLiteral(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn restores_typescript_tagged_template() {
     let input = r#"
 var __makeTemplateObject = (this && this.__makeTemplateObject) || function (cooked, raw) { return cooked; };

@@ -93,7 +93,11 @@ const ASSERT_THIS_INITIALIZED_PATHS: &[&str] = &[
     "@swc/helpers/_/_assert_this_initialized",
 ];
 
-const CALL_SUPER_PATHS: &[&str] = &["@swc/helpers/_/_call_super"];
+const CALL_SUPER_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/callSuper",
+    "@babel/runtime/helpers/esm/callSuper",
+    "@swc/helpers/_/_call_super",
+];
 
 const CREATE_CLASS_PATHS: &[&str] = &[
     "@babel/runtime/helpers/createClass",
@@ -101,7 +105,19 @@ const CREATE_CLASS_PATHS: &[&str] = &[
     "@swc/helpers/_/_create_class",
 ];
 
-const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_template_literal"];
+const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/taggedTemplateLiteral",
+    "@babel/runtime/helpers/esm/taggedTemplateLiteral",
+    "@babel/runtime/helpers/taggedTemplateLiteralLoose",
+    "@babel/runtime/helpers/esm/taggedTemplateLiteralLoose",
+    "@swc/helpers/_/_tagged_template_literal",
+];
+
+const TYPEOF_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/typeof",
+    "@babel/runtime/helpers/esm/typeof",
+    "@swc/helpers/_/_type_of",
+];
 
 pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind> {
     if INTEROP_DEFAULT_PATHS.contains(&path) {
@@ -152,6 +168,9 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     if CREATE_CLASS_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::CreateClass);
     }
+    if TYPEOF_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::Typeof);
+    }
     if path == "@swc/helpers/_/_array_with_holes" || path == "@swc/helpers/_/_set_prototype_of" {
         return Some(TranspilerHelperKind::HelperDependency);
     }
@@ -191,4 +210,54 @@ pub(super) fn named_import_is_helper(
 
 fn is_swc_helper_path(path: &str) -> bool {
     path.starts_with("@swc/helpers/_/_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_runtime_typeof_imports() {
+        for path in [
+            "@babel/runtime/helpers/typeof",
+            "@babel/runtime/helpers/esm/typeof",
+            "@swc/helpers/_/_type_of",
+        ] {
+            assert_eq!(
+                detect_helper_from_path(path),
+                Some(TranspilerHelperKind::Typeof),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_babel_runtime_call_super_imports() {
+        for path in [
+            "@babel/runtime/helpers/callSuper",
+            "@babel/runtime/helpers/esm/callSuper",
+        ] {
+            assert_eq!(
+                detect_helper_from_path(path),
+                Some(TranspilerHelperKind::CallSuper),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_babel_runtime_tagged_template_imports() {
+        for path in [
+            "@babel/runtime/helpers/taggedTemplateLiteral",
+            "@babel/runtime/helpers/esm/taggedTemplateLiteral",
+            "@babel/runtime/helpers/taggedTemplateLiteralLoose",
+            "@babel/runtime/helpers/esm/taggedTemplateLiteralLoose",
+        ] {
+            assert_eq!(
+                detect_helper_from_path(path),
+                Some(TranspilerHelperKind::TaggedTemplateLiteral),
+                "{path}"
+            );
+        }
+    }
 }

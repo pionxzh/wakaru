@@ -79,3 +79,28 @@ var x = o(y);
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn rewrites_imported_babel_runtime_typeof_helper() {
+    // transform-runtime output imports _typeof instead of inlining it.
+    let input = r#"
+import _typeof from "@babel/runtime/helpers/typeof";
+var x = _typeof(y) === "object";
+"#;
+    let expected = r#"
+const x = typeof y === "object";
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn rewrites_imported_swc_typeof_helper() {
+    let input = r#"
+import { _ as _typeof } from "@swc/helpers/_/_type_of";
+var x = _typeof(y) === "object";
+"#;
+    let expected = r#"
+const x = typeof y === "object";
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
