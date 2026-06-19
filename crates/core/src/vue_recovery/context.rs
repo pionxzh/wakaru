@@ -1066,6 +1066,7 @@ pub(super) fn collect_setup_context(
         .collect::<HashSet<_>>();
     let setup_ref_object_alias_refs = setup_ref_object_alias_refs(setup_stmts);
     let setup_non_value_member_refs = setup_non_value_member_refs(setup_stmts);
+    let setup_value_member_refs = setup_value_member_refs(render, setup_stmts);
     let setup_render_refs = render_ident_refs(render);
     let mut provider_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
@@ -1128,7 +1129,14 @@ pub(super) fn collect_setup_context(
                                         || setup_template_ref_alias_sources
                                             .contains(&binding.id.sym))
                                         && !setup_non_value_member_refs.contains(&binding.id.sym)
-                                        && is_ref_like_value_expr(init, ctx)
+                                        && (setup_template_ref_alias_sources
+                                            .contains(&binding.id.sym)
+                                            || should_emit_ref_script_setup_expr(
+                                                init,
+                                                ctx,
+                                                &binding.id.sym,
+                                                &setup_value_member_refs,
+                                            ))
                                     {
                                         if let Some((expr, helper, known_ref)) =
                                             ref_script_setup_expr(init, ctx)?
@@ -1300,6 +1308,128 @@ fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<Atom> {
         stmt.visit_with(&mut collector);
     }
     collector.refs
+}
+
+fn setup_value_member_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut collector = ValueMemberIdentRefCollector {
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    for stmt in setup_stmts {
+        stmt.visit_with(&mut collector);
+    }
+    render.visit_with(&mut collector);
+    collector.refs
+}
+
+struct ValueMemberIdentRefCollector {
+    scopes: Vec<HashSet<Atom>>,
+    refs: HashSet<Atom>,
+}
+
+impl ValueMemberIdentRefCollector {
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, sym: &Atom) {
+        if self.scopes.len() <= 1 {
+            return;
+        }
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(sym.clone());
+        }
+    }
+
+    fn declare_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.declare(&binding.id.sym),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.declare_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
+                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
+                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.declare_pat(&rest.arg),
+            Pat::Assign(assign) => self.declare_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+    }
+}
+
+impl Visit for ValueMemberIdentRefCollector {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
+            if let Expr::Ident(object) = member.obj.as_ref() {
+                if !self.is_shadowed(&object.sym) {
+                    self.refs.insert(object.sym.clone());
+                }
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        self.declare(&ident.id.sym);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.declare_pat(&declarator.name);
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.declare(&function.ident.sym);
+        self.push_scope();
+        for param in &function.function.params {
+            self.declare_pat(&param.pat);
+        }
+        function.function.visit_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.push_scope();
+        for param in &function.params {
+            self.declare_pat(&param.pat);
+        }
+        if let Some(body) = &function.body {
+            body.visit_with(self);
+        }
+        self.pop_scope();
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.push_scope();
+        for param in &arrow.params {
+            self.declare_pat(param);
+        }
+        arrow.body.visit_with(self);
+        self.pop_scope();
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.declare(&class.ident.sym);
+        class.class.visit_with(self);
+    }
 }
 
 struct NonValueMemberRefCollector {
@@ -1811,6 +1941,24 @@ fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         _ => {}
     }
     call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+}
+
+fn should_emit_ref_script_setup_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    binding: &Atom,
+    value_member_refs: &HashSet<Atom>,
+) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    match helper_name(&call.callee, ctx) {
+        Some(VueHelper::Computed) => return true,
+        Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => return true,
+        _ => {}
+    }
+    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+        && value_member_refs.contains(binding)
 }
 
 fn is_ref_like_vue_helper(name: &str) -> bool {

@@ -1205,7 +1205,12 @@ fn recover_component_tag(
     ctx: &VueRecoveryContext,
 ) -> Result<Option<RecoveredComponentTag>> {
     match expr {
-        Expr::Ident(_) => Ok(recover_static_component_tag(expr, ctx)),
+        Expr::Ident(_) => {
+            if let Some(component) = recover_static_component_tag(expr, ctx) {
+                return Ok(Some(component));
+            }
+            recover_dynamic_component_tag(expr, ctx)
+        }
         Expr::Call(call)
             if helper_name(&call.callee, ctx) == Some(VueHelper::ResolveDynamicComponent) =>
         {
@@ -1227,9 +1232,12 @@ fn recover_component_tag(
             let Some(target) = call.args.first() else {
                 return Ok(None);
             };
-            Ok(recover_static_component_tag(target.expr.as_ref(), ctx))
+            if let Some(component) = recover_static_component_tag(target.expr.as_ref(), ctx) {
+                return Ok(Some(component));
+            }
+            recover_dynamic_component_tag(target.expr.as_ref(), ctx)
         }
-        _ => Ok(None),
+        _ => recover_dynamic_component_tag(expr, ctx),
     }
 }
 
@@ -1257,6 +1265,36 @@ fn recover_static_component_tag(
             tag,
             attrs: Vec::new(),
         })
+}
+
+fn recover_dynamic_component_tag(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<RecoveredComponentTag>> {
+    if !is_dynamic_component_target(expr, ctx) {
+        return Ok(None);
+    }
+    Ok(Some(RecoveredComponentTag {
+        tag: "component".to_string(),
+        attrs: vec![VueAttr::Bind {
+            name: "is".to_string(),
+            expr: printed_vue_expr(expr, ctx)?,
+        }],
+    }))
+}
+
+fn is_dynamic_component_target(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match expr {
+        Expr::Paren(paren) => is_dynamic_component_target(paren.expr.as_ref(), ctx),
+        Expr::Ident(ident) => !ctx.vue_helpers.contains_key(&ident.sym),
+        Expr::Member(_)
+        | Expr::OptChain(_)
+        | Expr::Call(_)
+        | Expr::Cond(_)
+        | Expr::Bin(_)
+        | Expr::Seq(_) => true,
+        _ => false,
+    }
 }
 
 fn is_vue_helper_candidate_call(
