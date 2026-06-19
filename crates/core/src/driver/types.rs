@@ -31,10 +31,10 @@ pub struct DecompileOptions {
     pub dce_mode: DceMode,
     /// Controls how aggressively wakaru recovers likely original source patterns.
     pub level: RewriteLevel,
-    /// When true, attempt heuristic splitting of scope-hoisted bundles
-    /// (Rollup/Vite/flat esbuild). For detected webpack bundles, this also
-    /// enables a conservative recursive split of extracted scope-concatenated
-    /// module bodies.
+    /// When true, attempt heuristic splitting of top-level scope-hoisted
+    /// bundles (Rollup/Vite/flat esbuild) when no structural bundle is
+    /// detected. At `aggressive` level, also retry scope-hoist splitting inside
+    /// modules extracted by a structural bundle detector.
     pub heuristic_split: bool,
     /// Run post-transform diagnostic checks (lexical use-before-declaration,
     /// output parse verification). Results are returned as warnings.

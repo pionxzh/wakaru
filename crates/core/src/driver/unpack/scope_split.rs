@@ -1,8 +1,9 @@
 //! Heuristic splitting of scope-hoisted modules inside detected bundles.
 //!
 //! Detector output modules can themselves be scope-hoisted concatenations
-//! (esbuild/Bun style). When the heuristic split is enabled, each extracted
-//! module is re-examined and split further when the result still resolves.
+//! (esbuild/Bun style). When this aggressive-only pass is enabled, each
+//! extracted module is re-examined and split further when the result still
+//! resolves.
 
 use std::collections::HashSet;
 
@@ -359,6 +360,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disabled_nested_scope_split_preserves_detected_module() {
+        let result = UnpackResult {
+            modules: vec![UnpackedModule {
+                id: "100".to_string(),
+                is_entry: false,
+                code: nested_scope_hoist_fixture(),
+                filename: "module-100.js".to_string(),
+            }],
+            allow_cycle_premerge: true,
+        };
+
+        let output = maybe_split_scope_hoisted_modules(result, false);
+
+        assert_eq!(output.modules.len(), 1);
+        assert_eq!(output.modules[0].id, "100");
+        assert_eq!(output.modules[0].filename, "module-100.js");
+        assert!(output.allow_cycle_premerge);
+    }
+
+    #[test]
+    fn enabled_nested_scope_split_namespaces_child_modules() {
+        let result = UnpackResult {
+            modules: vec![UnpackedModule {
+                id: "100".to_string(),
+                is_entry: false,
+                code: nested_scope_hoist_fixture(),
+                filename: "module-100.js".to_string(),
+            }],
+            allow_cycle_premerge: true,
+        };
+
+        let output = maybe_split_scope_hoisted_modules(result, true);
+        let names: HashSet<_> = output
+            .modules
+            .iter()
+            .map(|module| module.filename.as_str())
+            .collect();
+
+        assert!(
+            output.modules.len() > 1,
+            "aggressive nested split should split fixture, got {:?}",
+            names
+        );
+        assert!(names.contains("module-100.js"));
+        assert!(
+            names.iter().any(|name| name.starts_with("module-100/")),
+            "child modules should be namespaced under parent filename: {:?}",
+            names
+        );
+        assert!(
+            !output.allow_cycle_premerge,
+            "recursive scope split should disable later cycle premerge"
+        );
+    }
+
+    #[test]
     fn namespace_scope_split_keeps_parent_filename_and_rewrites_entry_imports() {
         let parent = UnpackedModule {
             id: "11111".to_string(),
@@ -454,5 +511,25 @@ export const value = init + 1;
 
         let missing_entry = HashSet::from(["module-11111/chunk_value.js".to_string()]);
         assert!(!scope_split_imports_resolve(&modules, &missing_entry));
+    }
+
+    fn nested_scope_hoist_fixture() -> String {
+        r#"
+            function helperA1() { return 1; }
+            function helperA2() { return helperA1() + 1; }
+            function helperA3() { return helperA2() * 2; }
+            function helperA4() { return helperA3() + 5; }
+            function publicA() { return helperA4(); }
+
+            function helperB1() { return 10; }
+            function helperB2() { return helperB1() + 10; }
+            function helperB3() { return helperB2() * 20; }
+            function helperB4() { return helperB3() + 50; }
+            function publicB() { return helperB4(); }
+
+            const result = publicA() + publicB();
+            export { result };
+        "#
+        .to_string()
     }
 }

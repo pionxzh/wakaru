@@ -42,7 +42,8 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
 
     match detect_bundle(source, &options.filename)? {
         Some(result) => {
-            let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
+            let result =
+                maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
             unpack_unpack_result(result, options)
         }
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
@@ -90,7 +91,8 @@ pub fn unpack_files(
     for input in inputs {
         match detect_bundle(&input.source, &input.filename)? {
             Some(result) => {
-                let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
+                let result =
+                    maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let input_filename = input.filename.clone();
                 let allow_cycle_premerge = result.allow_cycle_premerge;
@@ -146,7 +148,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
     let result = detect_bundle_raw(source, &options.filename)?
         .map(|result| {
             (
-                maybe_split_scope_hoisted_modules(result, options.heuristic_split),
+                maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options)),
                 false,
             )
         })
@@ -229,6 +231,10 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
     }
 }
 
+fn nested_scope_split_enabled(options: &DecompileOptions) -> bool {
+    options.heuristic_split && options.level == RewriteLevel::Aggressive
+}
+
 pub fn unpack_files_raw(
     mut inputs: Vec<UnpackInput>,
     options: &DecompileOptions,
@@ -262,7 +268,8 @@ pub fn unpack_files_raw(
 
         match result {
             Some(result) => {
-                let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
+                let result =
+                    maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options));
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let allow_cycle_premerge = result.allow_cycle_premerge;
                 modules.extend(result.modules.into_iter().map(|module| {
@@ -423,6 +430,25 @@ mod tests {
 
     use super::*;
     use crate::unpacker::UnpackedModule;
+
+    #[test]
+    fn nested_scope_split_gate_requires_heuristic_split_and_aggressive() {
+        assert!(!nested_scope_split_enabled(&DecompileOptions {
+            heuristic_split: false,
+            level: RewriteLevel::Aggressive,
+            ..Default::default()
+        }));
+        assert!(!nested_scope_split_enabled(&DecompileOptions {
+            heuristic_split: true,
+            level: RewriteLevel::Standard,
+            ..Default::default()
+        }));
+        assert!(nested_scope_split_enabled(&DecompileOptions {
+            heuristic_split: true,
+            level: RewriteLevel::Aggressive,
+            ..Default::default()
+        }));
+    }
 
     #[test]
     fn scan_local_import_dependencies_reads_static_imports() {
