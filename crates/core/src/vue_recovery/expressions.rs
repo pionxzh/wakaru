@@ -120,11 +120,21 @@ impl<'a> SetupRefValueCleaner<'a> {
             .iter()
             .map(|binding| binding.as_ref())
             .collect::<Vec<_>>();
+        let ref_bindings = ctx
+            .setup_ref_bindings
+            .iter()
+            .chain(ctx.setup_template_ref_bindings.iter())
+            .collect::<std::collections::HashSet<_>>();
         if clean_assign_targets {
             bindings.extend(
                 ctx.setup_template_ref_bindings
                     .iter()
                     .map(|binding| binding.as_ref()),
+            );
+            bindings.extend(
+                ctx.setup_alias_bindings
+                    .iter()
+                    .filter_map(|(from, to)| ref_bindings.contains(from).then_some(to.as_ref())),
             );
         }
         bindings.sort_unstable();
@@ -535,7 +545,9 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
                 if let Some(value) = ctx
                     .setup_value_bindings
                     .iter()
-                    .find_map(|(binding, value)| (binding.as_ref() == ident).then_some(value))
+                    .find_map(|(binding, value)| {
+                        (binding.as_ref() == ident).then_some(&value.value)
+                    })
                 {
                     output.push_str(&format!("({})", value.trim()));
                     cursor += ".value".len();
