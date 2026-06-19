@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Callee, Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem, Pat,
-    VarDeclarator,
+    Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem, Pat, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -14,7 +13,6 @@ pub(crate) fn binding_key(ident: &Ident) -> BindingKey {
     (ident.sym.clone(), ident.ctxt)
 }
 
-#[allow(dead_code)]
 pub(crate) fn binding_key_from_ident_pat(pat: &Pat) -> Option<BindingKey> {
     let Pat::Ident(binding) = pat else {
         return None;
@@ -22,30 +20,19 @@ pub(crate) fn binding_key_from_ident_pat(pat: &Pat) -> Option<BindingKey> {
     Some(binding_key(&binding.id))
 }
 
-#[allow(dead_code)]
 pub(crate) fn ident_matches_binding(ident: &Ident, key: &BindingKey) -> bool {
     ident.sym == key.0 && ident.ctxt == key.1
 }
 
-#[allow(dead_code)]
 pub(crate) fn expr_matches_binding(expr: &Expr, key: &BindingKey) -> bool {
     matches!(expr, Expr::Ident(id) if ident_matches_binding(id, key))
 }
 
-#[allow(dead_code)]
 pub(crate) fn expr_binding_key(expr: &Expr) -> Option<BindingKey> {
     let Expr::Ident(id) = expr else {
         return None;
     };
     Some(binding_key(id))
-}
-
-#[allow(dead_code)]
-pub(crate) fn callee_matches_binding(callee: &Callee, key: &BindingKey) -> bool {
-    let Callee::Expr(expr) = callee else {
-        return false;
-    };
-    expr_matches_binding(expr, key)
 }
 
 pub(crate) fn static_member_prop_name(prop: &MemberProp) -> Option<&str> {
@@ -78,12 +65,10 @@ pub(crate) fn member_of_binding<'a>(
     member_prop_name(&member.prop, prop_name).then_some(member)
 }
 
-#[allow(dead_code)]
 pub(crate) fn var_declarator_binding_key(decl: &VarDeclarator) -> Option<BindingKey> {
     binding_key_from_ident_pat(&decl.name)
 }
 
-#[allow(dead_code)]
 pub(crate) fn import_specifier_binding_key(specifier: &ImportSpecifier) -> BindingKey {
     match specifier {
         ImportSpecifier::Default(default) => binding_key(&default.local),
@@ -277,7 +262,6 @@ pub(crate) fn remove_var_declarators_by_binding(
     });
 }
 
-#[allow(dead_code)]
 pub(crate) fn remove_import_specifiers_by_binding(
     body: &mut Vec<ModuleItem>,
     removable: &HashSet<BindingKey>,
