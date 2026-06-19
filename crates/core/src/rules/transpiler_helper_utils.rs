@@ -1607,32 +1607,60 @@ fn prop_name_ident(key: &PropName) -> Option<Atom> {
 fn function_from_inline_callable(expr: &Expr) -> Option<Function> {
     match strip_parens(expr) {
         Expr::Fn(fn_expr) => Some((*fn_expr.function).clone()),
-        Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
-                return None;
-            };
-            Some(Function {
-                params: arrow
-                    .params
-                    .iter()
-                    .map(|p| swc_core::ecma::ast::Param {
-                        span: DUMMY_SP,
-                        decorators: vec![],
-                        pat: p.clone(),
-                    })
-                    .collect(),
-                decorators: vec![],
-                span: DUMMY_SP,
-                ctxt: Default::default(),
-                body: Some(block.clone()),
-                is_generator: arrow.is_generator,
-                is_async: arrow.is_async,
-                type_params: None,
-                return_type: None,
-            })
-        }
+        Expr::Arrow(arrow) => function_from_arrow(arrow),
         _ => None,
     }
+}
+
+/// Build an equivalent [`Function`] from a block-body arrow. Returns `None` for
+/// expression-body arrows (there is no statement block to reuse); callers that
+/// need those match the expression form separately.
+fn function_from_arrow(arrow: &swc_core::ecma::ast::ArrowExpr) -> Option<Function> {
+    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+        return None;
+    };
+    Some(Function {
+        params: arrow
+            .params
+            .iter()
+            .map(|p| swc_core::ecma::ast::Param {
+                span: DUMMY_SP,
+                decorators: vec![],
+                pat: p.clone(),
+            })
+            .collect(),
+        decorators: vec![],
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        body: Some(block.clone()),
+        is_generator: arrow.is_generator,
+        is_async: arrow.is_async,
+        type_params: None,
+        return_type: None,
+    })
+}
+
+/// Detect an `interopRequireDefault` arrow whose body is a bare conditional
+/// expression: `(e) => e && e.__esModule ? e : { default: e }`. Block-body
+/// arrows are matched by [`is_interop_require_default_fn`] after conversion to a
+/// `Function`; expression-body arrows can't be converted, so they're matched
+/// here. Shared by declaration scanning and inline-expression detection.
+fn detect_interop_default_expr_arrow(
+    arrow: &swc_core::ecma::ast::ArrowExpr,
+) -> Option<TranspilerHelperKind> {
+    if arrow.params.len() != 1 {
+        return None;
+    }
+    let Pat::Ident(param) = &arrow.params[0] else {
+        return None;
+    };
+    let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() else {
+        return None;
+    };
+    let mut ctx = MatchContext::new();
+    let param_key = binding_key(&param.id);
+    ctx.declare("obj", param_key.0, param_key.1);
+    matches_ternary_expr(expr, &ctx).then_some(TranspilerHelperKind::InteropRequireDefault)
 }
 
 /// Classify an inline helper IIFE such as
@@ -1662,22 +1690,13 @@ pub(crate) fn classify_inline_helper_call(
 /// and never dispatch to sibling Babel sub-helpers, so sub-helper dispatch
 /// chains are not accepted here (`has_sub_helpers = false`).
 pub(crate) fn classify_inline_callable(callee: &Expr) -> Option<TranspilerHelperKind> {
-    // Arrow expression bodies (e.g. `(e) => e && e.__esModule ? e : {default: e}`)
-    // are only used by interopRequireDefault; reuse the same matcher path the
-    // declaration scanner uses for arrow expression bodies.
+    // Expression-body arrows (e.g. `(e) => e && e.__esModule ? e : {default: e}`)
+    // are only used by interopRequireDefault and can't be converted to a
+    // Function; match them directly. Block-body callables fall through to the
+    // declaration body-shape matchers.
     if let Expr::Arrow(arrow) = callee {
-        if let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() {
-            if arrow.params.len() == 1 {
-                if let Pat::Ident(param) = &arrow.params[0] {
-                    let mut ctx = MatchContext::new();
-                    let param_key = binding_key(&param.id);
-                    ctx.declare("obj", param_key.0, param_key.1);
-                    if matches_ternary_expr(expr, &ctx) {
-                        return Some(TranspilerHelperKind::InteropRequireDefault);
-                    }
-                }
-            }
-            return None;
+        if let Some(kind) = detect_interop_default_expr_arrow(arrow) {
+            return Some(kind);
         }
     }
 
@@ -1689,69 +1708,32 @@ fn detect_helper_from_arrow(
     arrow: &swc_core::ecma::ast::ArrowExpr,
     has_sub_helpers: bool,
 ) -> Option<TranspilerHelperKind> {
-    // interopRequireDefault: single param, body returns conditional on __esModule
-    if arrow.params.len() == 1 {
-        let Pat::Ident(param) = &arrow.params[0] else {
-            return None;
-        };
-        let mut ctx = MatchContext::new();
-        let param_key = binding_key(&param.id);
-        ctx.declare("obj", param_key.0, param_key.1);
-
-        match &*arrow.body {
-            BlockStmtOrExpr::BlockStmt(block) => {
-                if matches_ternary_return_block(&block.stmts, &ctx) {
-                    return Some(TranspilerHelperKind::InteropRequireDefault);
-                }
-                if matches_if_return_form(&block.stmts, &ctx) {
-                    return Some(TranspilerHelperKind::InteropRequireDefault);
-                }
-            }
-            BlockStmtOrExpr::Expr(expr) => {
-                if matches_ternary_expr(expr, &ctx) {
-                    return Some(TranspilerHelperKind::InteropRequireDefault);
-                }
-            }
-        }
+    // interopRequireDefault expression-body arrow: can't be converted to a
+    // Function, so match it directly.
+    if let Some(kind) = detect_interop_default_expr_arrow(arrow) {
+        return Some(kind);
     }
 
-    // Convert arrow to equivalent Function shape and try the general matchers.
-    // Only for block-body arrows (the common case for inlined helpers).
-    if let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
-        let func = Function {
-            params: arrow
-                .params
-                .iter()
-                .map(|p| swc_core::ecma::ast::Param {
-                    span: DUMMY_SP,
-                    decorators: vec![],
-                    pat: p.clone(),
-                })
-                .collect(),
-            decorators: vec![],
-            span: DUMMY_SP,
-            ctxt: Default::default(),
-            body: Some(block.clone()),
-            is_generator: false,
-            is_async: arrow.is_async,
-            type_params: None,
-            return_type: None,
-        };
-        if is_to_consumable_array_fn(&func, has_sub_helpers) {
-            return Some(TranspilerHelperKind::ToConsumableArray);
-        }
-        if is_object_spread_fn(&func) {
-            return Some(TranspilerHelperKind::ObjectSpread);
-        }
-        if is_sliced_to_array_fn(&func, has_sub_helpers) {
-            return Some(TranspilerHelperKind::SlicedToArray);
-        }
-        if is_object_without_properties_fn(&func) {
-            return Some(TranspilerHelperKind::ObjectWithoutProperties);
-        }
-        // Note: extends has 0 params and uses `arguments`, which arrows can't do.
+    // Every other inlined-helper arrow has a block body. Convert it to an
+    // equivalent Function and reuse the declaration body-shape matchers.
+    // (extends is excluded: it has 0 params and uses `arguments`, which an arrow
+    // can't express.)
+    let func = function_from_arrow(arrow)?;
+    if is_interop_require_default_fn(&func) {
+        return Some(TranspilerHelperKind::InteropRequireDefault);
     }
-
+    if is_to_consumable_array_fn(&func, has_sub_helpers) {
+        return Some(TranspilerHelperKind::ToConsumableArray);
+    }
+    if is_object_spread_fn(&func) {
+        return Some(TranspilerHelperKind::ObjectSpread);
+    }
+    if is_sliced_to_array_fn(&func, has_sub_helpers) {
+        return Some(TranspilerHelperKind::SlicedToArray);
+    }
+    if is_object_without_properties_fn(&func) {
+        return Some(TranspilerHelperKind::ObjectWithoutProperties);
+    }
     None
 }
 
@@ -5593,6 +5575,103 @@ mod tests {
             } else {
                 panic!("expected expression callee");
             }
+        });
+    }
+
+    // -- declaration-site arrow detection (detect_helper_from_arrow) -----------
+
+    fn parse_first_arrow(code: &str) -> swc_core::ecma::ast::ArrowExpr {
+        let module = parse_module(code);
+        for item in &module.body {
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+                if let Some(Expr::Arrow(arrow)) = var.decls.first().and_then(|d| d.init.as_deref())
+                {
+                    return arrow.clone();
+                }
+            }
+        }
+        panic!("no arrow expression found in source");
+    }
+
+    #[test]
+    fn arrow_decl_interop_default_ternary_expr() {
+        GLOBALS.set(&Globals::new(), || {
+            let arrow =
+                parse_first_arrow(r#"var f = (e) => e && e.__esModule ? e : { default: e };"#);
+            assert_eq!(
+                detect_helper_from_arrow(&arrow, false),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn arrow_decl_interop_default_ternary_return_block() {
+        GLOBALS.set(&Globals::new(), || {
+            let arrow = parse_first_arrow(
+                r#"var f = (e) => { return e && e.__esModule ? e : { default: e }; };"#,
+            );
+            assert_eq!(
+                detect_helper_from_arrow(&arrow, false),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn arrow_decl_interop_default_if_return_block() {
+        GLOBALS.set(&Globals::new(), || {
+            let arrow = parse_first_arrow(
+                r#"var f = (e) => { if (e && e.__esModule) return e; return { default: e }; };"#,
+            );
+            assert_eq!(
+                detect_helper_from_arrow(&arrow, false),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn arrow_decl_object_without_properties() {
+        GLOBALS.set(&Globals::new(), || {
+            let arrow = parse_first_arrow(
+                r#"var f = (e, t) => {
+                    var n = {};
+                    for (var r in e) {
+                        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+                    }
+                    return n;
+                };"#,
+            );
+            assert_eq!(
+                detect_helper_from_arrow(&arrow, false),
+                Some(TranspilerHelperKind::ObjectWithoutProperties)
+            );
+        });
+    }
+
+    #[test]
+    fn arrow_decl_to_consumable_array_threads_has_sub_helpers() {
+        GLOBALS.set(&Globals::new(), || {
+            // Babel 7+ OR-chain dispatcher form is only a helper when the module
+            // carries sub-helper signals — pins that has_sub_helpers is threaded
+            // through the arrow path unchanged.
+            let arrow = parse_first_arrow(
+                r#"var f = (arr) => { return _arrayWithoutHoles(arr) || _iterableToArray(arr) || _nonIterableSpread(); };"#,
+            );
+            assert_eq!(
+                detect_helper_from_arrow(&arrow, true),
+                Some(TranspilerHelperKind::ToConsumableArray)
+            );
+            assert_eq!(detect_helper_from_arrow(&arrow, false), None);
+        });
+    }
+
+    #[test]
+    fn arrow_decl_non_helper_is_none() {
+        GLOBALS.set(&Globals::new(), || {
+            let arrow = parse_first_arrow(r#"var f = (e) => { var a = e + 1; return a * 2; };"#);
+            assert_eq!(detect_helper_from_arrow(&arrow, false), None);
         });
     }
 }
