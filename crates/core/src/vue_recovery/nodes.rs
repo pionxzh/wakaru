@@ -422,6 +422,9 @@ fn list_item_context(ctx: &VueRecoveryContext, params: &RecoveredForParams) -> V
         .setup_ref_bindings
         .retain(|binding| !params.shadows(binding));
     item_ctx
+        .setup_template_ref_bindings
+        .retain(|binding| !params.shadows(binding));
+    item_ctx
 }
 
 fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) {
