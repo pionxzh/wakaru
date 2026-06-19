@@ -118,6 +118,7 @@ fn collapse_component_model_attrs(
                     arg: (name != "modelValue").then_some(VueDirectiveArg::Static(name)),
                     expr: Some(expr),
                     modifiers,
+                    scope: Default::default(),
                 }));
             }
             VueAttr::On { name, .. }
@@ -226,6 +227,7 @@ fn attrs_from_key_value(
             arg: None,
             expr: Some(printed_vue_expr(value, ctx)?),
             modifiers: Vec::new(),
+            scope: Default::default(),
         })]);
     }
 

@@ -20,7 +20,7 @@ use super::syntax::{string_lit, wtf8_to_string};
 use super::{RenderSource, VueRecoveryContext, VueRenderChildListSource};
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
-    VueUnsupported,
+    VueTemplateScope, VueUnsupported,
 };
 
 pub(super) fn recover_render_root(
@@ -398,10 +398,13 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
     };
     apply_for_param_renames(&mut item_node, &for_params);
 
+    let scope = for_params.template_scope();
+    let value = for_params.value;
     Ok(VueNode::For(VueFor {
-        value: for_params.value,
+        value,
         source,
         node: Box::new(item_node),
+        scope,
     }))
 }
 
@@ -414,6 +417,15 @@ pub(super) struct RecoveredForParams {
 impl RecoveredForParams {
     fn shadows(&self, name: &Atom) -> bool {
         self.bindings.iter().any(|binding| binding == name)
+    }
+
+    pub(super) fn template_scope(&self) -> VueTemplateScope {
+        VueTemplateScope::from_locals(self.bindings.iter().map(|binding| {
+            self.renames
+                .iter()
+                .find_map(|(from, to)| (from == binding).then(|| to.clone()))
+                .unwrap_or_else(|| binding.to_string())
+        }))
     }
 }
 
@@ -756,6 +768,7 @@ fn recover_with_memo(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<
             arg: None,
             expr: Some(printed_vue_expr(deps_arg.expr.as_ref(), ctx)?),
             modifiers: Vec::new(),
+            scope: Default::default(),
         }),
     );
     Ok(node)
