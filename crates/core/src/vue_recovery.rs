@@ -3224,6 +3224,31 @@ export const _ = dc({
     }
 
     #[test]
+    fn emits_opaque_helper_object_used_by_script_handler() {
+        let input = r#"
+import { d as dc, Q as useRouter, q as ob, X as ce } from "./vendor-vue.js";
+import { sections } from "./sections.js";
+export const _ = dc({
+  __name: "ErrorPanel",
+  setup() {
+    const router = useRouter();
+    function backToHome() {
+      router.push({ name: sections.Home });
+    }
+    return () => (
+      ob(), ce("button", { onClick: backToHome }, "Back", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { Q as useRouter } from \"./vendor-vue.js\";\nimport { sections } from \"./sections.js\";\n\nconst router = useRouter();\nfunction backToHome() {\n    router.push({\n        name: sections.Home\n    });\n}\n</script>\n\n<template>\n  <button @click=\"backToHome\">Back</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn emits_candidate_ref_used_by_inlined_setup_computed() {
         let input = r#"
 import { d as dc, r as rf, c as cp, q as ob, X as ce } from "./vendor-vue.js";
