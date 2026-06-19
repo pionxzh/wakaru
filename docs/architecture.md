@@ -275,7 +275,13 @@ crates/
       rules/
         mod.rs                      — rule module declarations and public exports
         pipeline.rs                 — rule descriptor registry and pipeline execution
-        transpiler_helper_utils.rs  — shared helper detection (body shape + import path)
+        transpiler_helper_utils/    — shared helper detection (module dir)
+          mod.rs                    — helper-kind types, LocalHelperContext, shared AST predicates
+          collect.rs                — module-level helper scan/orchestration
+          matchers.rs               — Babel/SWC body-shape matchers + per-node detection dispatch
+          ts_helpers.rs             — TypeScript/tslib detection (raw TsHelperKind channel)
+          paths.rs                  — runtime import-path constants + path classification
+          lifecycle.rs              — helper-declaration reference tracking + removal
         match_context.rs            — binding-aware slots for helper body matchers
         helper_matcher.rs           — shared helper binding/lifecycle primitives
         rename_utils.rs             — shared binding rename utilities
