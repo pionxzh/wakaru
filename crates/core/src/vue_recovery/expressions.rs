@@ -63,15 +63,10 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
         .to_string())
 }
 
-pub(super) fn print_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Result<String> {
-    let mut stmt = stmt.clone();
-    stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
-    stmt.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
-    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
-
+pub(super) fn print_clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Result<String> {
     let module = Module {
         span: DUMMY_SP,
-        body: vec![ModuleItem::Stmt(stmt)],
+        body: vec![ModuleItem::Stmt(stmt.clone())],
         shebang: None,
     };
 
@@ -91,6 +86,14 @@ pub(super) fn print_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Result<String
         .map(|s| s.trim().to_string())
         .map_err(|error| anyhow!("printed Vue setup statement is not UTF-8: {error}"))?;
     Ok(clean_expr(&code, ctx))
+}
+
+pub(super) fn clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Stmt {
+    let mut stmt = stmt.clone();
+    stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    stmt.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
+    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
+    stmt
 }
 
 pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
