@@ -42,6 +42,10 @@ const OBJECT_SPREAD_PATHS: &[&str] = &[
     "@swc/helpers/_/_object_spread_props",
 ];
 
+// NOTE: @swc/helpers/_/_sliced_to_array_loose exists in the package but no
+// current SWC transform emits it — `loose: true` destructuring skips the
+// helper entirely (direct index access). Same for its sub-helper
+// _iterable_to_array_limit_loose. Verified 2026-06-19 against swc main.
 const SLICED_TO_ARRAY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/slicedToArray",
     "@babel/runtime/helpers/esm/slicedToArray",
@@ -60,7 +64,10 @@ const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
 const INHERITS_PATHS: &[&str] = &[
     "@babel/runtime/helpers/inherits",
     "@babel/runtime/helpers/esm/inherits",
+    "@babel/runtime/helpers/inheritsLoose",
+    "@babel/runtime/helpers/esm/inheritsLoose",
     "@swc/helpers/_/_inherits",
+    "@swc/helpers/_/_inherits_loose",
 ];
 
 const ASYNC_TO_GENERATOR_PATHS: &[&str] = &[
@@ -309,6 +316,21 @@ mod tests {
             assert_eq!(
                 detect_helper_from_path(path),
                 Some(TranspilerHelperKind::TaggedTemplateLiteral),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_inherits_loose_paths() {
+        for path in [
+            "@babel/runtime/helpers/inheritsLoose",
+            "@babel/runtime/helpers/esm/inheritsLoose",
+            "@swc/helpers/_/_inherits_loose",
+        ] {
+            assert_eq!(
+                detect_helper_from_path(path),
+                Some(TranspilerHelperKind::Inherits),
                 "{path}"
             );
         }

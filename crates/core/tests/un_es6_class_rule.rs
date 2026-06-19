@@ -1826,6 +1826,46 @@ class Foo extends Bar {
 }
 
 #[test]
+fn babel_runtime_inherits_loose_import() {
+    // Babel loose mode: _inheritsLoose appears AFTER the constructor, no
+    // _possibleConstructorReturn, direct _Bar.apply(this, arguments) || this.
+    let input = r#"
+import _inheritsLoose from "@babel/runtime/helpers/inheritsLoose";
+var Foo = (function(_Bar) {
+    function Foo() {
+        return _Bar.apply(this, arguments) || this;
+    }
+    _inheritsLoose(Foo, _Bar);
+    return Foo;
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn swc_external_inherits_loose_import() {
+    let input = r#"
+import { _ as _inherits_loose } from "@swc/helpers/_/_inherits_loose";
+var Foo = (function(_Bar) {
+    function Foo() {
+        return _Bar.apply(this, arguments) || this;
+    }
+    _inherits_loose(Foo, _Bar);
+    return Foo;
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn removes_imported_inheritance_sub_helpers() {
     let input = r#"
 import { _ as _call_super } from "@swc/helpers/_/_call_super";
