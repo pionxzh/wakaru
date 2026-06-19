@@ -3795,6 +3795,31 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_tuple_element_ref_event_assignment() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { s as slice } from "./helpers.js";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const ready = slice(useState(false), 1)[0];
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("iframe", {
+        onLoad: _cache[0] || (_cache[0] = (event) => ready.value = true),
+        style: { height: ready.value ? "100px" : 0 }
+      }, null, 44, ["onLoad", "style"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { s as slice } from \"./helpers.js\";\nimport { u as useState } from \"./state.js\";\n\nconst ready = slice(useState(false), 1)[0];\n</script>\n\n<template>\n  <iframe @load=\"ready = true\" :style='{ height: ready ? \"100px\" : 0 }' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_setup_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, ref, openBlock, createElementBlock } from "vue";
