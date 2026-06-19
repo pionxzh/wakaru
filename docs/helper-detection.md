@@ -106,6 +106,16 @@ Rules still own domain-specific shape recognition. For example:
   helper calls and cache factories.
 - `un_webpack_interop.rs` recognizes webpack `require.n`, `require.t`, and
   `require.o` helper forms.
+- `un_object_spread.rs` recognizes esbuild's mangled `__spreadValues` /
+  `__spreadProps` helpers. This detection is **stateful** and stays rule-local
+  on purpose: esbuild aliases `Object.defineProperty`,
+  `Object.prototype.hasOwnProperty`, etc. into local variables, and the spread
+  helpers are matched relative to those module-wide aliases rather than by a
+  self-contained body shape. The central scanner's matchers are
+  `fn(&Function) -> bool` and must not depend on bundler-specific module state,
+  so moving this in would couple the scanner to esbuild internals. This is the
+  documented "deliberate exception" the unification proposal anticipated; see
+  [learnings/helper-detection-pattern-engine.md](learnings/helper-detection-pattern-engine.md).
 
 This is deliberate. A helper matcher should encode the smallest semantic shape
 that proves the transform is safe, while shared utilities handle binding

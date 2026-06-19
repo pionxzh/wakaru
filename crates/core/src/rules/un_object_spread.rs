@@ -16,7 +16,9 @@ use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
     cross_module_member_helper_kind, cross_module_ts_member_helper,
 };
-use super::helper_matcher::{binding_key, member_prop_name, static_member_prop_name};
+use super::helper_matcher::{
+    binding_key, member_prop_name, static_member_prop_name, var_declarator_binding_key,
+};
 use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
     LocalHelperContext, TranspilerHelperKind,
@@ -224,6 +226,16 @@ fn collect_uninitialized_object_spread_stubs(
     helpers
 }
 
+// esbuild object-spread detection is intentionally kept in this rule rather than
+// in the central `transpiler_helper_utils` scanner. The Babel/SWC matchers there
+// classify a function purely by its own AST shape (`fn(&Function) -> bool`), but
+// esbuild's `__spreadValues` / `__spreadProps` can only be recognized against
+// module-wide *state*: esbuild mangles `Object.defineProperty`,
+// `Object.prototype.hasOwnProperty`, etc. into local aliases, and the spread
+// helpers are matched relative to those aliases (`EsbuildObjectBuiltinAliases`)
+// and the `__defNormalProp` helper. Threading that bundler-specific state through
+// the generic scanner would couple it to esbuild internals, so per
+// docs/helper-detection.md this stateful detection stays rule-local.
 #[derive(Default)]
 struct EsbuildObjectBuiltinAliases {
     define_property: HashSet<BindingKey>,
@@ -274,7 +286,7 @@ fn collect_mangled_esbuild_object_spread_helpers(
             continue;
         };
         for decl in &var.decls {
-            let Some(key) = var_declarator_key(decl) else {
+            let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
             };
             let Some(init) = decl.init.as_deref() else {
@@ -313,7 +325,7 @@ fn collect_esbuild_object_builtin_aliases(module: &Module) -> EsbuildObjectBuilt
             continue;
         };
         for decl in &var.decls {
-            let Some(key) = var_declarator_key(decl) else {
+            let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
             };
             let Some(init) = decl.init.as_deref() else {
@@ -388,7 +400,7 @@ fn collect_esbuild_define_normal_prop_helpers(
             continue;
         };
         for decl in &var.decls {
-            let Some(key) = var_declarator_key(decl) else {
+            let Some(key) = var_declarator_binding_key(decl) else {
                 continue;
             };
             let Some(init) = decl.init.as_deref() else {
@@ -740,13 +752,6 @@ fn callee_is_alias_call_method(callee: &Callee, aliases: &HashSet<BindingKey>) -
     };
     member_prop_name(&member.prop, "call")
         && matches!(member.obj.as_ref(), Expr::Ident(id) if aliases.contains(&binding_key(id)))
-}
-
-fn var_declarator_key(decl: &swc_core::ecma::ast::VarDeclarator) -> Option<BindingKey> {
-    let Pat::Ident(binding) = &decl.name else {
-        return None;
-    };
-    Some(binding_key(&binding.id))
 }
 
 fn pat_ident(pat: &Pat) -> Option<&Ident> {
