@@ -278,13 +278,15 @@ runner!(run_un_esm, |ctx| UnEsm::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_template_literal, |ctx| {
-    if let Some(module_facts) = ctx.module_facts {
+fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    let mut rule = if let Some(module_facts) = ctx.module_facts {
         UnTemplateLiteral::new_with_facts(ctx.rewrite_level, module_facts)
     } else {
         UnTemplateLiteral::new_with_level(ctx.rewrite_level)
-    }
-});
+    };
+    rule.run_with_helpers(module, local_helpers.as_ref());
+}
 runner!(run_un_while_loop, UnWhileLoop);
 runner!(run_un_type_constructor, |ctx| UnTypeConstructor::new(
     ctx.rewrite_level

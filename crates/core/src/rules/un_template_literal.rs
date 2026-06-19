@@ -47,6 +47,44 @@ impl<'a> UnTemplateLiteral<'a> {
             module_facts: Some(module_facts),
         }
     }
+
+    pub(crate) fn run_with_helpers(
+        &mut self,
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+    ) {
+        let cross_module_helpers = self
+            .module_facts
+            .map(|facts| {
+                collect_cross_module_helper_refs(module, facts, |kind| {
+                    kind == TranspilerHelperKind::TaggedTemplateLiteral
+                })
+            })
+            .unwrap_or_default();
+        let detected_helpers: HashSet<BindingKey> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::TaggedTemplateLiteral)
+            .into_keys()
+            .collect();
+        let factories =
+            collect_template_factories(module, &cross_module_helpers, &detected_helpers);
+        let mut replacer = TaggedTemplateReplacer {
+            factories: &factories,
+            cross_module_helpers: &cross_module_helpers,
+            detected_helpers: &detected_helpers,
+            consumed_helpers: HashSet::new(),
+            consumed_caches: HashSet::new(),
+            consumed_factories: HashSet::new(),
+        };
+        module.visit_mut_children_with(&mut replacer);
+        module.visit_mut_children_with(self);
+
+        let mut removable = replacer.consumed_helpers;
+        removable.extend(replacer.consumed_caches);
+        removable.extend(replacer.consumed_factories);
+        if !removable.is_empty() {
+            remove_unused_template_bindings(module, &removable);
+        }
+    }
 }
 
 impl Default for UnTemplateLiteral<'_> {
@@ -75,38 +113,8 @@ struct TemplateMatch {
 
 impl VisitMut for UnTemplateLiteral<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let cross_module_helpers = self
-            .module_facts
-            .map(|facts| {
-                collect_cross_module_helper_refs(module, facts, |kind| {
-                    kind == TranspilerHelperKind::TaggedTemplateLiteral
-                })
-            })
-            .unwrap_or_default();
         let local_helpers = LocalHelperContext::collect(module);
-        let detected_helpers: HashSet<BindingKey> = local_helpers
-            .helpers_of_kind(TranspilerHelperKind::TaggedTemplateLiteral)
-            .into_keys()
-            .collect();
-        let factories =
-            collect_template_factories(module, &cross_module_helpers, &detected_helpers);
-        let mut replacer = TaggedTemplateReplacer {
-            factories: &factories,
-            cross_module_helpers: &cross_module_helpers,
-            detected_helpers: &detected_helpers,
-            consumed_helpers: HashSet::new(),
-            consumed_caches: HashSet::new(),
-            consumed_factories: HashSet::new(),
-        };
-        module.visit_mut_children_with(&mut replacer);
-        module.visit_mut_children_with(self);
-
-        let mut removable = replacer.consumed_helpers;
-        removable.extend(replacer.consumed_caches);
-        removable.extend(replacer.consumed_factories);
-        if !removable.is_empty() {
-            remove_unused_template_bindings(module, &removable);
-        }
+        self.run_with_helpers(module, &local_helpers);
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
