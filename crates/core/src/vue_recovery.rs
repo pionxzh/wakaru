@@ -26,9 +26,9 @@ mod syntax;
 
 use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
-    component_name_from_init, infer_render_helpers, render_context_param,
-    render_local_declaration_with_aliases, setup_context_param, setup_emit_param,
-    setup_props_param,
+    component_name_from_init, infer_render_helpers, is_ref_object_alias, is_ref_object_expr,
+    render_context_param, render_local_declaration_with_aliases, setup_context_param,
+    setup_emit_param, setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -1327,8 +1327,13 @@ fn setup_local_declarations<'a>(
         .collect::<Vec<_>>();
     let event_refs = template_event_expr_refs(root);
     let expr_refs = template_expr_refs(root);
+    let expr_read_refs = template_expr_read_refs(root);
     let shadowed_names = template_expr_shadowed_names(root);
     let expr_refs = expr_refs
+        .into_iter()
+        .filter(|local| !shadowed_names.contains(local))
+        .collect::<HashSet<_>>();
+    let expr_read_refs = expr_read_refs
         .into_iter()
         .filter(|local| !shadowed_names.contains(local))
         .collect::<HashSet<_>>();
@@ -1337,7 +1342,7 @@ fn setup_local_declarations<'a>(
         .filter(|local| !shadowed_names.contains(local))
         .collect::<HashSet<_>>();
     for declaration in &candidates {
-        if selects_safe_template_expr_local(ctx, declaration, &expr_refs) {
+        if selects_safe_template_expr_local(ctx, declaration, &expr_refs, &expr_read_refs) {
             wanted_refs.extend(
                 declaration
                     .bindings
@@ -1395,6 +1400,7 @@ fn selects_safe_template_expr_local(
     ctx: &VueRecoveryContext,
     declaration: &VueSetupLocalBinding,
     expr_refs: &HashSet<Atom>,
+    expr_read_refs: &HashSet<Atom>,
 ) -> bool {
     if declaration
         .bindings
@@ -1426,6 +1432,13 @@ fn selects_safe_template_expr_local(
                 return false;
             }
             matches!(decl.name, Pat::Ident(_) | Pat::Array(_))
+                || (matches!(decl.name, Pat::Object(_))
+                    && decl_bindings
+                        .iter()
+                        .any(|binding| expr_read_refs.contains(binding))
+                    && decl.init.as_deref().is_some_and(|init| {
+                        is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx)
+                    }))
         }),
         _ => false,
     }
@@ -1624,6 +1637,12 @@ fn template_expr_refs(root: &VueNode) -> HashSet<Atom> {
     refs
 }
 
+fn template_expr_read_refs(root: &VueNode) -> HashSet<Atom> {
+    let mut refs = HashSet::new();
+    collect_template_expr_read_refs(root, &mut refs);
+    refs
+}
+
 fn template_event_expr_refs(root: &VueNode) -> HashSet<Atom> {
     let mut refs = HashSet::new();
     collect_template_event_expr_refs(root, &mut refs);
@@ -1665,6 +1684,40 @@ fn collect_template_expr_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
             collect_js_ident_refs(expr.as_str(), refs);
+        }
+        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
+    }
+}
+
+fn collect_template_expr_read_refs(node: &VueNode, refs: &mut HashSet<Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &element.attrs {
+                collect_attr_expr_read_refs(attr, refs);
+            }
+            for child in &element.children {
+                collect_template_expr_read_refs(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_template_expr_read_refs(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                if let Some(condition) = &branch.condition {
+                    collect_js_read_refs(condition.as_str(), refs);
+                }
+                collect_template_expr_read_refs(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => {
+            collect_js_read_refs(for_node.source.as_str(), refs);
+            collect_template_expr_read_refs(&for_node.node, refs);
+        }
+        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
+            collect_js_read_refs(expr.as_str(), refs);
         }
         VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
@@ -1790,6 +1843,23 @@ fn collect_attr_expr_refs(attr: &VueAttr, refs: &mut HashSet<Atom>) {
     }
 }
 
+fn collect_attr_expr_read_refs(attr: &VueAttr, refs: &mut HashSet<Atom>) {
+    match attr {
+        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
+            collect_js_read_refs(expr.as_str(), refs);
+        }
+        VueAttr::Directive(directive) => {
+            if let Some(expr) = &directive.expr {
+                collect_js_read_refs(expr.as_str(), refs);
+            }
+            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                collect_js_read_refs(expr.as_str(), refs);
+            }
+        }
+        VueAttr::Static { .. } => {}
+    }
+}
+
 fn collect_attr_expr_shadowed_names(attr: &VueAttr, names: &mut HashSet<Atom>) {
     match attr {
         VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
@@ -1823,6 +1893,138 @@ fn collect_js_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
         }
         index += 1;
     }
+}
+
+fn collect_js_read_refs(source: &str, refs: &mut HashSet<Atom>) {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '"' | '\'' | '`' => {
+                index = if chars[index] == '`' {
+                    collect_template_literal_read_refs(&chars, index, refs)
+                } else {
+                    skip_quoted_js_string(&chars, index)
+                };
+                continue;
+            }
+            ch if is_ident_start(ch) => {
+                let start = index;
+                index += 1;
+                while index < chars.len() && is_ident_continue(chars[index]) {
+                    index += 1;
+                }
+                if js_ident_token_is_read(&chars, start, index) {
+                    let ident = chars[start..index].iter().collect::<String>();
+                    refs.insert(Atom::from(ident));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn collect_template_literal_read_refs(
+    chars: &[char],
+    start: usize,
+    refs: &mut HashSet<Atom>,
+) -> usize {
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index += 2;
+            continue;
+        }
+        if chars[index] == '`' {
+            return index + 1;
+        }
+        if chars[index] == '$' && chars.get(index + 1) == Some(&'{') {
+            let expr_start = index + 2;
+            if let Some(expr_end) = template_literal_expr_end(chars, expr_start) {
+                let expr = chars[expr_start..expr_end].iter().collect::<String>();
+                collect_js_read_refs(&expr, refs);
+                index = expr_end + 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    index
+}
+
+fn template_literal_expr_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut index = start;
+    let mut depth = 1usize;
+    while index < chars.len() {
+        match chars[index] {
+            '"' | '\'' | '`' => {
+                index = skip_quoted_js_string(chars, index);
+                continue;
+            }
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn skip_quoted_js_string(chars: &[char], start: usize) -> usize {
+    let quote = chars[start];
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index += 2;
+            continue;
+        }
+        if chars[index] == quote {
+            return index + 1;
+        }
+        index += 1;
+    }
+    index
+}
+
+fn js_ident_token_is_read(chars: &[char], start: usize, end: usize) -> bool {
+    let ident = chars[start..end].iter().collect::<String>();
+    if matches!(
+        ident.as_str(),
+        "true"
+            | "false"
+            | "null"
+            | "undefined"
+            | "if"
+            | "else"
+            | "return"
+            | "const"
+            | "let"
+            | "var"
+            | "new"
+    ) {
+        return false;
+    }
+
+    let prev = chars[..start]
+        .iter()
+        .rposition(|ch| !ch.is_whitespace())
+        .map(|index| chars[index]);
+    if matches!(prev, Some('.')) {
+        return false;
+    }
+
+    let next = chars[end..]
+        .iter()
+        .position(|ch| !ch.is_whitespace())
+        .map(|offset| chars[end + offset]);
+    !matches!(next, Some(':'))
 }
 
 fn collect_js_arrow_param_names(source: &str, names: &mut HashSet<Atom>) {
@@ -3807,7 +4009,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p :title=\"currentUser.name\">{{ isLoaded }}</p>\n</template>\n"
+            "<script setup>\nimport { storeToRefs } from \"pinia\";\n\nconst store = useStore();\nconst { currentUser, isLoaded } = storeToRefs(store);\n</script>\n\n<template>\n  <p :title=\"currentUser.name\">{{ isLoaded }}</p>\n</template>\n"
         );
     }
 
@@ -3829,7 +4031,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
+            "<script setup>\nimport { K as sr } from \"./vendor-vue-C85wAS_L.js\";\n\nconst { currentUser } = sr(useStore());\n</script>\n\n<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
         );
     }
 
@@ -3852,7 +4054,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
+            "<script setup>\nimport { K as sr } from \"./vendor-vue-C85wAS_L.js\";\n\nconst refs = sr(useStore());\nconst { currentUser } = refs;\n</script>\n\n<template>\n  <p :title=\"currentUser.name\" />\n</template>\n"
         );
     }
 
@@ -4645,6 +4847,56 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <p :title=\"status.label\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_ref_object_destructure_used_only_by_template_bindings() {
+        let input = r#"
+import { d as dc, K as sr, c as cp, q as ob, X as ce, Z as cc } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "BannerGate",
+  setup() {
+    const { isBannerEnabled, isFallbackEnabled } = sr(useSettings());
+    const showFallback = cp(() => isFallbackEnabled.value);
+    return () => (
+      ob(), ce("section", null, [
+        isBannerEnabled.value
+          ? (ob(), ce("p", { key: 0 }, "Banner"))
+          : cc("", true),
+        showFallback.value
+          ? (ob(), ce("p", { key: 1 }, "Fallback"))
+          : cc("", true)
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { K as sr } from \"./vendor-vue-C85wAS_L.js\";\n\nconst { isBannerEnabled, isFallbackEnabled } = sr(useSettings());\n</script>\n\n<template>\n  <section>\n    <p v-if=\"isBannerEnabled\">Banner</p>\n    <p v-if=\"isFallbackEnabled\">Fallback</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_select_ref_object_destructure_used_only_as_template_object_key() {
+        let input = r#"
+import { d as dc, K as sr, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "StaticSize",
+  setup() {
+    const { width, height } = sr(useWindowSize());
+    return () => (
+      ob(), ce("div", { style: { height: "100%" } }, null, 4)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div :style='{ height: \"100%\" }' />\n</template>\n"
         );
     }
 
