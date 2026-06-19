@@ -26,8 +26,9 @@ mod syntax;
 
 use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
-    component_name_from_init, infer_render_helpers, render_context_param, setup_context_param,
-    setup_emit_param, setup_props_param,
+    component_name_from_init, infer_render_helpers, render_context_param,
+    render_local_declaration_with_aliases, setup_context_param, setup_emit_param,
+    setup_props_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -92,6 +93,8 @@ struct VueSetupLocalBinding {
     refs: HashSet<Atom>,
     source: String,
     import_refs: HashSet<Atom>,
+    stmt: Stmt,
+    module_scope: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -944,8 +947,8 @@ fn setup_script(
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
-    let local_declarations = setup_local_declarations(ctx, root);
-    let emit_declaration = setup_emit_declaration(ctx, root, &local_declarations)?;
+    let selected_local_declarations = setup_local_declarations(ctx, root);
+    let emit_declaration = setup_emit_declaration(ctx, root, &selected_local_declarations)?;
     let prop_names = ctx
         .setup_component_options
         .as_ref()
@@ -970,6 +973,14 @@ fn setup_script(
         })
         .transpose()?
         .flatten();
+    let local_declarations = render_setup_local_declarations(
+        ctx,
+        selected_local_declarations,
+        &prop_bindings,
+        props_declaration.as_ref(),
+        emit_declaration.as_ref(),
+        &ref_declarations,
+    )?;
     let declared_bindings = script_setup_declared_bindings(
         ctx,
         &prop_bindings,
@@ -1069,6 +1080,127 @@ fn setup_script(
     }
     out.push_str(&body);
     Ok(Some(out))
+}
+
+fn render_setup_local_declarations(
+    ctx: &VueRecoveryContext,
+    local_declarations: Vec<&VueSetupLocalBinding>,
+    prop_bindings: &[(String, String)],
+    props_declaration: Option<&(String, String)>,
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+) -> Result<Vec<VueSetupLocalBinding>> {
+    let aliases = script_local_binding_aliases(
+        ctx,
+        &local_declarations,
+        prop_bindings,
+        props_declaration,
+        emit_declaration,
+        ref_declarations,
+    );
+    let mut rendered = Vec::new();
+    let mut rendered_module_bindings = HashSet::new();
+    for declaration in local_declarations {
+        if declaration.module_scope {
+            if declaration
+                .bindings
+                .iter()
+                .any(|binding| rendered_module_bindings.contains(binding))
+            {
+                continue;
+            }
+            rendered_module_bindings.extend(declaration.bindings.iter().cloned());
+        }
+        let declaration = render_local_declaration_with_aliases(ctx, declaration, &aliases)?;
+        if !declaration.source.is_empty() {
+            rendered.push(declaration);
+        }
+    }
+    Ok(rendered)
+}
+
+fn script_local_binding_aliases(
+    ctx: &VueRecoveryContext,
+    local_declarations: &[&VueSetupLocalBinding],
+    prop_bindings: &[(String, String)],
+    props_declaration: Option<&(String, String)>,
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+) -> HashMap<Atom, Atom> {
+    let mut used = HashSet::new();
+    used.extend(ctx.script_imports.keys().cloned());
+    used.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|(binding, _)| binding.clone()),
+    );
+    used.extend(
+        ctx.setup_ref_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
+    used.extend(ctx.setup_value_bindings.keys().cloned());
+    used.extend(ctx.setup_alias_bindings.keys().cloned());
+    used.extend(ctx.setup_emit_aliases.iter().cloned());
+    used.extend(
+        prop_bindings
+            .iter()
+            .map(|(_, binding)| Atom::from(binding.clone())),
+    );
+    if let Some((binding, _)) = props_declaration {
+        used.insert(Atom::from(binding.clone()));
+    }
+    if let Some((binding, _)) = emit_declaration {
+        used.insert(Atom::from(binding.clone()));
+    }
+    used.extend(
+        ref_declarations
+            .iter()
+            .map(|(binding, _, _)| Atom::from(binding.clone())),
+    );
+    used.extend(
+        local_declarations
+            .iter()
+            .filter(|declaration| !declaration.module_scope)
+            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+    );
+
+    let mut aliases = HashMap::new();
+    let mut seen_module_bindings = HashSet::new();
+    for declaration in local_declarations {
+        if !declaration.module_scope {
+            continue;
+        }
+        for binding in &declaration.bindings {
+            if aliases.contains_key(binding) {
+                continue;
+            }
+            if !seen_module_bindings.insert(binding.clone()) {
+                continue;
+            }
+            if !is_valid_identifier_name(binding.as_ref()) {
+                continue;
+            }
+            if used.contains(binding) {
+                let alias = unique_script_local_binding(binding, &mut used);
+                aliases.insert(binding.clone(), alias);
+            } else {
+                used.insert(binding.clone());
+            }
+        }
+    }
+    aliases
+}
+
+fn unique_script_local_binding(binding: &Atom, used: &mut HashSet<Atom>) -> Atom {
+    let mut index = 1;
+    loop {
+        let candidate = Atom::from(format!("{}_{index}", binding.as_ref()));
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 fn component_props_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
@@ -1696,7 +1828,7 @@ fn referenced_script_imports(
     ctx: &VueRecoveryContext,
     root: &VueNode,
     declared_bindings: &HashSet<Atom>,
-    local_declarations: &[&VueSetupLocalBinding],
+    local_declarations: &[VueSetupLocalBinding],
 ) -> Vec<String> {
     let mut refs = ctx.setup_script_import_refs.clone();
     refs.extend(setup_script_binding_refs(ctx));
@@ -1730,7 +1862,7 @@ fn script_setup_declared_bindings(
     props_declaration: Option<&(String, String)>,
     emit_declaration: Option<&(String, String)>,
     ref_declarations: &[(String, String, String)],
-    local_declarations: &[&VueSetupLocalBinding],
+    local_declarations: &[VueSetupLocalBinding],
 ) -> HashSet<Atom> {
     let mut declared = HashSet::new();
     if let Some((binding, _)) = props_declaration {
@@ -3288,6 +3420,100 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { computed } from \"vue\";\nimport { n as normalize } from \"./format.js\";\nimport { r as r_1 } from \"./vendor-vue.js\";\n\nconst decorate = (item)=>normalize(item.name);\nfunction useItems(kind) {\n    return {\n        items: r_1([\n            decorate(kind.value)\n        ]),\n        loaded: r_1(true)\n    };\n}\nconst kind = {\n    value: \"soccer\"\n};\nconst r = [\n    \",\"\n];\nconst { items, loaded } = useItems(kind);\n\nconst label = computed(()=>{\n    const names = [];\n    items.value.forEach((item)=>names.push(item.name));\n    return names.join(r[0]);\n});\n</script>\n\n<template>\n  <p :title=\"label\">\n    <template v-if=\"loaded.value\">\n      Ready\n    </template>\n    <template v-else>\n      Wait\n    </template>\n  </p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn aliases_module_local_helper_when_setup_local_collides() {
+        let input = r#"
+import { d as dc, r as rf, c as cp, q as ob, X as ce } from "./vendor-vue.js";
+import { n as normalize } from "./format.js";
+const r = (item) => normalize(item.name);
+function useItems(kind) {
+  return {
+    items: rf([r(kind.value)]),
+    loaded: rf(true)
+  };
+}
+export const _ = dc({
+  __name: "ItemsPanel",
+  setup() {
+    const kind = { value: "soccer" };
+    const r = [","];
+    const { items, loaded } = useItems(kind);
+    const label = cp(() => {
+      const names = [];
+      items.value.forEach((item) => names.push(r[0] + item));
+      return names.join("");
+    });
+    return () => (
+      ob(), ce("p", { title: label.value }, loaded.value ? "Ready" : "Wait", 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { n as normalize } from \"./format.js\";\nimport { r as rf } from \"./vendor-vue.js\";\n\nconst r_1 = (item)=>normalize(item.name);\nfunction useItems(kind) {\n    return {\n        items: rf([\n            r_1(kind.value)\n        ]),\n        loaded: rf(true)\n    };\n}\nconst kind = {\n    value: \"soccer\"\n};\nconst r = [\n    \",\"\n];\nconst { items, loaded } = useItems(kind);\n\nconst label = computed(()=>{\n    const names = [];\n    items.value.forEach((item)=>names.push(r[0] + item));\n    return names.join(\"\");\n});\n</script>\n\n<template>\n  <p :title=\"label\">\n    <template v-if=\"loaded.value\">\n      Ready\n    </template>\n    <template v-else>\n      Wait\n    </template>\n  </p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn does_not_rewrite_setup_local_refs_to_module_aliases() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue.js";
+const source = () => "module";
+function useItems() {
+  return source();
+}
+export const _ = dc({
+  __name: "ItemsPanel",
+  setup() {
+    const source = { value: "setup" };
+    function onClick() {
+      return source.value + useItems();
+    }
+    return () => (
+      ob(), ce("button", { title: source.value, onClick: onClick }, "Ready", 8, ["title", "onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst source_1 = ()=>\"module\";\nfunction useItems() {\n    return source_1();\n}\nconst source = {\n    value: \"setup\"\n};\nfunction onClick() {\n    return source.value + useItems();\n}\n</script>\n\n<template>\n  <button :title=\"source.value\" @click=\"onClick\">Ready</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn omits_later_duplicate_module_local_candidates() {
+        let input = r#"
+import { d as dc, q as ob, X as ce } from "./vendor-vue.js";
+function r(step) {
+  return step();
+}
+var r = document.createElement("style");
+function useItems() {
+  return r(() => "ready");
+}
+export const _ = dc({
+  __name: "ItemsPanel",
+  setup() {
+    function onClick() {
+      return useItems();
+    }
+    return () => (
+      ob(), ce("button", { onClick: onClick }, "Ready", 8, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nfunction r(step) {\n    return step();\n}\nfunction useItems() {\n    return r(()=>\"ready\");\n}\nfunction onClick() {\n    return useItems();\n}\n</script>\n\n<template>\n  <button @click=\"onClick\">Ready</button>\n</template>\n"
         );
     }
 
