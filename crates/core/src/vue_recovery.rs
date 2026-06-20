@@ -5708,6 +5708,23 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_legacy_function_cached_event_handler() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", {
+    onClick: _cache[0] || (_cache[0] = function() { return _ctx.increment && _ctx.increment(...arguments); })
+  }, "Go", 40, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click=\"increment\">Go</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_cached_event_direct_call() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
