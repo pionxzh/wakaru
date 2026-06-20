@@ -1,7 +1,7 @@
 # Rule Dependency Inventory
 
 This document maps the dependency relationships between all rules in the decompile pipeline.
-It serves as the foundation for Step 1 and Step 2 of the [fact-system proposal](proposal-of-fact-system.md).
+It serves as the foundation for Step 1 and Step 2 of the [fact system](fact-system.md).
 
 The executable subset of these relationships lives in
 `crates/core/src/rules/pipeline.rs` as `RuleDescriptor::requires`. That metadata
