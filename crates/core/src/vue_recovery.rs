@@ -5477,6 +5477,31 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_tuple_ref_inside_inlined_computed_class_binding() {
+        let input = r#"
+import { defineComponent, computed, normalizeClass, openBlock, createElementBlock } from "vue";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const [open, setOpen] = useState(false);
+    const left = false;
+    const hidden = computed(() => open.value && left === false);
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("div", {
+        class: normalizeClass({ hidden: !hidden.value })
+      }, null, 2)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [open, setOpen] = useState(false);\nconst left = false;\n</script>\n\n<template>\n  <div :class=\"{ hidden: !(open &amp;&amp; left === false) }\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_tuple_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";
