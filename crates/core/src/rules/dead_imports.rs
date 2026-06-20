@@ -18,10 +18,10 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{BytePos, SyntaxContext, DUMMY_SP};
-use swc_core::ecma::ast::{
-    Ident, ImportDecl, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Str,
-};
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::ast::{ImportDecl, ImportSpecifier, Module, ModuleDecl, ModuleItem, Str};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use crate::analysis::binding_uses::BindingUseIndex;
 
 pub struct DeadImports {
     pre_dead_spans: Option<HashSet<(BytePos, BytePos)>>,
@@ -58,11 +58,7 @@ impl VisitMut for DeadImports {
 }
 
 fn collect_references(module: &Module) -> HashSet<(Atom, SyntaxContext)> {
-    let mut collector = ReferenceCollector {
-        refs: HashSet::new(),
-    };
-    module.visit_with(&mut collector);
-    collector.refs
+    BindingUseIndex::collect(module).referenced_bindings()
 }
 
 pub(crate) fn compute_pre_dead_import_spans(module: &Module) -> HashSet<(BytePos, BytePos)> {
@@ -144,35 +140,4 @@ fn dedup_side_effect_imports(module: &mut Module) {
 
 fn import_source_key(src: &Str) -> String {
     src.value.as_str().unwrap_or("").to_string()
-}
-
-/// Collects every (sym, ctxt) pair that appears as a reference in the module.
-/// Skips import declarations (bindings aren't references) and property-name
-/// positions in member access, object literals, and JSX attributes.
-struct ReferenceCollector {
-    refs: HashSet<(Atom, SyntaxContext)>,
-}
-
-impl Visit for ReferenceCollector {
-    fn visit_import_decl(&mut self, _: &ImportDecl) {
-        // Import specifier locals are bindings, not references.
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        self.refs.insert((ident.sym.clone(), ident.ctxt));
-    }
-
-    fn visit_prop_name(&mut self, prop: &PropName) {
-        // Only a computed key is a real reference; identifier/string keys are
-        // labels, not variable uses.
-        if let PropName::Computed(c) = prop {
-            c.visit_with(self);
-        }
-    }
-
-    fn visit_member_prop(&mut self, prop: &MemberProp) {
-        if let MemberProp::Computed(c) = prop {
-            c.visit_with(self);
-        }
-    }
 }

@@ -6,6 +6,7 @@
     clippy::vec_box
 )]
 
+pub(crate) mod analysis;
 pub mod driver;
 pub mod facts;
 pub(crate) mod js_names;
