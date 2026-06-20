@@ -1406,6 +1406,7 @@ fn setup_local_declarations<'a>(
                 declaration
                     .bindings
                     .iter()
+                    .chain(declaration.emitted_bindings.iter())
                     .filter(|binding| expr_refs.contains(*binding))
                     .cloned(),
             );
@@ -1432,9 +1433,13 @@ fn setup_local_declarations<'a>(
             } else {
                 &setup_wanted_refs
             };
-            let binds_wanted_ref = declaration.bindings.iter().any(|binding| {
-                is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
-            });
+            let binds_wanted_ref = declaration
+                .bindings
+                .iter()
+                .chain(declaration.emitted_bindings.iter())
+                .any(|binding| {
+                    is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
+                });
             if !binds_wanted_ref {
                 continue;
             }
@@ -1467,7 +1472,13 @@ fn setup_scope_bindings(
     let mut bindings = candidates
         .iter()
         .filter(|declaration| !declaration.module_scope)
-        .flat_map(|declaration| declaration.bindings.iter().cloned())
+        .flat_map(|declaration| {
+            declaration
+                .bindings
+                .iter()
+                .chain(declaration.emitted_bindings.iter())
+                .cloned()
+        })
         .collect::<HashSet<_>>();
     if let Some(binding) = &ctx.setup_props_context {
         bindings.insert(binding.clone());
@@ -1490,11 +1501,7 @@ fn selects_safe_template_expr_local(
     expr_refs: &HashSet<Atom>,
     expr_read_refs: &HashSet<Atom>,
 ) -> bool {
-    if declaration
-        .bindings
-        .iter()
-        .all(|binding| !expr_refs.contains(binding))
-    {
+    if !any_binding_ref(declaration, expr_refs) {
         return false;
     }
     if declaration.module_scope {
@@ -1505,9 +1512,13 @@ fn selects_safe_template_expr_local(
         Stmt::Decl(Decl::Var(var)) => var.decls.iter().any(|decl| {
             let mut decl_bindings = HashSet::new();
             collect_local_pat_bindings(&decl.name, &mut decl_bindings);
-            if decl_bindings
+            if !decl_bindings
                 .iter()
-                .all(|binding| !expr_refs.contains(binding))
+                .any(|binding| expr_refs.contains(binding))
+                && !declaration
+                    .emitted_bindings
+                    .iter()
+                    .any(|binding| expr_refs.contains(binding))
             {
                 return false;
             }
@@ -1521,15 +1532,42 @@ fn selects_safe_template_expr_local(
             }
             matches!(decl.name, Pat::Ident(_) | Pat::Array(_))
                 || (matches!(decl.name, Pat::Object(_))
-                    && decl_bindings
+                    && (decl_bindings
                         .iter()
                         .any(|binding| expr_read_refs.contains(binding))
+                        || declaration
+                            .emitted_bindings
+                            .iter()
+                            .any(|binding| expr_read_refs.contains(binding)))
                     && decl.init.as_deref().is_some_and(|init| {
-                        is_ref_object_expr(init, ctx) || is_ref_object_alias(init, ctx)
+                        is_ref_object_expr(init, ctx)
+                            || is_ref_object_alias(init, ctx)
+                            || declaration_refs_setup_props(ctx, declaration)
                     }))
         }),
         _ => false,
     }
+}
+
+fn any_binding_ref(declaration: &VueSetupLocalBinding, refs: &HashSet<Atom>) -> bool {
+    declaration
+        .bindings
+        .iter()
+        .chain(declaration.emitted_bindings.iter())
+        .any(|binding| refs.contains(binding))
+}
+
+fn declaration_refs_setup_props(
+    ctx: &VueRecoveryContext,
+    declaration: &VueSetupLocalBinding,
+) -> bool {
+    ctx.setup_props_context
+        .as_ref()
+        .is_some_and(|binding| declaration.refs.contains(binding))
+        || ctx
+            .setup_props_aliases
+            .iter()
+            .any(|binding| declaration.refs.contains(binding))
 }
 
 fn is_opaque_vue_helper_candidate_call(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
@@ -5566,17 +5604,26 @@ export default {
     }
 
     #[test]
-    fn labels_render_local_slot_partition_vnode_children() {
+    fn recovers_render_local_slot_partition_vnode_children_as_default_slot() {
         let input = r#"
 import { h } from "./vendor-vue.js";
+function getConfig(props) {
+  return props;
+}
 export default {
+  props: {
+    tag: String,
+    wrapperTag: String,
+    config: Object,
+  },
   setup(props, context) {
     const slots = context.slots;
+    const { params: p } = getConfig(props);
     return () => {
       const slotState = partitionSlots(slots);
       const { slides, slots: namedSlots } = slotState;
       return h(props.tag, null, [
-        h(props.wrapperTag, null, [
+        h(props.wrapperTag, { class: p.wrapperClass }, [
           namedSlots["wrapper-start"],
           renderSlides(slides),
           namedSlots["wrapper-end"]
@@ -5589,7 +5636,7 @@ export default {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <component :is=\"tag\">\n    <component :is=\"wrapperTag\">\n      <slot name=\"wrapper-start\" />\n      <!-- wakaru: vnode-children: renderSlides(slides); source: render-local slot-partition children \"slides\" -->\n      <slot name=\"wrapper-end\" />\n    </component>\n  </component>\n</template>\n"
+            "<script setup>\nconst props = defineProps({\n    tag: String,\n    wrapperTag: String,\n    config: Object\n});\nconst { config, tag, wrapperTag } = props;\n\nfunction getConfig(props) {\n    return props;\n}\nconst { params: p } = getConfig(props);\n</script>\n\n<template>\n  <component :is=\"tag\">\n    <component :is=\"wrapperTag\" :class=\"p.wrapperClass\">\n      <slot name=\"wrapper-start\" />\n      <slot />\n      <slot name=\"wrapper-end\" />\n    </component>\n  </component>\n</template>\n"
         );
     }
 
