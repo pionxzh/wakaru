@@ -4,11 +4,11 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr,
-    Callee, ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier,
-    KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
-    ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    Stmt, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt,
+    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -318,6 +318,7 @@ pub(super) fn render_local_declaration_with_aliases(
     ctx: &VueRecoveryContext,
     declaration: &VueSetupLocalBinding,
     aliases: &HashMap<Atom, Atom>,
+    props_binding: Option<&str>,
 ) -> Result<VueSetupLocalBinding> {
     let mut stmt = declaration.stmt.clone();
     if declaration.module_scope && !aliases.is_empty() {
@@ -325,7 +326,12 @@ pub(super) fn render_local_declaration_with_aliases(
         stmt.visit_mut_with(&mut ImportAliasRenamer::new(aliases));
     }
 
-    let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    let mut cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    if !declaration.module_scope {
+        if let Some(props_binding) = props_binding {
+            rewrite_setup_props_refs(&mut cleaned_stmt, ctx, props_binding);
+        }
+    }
     let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
     let bindings = if declaration.module_scope {
         declaration
@@ -352,6 +358,153 @@ pub(super) fn render_local_declaration_with_aliases(
         stmt: cleaned_stmt,
         module_scope: declaration.module_scope,
     })
+}
+
+fn rewrite_setup_props_refs(stmt: &mut Stmt, ctx: &VueRecoveryContext, props_binding: &str) {
+    let mut rewriter = SetupPropsRefRewriter::new(ctx, props_binding);
+    if !rewriter.is_empty() {
+        stmt.visit_mut_with(&mut rewriter);
+    }
+}
+
+struct SetupPropsRefRewriter {
+    sources: Vec<Atom>,
+    replacement: Atom,
+    shadow_depths: Vec<usize>,
+}
+
+impl SetupPropsRefRewriter {
+    fn new(ctx: &VueRecoveryContext, props_binding: &str) -> Self {
+        let mut sources = Vec::new();
+        if let Some(binding) = &ctx.setup_props_context {
+            sources.push(binding.clone());
+        }
+        sources.extend(ctx.setup_props_aliases.iter().cloned());
+        sources.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+        sources.dedup();
+        let shadow_depths = vec![0; sources.len()];
+        Self {
+            sources,
+            replacement: Atom::from(props_binding.to_string()),
+            shadow_depths,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sources.is_empty()
+    }
+
+    fn active_source(&self, name: &Atom) -> bool {
+        self.sources
+            .iter()
+            .zip(self.shadow_depths.iter())
+            .any(|(source, shadow_depth)| source == name && *shadow_depth == 0)
+    }
+
+    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
+        self.sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| {
+                params
+                    .iter()
+                    .any(|pat| pat_binds_atom(pat, source))
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn decl_shadowing_indices(&self, decl: &Decl) -> Vec<usize> {
+        self.sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| decl_binds_atom(decl, source).then_some(index))
+            .collect()
+    }
+
+    fn block_shadowing_indices(&self, block: &BlockStmt) -> Vec<usize> {
+        let mut indices = block
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::Decl(decl) => Some(decl),
+                _ => None,
+            })
+            .flat_map(|decl| self.decl_shadowing_indices(decl))
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+    }
+
+    fn enter_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] += 1;
+        }
+    }
+
+    fn exit_shadowed(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.shadow_depths[*index] -= 1;
+        }
+    }
+}
+
+impl VisitMut for SetupPropsRefRewriter {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let replacement = match expr {
+            Expr::Ident(ident) if self.active_source(&ident.sym) => Some(Ident::new(
+                self.replacement.clone(),
+                ident.span,
+                Default::default(),
+            )),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            *expr = Expr::Ident(replacement);
+        }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let params = arrow.params.iter().collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        arrow.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| &param.pat)
+            .collect::<Vec<_>>();
+        let shadowed = self.shadowing_indices(&params);
+        self.enter_shadowed(&shadowed);
+        function.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        let shadowed = self.block_shadowing_indices(block);
+        self.enter_shadowed(&shadowed);
+        block.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+}
+
+fn pat_binds_atom(pat: &Pat, binding: &Atom) -> bool {
+    let mut bindings = HashSet::new();
+    collect_pat_bindings(pat, &mut bindings);
+    bindings.contains(binding)
+}
+
+fn decl_binds_atom(decl: &Decl, binding: &Atom) -> bool {
+    let mut bindings = HashSet::new();
+    collect_decl_bindings(decl, &mut bindings);
+    bindings.contains(binding)
 }
 
 fn rename_top_level_decl_bindings(stmt: &mut Stmt, aliases: &HashMap<Atom, Atom>) {
