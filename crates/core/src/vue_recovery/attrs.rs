@@ -4,7 +4,7 @@ use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Function, Lit, ObjectLit, Pat, Prop,
-    PropOrSpread,
+    PropOrSpread, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -365,16 +365,18 @@ fn cached_event_handler_name(value: &Expr, ctx: &VueRecoveryContext) -> Result<O
             cached_event_handler_name(bin.right.as_ref(), ctx)
         }
         Expr::Assign(assign) if assign.op == AssignOp::Assign => {
-            arrow_handler_name(assign.right.as_ref(), ctx)
+            cached_handler_name(assign.right.as_ref(), ctx)
         }
         Expr::Arrow(arrow) => arrow_handler_expr(arrow, ctx),
+        Expr::Fn(function) => function_handler_expr(&function.function, ctx),
         _ => Ok(None),
     }
 }
 
-fn arrow_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn cached_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     match body {
         Expr::Arrow(arrow) => arrow_handler_expr(arrow, ctx),
+        Expr::Fn(function) => function_handler_expr(&function.function, ctx),
         _ => Ok(None),
     }
 }
@@ -384,6 +386,19 @@ fn arrow_handler_expr(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Opt
         return Ok(None);
     };
     handler_expr_name(expr.as_ref(), ctx, arrow_event_param(arrow))
+}
+
+fn function_handler_expr(function: &Function, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    let Some(body) = function.body.as_ref() else {
+        return Ok(None);
+    };
+    let [Stmt::Return(return_stmt)] = body.stmts.as_slice() else {
+        return Ok(None);
+    };
+    let Some(expr) = return_stmt.arg.as_deref() else {
+        return Ok(None);
+    };
+    handler_expr_name(expr, ctx, function_event_param(function))
 }
 
 fn handler_expr_name(
@@ -419,6 +434,13 @@ fn clean_event_handler_expr(
 
 fn arrow_event_param(arrow: &ArrowExpr) -> Option<&str> {
     let Pat::Ident(binding) = arrow.params.first()? else {
+        return None;
+    };
+    Some(binding.id.sym.as_ref())
+}
+
+fn function_event_param(function: &Function) -> Option<&str> {
+    let Pat::Ident(binding) = &function.params.first()?.pat else {
         return None;
     };
     Some(binding.id.sym.as_ref())
