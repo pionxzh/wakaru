@@ -857,14 +857,42 @@ async function collect_enabled(items) {
       continue;
     }
     try {
-      _b = (_a = output).push;
-      _b.apply(_a, [await fetch_item(item.id)]);
+      output.push(await fetch_item(item.id));
     } catch (error) {
-      _d = (_c = output).push;
-      _d.apply(_c, [await recover_item(item, error)]);
+      output.push(await recover_item(item, error));
     }
   }
   return output;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_memoized_method_apply_keeps_side_effecting_direct_receiver() {
+    let input = r#"
+function collect() {
+  return __awaiter(this, void 0, void 0, function () {
+    var _a;
+    return __generator(this, function (_b) {
+      switch (_b.label) {
+        case 0:
+          _a = get_output().push;
+          return [4 /*yield*/, fetch_item()];
+        case 1:
+          _a.apply(get_output(), [_b.sent()]);
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function collect() {
+  var _a;
+  _a = get_output().push;
+  _a.apply(get_output(), [await fetch_item()]);
 }
 "#;
     let output = apply(input);
@@ -1016,8 +1044,7 @@ async function process_items(items) {
   results = [];
   index = 0;
   for (; index < items.length; index++) {
-    _b = (_a = results).push;
-    _b.apply(_a, [await transform_item(items[index])]);
+    results.push(await transform_item(items[index]));
   }
   return results;
 }

@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, Expr, ExprStmt, Function,
-    Ident, IfStmt, MemberExpr, Module, Pat, Prop, PropName, ReturnStmt, SeqExpr,
-    SimpleAssignTarget, Stmt, SwitchCase, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CallExpr, Callee, Expr,
+    ExprOrSpread, ExprStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop, PropName,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -564,11 +564,12 @@ fn decode_state_machine(
         }
     }
 
-    let recovered = StateMachineProgram::from_labeled_stmts(output, trys)
+    let mut recovered = StateMachineProgram::from_labeled_stmts(output, trys)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::SkipNestedFunctions)
         .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
+    fold_memoized_member_apply_calls(&mut recovered);
     if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {
         return None;
     }
@@ -1059,6 +1060,307 @@ impl VisitMut for CatchValueReplacer {
         }
         expr.visit_mut_children_with(self);
     }
+}
+
+fn fold_memoized_member_apply_calls(stmts: &mut Vec<Stmt>) {
+    let mut folded = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((stmt, consumed)) = try_fold_memoized_member_apply_call(&stmts[index..]) {
+            folded.push(stmt);
+            index += consumed;
+        } else {
+            let mut stmt = stmts[index].clone();
+            fold_memoized_member_apply_calls_in_stmt(&mut stmt);
+            folded.push(stmt);
+            index += 1;
+        }
+    }
+
+    *stmts = folded;
+}
+
+fn fold_memoized_member_apply_calls_in_stmt(stmt: &mut Stmt) {
+    match stmt {
+        Stmt::Block(block) => fold_memoized_member_apply_calls(&mut block.stmts),
+        Stmt::For(for_stmt) => {
+            if let Stmt::Block(block) = for_stmt.body.as_mut() {
+                fold_memoized_member_apply_calls(&mut block.stmts);
+            }
+        }
+        Stmt::Try(try_stmt) => {
+            fold_memoized_member_apply_calls(&mut try_stmt.block.stmts);
+            if let Some(handler) = &mut try_stmt.handler {
+                fold_memoized_member_apply_calls(&mut handler.body.stmts);
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                fold_memoized_member_apply_calls(&mut finalizer.stmts);
+            }
+        }
+        Stmt::If(if_stmt) => {
+            fold_memoized_member_apply_calls_in_stmt(&mut if_stmt.cons);
+            if let Some(alt) = &mut if_stmt.alt {
+                fold_memoized_member_apply_calls_in_stmt(alt);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn try_fold_memoized_member_apply_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let (method_key, member) = extract_memoized_member_assign(stmts.first()?)?;
+    let call = extract_bound_memoized_member_call(stmts.get(1)?, &method_key, &member)?;
+    let mut keys = vec![method_key];
+    keys.extend(memoized_member_temp_keys(&member));
+    if keys
+        .iter()
+        .any(|key| local_temp_read_before_reassign(&stmts[2..], key))
+    {
+        return None;
+    }
+
+    Some((
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Call(call)),
+        }),
+        2,
+    ))
+}
+
+struct MemoizedMember {
+    receiver: Box<Expr>,
+    receiver_key: Option<BindingKey>,
+    prop: swc_core::ecma::ast::MemberProp,
+}
+
+fn extract_memoized_member_assign(stmt: &Stmt) -> Option<(BindingKey, MemoizedMember)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let method_ident = assign.left.as_simple()?.as_ident()?;
+    if !is_likely_generated_alias(&method_ident.id.sym) {
+        return None;
+    }
+    let Expr::Member(member) = assign.right.as_ref() else {
+        return None;
+    };
+    Some((
+        binding_key(&method_ident.id),
+        MemoizedMember {
+            receiver: memoized_member_receiver(&member.obj)?,
+            receiver_key: memoized_receiver_key(&member.obj),
+            prop: member.prop.clone(),
+        },
+    ))
+}
+
+fn memoized_member_receiver(receiver: &Expr) -> Option<Box<Expr>> {
+    let receiver = strip_parens(receiver);
+    if let Expr::Assign(assign) = receiver {
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        let left = assign.left.as_simple()?.as_ident()?;
+        if !is_likely_generated_alias(&left.id.sym) {
+            return None;
+        }
+        return Some(assign.right.clone());
+    }
+    Some(Box::new(receiver.clone()))
+}
+
+fn memoized_receiver_key(receiver: &Expr) -> Option<BindingKey> {
+    let Expr::Assign(assign) = strip_parens(receiver) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let left = assign.left.as_simple()?.as_ident()?;
+    Some(binding_key(&left.id))
+}
+
+fn extract_bound_memoized_member_call(
+    stmt: &Stmt,
+    method_key: &BindingKey,
+    member: &MemoizedMember,
+) -> Option<CallExpr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(call_member) = callee.as_ref() else {
+        return None;
+    };
+    if local_temp_key(&call_member.obj).as_ref() != Some(method_key) {
+        return None;
+    }
+
+    if is_ident_prop(&call_member.prop, "call") {
+        return extract_bound_memoized_call(call, member);
+    }
+    if is_ident_prop(&call_member.prop, "apply") {
+        return extract_bound_memoized_apply(call, member);
+    }
+
+    None
+}
+
+fn extract_bound_memoized_call(call: &CallExpr, member: &MemoizedMember) -> Option<CallExpr> {
+    if call.args.is_empty() || !memoized_call_receiver_matches(&call.args[0].expr, member) {
+        return None;
+    }
+    let mut next = call.clone();
+    next.callee = memoized_call_callee(member);
+    next.args.remove(0);
+    Some(next)
+}
+
+fn extract_bound_memoized_apply(call: &CallExpr, member: &MemoizedMember) -> Option<CallExpr> {
+    if call.args.len() != 2
+        || call.args[0].spread.is_some()
+        || call.args[1].spread.is_some()
+        || !memoized_call_receiver_matches(&call.args[0].expr, member)
+    {
+        return None;
+    }
+    let mut next = call.clone();
+    next.callee = memoized_call_callee(member);
+    next.args = args_from_apply_arg(call.args[1].expr.clone());
+    Some(next)
+}
+
+fn memoized_call_callee(member: &MemoizedMember) -> Callee {
+    Callee::Expr(Box::new(Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: member.receiver.clone(),
+        prop: member.prop.clone(),
+    })))
+}
+
+fn memoized_call_receiver_matches(receiver_arg: &Expr, member: &MemoizedMember) -> bool {
+    if let Some(receiver_key) = &member.receiver_key {
+        local_temp_key(receiver_arg).as_ref() == Some(receiver_key)
+    } else {
+        direct_memoized_receiver_matches(receiver_arg, &member.receiver)
+    }
+}
+
+fn direct_memoized_receiver_matches(receiver_arg: &Expr, receiver: &Expr) -> bool {
+    match (strip_parens(receiver_arg), strip_parens(receiver)) {
+        (Expr::Ident(left), Expr::Ident(right)) => left.sym == right.sym && left.ctxt == right.ctxt,
+        (Expr::This(_), Expr::This(_)) => true,
+        _ => false,
+    }
+}
+
+fn args_from_apply_arg(arg: Box<Expr>) -> Vec<ExprOrSpread> {
+    match *arg {
+        Expr::Array(array) if array.elems.iter().all(Option::is_some) => {
+            array.elems.into_iter().flatten().collect()
+        }
+        expr => vec![ExprOrSpread {
+            spread: Some(DUMMY_SP),
+            expr: Box::new(expr),
+        }],
+    }
+}
+
+fn memoized_member_temp_keys(member: &MemoizedMember) -> Vec<BindingKey> {
+    let mut keys = Vec::new();
+    if let Some(receiver_key) = &member.receiver_key {
+        keys.push(receiver_key.clone());
+    }
+    keys
+}
+
+fn local_temp_key(expr: &Expr) -> Option<BindingKey> {
+    let Expr::Ident(id) = strip_parens(expr) else {
+        return None;
+    };
+    Some(binding_key(id))
+}
+
+fn local_temp_read_before_reassign(stmts: &[Stmt], key: &BindingKey) -> bool {
+    for stmt in stmts {
+        if let Some(rhs) = direct_local_temp_reassign_rhs(stmt, key) {
+            return expr_reads_local_temp(rhs, key);
+        }
+        if stmt_reads_local_temp(stmt, key) {
+            return true;
+        }
+    }
+    false
+}
+
+fn direct_local_temp_reassign_rhs<'a>(stmt: &'a Stmt, key: &BindingKey) -> Option<&'a Expr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !assign_target_matches_local_temp(&assign.left, key) {
+        return None;
+    }
+    Some(&assign.right)
+}
+
+fn stmt_reads_local_temp(stmt: &Stmt, key: &BindingKey) -> bool {
+    let mut finder = LocalTempReadFinder { key, found: false };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+fn expr_reads_local_temp(expr: &Expr, key: &BindingKey) -> bool {
+    let mut finder = LocalTempReadFinder { key, found: false };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+struct LocalTempReadFinder<'a> {
+    key: &'a BindingKey,
+    found: bool,
+}
+
+impl Visit for LocalTempReadFinder<'_> {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Some(init) = &decl.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if !assign_target_matches_local_temp(&assign.left, self.key) {
+            assign.left.visit_with(self);
+        }
+        assign.right.visit_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
+            self.found = true;
+        }
+    }
+}
+
+fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> bool {
+    matches!(
+        target,
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+            if binding.id.sym == key.0 && binding.id.ctxt == key.1
+    )
 }
 
 // ============================================================
