@@ -4,11 +4,11 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, ClassDecl, Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt,
-    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, Expr, ExprOrSpread, FnDecl,
+    Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread,
+    ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -847,6 +847,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
     let mut inference = HelperInference {
         candidates: &ctx.vue_helper_candidates,
         inferred: HashMap::new(),
+        prop_value_depth: 0,
     };
     match render {
         RenderSource::Function(render) => {
@@ -865,12 +866,18 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
 struct HelperInference<'a> {
     candidates: &'a std::collections::HashSet<Atom>,
     inferred: HashMap<Atom, VueHelper>,
+    prop_value_depth: usize,
 }
 
 impl Visit for HelperInference<'_> {
     fn visit_if_stmt(&mut self, if_stmt: &IfStmt) {
-        self.infer_unref_expr(if_stmt.test.as_ref());
+        self.infer_condition_unref_expr(if_stmt.test.as_ref());
         if_stmt.visit_children_with(self);
+    }
+
+    fn visit_cond_expr(&mut self, cond: &CondExpr) {
+        self.infer_condition_unref_expr(cond.test.as_ref());
+        cond.visit_children_with(self);
     }
 
     fn visit_member_expr(&mut self, member: &MemberExpr) {
@@ -879,6 +886,10 @@ impl Visit for HelperInference<'_> {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.prop_value_depth > 0 {
+            self.infer_render_prop_unref_call(call);
+        }
+
         if let Callee::Expr(callee) = &call.callee {
             self.infer_unref_expr(callee.as_ref());
         }
@@ -918,6 +929,27 @@ impl Visit for HelperInference<'_> {
             Some(VueHelper::CreateBlock | VueHelper::CreateVNode)
         ) {
             self.infer_builtin_component_arg(call);
+        }
+
+        if matches!(
+            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
+            Some(VueHelper::RenderList)
+        ) {
+            if let Some(source) = call.args.first() {
+                self.infer_render_list_source_unref(source.expr.as_ref());
+            }
+        }
+
+        if matches!(
+            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
+            Some(
+                VueHelper::CreateBlock
+                    | VueHelper::CreateElementBlock
+                    | VueHelper::CreateElementVNode
+                    | VueHelper::CreateVNode
+            )
+        ) {
+            self.infer_render_prop_unrefs(call);
         }
 
         call.visit_children_with(self);
@@ -965,6 +997,77 @@ impl HelperInference<'_> {
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
     }
 
+    fn infer_condition_unref_expr(&mut self, expr: &Expr) {
+        match unwrap_paren_expr(expr) {
+            Expr::Call(_) => self.infer_unref_expr(expr),
+            Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
+                self.infer_condition_unref_expr(unary.arg.as_ref());
+            }
+            Expr::Bin(bin)
+                if matches!(
+                    bin.op,
+                    BinaryOp::LogicalAnd
+                        | BinaryOp::LogicalOr
+                        | BinaryOp::EqEq
+                        | BinaryOp::EqEqEq
+                        | BinaryOp::NotEq
+                        | BinaryOp::NotEqEq
+                ) =>
+            {
+                self.infer_condition_unref_expr(bin.left.as_ref());
+                self.infer_condition_unref_expr(bin.right.as_ref());
+            }
+            Expr::Cond(cond) => {
+                self.infer_condition_unref_expr(cond.test.as_ref());
+            }
+            _ => {}
+        }
+    }
+
+    fn infer_render_prop_unrefs(&mut self, call: &CallExpr) {
+        let Some(props) = call.args.get(1).and_then(|arg| match arg.expr.as_ref() {
+            Expr::Object(object) => Some(object),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        self.prop_value_depth += 1;
+        for prop in &props.props {
+            match prop {
+                PropOrSpread::Prop(prop) => {
+                    if let Prop::KeyValue(key_value) = prop.as_ref() {
+                        key_value.value.visit_with(self);
+                    }
+                }
+                PropOrSpread::Spread(spread) => {
+                    spread.expr.visit_with(self);
+                }
+            }
+        }
+        self.prop_value_depth -= 1;
+    }
+
+    fn infer_render_prop_unref_call(&mut self, call: &CallExpr) {
+        if !is_render_prop_unref_call(&call.args) {
+            return;
+        }
+        let Some(callee) = call_callee_ident(call) else {
+            return;
+        };
+        if !self.candidates.contains(&callee.sym) {
+            return;
+        }
+        self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
+    }
+
+    fn infer_render_list_source_unref(&mut self, expr: &Expr) {
+        let Expr::Call(call) = unwrap_paren_expr(expr) else {
+            return;
+        };
+        self.infer_render_prop_unref_call(call);
+    }
+
     fn infer_builtin_component_arg(&mut self, call: &CallExpr) {
         let Some(component) = call
             .args
@@ -986,6 +1089,16 @@ impl HelperInference<'_> {
                 .or_insert(VueHelper::Other("Transition".to_string()));
         }
     }
+}
+
+fn is_render_prop_unref_call(args: &[ExprOrSpread]) -> bool {
+    if args.len() != 1 {
+        return false;
+    }
+    matches!(
+        args.first().map(|arg| unwrap_paren_expr(arg.expr.as_ref())),
+        Some(Expr::Ident(_) | Expr::Member(_) | Expr::OptChain(_))
+    )
 }
 
 fn is_transition_component_props(object: &ObjectLit) -> bool {
