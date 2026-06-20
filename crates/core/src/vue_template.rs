@@ -443,6 +443,24 @@ mod tests {
     }
 
     #[test]
+    fn prints_empty_event_attrs_without_value() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("button").with_attrs(
+                vec![VueAttr::On {
+                    name: "click".into(),
+                    expr: "".into(),
+                    modifiers: vec!["stop".into()],
+                }],
+            ))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <button @click.stop />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn prefers_single_quoted_expression_attrs_when_expr_contains_double_quotes() {
         let template = VueTemplate {
             children: vec![VueNode::Element(VueElement::new("button").with_attrs(

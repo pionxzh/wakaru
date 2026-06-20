@@ -1157,6 +1157,9 @@ fn infer_call_helper(call: &CallExpr) -> Option<VueHelper> {
     if is_render_list_call(&call.args) {
         return Some(VueHelper::RenderList);
     }
+    if is_event_modifier_helper_call(&call.args) {
+        return Some(VueHelper::WithModifiers);
+    }
     if is_with_ctx_call(&call.args) {
         return Some(VueHelper::WithCtx);
     }
@@ -1251,6 +1254,40 @@ fn is_render_list_call(args: &[ExprOrSpread]) -> bool {
     matches!(
         args.get(1).map(|arg| arg.expr.as_ref()),
         Some(Expr::Arrow(_))
+    )
+}
+
+fn is_event_modifier_helper_call(args: &[ExprOrSpread]) -> bool {
+    if args.len() != 2 {
+        return false;
+    }
+
+    let Some(modifiers) = args.get(1).and_then(|arg| match arg.expr.as_ref() {
+        Expr::Array(array) => Some(array),
+        _ => None,
+    }) else {
+        return false;
+    };
+    if modifiers
+        .elems
+        .iter()
+        .flatten()
+        .any(|elem| string_lit(elem.expr.as_ref()).is_none())
+    {
+        return false;
+    }
+
+    matches!(
+        args.first().map(|arg| unwrap_paren_expr(arg.expr.as_ref())),
+        Some(
+            Expr::Ident(_)
+                | Expr::Member(_)
+                | Expr::Call(_)
+                | Expr::Arrow(_)
+                | Expr::Fn(_)
+                | Expr::Bin(_)
+                | Expr::Assign(_)
+        )
     )
 }
 
