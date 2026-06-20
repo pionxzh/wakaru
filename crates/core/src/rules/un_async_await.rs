@@ -454,6 +454,7 @@ fn decode_state_machine(
             Some(n) => n as usize,
             None => continue,
         };
+        let next_case_label = next_numeric_case_label(&cases, idx);
 
         let expanded = expand_terser_case_stmts(&case.cons);
         for stmt in &expanded {
@@ -465,7 +466,13 @@ fn decode_state_machine(
                 continue;
             }
 
-            if let Some(decoded) = decode_return_opcode_with_backedge(stmt, values_helpers, idx) {
+            if let Some(decoded) = decode_return_opcode_with_backedge(
+                stmt,
+                values_helpers,
+                idx,
+                next_case_label,
+                &trys,
+            ) {
                 if let Some(s) = decoded {
                     flat.push((idx, s));
                 }
@@ -745,6 +752,14 @@ fn numeric_case_test(case: &SwitchCase) -> Option<f64> {
     }
 }
 
+fn next_numeric_case_label(cases: &[SwitchCase], current: usize) -> Option<usize> {
+    cases
+        .iter()
+        .filter_map(|case| numeric_case_test(case).map(|n| n as usize))
+        .filter(|label| *label > current)
+        .min()
+}
+
 fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4]> {
     // _a.trys.push([s, c, f, n])
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
@@ -792,6 +807,22 @@ fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4
     Some(region)
 }
 
+fn is_try_region_exit(label: usize, target: usize, trys: &[[Option<usize>; 4]]) -> bool {
+    trys.iter().any(|region| {
+        let Some(start) = region[0] else {
+            return false;
+        };
+        let Some(end) = region[3].or(region[2]).or(region[1]) else {
+            return false;
+        };
+        if label < start || label >= end {
+            return false;
+        }
+        region[3].is_some_and(|next| target == next)
+            || region[2].is_some_and(|finally_start| target == finally_start)
+    })
+}
+
 fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
@@ -811,16 +842,17 @@ fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
 /// Returns `Some(Some(stmt))` if an opcode-based return was decoded,
 /// `Some(None)` to drop the statement, or `None` if not a return opcode.
 fn decode_return_opcode(stmt: &Stmt, values_helpers: &HashSet<BindingKey>) -> Option<Option<Stmt>> {
-    decode_return_opcode_with_backedge(stmt, values_helpers, 0)
+    decode_return_opcode_with_backedge(stmt, values_helpers, 0, None, &[])
 }
 
-/// Like `decode_return_opcode`, but preserves back-edge goto opcodes
-/// (`return [3, N]` where N > 0 and N < current_case) so that
-/// `recover_index_loops` can reconstruct for-loops.
+/// Like `decode_return_opcode`, but preserves non-fallthrough goto opcodes so
+/// shared state-machine recovery can reconstruct loops and structured branches.
 fn decode_return_opcode_with_backedge(
     stmt: &Stmt,
     values_helpers: &HashSet<BindingKey>,
     current_case: usize,
+    next_case_label: Option<usize>,
+    trys: &[[Option<usize>; 4]],
 ) -> Option<Option<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = ret.arg.as_ref()?;
@@ -852,7 +884,8 @@ fn decode_return_opcode_with_backedge(
             Some(s)
         }
         3 => {
-            // goto(label) — preserve back-edges for loop recovery
+            // goto(label) — preserve back-edges for loop recovery and
+            // non-fallthrough forward jumps that mark if/else joins.
             if let Some(target) = argument.as_deref().and_then(|e| {
                 if let Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) = e {
                     Some(n.value as usize)
@@ -860,7 +893,11 @@ fn decode_return_opcode_with_backedge(
                     None
                 }
             }) {
-                if target > 0 && target < current_case {
+                if target > 0
+                    && (target < current_case
+                        || (target > current_case && Some(target) != next_case_label))
+                    && !is_try_region_exit(current_case, target, trys)
+                {
                     return Some(Some(stmt.clone()));
                 }
             }
