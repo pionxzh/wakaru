@@ -97,3 +97,31 @@ a = b = fn();
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn does_not_split_regex_literal() {
+    // Regex literals create a new object per evaluation; cloning would break
+    // identity and shared lastIndex state for g/y regex. (issue #193)
+    let input = r#"
+a = b = /./g;
+"#;
+    let expected = r#"
+a = b = /./g;
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_split_regex_literal_without_flags() {
+    let input = r#"
+a = b = /pattern/;
+"#;
+    let expected = r#"
+a = b = /pattern/;
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

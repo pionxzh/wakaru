@@ -69,9 +69,15 @@ fn should_split(stmt: &Stmt) -> bool {
     is_simple_value(cur) && targets_can_be_split(a)
 }
 
-/// A "simple" value is an identifier or any literal.
+/// A "simple" value is an identifier or a primitive literal.
+/// Regex literals are excluded: each evaluation creates a new object,
+/// so cloning would break identity and shared `lastIndex` state.
 fn is_simple_value(expr: &Expr) -> bool {
-    matches!(expr, Expr::Ident(_) | Expr::Lit(_))
+    match expr {
+        Expr::Ident(_) => true,
+        Expr::Lit(lit) => !matches!(lit, swc_core::ecma::ast::Lit::Regex(_)),
+        _ => false,
+    }
 }
 
 type BindingKey = (Atom, SyntaxContext);
