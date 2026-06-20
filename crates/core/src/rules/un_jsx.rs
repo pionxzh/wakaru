@@ -14,6 +14,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
+
 use super::decl_utils::BindingId;
 use super::{RewriteLevel, Rule};
 
@@ -687,9 +689,7 @@ impl Visit for NameCollector {
 }
 
 fn strip_unused_classic_pragma_imports(items: &mut [ModuleItem]) {
-    let mut collector = BindingReferenceCollector::default();
-    items.visit_with(&mut collector);
-    let referenced = collector.refs;
+    let referenced = BindingUseIndex::collect_module_items(items).referenced_bindings();
 
     for item in items {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
@@ -704,21 +704,6 @@ fn strip_unused_classic_pragma_imports(items: &mut [ModuleItem]) {
             }
             _ => true,
         });
-    }
-}
-
-#[derive(Default)]
-struct BindingReferenceCollector {
-    refs: HashSet<BindingId>,
-}
-
-impl Visit for BindingReferenceCollector {
-    fn visit_import_decl(&mut self, _: &ImportDecl) {
-        // Import specifier locals are bindings, not references.
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        self.refs.insert((ident.sym.clone(), ident.ctxt));
     }
 }
 

@@ -5,8 +5,8 @@ use swc_core::common::{Span, SyntaxContext};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, Callee, CatchClause,
     ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
-    JSXElementName, JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ObjectPat,
-    ObjectPatProp, Pat, PropName, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
+    JSXElementName, JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ModuleItem,
+    ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
     VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -49,11 +49,22 @@ pub(crate) struct BindingUseIndex {
 
 impl BindingUseIndex {
     pub(crate) fn collect(module: &Module) -> Self {
+        Self::collect_node(module)
+    }
+
+    pub(crate) fn collect_module_items(items: &[ModuleItem]) -> Self {
+        Self::collect_node(items)
+    }
+
+    fn collect_node<T>(node: &T) -> Self
+    where
+        T: VisitWith<BindingUseCollector> + VisitWith<LegacyIdentCounter> + ?Sized,
+    {
         let mut collector = BindingUseCollector::default();
-        module.visit_with(&mut collector);
+        node.visit_with(&mut collector);
 
         let mut legacy = LegacyIdentCounter::default();
-        module.visit_with(&mut legacy);
+        node.visit_with(&mut legacy);
 
         Self {
             bindings: collector.bindings,
@@ -76,6 +87,18 @@ impl BindingUseIndex {
         self.bindings
             .iter()
             .filter(|(_, info)| !info.uses.is_empty())
+            .map(|(binding, _)| binding.clone())
+            .collect()
+    }
+
+    pub(crate) fn new_callee_bindings(&self) -> HashSet<BindingId> {
+        self.bindings
+            .iter()
+            .filter(|(_, info)| {
+                info.uses
+                    .iter()
+                    .any(|site| matches!(site.kind, UseKind::NewCallee))
+            })
             .map(|(binding, _)| binding.clone())
             .collect()
     }
@@ -623,6 +646,28 @@ mod tests {
             index.use_kinds(&tmp),
             vec![UseKind::Write, UseKind::ReadWrite]
         );
+    }
+
+    #[test]
+    fn exposes_direct_new_callee_bindings() {
+        let module = resolved("let C, ns; new C(); new ns.C(); C();");
+        let index = BindingUseIndex::collect(&module);
+        let c = binding(&module, "C");
+        let ns = binding(&module, "ns");
+        let new_callees = index.new_callee_bindings();
+
+        assert!(new_callees.contains(&c));
+        assert!(!new_callees.contains(&ns));
+    }
+
+    #[test]
+    fn collects_module_items_without_counting_import_specifier_bindings_as_uses() {
+        let module = resolved("import createElement from 'react'; const view = createElement;");
+        let index = BindingUseIndex::collect_module_items(&module.body);
+        let create_element = binding(&module, "createElement");
+
+        assert_eq!(index.use_count(&create_element), 1);
+        assert!(index.referenced_bindings().contains(&create_element));
     }
 
     #[test]

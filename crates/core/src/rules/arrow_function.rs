@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
-use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function,
     Ident, KeyValueProp, MemberProp, Module, Pat, SimpleAssignTarget, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 
 pub struct ArrowFunction;
 
@@ -18,8 +19,6 @@ impl VisitMut for ArrowFunction {
         });
     }
 }
-
-type BindingId = (Atom, SyntaxContext);
 
 struct ArrowFunctionConverter<'a> {
     constructed_bindings: &'a HashSet<BindingId>,
@@ -101,24 +100,7 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 }
 
 fn collect_constructed_bindings(module: &Module) -> HashSet<BindingId> {
-    let mut collector = ConstructedBindingCollector::default();
-    module.visit_with(&mut collector);
-    collector.bindings
-}
-
-#[derive(Default)]
-struct ConstructedBindingCollector {
-    bindings: HashSet<BindingId>,
-}
-
-impl Visit for ConstructedBindingCollector {
-    fn visit_new_expr(&mut self, expr: &swc_core::ecma::ast::NewExpr) {
-        if let Expr::Ident(id) = expr.callee.as_ref() {
-            self.bindings.insert((id.sym.clone(), id.ctxt));
-        }
-        expr.args.visit_with(self);
-        expr.type_args.visit_with(self);
-    }
+    BindingUseIndex::collect(module).new_callee_bindings()
 }
 
 fn declarator_binds_constructed_name(
