@@ -286,6 +286,25 @@ fn composable_ref_props_from_function(
     (!ref_props.is_empty()).then_some(ref_props)
 }
 
+pub(super) fn composable_ref_props_from_iife_call(expr: &Expr) -> Option<HashSet<Atom>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    match unwrap_paren_expr(callee.as_ref()) {
+        Expr::Arrow(arrow) => {
+            composable_ref_props_from_function(FunctionLike::Arrow(arrow), &HashSet::new())
+        }
+        Expr::Fn(function) => composable_ref_props_from_function(
+            FunctionLike::Function(&function.function),
+            &HashSet::new(),
+        ),
+        _ => None,
+    }
+}
+
 fn composable_local_ref_bindings(
     function: FunctionLike<'_>,
     ref_returning_functions: &HashSet<Atom>,

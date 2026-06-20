@@ -14,6 +14,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
 use super::helpers::{helper_name, VueHelper};
+use super::imports;
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
@@ -1415,6 +1416,7 @@ pub(super) fn collect_setup_context(
     let setup_value_member_refs = setup_value_member_refs(render, setup_stmts);
     let setup_render_refs = render_ident_refs(render);
     let mut provider_ref_object_bindings = HashMap::new();
+    let mut composable_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
 
     for stmt in setup_stmts {
@@ -1453,6 +1455,14 @@ pub(super) fn collect_setup_context(
                                         provider_ref_object_bindings
                                             .insert(binding.id.sym.clone(), ref_props);
                                     }
+                                    if let Some(ref_props) = setup_composable_ref_props(
+                                        init,
+                                        ctx,
+                                        &composable_ref_object_bindings,
+                                    ) {
+                                        composable_ref_object_bindings
+                                            .insert(binding.id.sym.clone(), ref_props);
+                                    }
                                     let is_ref_object = is_ref_object_expr(init, ctx);
                                     if is_ref_object {
                                         ctx.setup_ref_object_bindings
@@ -1468,7 +1478,11 @@ pub(super) fn collect_setup_context(
                                         )
                                     {
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
-                                        if is_composable_ref_member_extraction_expr(init, ctx) {
+                                        if is_composable_ref_member_extraction_expr(
+                                            init,
+                                            ctx,
+                                            &composable_ref_object_bindings,
+                                        ) {
                                             ctx.setup_composable_ref_bindings
                                                 .insert(binding.id.sym.clone());
                                         }
@@ -1557,9 +1571,11 @@ pub(super) fn collect_setup_context(
                                         &mut ctx.setup_ref_bindings,
                                     );
                                 }
-                                if let Some(ref_props) =
-                                    imported_composable_ref_props_from_expr(init, ctx).cloned()
-                                {
+                                if let Some(ref_props) = setup_composable_ref_props(
+                                    init,
+                                    ctx,
+                                    &composable_ref_object_bindings,
+                                ) {
                                     collect_provider_object_pat_bindings(
                                         object,
                                         &ref_props,
@@ -2613,14 +2629,18 @@ fn is_ref_member_extraction_expr(
         .is_some_and(|props| props.contains(&prop))
 }
 
-fn is_composable_ref_member_extraction_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+fn is_composable_ref_member_extraction_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    bindings: &HashMap<Atom, HashSet<Atom>>,
+) -> bool {
     let Expr::Member(member) = unwrap_paren_expr(expr) else {
         return false;
     };
     let Some(prop) = member_prop_name(&member.prop) else {
         return false;
     };
-    imported_composable_ref_props_from_expr(member.obj.as_ref(), ctx)
+    setup_composable_ref_props(member.obj.as_ref(), ctx, bindings)
         .is_some_and(|props| props.contains(&prop))
 }
 
@@ -2771,8 +2791,22 @@ fn setup_ref_props(
 ) -> Option<HashSet<Atom>> {
     provider_ref_props_from_expr(expr, ctx)
         .cloned()
-        .or_else(|| imported_composable_ref_props_from_expr(expr, ctx).cloned())
+        .or_else(|| direct_composable_ref_props(expr, ctx))
         .or_else(|| provider_ref_props_from_alias(expr, bindings).cloned())
+}
+
+fn setup_composable_ref_props(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    bindings: &HashMap<Atom, HashSet<Atom>>,
+) -> Option<HashSet<Atom>> {
+    direct_composable_ref_props(expr, ctx).or_else(|| ref_props_from_alias(expr, bindings).cloned())
+}
+
+fn direct_composable_ref_props(expr: &Expr, ctx: &VueRecoveryContext) -> Option<HashSet<Atom>> {
+    imported_composable_ref_props_from_expr(expr, ctx)
+        .cloned()
+        .or_else(|| imports::composable_ref_props_from_iife_call(expr))
 }
 
 fn imported_composable_ref_props_from_expr<'a>(
@@ -2813,6 +2847,13 @@ fn is_provider_ref_method(prop: &MemberProp) -> bool {
 }
 
 fn provider_ref_props_from_alias<'a>(
+    expr: &Expr,
+    bindings: &'a HashMap<Atom, HashSet<Atom>>,
+) -> Option<&'a HashSet<Atom>> {
+    ref_props_from_alias(expr, bindings)
+}
+
+fn ref_props_from_alias<'a>(
     expr: &Expr,
     bindings: &'a HashMap<Atom, HashSet<Atom>>,
 ) -> Option<&'a HashSet<Atom>> {
