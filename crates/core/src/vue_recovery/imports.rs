@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, Decl, DefaultDecl, ExportSpecifier, Expr,
-    Function, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropOrSpread,
-    ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
+    ExportSpecifier, Expr, Function, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
+    Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -277,8 +277,12 @@ fn composable_local_ref_bindings(
     function: FunctionLike<'_>,
     ref_returning_functions: &HashSet<Atom>,
 ) -> HashSet<Atom> {
+    let value_member_refs = function_value_member_bindings(function);
+    let called_bindings = function_called_bindings(function);
+    let tuple_ref_bindings =
+        function_tuple_ref_bindings(function, &value_member_refs, &called_bindings);
     let mut collector = RefLocalCollector {
-        refs: HashSet::new(),
+        refs: tuple_ref_bindings,
         ref_returning_functions,
     };
     match function {
@@ -292,6 +296,183 @@ fn composable_local_ref_bindings(
         }
     }
     collector.refs
+}
+
+fn function_value_member_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
+    let mut collector = ValueMemberCollector {
+        bindings: HashSet::new(),
+    };
+    match function {
+        FunctionLike::Function(function) => {
+            if let Some(body) = &function.body {
+                body.visit_with(&mut collector);
+            }
+        }
+        FunctionLike::Arrow(arrow) => {
+            arrow.body.visit_with(&mut collector);
+        }
+    }
+    collector.bindings
+}
+
+struct ValueMemberCollector {
+    bindings: HashSet<Atom>,
+}
+
+impl Visit for ValueMemberCollector {
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_with(self);
+        }
+    }
+
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if member_prop_is_value(&member.prop) {
+            if let Expr::Ident(object) = unwrap_paren_expr(member.obj.as_ref()) {
+                self.bindings.insert(object.sym.clone());
+            }
+        }
+        member.obj.visit_with(self);
+        if let MemberProp::Computed(computed) = &member.prop {
+            computed.visit_with(self);
+        }
+    }
+}
+
+fn function_called_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
+    let mut collector = CalledBindingCollector {
+        bindings: HashSet::new(),
+    };
+    match function {
+        FunctionLike::Function(function) => {
+            if let Some(body) = &function.body {
+                body.visit_with(&mut collector);
+            }
+        }
+        FunctionLike::Arrow(arrow) => {
+            arrow.body.visit_with(&mut collector);
+        }
+    }
+    collector.bindings
+}
+
+struct CalledBindingCollector {
+    bindings: HashSet<Atom>,
+}
+
+impl Visit for CalledBindingCollector {
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Ident(ident) = unwrap_paren_expr(callee.as_ref()) {
+                self.bindings.insert(ident.sym.clone());
+            }
+        }
+        call.visit_children_with(self);
+    }
+}
+
+fn function_tuple_ref_bindings(
+    function: FunctionLike<'_>,
+    value_member_refs: &HashSet<Atom>,
+    called_bindings: &HashSet<Atom>,
+) -> HashSet<Atom> {
+    let mut collector = TupleRefBindingCollector {
+        value_member_refs,
+        called_bindings,
+        refs: HashSet::new(),
+        tuple_member_aliases: Vec::new(),
+    };
+    match function {
+        FunctionLike::Function(function) => {
+            if let Some(body) = &function.body {
+                body.visit_with(&mut collector);
+            }
+        }
+        FunctionLike::Arrow(arrow) => {
+            arrow.body.visit_with(&mut collector);
+        }
+    }
+    collector.finish()
+}
+
+struct TupleMemberAlias {
+    tuple: Atom,
+    index: usize,
+    binding: Atom,
+}
+
+struct TupleRefBindingCollector<'a> {
+    value_member_refs: &'a HashSet<Atom>,
+    called_bindings: &'a HashSet<Atom>,
+    refs: HashSet<Atom>,
+    tuple_member_aliases: Vec<TupleMemberAlias>,
+}
+
+impl TupleRefBindingCollector<'_> {
+    fn collect_array_pat(&mut self, pat: &swc_core::ecma::ast::ArrayPat) {
+        let has_called_sibling = pat.elems.iter().enumerate().any(|(index, elem)| {
+            index > 0 && elem.as_ref().is_some_and(|elem| self.pat_is_called(elem))
+        });
+        if !has_called_sibling {
+            return;
+        }
+        let Some(Some(Pat::Ident(binding))) = pat.elems.first() else {
+            return;
+        };
+        if self.value_member_refs.contains(&binding.id.sym) {
+            self.refs.insert(binding.id.sym.clone());
+        }
+    }
+
+    fn pat_is_called(&self, pat: &Pat) -> bool {
+        match pat {
+            Pat::Ident(binding) => self.called_bindings.contains(&binding.id.sym),
+            Pat::Assign(assign) => self.pat_is_called(assign.left.as_ref()),
+            _ => false,
+        }
+    }
+
+    fn finish(mut self) -> HashSet<Atom> {
+        let called_tuple_sources = self
+            .tuple_member_aliases
+            .iter()
+            .filter(|alias| alias.index > 0 && self.called_bindings.contains(&alias.binding))
+            .map(|alias| alias.tuple.clone())
+            .collect::<HashSet<_>>();
+        self.refs.extend(
+            self.tuple_member_aliases
+                .into_iter()
+                .filter(|alias| {
+                    alias.index == 0
+                        && self.value_member_refs.contains(&alias.binding)
+                        && called_tuple_sources.contains(&alias.tuple)
+                })
+                .map(|alias| alias.binding),
+        );
+        self.refs
+    }
+}
+
+impl Visit for TupleRefBindingCollector<'_> {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        match (&declarator.name, declarator.init.as_deref()) {
+            (Pat::Array(array), Some(_)) => self.collect_array_pat(array),
+            (Pat::Ident(binding), Some(init)) => {
+                if let Some((tuple, index)) = tuple_member_index(init) {
+                    self.tuple_member_aliases.push(TupleMemberAlias {
+                        tuple,
+                        index,
+                        binding: binding.id.sym.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
 }
 
 struct RefLocalCollector<'a> {
@@ -374,6 +555,30 @@ fn object_ref_props(
         }
     }
     ref_props
+}
+
+fn tuple_member_index(expr: &Expr) -> Option<(Atom, usize)> {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let Expr::Ident(tuple) = unwrap_paren_expr(member.obj.as_ref()) else {
+        return None;
+    };
+    member_prop_index(&member.prop).map(|index| (tuple.sym.clone(), index))
+}
+
+fn member_prop_index(prop: &MemberProp) -> Option<usize> {
+    match prop {
+        MemberProp::Computed(computed) => match unwrap_paren_expr(computed.expr.as_ref()) {
+            Expr::Lit(Lit::Num(number)) if number.value >= 0.0 && number.value.fract() == 0.0 => {
+                Some(number.value as usize)
+            }
+            Expr::Lit(Lit::Str(_)) => string_lit(computed.expr.as_ref())?.parse().ok(),
+            _ => None,
+        },
+        MemberProp::Ident(ident) => ident.sym.as_ref().parse().ok(),
+        MemberProp::PrivateName(_) => None,
+    }
 }
 
 fn composable_ref_prop_exports(
