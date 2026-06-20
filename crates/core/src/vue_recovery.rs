@@ -4785,6 +4785,85 @@ export { useViewState as u };
     }
 
     #[test]
+    fn recovers_imported_composable_tuple_member_ref_values() {
+        let input = r#"
+import { defineComponent, normalizeClass, openBlock, createElementBlock } from "vue";
+import { u as useStatus } from "./status.js";
+export default defineComponent({
+  __name: "UsesStatus",
+  setup() {
+    const selectedStatus = useStatus().selectedStatus;
+    return () => (
+      openBlock(), createElementBlock("div", { class: normalizeClass({ rise: selectedStatus.value === "rise" }) }, null, 2)
+    );
+  }
+});
+"#;
+        let state = r#"
+export const u = () => {
+  const [status, setStatus] = useResetState("remain");
+  if (status.value === "drop") {
+    setStatus("remain");
+  }
+  return { selectedStatus: status };
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./status.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as useStatus } from \"./status.js\";\n\nconst selectedStatus = useStatus().selectedStatus;\n</script>\n\n<template>\n  <div :class='{ rise: selectedStatus === \"rise\" }' />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_imported_composable_legacy_tuple_member_ref_values() {
+        let input = r#"
+import { defineComponent, normalizeClass, openBlock, createElementBlock } from "vue";
+import { u as useStatus } from "./status-legacy.js";
+export default defineComponent({
+  __name: "UsesStatus",
+  setup() {
+    const selectedStatus = useStatus().selectedStatus;
+    return () => (
+      openBlock(), createElementBlock("div", { class: normalizeClass({ rise: selectedStatus.value === "rise" }) }, null, 2)
+    );
+  }
+});
+"#;
+        let state = r#"
+System.register([], function (_export) {
+  return {
+    setters: [],
+    execute: function () {
+      _export("u", () => {
+        const pair = _slicedToArray(useResetState("remain"), 2);
+        const status = pair[0];
+        const setStatus = pair[1];
+        if (status.value === "drop") {
+          setStatus("remain");
+        }
+        return { selectedStatus: status };
+      });
+    }
+  };
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./status-legacy.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as useStatus } from \"./status-legacy.js\";\n\nconst selectedStatus = useStatus().selectedStatus;\n</script>\n\n<template>\n  <div :class='{ rise: selectedStatus === \"rise\" }' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_imported_composable_member_plain_value_members() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";
@@ -4805,6 +4884,39 @@ const usePlainState = () => {
   return { currentUser };
 };
 export { usePlainState as u };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as usePlainState } from \"./state.js\";\n\nconst currentUser = usePlainState().currentUser;\n</script>\n\n<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_imported_composable_tuple_plain_value_members() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { u as usePlainState } from "./state.js";
+export default defineComponent({
+  __name: "UsesPlainState",
+  setup() {
+    const currentUser = usePlainState().currentUser;
+    return () => (
+      openBlock(), createElementBlock("p", { title: currentUser.value.name }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+export const u = () => {
+  const [currentUser] = usePlainTuple();
+  const label = currentUser.value.name;
+  return { currentUser, label };
+};
 "#;
 
         assert_eq!(
