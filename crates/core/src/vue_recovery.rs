@@ -4640,6 +4640,68 @@ export { usePlainState as u };
     }
 
     #[test]
+    fn recovers_imported_systemjs_composable_returned_ref_values() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+import { u as useViewState } from "./state-legacy.js";
+export default defineComponent({
+  __name: "UsesLegacyViewState",
+  setup() {
+    const { page, selectedKey, raw } = useViewState();
+    const label = computed(() => {
+      const parts = [];
+      parts.push(page.name);
+      parts.push(selectedKey.value);
+      parts.push(raw.value);
+      return parts.join(":");
+    });
+    return () => (
+      openBlock(), createElementBlock("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+System.register(["./vendor-vue.js"], function (_export) {
+  var ref, watch, readonly;
+  return {
+    setters: [
+      function (module) {
+        ref = module.B;
+        watch = module.w;
+        readonly = module.aB;
+      }
+    ],
+    execute: function () {
+      function trackedValue(source) {
+        const value = ref();
+        watch(source, (next) => {
+          value.value = next;
+        });
+        return readonly(value);
+      }
+      _export("u", () => {
+        const page = usePage();
+        const selectedKey = trackedValue(() => page.params.kind);
+        const raw = { value: "plain" };
+        return { page, selectedKey, raw };
+      });
+    }
+  };
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state-legacy.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { u as useViewState } from \"./state-legacy.js\";\n\nconst { page, selectedKey, raw } = useViewState();\n\nconst label = computed(()=>{\n    const parts = [];\n    parts.push(page.name);\n    parts.push(selectedKey);\n    parts.push(raw.value);\n    return parts.join(\":\");\n});\n</script>\n\n<template>\n  <p :title=\"label\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_provider_returned_ref_values() {
         let input = r#"
 import { d as dc, c as cp, q as ob, aa as cb } from "./vendor-vue.js";
