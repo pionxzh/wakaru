@@ -559,6 +559,7 @@ fn decode_state_machine(
 
     let recovered = StateMachineProgram::from_labeled_stmts(output, trys)
         .recover_conditional_assignments()
+        .recover_conditional_branches(OpcodeReturnScan::SkipNestedFunctions)
         .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
     if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {

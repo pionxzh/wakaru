@@ -65,6 +65,11 @@ impl StateMachineProgram {
         self
     }
 
+    pub(crate) fn recover_conditional_branches(mut self, opcode_scan: OpcodeReturnScan) -> Self {
+        self.blocks = recover_conditional_branch_blocks(self.blocks, opcode_scan);
+        self
+    }
+
     pub(crate) fn into_reconstructed_stmts(self) -> Vec<Stmt> {
         let Self {
             blocks,
@@ -195,6 +200,8 @@ fn try_recover_conditional_assignment(blocks: &[StateBlock]) -> Option<(StateBlo
         target_stmts.extend(block.stmts.iter().cloned());
         cursor += 1;
     }
+    strip_final_jump_after(&mut fallthrough_stmts, target);
+    strip_final_jump_after(&mut target_stmts, target);
 
     if fallthrough_stmts.len() != 1 || target_stmts.len() != 1 {
         return None;
@@ -252,6 +259,132 @@ fn assign_stmt(left: AssignTarget, right: Box<Expr>) -> Stmt {
             left,
             right,
         })),
+    })
+}
+
+fn recover_conditional_branch_blocks(
+    mut blocks: Vec<StateBlock>,
+    opcode_scan: OpcodeReturnScan,
+) -> Vec<StateBlock> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < blocks.len() {
+        if let Some((block, consumed)) =
+            try_recover_conditional_branch(&blocks[index..], opcode_scan)
+        {
+            result.push(block);
+            index += consumed;
+        } else {
+            let label = blocks[index].label;
+            let stmts = std::mem::take(&mut blocks[index].stmts);
+            result.push(StateBlock::new(label, stmts));
+            index += 1;
+        }
+    }
+
+    result
+}
+
+fn try_recover_conditional_branch(
+    blocks: &[StateBlock],
+    opcode_scan: OpcodeReturnScan,
+) -> Option<(StateBlock, usize)> {
+    let first_block = blocks.first()?;
+    let start_label = first_block.label;
+    let StateTerminator::ConditionalJump { test, target } = first_block.terminator() else {
+        return None;
+    };
+    if target <= start_label {
+        return None;
+    }
+
+    let mut cursor = 1usize;
+    let mut fallthrough_stmts = Vec::new();
+    while let Some(block) = blocks.get(cursor) {
+        if block.label >= target {
+            break;
+        }
+        fallthrough_stmts.extend(block.stmts.iter().cloned());
+        cursor += 1;
+    }
+    if fallthrough_stmts.is_empty() {
+        return None;
+    }
+
+    let join_target = pop_final_jump(&mut fallthrough_stmts)?;
+    if join_target <= target {
+        return None;
+    }
+
+    let target_start = cursor;
+    let mut target_stmts = Vec::new();
+    while let Some(block) = blocks.get(cursor) {
+        if block.label >= join_target {
+            break;
+        }
+        target_stmts.extend(block.stmts.iter().cloned());
+        cursor += 1;
+    }
+    if cursor == target_start {
+        return None;
+    }
+    strip_final_jump_to(&mut target_stmts, join_target);
+
+    if fallthrough_stmts.is_empty() && target_stmts.is_empty() {
+        return None;
+    }
+    if stmts_contain_state_opcode_return(&fallthrough_stmts, opcode_scan)
+        || stmts_contain_state_opcode_return(&target_stmts, opcode_scan)
+    {
+        return None;
+    }
+
+    Some((
+        StateBlock::new(
+            start_label,
+            vec![Stmt::If(IfStmt {
+                span: DUMMY_SP,
+                test: invert_condition(&test),
+                cons: Box::new(block_stmt(fallthrough_stmts)),
+                alt: Some(Box::new(block_stmt(target_stmts))),
+            })],
+        ),
+        cursor,
+    ))
+}
+
+fn pop_final_jump(stmts: &mut Vec<Stmt>) -> Option<usize> {
+    let target = jump_target_stmt(stmts.last()?)?;
+    stmts.pop();
+    Some(target)
+}
+
+fn strip_final_jump_after(stmts: &mut Vec<Stmt>, target: usize) {
+    if stmts
+        .last()
+        .and_then(jump_target_stmt)
+        .is_some_and(|jump_target| jump_target > target)
+    {
+        stmts.pop();
+    }
+}
+
+fn strip_final_jump_to(stmts: &mut Vec<Stmt>, target: usize) {
+    if stmts
+        .last()
+        .and_then(jump_target_stmt)
+        .is_some_and(|jump_target| jump_target == target)
+    {
+        stmts.pop();
+    }
+}
+
+fn block_stmt(stmts: Vec<Stmt>) -> Stmt {
+    Stmt::Block(BlockStmt {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        stmts,
     })
 }
 
@@ -803,6 +936,40 @@ mod tests {
             panic!("expected assignment expression");
         };
         assert!(matches!(assign.right.as_ref(), Expr::Cond(_)));
+    }
+
+    #[test]
+    fn program_recovers_conditional_if_else_branches() {
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![
+                (0, if_jump("skip_then", 2)),
+                (0, expr_ident_stmt("then_work")),
+                (0, jump_return(3)),
+                (2, expr_ident_stmt("else_work")),
+            ],
+            vec![],
+        )
+        .recover_conditional_branches(OpcodeReturnScan::SkipNestedFunctions)
+        .into_reconstructed_stmts();
+
+        assert_eq!(recovered.len(), 1);
+        let Stmt::If(if_stmt) = &recovered[0] else {
+            panic!("expected recovered if statement");
+        };
+        assert!(matches!(if_stmt.test.as_ref(), Expr::Unary(_)));
+        assert!(if_stmt.alt.is_some());
+
+        let Stmt::Block(cons) = if_stmt.cons.as_ref() else {
+            panic!("expected then block");
+        };
+        assert_eq!(cons.stmts.len(), 1);
+        let Some(alt) = &if_stmt.alt else {
+            panic!("expected else block");
+        };
+        let Stmt::Block(alt) = alt.as_ref() else {
+            panic!("expected else block");
+        };
+        assert_eq!(alt.stmts.len(), 1);
     }
 
     #[test]

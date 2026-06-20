@@ -1342,6 +1342,7 @@ fn decode_babel_state_machine(
             Some(n) => n,
             None => continue, // skip "end" case
         };
+        let next_case_label = next_numeric_case_label(&cases, idx);
 
         let mut catch_aliases = Vec::new();
         let is_catch = is_catch_label(idx, &trys);
@@ -1361,7 +1362,10 @@ fn decode_babel_state_machine(
             if is_next_assign(state_name, stmt) {
                 if let Some(target) = extract_state_next_assign_target(state_name, stmt) {
                     if i + 1 < stmts.len() && matches!(stmts[i + 1], Stmt::Break(_)) {
-                        if target > 0 && target < idx {
+                        if target > 0
+                            && (target < idx || (target > idx && Some(target) != next_case_label))
+                            && !is_try_region_exit(idx, target, &trys)
+                        {
                             flat.push((idx, jump_return_stmt(target)));
                         }
                         i += 2;
@@ -1605,6 +1609,7 @@ fn decode_babel_state_machine(
 
     let mut result = StateMachineProgram::from_labeled_stmts(output, trys)
         .recover_conditional_assignments()
+        .recover_conditional_branches(OpcodeReturnScan::IncludeNestedFunctions)
         .resolve_labeled_forward_jumps(OpcodeReturnScan::IncludeNestedFunctions)
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget);
     fold_state_temp_member_calls(state_name, &mut result);
@@ -1816,6 +1821,22 @@ fn infer_try_region_nexts(trys: &mut [[Option<usize>; 4]], cases: &[SwitchCase])
             .min();
         region[3] = next;
     }
+}
+
+fn is_try_region_exit(label: usize, target: usize, trys: &[[Option<usize>; 4]]) -> bool {
+    trys.iter().any(|region| {
+        let Some(start) = region[0] else {
+            return false;
+        };
+        let Some(end) = region[3].or(region[2]).or(region[1]) else {
+            return false;
+        };
+        if label < start || label >= end {
+            return false;
+        }
+        region[3].is_some_and(|next| target == next)
+            || region[2].is_some_and(|finally_start| target == finally_start)
+    })
 }
 
 fn is_next_assign_to(state_name: &Atom, stmt: &Stmt, target: usize) -> bool {
@@ -2243,6 +2264,14 @@ fn case_label_index(case: &SwitchCase) -> Option<usize> {
     } else {
         None // "end" case
     }
+}
+
+fn next_numeric_case_label(cases: &[SwitchCase], current: usize) -> Option<usize> {
+    cases
+        .iter()
+        .filter_map(case_label_index)
+        .filter(|label| *label > current)
+        .min()
 }
 
 fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4]> {

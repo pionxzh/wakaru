@@ -616,10 +616,9 @@ function* pick(input) {
 }
 
 #[test]
-fn generator_does_not_recover_unstructurable_forward_branch() {
-    // A forward jump whose branches are not a shared conditional assignment
-    // cannot be structured; rather than leak a `[3, N]` opcode goto, the
-    // function must be left un-recovered.
+fn generator_recovers_forward_if_else_branch() {
+    // A forward jump to an else label followed by an explicit jump to a join
+    // label is structured as a normal if/else instead of forcing rollback.
     let input = r#"
 var _marked = _regenerator().m(pick);
 function pick(input) {
@@ -641,15 +640,16 @@ function pick(input) {
   }, _marked);
 }
 "#;
-    let output = apply(input);
-    assert!(
-        !output.contains("[3,") && !output.contains("[\n        3,"),
-        "must not leak an opcode goto into the output:\n{output}"
-    );
-    assert!(
-        !output.contains("function* pick"),
-        "unstructurable branch should leave the function un-recovered:\n{output}"
-    );
+    let expected = r#"
+function* pick(input) {
+  if (input) {
+    sideEffect();
+  } else {
+    other();
+  }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
