@@ -1081,6 +1081,7 @@ fn setup_script(
     if ctx.setup_script_bindings.is_empty()
         && local_declarations.is_empty()
         && ref_declarations.is_empty()
+        && props_declaration.is_none()
         && emit_declaration.is_none()
         && script_imports.is_empty()
     {
@@ -3053,6 +3054,34 @@ export default defineComponent({
     }
 
     #[test]
+    fn emits_define_props_for_props_only_template_refs() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    id: String,
+    disabled: Boolean,
+    onChange: Function,
+  },
+  setup(props) {
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("input", {
+        id: props.id,
+        disabled: props.disabled,
+        onInput: _cache[0] || (_cache[0] = (event) => props.onChange(event.target.value))
+      }, null, 40, ["id", "disabled", "onInput"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst props = defineProps({\n    id: String,\n    disabled: Boolean,\n    onChange: Function\n});\nconst { disabled, id, onChange } = props;\n</script>\n\n<template>\n  <input :id=\"id\" :disabled=\"disabled\" @input=\"onChange($event.target.value)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_props_alias_context() {
         let input = r#"
 import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
@@ -3721,7 +3750,7 @@ export default _sfc_main;
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <div>\n    <div v-if=\"(show ? progressDuration : 0) !== void 0\" :style=\"`animation-duration: ${(show ? progressDuration : 0)}ms;`\" />\n  </div>\n</template>\n"
+            "<script setup>\nconst props = defineProps({\n    show: Boolean,\n    progressDuration: Number\n});\nconst { progressDuration, show } = props;\n</script>\n\n<template>\n  <div>\n    <div v-if=\"(show ? progressDuration : 0) !== void 0\" :style=\"`animation-duration: ${(show ? progressDuration : 0)}ms;`\" />\n  </div>\n</template>\n"
         );
     }
 
@@ -4000,7 +4029,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <span :title=\"list.reduce((total, item)=>{ const next = item.count; return total + next; }, 0)\" />\n</template>\n"
+            "<script setup>\nconst props = defineProps({\n    list: Array\n});\nconst { list } = props;\n</script>\n\n<template>\n  <span :title=\"list.reduce((total, item)=>{ const next = item.count; return total + next; }, 0)\" />\n</template>\n"
         );
     }
 
