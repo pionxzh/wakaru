@@ -1,8 +1,11 @@
+use std::collections::HashSet;
+
+use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmt, CatchClause, CondExpr, Expr,
-    ExprOrSpread, ExprStmt, Function, Ident, IfStmt, Lit, Pat, SimpleAssignTarget, Stmt, TryStmt,
-    UnaryExpr, UnaryOp,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmt, BreakStmt, CatchClause, CondExpr,
+    ContinueStmt, Expr, ExprOrSpread, ExprStmt, ForStmt, Function, Ident, IfStmt, Lit, Pat,
+    SimpleAssignTarget, Stmt, TryStmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -18,6 +21,16 @@ impl OpcodeReturnScan {
     fn skip_nested_functions(self) -> bool {
         matches!(self, Self::SkipNestedFunctions)
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum IndexLoopContinueMode {
+    /// TypeScript-style state machines use the label before the break target as
+    /// the continue target when loop-body jump returns are present.
+    AdjacentBackEdge,
+    /// Babel/regenerator recovery can infer continue from the single non-break
+    /// jump target inside the loop body.
+    SingleBodyJumpTarget,
 }
 
 /// Label-indexed state-machine output after opcode decoding, before structured
@@ -58,6 +71,13 @@ impl StateMachineProgram {
             try_regions,
         } = self;
         reconstruct_with_regions(label_stmts_from_blocks(blocks), &try_regions)
+    }
+
+    pub(crate) fn into_reconstructed_stmts_with_index_loops(
+        self,
+        continue_mode: IndexLoopContinueMode,
+    ) -> Vec<Stmt> {
+        recover_index_loops(self.into_reconstructed_stmts(), continue_mode)
     }
 }
 
@@ -233,6 +253,241 @@ fn assign_stmt(left: AssignTarget, right: Box<Expr>) -> Stmt {
             right,
         })),
     })
+}
+
+fn recover_index_loops(mut stmts: Vec<Stmt>, continue_mode: IndexLoopContinueMode) -> Vec<Stmt> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((loop_stmt, consumed)) = try_recover_index_loop(&stmts[index..], continue_mode)
+        {
+            result.push(loop_stmt);
+            index += consumed;
+        } else {
+            result.push(stmts[index].take());
+            index += 1;
+        }
+    }
+
+    result
+}
+
+fn try_recover_index_loop(
+    stmts: &[Stmt],
+    continue_mode: IndexLoopContinueMode,
+) -> Option<(Stmt, usize)> {
+    let (test, break_target) = loop_break_test(stmts.first()?)?;
+    let final_return_idx = find_loop_boundary(stmts)?;
+    if final_return_idx < 3 {
+        return None;
+    }
+
+    let update_idx = final_return_idx.checked_sub(1)?;
+    let update = expr_stmt_expr(&stmts[update_idx])?;
+    let mut body_stmts = stmts[1..update_idx].to_vec();
+    let continue_target = continue_target_for_loop(
+        &body_stmts,
+        &stmts[final_return_idx],
+        break_target,
+        continue_mode,
+    )?;
+    convert_jump_returns(&mut body_stmts, break_target, continue_target)?;
+
+    let consumed = if return_jump_target(&stmts[final_return_idx]).is_some() {
+        final_return_idx + 1
+    } else {
+        update_idx + 1
+    };
+    Some((
+        Stmt::For(ForStmt {
+            span: DUMMY_SP,
+            init: None,
+            test: Some(test),
+            update: Some(update),
+            body: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body_stmts,
+            })),
+        }),
+        consumed,
+    ))
+}
+
+fn continue_target_for_loop(
+    body_stmts: &[Stmt],
+    final_return: &Stmt,
+    break_target: usize,
+    continue_mode: IndexLoopContinueMode,
+) -> Option<usize> {
+    match continue_mode {
+        IndexLoopContinueMode::AdjacentBackEdge => {
+            let body_has_jump_returns = body_stmts.iter().any(|s| {
+                convert_jump_return(&mut s.clone(), break_target, break_target.saturating_sub(1))
+                    .is_some_and(|changed| changed)
+            });
+            if body_has_jump_returns {
+                break_target.checked_sub(1).filter(|ct| *ct > 0)
+            } else {
+                return_jump_target(final_return).filter(|target| *target < break_target)
+            }
+        }
+        IndexLoopContinueMode::SingleBodyJumpTarget => {
+            single_continue_target(body_stmts, break_target).or_else(|| {
+                return_jump_target(final_return).filter(|target| *target < break_target)
+            })
+        }
+    }
+}
+
+fn single_continue_target(stmts: &[Stmt], break_target: usize) -> Option<usize> {
+    let mut targets = HashSet::new();
+    collect_jump_targets(stmts, &mut targets);
+    targets.remove(&break_target);
+    if targets.len() == 1 {
+        targets.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn collect_jump_targets(stmts: &[Stmt], targets: &mut HashSet<usize>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Return(_) => {
+                if let Some(target) = return_jump_target(stmt) {
+                    targets.insert(target);
+                }
+            }
+            Stmt::If(if_stmt) => {
+                collect_jump_target(&if_stmt.cons, targets);
+                if let Some(alt) = &if_stmt.alt {
+                    collect_jump_target(alt, targets);
+                }
+            }
+            Stmt::Block(block) => collect_jump_targets(&block.stmts, targets),
+            Stmt::Try(try_stmt) => {
+                collect_jump_targets(&try_stmt.block.stmts, targets);
+                if let Some(handler) = &try_stmt.handler {
+                    collect_jump_targets(&handler.body.stmts, targets);
+                }
+                if let Some(finalizer) = &try_stmt.finalizer {
+                    collect_jump_targets(&finalizer.stmts, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_jump_target(stmt: &Stmt, targets: &mut HashSet<usize>) {
+    collect_jump_targets(std::slice::from_ref(stmt), targets);
+}
+
+fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
+    let Stmt::If(if_stmt) = stmt else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let target = jump_target_stmt(&if_stmt.cons)?;
+    Some((invert_condition(&if_stmt.test), target))
+}
+
+fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Stmt::Return(_) = stmt {
+            if return_jump_target(stmt).is_some() {
+                return Some(i);
+            }
+        }
+    }
+    stmts
+        .iter()
+        .position(|stmt| return_value_stmt(stmt).is_some())
+}
+
+fn expr_stmt_expr(stmt: &Stmt) -> Option<Box<Expr>> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    Some(expr_stmt.expr.clone())
+}
+
+fn return_value_stmt(stmt: &Stmt) -> Option<&Stmt> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    ret.arg.as_ref()?;
+    Some(stmt)
+}
+
+fn convert_jump_returns(
+    stmts: &mut [Stmt],
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    let mut changed = false;
+    for stmt in stmts {
+        changed |= convert_jump_return(stmt, break_target, continue_target)?;
+    }
+    Some(changed)
+}
+
+fn convert_jump_return(
+    stmt: &mut Stmt,
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    match stmt {
+        Stmt::Return(_) => {
+            if let Some(target) = return_jump_target(stmt) {
+                if target == break_target {
+                    *stmt = Stmt::Break(BreakStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else if target == continue_target {
+                    *stmt = Stmt::Continue(ContinueStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else {
+                    return None;
+                }
+                return Some(true);
+            }
+            Some(false)
+        }
+        Stmt::If(if_stmt) => {
+            let mut changed =
+                convert_jump_return(&mut if_stmt.cons, break_target, continue_target)?;
+            if let Some(alt) = &mut if_stmt.alt {
+                changed |= convert_jump_return(alt, break_target, continue_target)?;
+            }
+            Some(changed)
+        }
+        Stmt::Block(block) => convert_jump_returns(&mut block.stmts, break_target, continue_target),
+        Stmt::Try(try_stmt) => {
+            let mut changed =
+                convert_jump_returns(&mut try_stmt.block.stmts, break_target, continue_target)?;
+            if let Some(handler) = &mut try_stmt.handler {
+                changed |=
+                    convert_jump_returns(&mut handler.body.stmts, break_target, continue_target)?;
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                changed |= convert_jump_returns(
+                    finalizer.stmts.as_mut_slice(),
+                    break_target,
+                    continue_target,
+                )?;
+            }
+            Some(changed)
+        }
+        _ => Some(false),
+    }
 }
 
 pub(crate) fn reconstruct_with_regions(
@@ -548,6 +803,52 @@ mod tests {
             panic!("expected assignment expression");
         };
         assert!(matches!(assign.right.as_ref(), Expr::Cond(_)));
+    }
+
+    #[test]
+    fn program_recovers_adjacent_back_edge_index_loop() {
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![
+                (0, if_jump("done", 4)),
+                (1, if_jump("skip", 3)),
+                (2, expr_ident_stmt("update")),
+                (3, jump_return(0)),
+            ],
+            vec![],
+        )
+        .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
+
+        assert_loop_body_continue(&recovered);
+    }
+
+    #[test]
+    fn program_recovers_single_body_jump_target_index_loop() {
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![
+                (0, if_jump("done", 7)),
+                (1, if_jump("skip", 3)),
+                (2, expr_ident_stmt("update")),
+                (3, jump_return(0)),
+            ],
+            vec![],
+        )
+        .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget);
+
+        assert_loop_body_continue(&recovered);
+    }
+
+    fn assert_loop_body_continue(recovered: &[Stmt]) {
+        assert_eq!(recovered.len(), 1);
+        let Stmt::For(for_stmt) = &recovered[0] else {
+            panic!("expected recovered for statement");
+        };
+        let Stmt::Block(block) = for_stmt.body.as_ref() else {
+            panic!("expected recovered for body block");
+        };
+        let Stmt::If(if_stmt) = &block.stmts[0] else {
+            panic!("expected conditional continue guard");
+        };
+        assert!(matches!(if_stmt.cons.as_ref(), Stmt::Continue(_)));
     }
 
     fn if_jump(test: &str, target: usize) -> Stmt {
