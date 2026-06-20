@@ -12,8 +12,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
 use super::state_machine::{
-    invert_condition, jump_target_stmt, reconstruct_with_regions, resolve_labeled_forward_jumps,
-    return_jump_target, stmts_contain_state_opcode_return, OpcodeReturnScan,
+    invert_condition, jump_target_stmt, return_jump_target, stmts_contain_state_opcode_return,
+    OpcodeReturnScan, StateMachineProgram,
 };
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::js_names::is_likely_generated_alias;
@@ -559,16 +559,11 @@ fn decode_state_machine(
 
     let output = recover_conditional_assignments(output);
 
-    let output = resolve_labeled_forward_jumps(output, OpcodeReturnScan::SkipNestedFunctions);
-
-    // Phase 3: group by label index
-    let max_label = output.iter().map(|(i, _)| *i).max().unwrap_or(0);
-    let mut label_stmts: Vec<Vec<Stmt>> = vec![vec![]; max_label + 1];
-    for (idx, stmt) in output {
-        label_stmts[idx].push(stmt);
-    }
-
-    let recovered = recover_index_loops(reconstruct_with_regions(label_stmts, &trys));
+    let recovered = recover_index_loops(
+        StateMachineProgram::from_labeled_stmts(output, trys)
+            .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
+            .into_reconstructed_stmts(),
+    );
     if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {
         return None;
     }

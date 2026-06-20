@@ -1,4 +1,3 @@
-use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, CatchClause, Expr, ExprOrSpread, Function, Ident, IfStmt, Lit, Pat, Stmt,
@@ -16,6 +15,111 @@ impl OpcodeReturnScan {
     fn skip_nested_functions(self) -> bool {
         matches!(self, Self::SkipNestedFunctions)
     }
+}
+
+/// Label-indexed state-machine output after opcode decoding, before structured
+/// control-flow recovery finishes.
+#[derive(Clone)]
+pub(crate) struct StateMachineProgram {
+    blocks: Vec<StateBlock>,
+    try_regions: Vec<[Option<usize>; 4]>,
+}
+
+impl StateMachineProgram {
+    pub(crate) fn from_labeled_stmts(
+        stmts: Vec<(usize, Stmt)>,
+        try_regions: Vec<[Option<usize>; 4]>,
+    ) -> Self {
+        Self {
+            blocks: stmts
+                .into_iter()
+                .map(|(label, stmt)| StateBlock::new(label, vec![stmt]))
+                .collect(),
+            try_regions,
+        }
+    }
+
+    pub(crate) fn resolve_labeled_forward_jumps(mut self, opcode_scan: OpcodeReturnScan) -> Self {
+        self.blocks = resolve_labeled_forward_jump_blocks(self.blocks, opcode_scan);
+        self
+    }
+
+    pub(crate) fn into_reconstructed_stmts(self) -> Vec<Stmt> {
+        let Self {
+            blocks,
+            try_regions,
+        } = self;
+        reconstruct_with_regions(label_stmts_from_blocks(blocks), &try_regions)
+    }
+}
+
+#[derive(Clone)]
+struct StateBlock {
+    label: usize,
+    stmts: Vec<Stmt>,
+}
+
+impl StateBlock {
+    fn new(label: usize, stmts: Vec<Stmt>) -> Self {
+        Self { label, stmts }
+    }
+
+    fn terminator(&self) -> StateTerminator {
+        self.stmts
+            .last()
+            .map(StateTerminator::from_stmt)
+            .unwrap_or(StateTerminator::Fallthrough)
+    }
+}
+
+enum StateTerminator {
+    ConditionalJump { test: Box<Expr>, target: usize },
+    Jump { target: usize },
+    Return,
+    Fallthrough,
+}
+
+impl StateTerminator {
+    fn from_stmt(stmt: &Stmt) -> Self {
+        if let Stmt::If(if_stmt) = stmt {
+            if if_stmt.alt.is_none() {
+                if let Some(target) = jump_target_stmt(&if_stmt.cons) {
+                    return Self::ConditionalJump {
+                        test: if_stmt.test.clone(),
+                        target,
+                    };
+                }
+            }
+        }
+
+        if let Some(target) = jump_target_stmt(stmt) {
+            return Self::Jump { target };
+        }
+
+        if matches!(stmt, Stmt::Return(_)) {
+            return Self::Return;
+        }
+
+        Self::Fallthrough
+    }
+
+    fn jump_target(&self) -> Option<usize> {
+        match self {
+            StateTerminator::ConditionalJump { target, .. } | StateTerminator::Jump { target } => {
+                Some(*target)
+            }
+            StateTerminator::Return | StateTerminator::Fallthrough => None,
+        }
+    }
+}
+
+fn label_stmts_from_blocks(blocks: Vec<StateBlock>) -> Vec<Vec<Stmt>> {
+    let max_label = blocks.iter().map(|block| block.label).max().unwrap_or(0);
+    let mut label_stmts: Vec<Vec<Stmt>> = vec![vec![]; max_label + 1];
+    for block in blocks {
+        label_stmts[block.label].extend(block.stmts);
+    }
+    label_stmts
 }
 
 pub(crate) fn reconstruct_with_regions(
@@ -115,21 +219,22 @@ pub(crate) fn reconstruct_with_regions(
 /// label-index pairs. Stmts between the jump and label N become the "then"
 /// body; stmts at label N+ continue after the if-block. Only resolves jumps
 /// where the body between the jump and target is opcode-free.
-pub(crate) fn resolve_labeled_forward_jumps(
-    mut stmts: Vec<(usize, Stmt)>,
+fn resolve_labeled_forward_jump_blocks(
+    mut blocks: Vec<StateBlock>,
     opcode_scan: OpcodeReturnScan,
-) -> Vec<(usize, Stmt)> {
+) -> Vec<StateBlock> {
     let mut result = Vec::new();
     let mut index = 0;
-    while index < stmts.len() {
-        if let Some((recovered_label, recovered, consumed)) =
-            try_resolve_labeled_forward_jump(&stmts[index..], opcode_scan)
+    while index < blocks.len() {
+        if let Some((recovered, consumed)) =
+            try_resolve_labeled_forward_jump(&blocks[index..], opcode_scan)
         {
-            result.push((recovered_label, recovered));
+            result.push(recovered);
             index += consumed;
         } else {
-            let (label, stmt) = &mut stmts[index];
-            result.push((*label, stmt.take()));
+            let label = blocks[index].label;
+            let stmts = std::mem::take(&mut blocks[index].stmts);
+            result.push(StateBlock::new(label, stmts));
             index += 1;
         }
     }
@@ -137,44 +242,52 @@ pub(crate) fn resolve_labeled_forward_jumps(
 }
 
 fn try_resolve_labeled_forward_jump(
-    stmts: &[(usize, Stmt)],
+    blocks: &[StateBlock],
     opcode_scan: OpcodeReturnScan,
-) -> Option<(usize, Stmt, usize)> {
-    let (start_label, first_stmt) = stmts.first()?;
-    let Stmt::If(if_stmt) = first_stmt else {
+) -> Option<(StateBlock, usize)> {
+    let first_block = blocks.first()?;
+    let start_label = first_block.label;
+    let terminator = first_block.terminator();
+    let target = terminator.jump_target()?;
+    let StateTerminator::ConditionalJump { test, .. } = terminator else {
         return None;
     };
-    if if_stmt.alt.is_some() {
-        return None;
-    }
-    let target = jump_target_stmt(&if_stmt.cons)?;
-    if target <= *start_label {
+    if target <= start_label {
         return None;
     }
 
-    let max_remaining_label = stmts[1..].iter().map(|(l, _)| *l).max().unwrap_or(0);
+    let max_remaining_label = blocks[1..]
+        .iter()
+        .map(|block| block.label)
+        .max()
+        .unwrap_or(0);
     if target <= max_remaining_label {
         return None;
     }
 
-    let body_stmts: Vec<Stmt> = stmts[1..].iter().map(|(_, s)| s.clone()).collect();
+    let body_stmts: Vec<Stmt> = blocks[1..]
+        .iter()
+        .flat_map(|block| block.stmts.iter().cloned())
+        .collect();
     if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts, opcode_scan) {
         return None;
     }
 
     Some((
-        *start_label,
-        Stmt::If(IfStmt {
-            span: DUMMY_SP,
-            test: invert_condition(&if_stmt.test),
-            cons: Box::new(Stmt::Block(BlockStmt {
+        StateBlock::new(
+            start_label,
+            vec![Stmt::If(IfStmt {
                 span: DUMMY_SP,
-                ctxt: Default::default(),
-                stmts: body_stmts,
-            })),
-            alt: None,
-        }),
-        stmts.len(),
+                test: invert_condition(&test),
+                cons: Box::new(Stmt::Block(BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    stmts: body_stmts,
+                })),
+                alt: None,
+            })],
+        ),
+        blocks.len(),
     ))
 }
 
@@ -271,4 +384,70 @@ pub(crate) fn invert_condition(test: &Expr) -> Box<Expr> {
         op: UnaryOp::Bang,
         arg: Box::new(test.clone()),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::atoms::Atom;
+    use swc_core::ecma::ast::{ArrayLit, ExprStmt, Number, ReturnStmt};
+
+    #[test]
+    fn program_resolves_forward_jump_blocks() {
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![(0, if_jump("done", 2)), (1, expr_ident_stmt("work"))],
+            vec![],
+        )
+        .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
+        .into_reconstructed_stmts();
+
+        assert_eq!(recovered.len(), 1);
+        let Stmt::If(if_stmt) = &recovered[0] else {
+            panic!("expected recovered if statement");
+        };
+        assert!(if_stmt.alt.is_none());
+        assert!(matches!(if_stmt.test.as_ref(), Expr::Unary(_)));
+
+        let Stmt::Block(block) = if_stmt.cons.as_ref() else {
+            panic!("expected recovered if body block");
+        };
+        assert_eq!(block.stmts.len(), 1);
+    }
+
+    fn if_jump(test: &str, target: usize) -> Stmt {
+        Stmt::If(IfStmt {
+            span: DUMMY_SP,
+            test: Box::new(Expr::Ident(Ident::new_no_ctxt(Atom::from(test), DUMMY_SP))),
+            cons: Box::new(jump_return(target)),
+            alt: None,
+        })
+    }
+
+    fn jump_return(target: usize) -> Stmt {
+        Stmt::Return(ReturnStmt {
+            span: DUMMY_SP,
+            arg: Some(Box::new(Expr::Array(ArrayLit {
+                span: DUMMY_SP,
+                elems: vec![Some(number_elem(3.0)), Some(number_elem(target as f64))],
+            }))),
+        })
+    }
+
+    fn number_elem(value: f64) -> ExprOrSpread {
+        ExprOrSpread {
+            spread: None,
+            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                span: DUMMY_SP,
+                value,
+                raw: None,
+            }))),
+        }
+    }
+
+    fn expr_ident_stmt(name: &str) -> Stmt {
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Ident(Ident::new_no_ctxt(Atom::from(name), DUMMY_SP))),
+        })
+    }
 }

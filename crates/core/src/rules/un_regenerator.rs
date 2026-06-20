@@ -18,8 +18,8 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding,
 };
 use super::state_machine::{
-    invert_condition, jump_target_stmt, reconstruct_with_regions, resolve_labeled_forward_jumps,
-    return_jump_target, stmts_contain_state_opcode_return, OpcodeReturnScan,
+    invert_condition, jump_target_stmt, return_jump_target, stmts_contain_state_opcode_return,
+    OpcodeReturnScan, StateMachineProgram,
 };
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
@@ -1605,24 +1605,14 @@ fn decode_babel_state_machine(
     // assignment and the assignment at the jump target.
     let output = recover_conditional_assignments(output);
 
-    // Phase 3b: Resolve remaining forward jumps into if-blocks. At this stage
-    // we still have `(label_idx, stmt)` pairs, so we can determine which
-    // stmts fall before and after the jump target.
-    let output = resolve_labeled_forward_jumps(output, OpcodeReturnScan::IncludeNestedFunctions);
-
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_name, &cases);
 
-    // Phase 4: Group by label and reconstruct try/catch/finally
-    let max_label = output.iter().map(|(i, _)| *i).max().unwrap_or(0);
-    let mut label_stmts: Vec<Vec<Stmt>> = vec![vec![]; max_label + 1];
-    for (idx, stmt) in output {
-        if idx <= max_label {
-            label_stmts[idx].push(stmt);
-        }
-    }
-
-    let mut result = recover_index_loops(reconstruct_with_regions(label_stmts, &trys));
+    let mut result = recover_index_loops(
+        StateMachineProgram::from_labeled_stmts(output, trys)
+            .resolve_labeled_forward_jumps(OpcodeReturnScan::IncludeNestedFunctions)
+            .into_reconstructed_stmts(),
+    );
     fold_state_temp_member_calls(state_name, &mut result);
 
     // Wrap in while(true) if we detected a back-edge to case 0
