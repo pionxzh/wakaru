@@ -81,16 +81,22 @@ fn targets_can_be_split(assign: &AssignExpr) -> bool {
     let mut current = assign;
 
     loop {
-        let refs = target_reference_bindings(&current.left);
-        if refs
-            .iter()
-            .any(|reference| assigned_bindings.contains(reference))
-        {
-            return false;
-        }
-
         if let Some(binding) = target_ident_binding(&current.left) {
             assigned_bindings.insert(binding);
+        }
+
+        match current.right.as_ref() {
+            Expr::Assign(next) if next.op == AssignOp::Assign => {
+                current = next;
+            }
+            _ => break,
+        }
+    }
+
+    let mut current = assign;
+    loop {
+        if !target_reference_bindings(&current.left).is_disjoint(&assigned_bindings) {
+            return false;
         }
 
         match current.right.as_ref() {

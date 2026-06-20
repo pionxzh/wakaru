@@ -58,6 +58,19 @@ cursor = cursor.next = hook;
 }
 
 #[test]
+fn does_not_split_chain_when_outer_target_reads_inner_ident() {
+    let input = r#"
+cursor.next = cursor = hook;
+"#;
+    let expected = r#"
+cursor.next = cursor = hook;
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_split_member_expression_final_value() {
     // Reused from packages/unminify/src/transformations/__tests__/un-assignment-merging.spec.ts
     let input = r#"
