@@ -4744,6 +4744,80 @@ export { useViewState as u };
     }
 
     #[test]
+    fn recovers_imported_composable_member_ref_values() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+import { u as useViewState } from "./state.js";
+export default defineComponent({
+  __name: "UsesViewState",
+  setup() {
+    const selectedKey = useViewState().selectedKey;
+    return () => (
+      openBlock(), createElementBlock("p", { title: selectedKey.value }, toDisplayString(selectedKey.value), 9, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+function trackedValue(source) {
+  const value = createRef();
+  watch(source, (next) => {
+    value.value = next;
+  });
+  return readonly(value);
+}
+const useViewState = () => {
+  const selectedKey = trackedValue(() => route.params.kind);
+  const raw = { value: "plain" };
+  return { selectedKey, raw };
+};
+export { useViewState as u };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as useViewState } from \"./state.js\";\n\nconst selectedKey = useViewState().selectedKey;\n</script>\n\n<template>\n  <p :title=\"selectedKey\">{{ selectedKey }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_imported_composable_member_plain_value_members() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+import { u as usePlainState } from "./state.js";
+export default defineComponent({
+  __name: "UsesPlainState",
+  setup() {
+    const currentUser = usePlainState().currentUser;
+    return () => (
+      openBlock(), createElementBlock("p", { title: currentUser.value.name }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+const usePlainState = () => {
+  const currentUser = { value: { name: "Ada" } };
+  return { currentUser };
+};
+export { usePlainState as u };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as usePlainState } from \"./state.js\";\n\nconst currentUser = usePlainState().currentUser;\n</script>\n\n<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_imported_composable_returned_plain_value_members() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock } from "vue";
@@ -5375,6 +5449,30 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [open, setOpen] = useState(false);\n</script>\n\n<template>\n  <section :disabled=\"!open\">\n    <p v-if=\"open\">Open</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_tuple_ref_inside_class_binding() {
+        let input = r#"
+import { defineComponent, normalizeClass, openBlock, createElementBlock } from "vue";
+import { u as useState } from "./state.js";
+export default defineComponent({
+  setup() {
+    const [open, setOpen] = useState(false);
+    const left = false;
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("div", {
+        class: normalizeClass({ hidden: !(open.value && left === false) })
+      }, null, 2)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { u as useState } from \"./state.js\";\n\nconst [open, setOpen] = useState(false);\nconst left = false;\n</script>\n\n<template>\n  <div :class=\"{ hidden: !(open &amp;&amp; left === false) }\" />\n</template>\n"
         );
     }
 

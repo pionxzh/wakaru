@@ -1459,7 +1459,11 @@ pub(super) fn collect_setup_context(
                                     let is_ref_object_alias_source = is_ref_object
                                         && setup_ref_object_alias_refs.contains(&binding.id.sym);
                                     if setup_value_member_refs.contains(&binding.id.sym)
-                                        && is_ref_object_member_expr(init, ctx)
+                                        && is_ref_member_extraction_expr(
+                                            init,
+                                            ctx,
+                                            &provider_ref_object_bindings,
+                                        )
                                     {
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                                     }
@@ -2429,6 +2433,14 @@ fn member_prop_is_named(prop: &MemberProp, name: &str) -> bool {
     }
 }
 
+fn member_prop_name(prop: &MemberProp) -> Option<Atom> {
+    match prop {
+        MemberProp::Ident(ident) => Some(ident.sym.clone()),
+        MemberProp::Computed(computed) => string_lit(computed.expr.as_ref()).map(Atom::from),
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
 fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
         return false;
@@ -2518,11 +2530,23 @@ pub(super) fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool
     ctx.setup_ref_object_bindings.contains(&ident.sym)
 }
 
-fn is_ref_object_member_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+fn is_ref_member_extraction_expr(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    provider_ref_object_bindings: &HashMap<Atom, HashSet<Atom>>,
+) -> bool {
     let Expr::Member(member) = unwrap_paren_expr(expr) else {
         return false;
     };
-    is_ref_object_expr(member.obj.as_ref(), ctx) || is_ref_object_alias(member.obj.as_ref(), ctx)
+    if is_ref_object_expr(member.obj.as_ref(), ctx) || is_ref_object_alias(member.obj.as_ref(), ctx)
+    {
+        return true;
+    }
+    let Some(prop) = member_prop_name(&member.prop) else {
+        return false;
+    };
+    setup_ref_props(member.obj.as_ref(), ctx, provider_ref_object_bindings)
+        .is_some_and(|props| props.contains(&prop))
 }
 
 fn is_ref_object_helper(name: &str) -> bool {
