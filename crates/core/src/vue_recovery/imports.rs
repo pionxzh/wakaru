@@ -38,6 +38,19 @@ pub(super) fn composable_ref_props_from_source(source: &str) -> HashMap<String, 
 }
 
 fn composable_ref_props_from_module(module: &Module) -> HashMap<String, HashSet<Atom>> {
+    let (local_ref_props, ref_returning_functions) = local_composable_ref_prop_analysis(module);
+    composable_ref_prop_exports(module, &local_ref_props, &ref_returning_functions)
+}
+
+pub(super) fn local_composable_ref_props_from_module(
+    module: &Module,
+) -> HashMap<Atom, HashSet<Atom>> {
+    local_composable_ref_prop_analysis(module).0
+}
+
+fn local_composable_ref_prop_analysis(
+    module: &Module,
+) -> (HashMap<Atom, HashSet<Atom>>, HashSet<Atom>) {
     let local_functions = local_function_likes(module);
     let ref_returning_functions = ref_returning_function_bindings(&local_functions);
     let local_ref_props = local_functions
@@ -48,7 +61,7 @@ fn composable_ref_props_from_module(module: &Module) -> HashMap<String, HashSet<
         })
         .collect::<HashMap<_, _>>();
 
-    composable_ref_prop_exports(module, &local_ref_props, &ref_returning_functions)
+    (local_ref_props, ref_returning_functions)
 }
 
 #[derive(Clone, Copy)]
@@ -278,11 +291,13 @@ fn composable_local_ref_bindings(
     ref_returning_functions: &HashSet<Atom>,
 ) -> HashSet<Atom> {
     let value_member_refs = function_value_member_bindings(function);
+    let strong_value_member_refs = function_strong_value_member_bindings(function);
     let called_bindings = function_called_bindings(function);
     let tuple_ref_bindings =
         function_tuple_ref_bindings(function, &value_member_refs, &called_bindings);
     let mut collector = RefLocalCollector {
         refs: tuple_ref_bindings,
+        strong_value_member_refs: &strong_value_member_refs,
         ref_returning_functions,
     };
     match function {
@@ -313,6 +328,69 @@ fn function_value_member_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
         }
     }
     collector.bindings
+}
+
+fn function_strong_value_member_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
+    let mut collector = StrongValueMemberCollector {
+        bindings: HashSet::new(),
+    };
+    match function {
+        FunctionLike::Function(function) => {
+            if let Some(body) = &function.body {
+                body.visit_with(&mut collector);
+            }
+        }
+        FunctionLike::Arrow(arrow) => {
+            arrow.body.visit_with(&mut collector);
+        }
+    }
+    collector.bindings
+}
+
+struct StrongValueMemberCollector {
+    bindings: HashSet<Atom>,
+}
+
+impl StrongValueMemberCollector {
+    fn collect_value_member_expr(&mut self, expr: &Expr) {
+        if let Some(binding) = value_member_object(expr) {
+            self.bindings.insert(binding);
+        }
+    }
+}
+
+impl Visit for StrongValueMemberCollector {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                self.collect_value_member_expr(&Expr::Member(member.clone()));
+            }
+            AssignTarget::Simple(_) | AssignTarget::Pat(_) => {}
+        }
+        assign.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        self.collect_value_member_expr(update.arg.as_ref());
+    }
+
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = unwrap_paren_expr(callee.as_ref()) {
+                self.collect_value_member_expr(member.obj.as_ref());
+            } else {
+                callee.visit_with(self);
+            }
+        }
+        for arg in &call.args {
+            self.collect_value_member_expr(arg.expr.as_ref());
+            arg.expr.visit_with(self);
+        }
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
 }
 
 struct ValueMemberCollector {
@@ -477,6 +555,7 @@ impl Visit for TupleRefBindingCollector<'_> {
 
 struct RefLocalCollector<'a> {
     refs: HashSet<Atom>,
+    strong_value_member_refs: &'a HashSet<Atom>,
     ref_returning_functions: &'a HashSet<Atom>,
 }
 
@@ -485,17 +564,32 @@ impl Visit for RefLocalCollector<'_> {
         let Some(init) = declarator.init.as_deref() else {
             return;
         };
-        if !expr_is_ref_binding_init(init, &self.refs, self.ref_returning_functions) {
-            return;
-        }
-        if let Pat::Ident(binding) = &declarator.name {
-            self.refs.insert(binding.id.sym.clone());
+        match &declarator.name {
+            Pat::Ident(binding)
+                if expr_is_ref_binding_init(init, &self.refs, self.ref_returning_functions)
+                    || (is_ref_candidate_init(init)
+                        && self.strong_value_member_refs.contains(&binding.id.sym)) =>
+            {
+                self.refs.insert(binding.id.sym.clone());
+            }
+            Pat::Object(object) if is_ref_candidate_init(init) => {
+                collect_object_pat_ref_bindings(
+                    object,
+                    self.strong_value_member_refs,
+                    &mut self.refs,
+                );
+            }
+            _ => {}
         }
     }
 
     fn visit_function(&mut self, _function: &Function) {}
 
     fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+}
+
+fn is_ref_candidate_init(expr: &Expr) -> bool {
+    matches!(unwrap_paren_expr(expr), Expr::Call(_))
 }
 
 fn expr_is_ref_binding_init(
@@ -555,6 +649,56 @@ fn object_ref_props(
         }
     }
     ref_props
+}
+
+fn value_member_object(expr: &Expr) -> Option<Atom> {
+    match unwrap_paren_expr(expr) {
+        Expr::Member(member) if member_prop_is_value(&member.prop) => {
+            match unwrap_paren_expr(member.obj.as_ref()) {
+                Expr::Ident(object) => Some(object.sym.clone()),
+                _ => None,
+            }
+        }
+        Expr::Member(member) => value_member_object(member.obj.as_ref()),
+        _ => None,
+    }
+}
+
+fn collect_object_pat_ref_bindings(
+    object: &swc_core::ecma::ast::ObjectPat,
+    ref_bindings: &HashSet<Atom>,
+    bindings: &mut HashSet<Atom>,
+) {
+    for prop in &object.props {
+        match prop {
+            swc_core::ecma::ast::ObjectPatProp::KeyValue(key_value) => {
+                collect_pat_ref_bindings(key_value.value.as_ref(), ref_bindings, bindings);
+            }
+            swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                if ref_bindings.contains(&assign.key.sym) {
+                    bindings.insert(assign.key.sym.clone());
+                }
+            }
+            swc_core::ecma::ast::ObjectPatProp::Rest(_) => {}
+        }
+    }
+}
+
+fn collect_pat_ref_bindings(pat: &Pat, ref_bindings: &HashSet<Atom>, bindings: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) if ref_bindings.contains(&binding.id.sym) => {
+            bindings.insert(binding.id.sym.clone());
+        }
+        Pat::Assign(assign) => {
+            collect_pat_ref_bindings(assign.left.as_ref(), ref_bindings, bindings)
+        }
+        Pat::Ident(_)
+        | Pat::Array(_)
+        | Pat::Rest(_)
+        | Pat::Object(_)
+        | Pat::Expr(_)
+        | Pat::Invalid(_) => {}
+    }
 }
 
 fn tuple_member_index(expr: &Expr) -> Option<(Atom, usize)> {

@@ -1468,6 +1468,10 @@ pub(super) fn collect_setup_context(
                                         )
                                     {
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        if is_composable_ref_member_extraction_expr(init, ctx) {
+                                            ctx.setup_composable_ref_bindings
+                                                .insert(binding.id.sym.clone());
+                                        }
                                     }
                                     if let Some(value) = computed_value_expr(init, ctx)? {
                                         if setup_value_member_refs.contains(&binding.id.sym) {
@@ -1551,6 +1555,15 @@ pub(super) fn collect_setup_context(
                                         object,
                                         &ref_props,
                                         &mut ctx.setup_ref_bindings,
+                                    );
+                                }
+                                if let Some(ref_props) =
+                                    imported_composable_ref_props_from_expr(init, ctx).cloned()
+                                {
+                                    collect_provider_object_pat_bindings(
+                                        object,
+                                        &ref_props,
+                                        &mut ctx.setup_composable_ref_bindings,
                                     );
                                 }
                                 false
@@ -2597,6 +2610,17 @@ fn is_ref_member_extraction_expr(
         return false;
     };
     setup_ref_props(member.obj.as_ref(), ctx, provider_ref_object_bindings)
+        .is_some_and(|props| props.contains(&prop))
+}
+
+fn is_composable_ref_member_extraction_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    let Some(prop) = member_prop_name(&member.prop) else {
+        return false;
+    };
+    imported_composable_ref_props_from_expr(member.obj.as_ref(), ctx)
         .is_some_and(|props| props.contains(&prop))
 }
 
