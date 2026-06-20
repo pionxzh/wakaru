@@ -311,6 +311,7 @@ fn push_script_local_binding(
             import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
             stmt: cleaned_stmt,
             module_scope: true,
+            template_selectable: true,
         });
     }
     Ok(())
@@ -359,6 +360,7 @@ pub(super) fn render_local_declaration_with_aliases(
         import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
         stmt: cleaned_stmt,
         module_scope: declaration.module_scope,
+        template_selectable: declaration.template_selectable,
     })
 }
 
@@ -1303,10 +1305,10 @@ pub(super) fn collect_setup_context(
     for stmt in setup_stmts {
         match stmt {
             Stmt::Decl(Decl::Fn(function)) => {
-                local_candidates.push((vec![function.ident.sym.clone()], stmt.clone()));
+                local_candidates.push((vec![function.ident.sym.clone()], stmt.clone(), true));
             }
             Stmt::Decl(Decl::Class(class)) => {
-                local_candidates.push((vec![class.ident.sym.clone()], stmt.clone()));
+                local_candidates.push((vec![class.ident.sym.clone()], stmt.clone(), true));
             }
             Stmt::Decl(Decl::Var(var)) => {
                 let mut local_decls = Vec::new();
@@ -1346,6 +1348,13 @@ pub(super) fn collect_setup_context(
                                     if let Some(value) = computed_value_expr(init, ctx)? {
                                         ctx.setup_value_bindings
                                             .insert(binding.id.sym.clone(), value);
+                                        let mut local_var = var.as_ref().clone();
+                                        local_var.decls = vec![decl.clone()];
+                                        local_candidates.push((
+                                            vec![binding.id.sym.clone()],
+                                            Stmt::Decl(Decl::Var(Box::new(local_var))),
+                                            false,
+                                        ));
                                         true
                                     } else if let Some((value, import_refs)) =
                                         computed_script_setup_expr(init, ctx)?
@@ -1441,6 +1450,9 @@ pub(super) fn collect_setup_context(
                         .init
                         .as_deref()
                         .is_some_and(|init| is_script_import_call_expr(init, ctx));
+                    let is_provider_ref_local = decl.init.as_deref().is_some_and(|init| {
+                        setup_ref_props(init, ctx, &provider_ref_object_bindings).is_some()
+                    });
                     let is_local_candidate = match &decl.name {
                         Pat::Ident(_) | Pat::Array(_) => true,
                         Pat::Object(_) => {
@@ -1448,6 +1460,7 @@ pub(super) fn collect_setup_context(
                                 || has_render_ref
                                 || is_ref_object_local
                                 || is_imported_call_local
+                                || is_provider_ref_local
                         }
                         _ => false,
                     };
@@ -1476,7 +1489,11 @@ pub(super) fn collect_setup_context(
                     bindings.dedup();
                     let mut local_var = var.as_ref().clone();
                     local_var.decls = local_decls;
-                    local_candidates.push((bindings, Stmt::Decl(Decl::Var(Box::new(local_var)))));
+                    local_candidates.push((
+                        bindings,
+                        Stmt::Decl(Decl::Var(Box::new(local_var))),
+                        true,
+                    ));
                 }
             }
             _ => {}
@@ -1496,7 +1513,7 @@ pub(super) fn collect_setup_context(
 
     assign_setup_prop_bindings(ctx, &local_candidates);
 
-    for (bindings, stmt) in local_candidates {
+    for (bindings, stmt, template_selectable) in local_candidates {
         let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
         let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
         if !source.is_empty() {
@@ -1509,6 +1526,7 @@ pub(super) fn collect_setup_context(
                 import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
                 stmt: cleaned_stmt,
                 module_scope: false,
+                template_selectable,
             });
         }
     }
@@ -2072,7 +2090,7 @@ fn is_zero_member_prop(prop: &MemberProp) -> bool {
 
 fn assign_setup_prop_bindings(
     ctx: &mut VueRecoveryContext,
-    local_candidates: &[(Vec<Atom>, Stmt)],
+    local_candidates: &[(Vec<Atom>, Stmt, bool)],
 ) {
     ctx.setup_prop_bindings.clear();
     let prop_names = ctx
@@ -2095,7 +2113,7 @@ fn assign_setup_prop_bindings(
     reserved.extend(
         local_candidates
             .iter()
-            .flat_map(|(bindings, _)| bindings.iter().cloned()),
+            .flat_map(|(bindings, _, _)| bindings.iter().cloned()),
     );
     reserved.extend(
         ctx.setup_script_bindings
@@ -2791,7 +2809,7 @@ fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> Ha
     collector.refs
 }
 
-fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
+pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
     let mut collector = IdentRefCollector {
         scopes: vec![HashSet::new()],
         refs: HashSet::new(),

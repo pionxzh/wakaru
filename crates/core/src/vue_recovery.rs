@@ -32,7 +32,7 @@ use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
     component_name_from_init, infer_render_helpers, is_ref_object_alias, is_ref_object_expr,
     render_context_param, render_local_declaration_with_aliases, setup_context_param,
-    setup_emit_param, setup_props_param,
+    setup_emit_param, setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -103,6 +103,7 @@ struct VueSetupLocalBinding {
     import_refs: HashSet<Atom>,
     stmt: Stmt,
     module_scope: bool,
+    template_selectable: bool,
 }
 
 #[derive(Clone)]
@@ -1150,7 +1151,7 @@ fn setup_script(
     }
 
     let mut out = String::new();
-    if let Some(vue_import) = vue_script_import_line(ctx, &ref_declarations) {
+    if let Some(vue_import) = vue_script_import_line(ctx, &ref_declarations, &local_declarations) {
         out.push_str(&vue_import);
         out.push('\n');
     }
@@ -1356,21 +1357,78 @@ fn setup_emit_declaration(
 fn vue_script_import_line(
     ctx: &VueRecoveryContext,
     ref_declarations: &[(String, String, String)],
+    local_declarations: &[VueSetupLocalBinding],
 ) -> Option<String> {
-    let mut imports = Vec::new();
+    let mut imports = Vec::<(String, String)>::new();
     if !ctx.setup_script_bindings.is_empty() {
-        imports.push("computed".to_string());
+        imports.push(("computed".to_string(), "computed".to_string()));
     }
     for (_, _, helper) in ref_declarations {
-        if !imports.contains(helper) {
-            imports.push(helper.clone());
+        imports.push((helper.clone(), helper.clone()));
+    }
+    for declaration in local_declarations {
+        for local in stmt_ident_refs(&declaration.stmt) {
+            if ctx.script_imports.contains_key(&local) {
+                continue;
+            }
+            let Some(helper) = ctx.vue_helpers.get(&local) else {
+                continue;
+            };
+            imports.push((
+                vue_helper_import_name(helper).to_string(),
+                local.as_ref().to_string(),
+            ));
         }
     }
     imports.sort();
+    imports.dedup();
     if imports.is_empty() {
         None
     } else {
-        Some(format!("import {{ {} }} from \"vue\";", imports.join(", ")))
+        let specifiers = imports
+            .into_iter()
+            .map(|(imported, local)| {
+                if imported == local {
+                    imported
+                } else {
+                    format!("{imported} as {local}")
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(format!(
+            "import {{ {} }} from \"vue\";",
+            specifiers.join(", ")
+        ))
+    }
+}
+
+fn vue_helper_import_name(helper: &VueHelper) -> &str {
+    match helper {
+        VueHelper::Computed => "computed",
+        VueHelper::CreateBlock => "createBlock",
+        VueHelper::CreateCommentVNode => "createCommentVNode",
+        VueHelper::CreateElementBlock => "createElementBlock",
+        VueHelper::CreateElementVNode => "createElementVNode",
+        VueHelper::CreateSlots => "createSlots",
+        VueHelper::CreateStaticVNode => "createStaticVNode",
+        VueHelper::CreateTextVNode => "createTextVNode",
+        VueHelper::CreateVNode => "createVNode",
+        VueHelper::Fragment => "Fragment",
+        VueHelper::OpenBlock => "openBlock",
+        VueHelper::RenderList => "renderList",
+        VueHelper::RenderSlot => "renderSlot",
+        VueHelper::ResolveComponent => "resolveComponent",
+        VueHelper::ResolveDirective => "resolveDirective",
+        VueHelper::ResolveDynamicComponent => "resolveDynamicComponent",
+        VueHelper::ToDisplayString => "toDisplayString",
+        VueHelper::Unref => "unref",
+        VueHelper::VModel(name) | VueHelper::Other(name) => name.as_ref(),
+        VueHelper::VShow => "vShow",
+        VueHelper::WithCtx => "withCtx",
+        VueHelper::WithDirectives => "withDirectives",
+        VueHelper::WithKeys => "withKeys",
+        VueHelper::WithMemo => "withMemo",
+        VueHelper::WithModifiers => "withModifiers",
     }
 }
 
@@ -1537,6 +1595,9 @@ fn selects_safe_template_expr_local(
     expr_refs: &HashSet<Atom>,
     expr_read_refs: &HashSet<Atom>,
 ) -> bool {
+    if !declaration.template_selectable {
+        return false;
+    }
     if !any_binding_ref(declaration, expr_refs) {
         return false;
     }
@@ -2713,6 +2774,7 @@ mod tests {
             import_refs: HashSet::new(),
             stmt: test_stmt(source),
             module_scope,
+            template_selectable: true,
         }
     }
 
@@ -4726,6 +4788,47 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" :loaded=\"loaded\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn emits_setup_dependencies_for_provider_computed_aliases() {
+        let input = r#"
+import { defineComponent, computed, ref, openBlock, createElementBlock, createVNode, createCommentVNode, Fragment } from "vue";
+import { P as ListPanel } from "./ListPanel.vue";
+import { I as ItemPicker } from "./ItemPicker.vue";
+const state = createProvider("State", () => {
+  const items = computed(() => source.value);
+  const loaded = computed(() => ready.value);
+  return { items, loaded };
+});
+function prepare(filters) {
+  return { isOpen: ref(false), setIsOpen(value) {} };
+}
+export default defineComponent({
+  __name: "UsesStateBlock",
+  setup() {
+    const { items, loaded } = state.provide();
+    const visibleItems = computed(() => items.value.filter((item) => item.enabled));
+    const itemFilters = computed(() => {
+      const mapped = items.value.map((item) => ({ id: item.id, name: item.name, size: item.size }));
+      return uniqueBy(mapped, (item) => item.id);
+    });
+    const { isOpen, setIsOpen } = prepare(itemFilters);
+    const isSticky = true;
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock(Fragment, null, [
+        visibleItems.value.length > 0 ? (openBlock(), createVNode(ListPanel, { active: true, isSticky }, null, 8, ["isSticky"])) : createCommentVNode("", true),
+        createVNode(ItemPicker, { itemFilters: itemFilters.value, loaded: loaded.value, onClose: _cache[0] || (_cache[0] = (event) => setIsOpen(false)) }, null, 8, ["itemFilters", "loaded", "onClose"])
+      ], 64)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst state = createProvider(\"State\", ()=>{\n    const items = computed(()=>source.value);\n    const loaded = computed(()=>ready.value);\n    return {\n        items,\n        loaded\n    };\n});\nfunction prepare(filters) {\n    return {\n        isOpen: ref(false),\n        setIsOpen (value) {}\n    };\n}\nconst { items, loaded } = state.provide();\nconst itemFilters = computed(()=>{\n    const mapped = items.map((item)=>({\n            id: item.id,\n            name: item.name,\n            size: item.size\n        }));\n    return uniqueBy(mapped, (item)=>item.id);\n});\nconst { isOpen, setIsOpen } = prepare(itemFilters);\nconst isSticky = true;\n</script>\n\n<template>\n  <ListPanel v-if=\"(items.filter((item)=>item.enabled)).length > 0\" active :isSticky=\"isSticky\" />\n  <ItemPicker :itemFilters=\"uniqueBy(items.map((item)=>({ id: item.id, name: item.name, size: item.size })), (item)=>item.id)\" :loaded=\"loaded\" @close=\"setIsOpen(false)\" />\n</template>\n"
         );
     }
 
