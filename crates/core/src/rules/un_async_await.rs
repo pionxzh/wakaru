@@ -5,14 +5,16 @@ use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CondExpr,
     ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop,
-    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, UnaryExpr, UnaryOp,
-    YieldExpr,
+    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
-use super::state_machine::{reconstruct_with_regions, resolve_labeled_forward_jumps};
+use super::state_machine::{
+    invert_condition, jump_target_stmt, reconstruct_with_regions, resolve_labeled_forward_jumps,
+    return_jump_target, stmts_contain_state_opcode_return, OpcodeReturnScan,
+};
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
@@ -137,7 +139,7 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     let saved_stmts = body.stmts.clone();
     if try_transform_awaiter(body, helpers) {
         try_transform_generator(body, helpers);
-        if stmts_contain_state_opcode_return(&body.stmts) {
+        if stmts_contain_state_opcode_return(&body.stmts, OpcodeReturnScan::SkipNestedFunctions) {
             body.stmts = saved_stmts;
         } else {
             func.is_async = true;
@@ -557,7 +559,7 @@ fn decode_state_machine(
 
     let output = recover_conditional_assignments(output);
 
-    let output = resolve_labeled_forward_jumps(output);
+    let output = resolve_labeled_forward_jumps(output, OpcodeReturnScan::SkipNestedFunctions);
 
     // Phase 3: group by label index
     let max_label = output.iter().map(|(i, _)| *i).max().unwrap_or(0);
@@ -567,7 +569,7 @@ fn decode_state_machine(
     }
 
     let recovered = recover_index_loops(reconstruct_with_regions(label_stmts, &trys));
-    if stmts_contain_state_opcode_return(&recovered) {
+    if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {
         return None;
     }
     Some(recovered)
@@ -1203,37 +1205,6 @@ fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
         .position(|stmt| return_value_stmt(stmt).is_some())
 }
 
-fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-    impl swc_core::ecma::visit::Visit for Finder {
-        fn visit_function(&mut self, _func: &Function) {}
-
-        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
-
-        fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
-            if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
-                if arr.elems.first().and_then(|e| e.as_ref()).is_some_and(|e| {
-                    matches!(e.expr.as_ref(), Expr::Lit(swc_core::ecma::ast::Lit::Num(_)))
-                }) {
-                    self.found = true;
-                    return;
-                }
-            }
-            ret.visit_children_with(self);
-        }
-    }
-    let mut f = Finder { found: false };
-    for stmt in stmts {
-        swc_core::ecma::visit::VisitWith::visit_with(stmt, &mut f);
-        if f.found {
-            return true;
-        }
-    }
-    false
-}
-
 fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
     let Stmt::If(if_stmt) = stmt else {
         return None;
@@ -1243,20 +1214,6 @@ fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
     }
     let target = jump_target_stmt(&if_stmt.cons)?;
     Some((invert_condition(&if_stmt.test), target))
-}
-
-fn invert_condition(test: &Expr) -> Box<Expr> {
-    if let Expr::Unary(unary) = test {
-        if unary.op == UnaryOp::Bang {
-            return unary.arg.clone();
-        }
-    }
-
-    Box::new(Expr::Unary(UnaryExpr {
-        span: DUMMY_SP,
-        op: UnaryOp::Bang,
-        arg: Box::new(test.clone()),
-    }))
 }
 
 fn expr_stmt_expr(stmt: &Stmt) -> Option<Box<Expr>> {
@@ -1272,38 +1229,6 @@ fn return_value_stmt(stmt: &Stmt) -> Option<&Stmt> {
     };
     ret.arg.as_ref()?;
     Some(stmt)
-}
-
-fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
-    match stmt {
-        Stmt::Return(_) => return_jump_target(stmt),
-        Stmt::Block(block) if block.stmts.len() == 1 => return_jump_target(&block.stmts[0]),
-        _ => None,
-    }
-}
-
-fn return_jump_target(stmt: &Stmt) -> Option<usize> {
-    let Stmt::Return(ret) = stmt else {
-        return None;
-    };
-    let Expr::Array(arr) = ret.arg.as_deref()? else {
-        return None;
-    };
-    if arr.elems.len() < 2 {
-        return None;
-    }
-    let opcode = number_array_elem(arr.elems.first()?)?;
-    if opcode != 3 {
-        return None;
-    }
-    Some(number_array_elem(arr.elems.get(1)?)? as usize)
-}
-
-fn number_array_elem(elem: &Option<swc_core::ecma::ast::ExprOrSpread>) -> Option<u32> {
-    let Expr::Lit(swc_core::ecma::ast::Lit::Num(num)) = elem.as_ref()?.expr.as_ref() else {
-        return None;
-    };
-    Some(num.value as u32)
 }
 
 fn convert_jump_returns(

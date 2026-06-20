@@ -5,6 +5,18 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+#[derive(Clone, Copy)]
+pub(crate) enum OpcodeReturnScan {
+    SkipNestedFunctions,
+    IncludeNestedFunctions,
+}
+
+impl OpcodeReturnScan {
+    fn skip_nested_functions(self) -> bool {
+        matches!(self, Self::SkipNestedFunctions)
+    }
+}
+
 pub(crate) fn reconstruct_with_regions(
     label_stmts: Vec<Vec<Stmt>>,
     trys: &[[Option<usize>; 4]],
@@ -102,12 +114,15 @@ pub(crate) fn reconstruct_with_regions(
 /// label-index pairs. Stmts between the jump and label N become the "then"
 /// body; stmts at label N+ continue after the if-block. Only resolves jumps
 /// where the body between the jump and target is opcode-free.
-pub(crate) fn resolve_labeled_forward_jumps(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
+pub(crate) fn resolve_labeled_forward_jumps(
+    stmts: Vec<(usize, Stmt)>,
+    opcode_scan: OpcodeReturnScan,
+) -> Vec<(usize, Stmt)> {
     let mut result = Vec::new();
     let mut index = 0;
     while index < stmts.len() {
         if let Some((recovered_label, recovered, consumed)) =
-            try_resolve_labeled_forward_jump(&stmts[index..])
+            try_resolve_labeled_forward_jump(&stmts[index..], opcode_scan)
         {
             result.push((recovered_label, recovered));
             index += consumed;
@@ -119,7 +134,10 @@ pub(crate) fn resolve_labeled_forward_jumps(stmts: Vec<(usize, Stmt)>) -> Vec<(u
     result
 }
 
-fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, Stmt, usize)> {
+fn try_resolve_labeled_forward_jump(
+    stmts: &[(usize, Stmt)],
+    opcode_scan: OpcodeReturnScan,
+) -> Option<(usize, Stmt, usize)> {
     let (start_label, first_stmt) = stmts.first()?;
     let Stmt::If(if_stmt) = first_stmt else {
         return None;
@@ -138,7 +156,7 @@ fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, S
     }
 
     let body_stmts: Vec<Stmt> = stmts[1..].iter().map(|(_, s)| s.clone()).collect();
-    if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts) {
+    if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts, opcode_scan) {
         return None;
     }
 
@@ -158,14 +176,26 @@ fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, S
     ))
 }
 
-fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
+pub(crate) fn stmts_contain_state_opcode_return(
+    stmts: &[Stmt],
+    opcode_scan: OpcodeReturnScan,
+) -> bool {
     struct Finder {
         found: bool,
+        opcode_scan: OpcodeReturnScan,
     }
     impl Visit for Finder {
-        fn visit_function(&mut self, _func: &Function) {}
+        fn visit_function(&mut self, func: &Function) {
+            if !self.opcode_scan.skip_nested_functions() {
+                func.visit_children_with(self);
+            }
+        }
 
-        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            if !self.opcode_scan.skip_nested_functions() {
+                arrow.visit_children_with(self);
+            }
+        }
 
         fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
             if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
@@ -182,7 +212,10 @@ fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
             ret.visit_children_with(self);
         }
     }
-    let mut finder = Finder { found: false };
+    let mut finder = Finder {
+        found: false,
+        opcode_scan,
+    };
     for stmt in stmts {
         stmt.visit_with(&mut finder);
         if finder.found {
@@ -192,7 +225,7 @@ fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
     false
 }
 
-fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
+pub(crate) fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
     match stmt {
         Stmt::Return(_) => return_jump_target(stmt),
         Stmt::Block(block) if block.stmts.len() == 1 => return_jump_target(&block.stmts[0]),
@@ -200,7 +233,7 @@ fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
     }
 }
 
-fn return_jump_target(stmt: &Stmt) -> Option<usize> {
+pub(crate) fn return_jump_target(stmt: &Stmt) -> Option<usize> {
     let Stmt::Return(ret) = stmt else {
         return None;
     };
@@ -224,7 +257,7 @@ fn jump_array_elem_number(elem: &Option<ExprOrSpread>) -> Option<u32> {
     Some(num.value as u32)
 }
 
-fn invert_condition(test: &Expr) -> Box<Expr> {
+pub(crate) fn invert_condition(test: &Expr) -> Box<Expr> {
     if let Expr::Unary(unary) = test {
         if unary.op == UnaryOp::Bang {
             return unary.arg.clone();

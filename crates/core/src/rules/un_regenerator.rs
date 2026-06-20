@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
     BreakStmt, CallExpr, Callee, ContinueStmt, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr,
     ForStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
     ModuleItem, Number, Param, ParenExpr, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase,
-    UnaryExpr, UnaryOp, VarDeclarator, WhileStmt, YieldExpr,
+    VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -17,7 +17,10 @@ use super::helper_matcher::{
     binding_key, count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
     remove_var_declarators_by_binding,
 };
-use super::state_machine::{reconstruct_with_regions, resolve_labeled_forward_jumps};
+use super::state_machine::{
+    invert_condition, jump_target_stmt, reconstruct_with_regions, resolve_labeled_forward_jumps,
+    return_jump_target, stmts_contain_state_opcode_return, OpcodeReturnScan,
+};
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
@@ -831,44 +834,12 @@ fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<Binding
     // Safety net: if a forward conditional jump could not be structured, an
     // opcode goto (`return [3, N]`) leaks into the output. Rather than emit
     // broken control flow, leave the function un-recovered.
-    if stmts_contain_state_opcode_return(&new_stmts) {
+    if stmts_contain_state_opcode_return(&new_stmts, OpcodeReturnScan::IncludeNestedFunctions) {
         return None;
     }
     body.stmts.remove(return_idx);
     body.stmts.splice(return_idx..return_idx, new_stmts);
     Some(mark_name)
-}
-
-/// Detects a leaked state-machine opcode return (`return [<num>, ...]`) anywhere
-/// in the decoded statements — a sign the control flow was not fully structured.
-fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
-    struct Finder {
-        found: bool,
-    }
-    impl swc_core::ecma::visit::Visit for Finder {
-        fn visit_return_stmt(&mut self, ret: &ReturnStmt) {
-            if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
-                if arr
-                    .elems
-                    .first()
-                    .and_then(|e| e.as_ref())
-                    .is_some_and(|e| matches!(e.expr.as_ref(), Expr::Lit(Lit::Num(_))))
-                {
-                    self.found = true;
-                    return;
-                }
-            }
-            ret.visit_children_with(self);
-        }
-    }
-    let mut f = Finder { found: false };
-    for stmt in stmts {
-        swc_core::ecma::visit::VisitWith::visit_with(stmt, &mut f);
-        if f.found {
-            return true;
-        }
-    }
-    false
 }
 
 /// Extract the mark binding key (sym + ctxt) from the 2nd argument of .wrap(fn, markIdent, ...)
@@ -1637,7 +1608,7 @@ fn decode_babel_state_machine(
     // Phase 3b: Resolve remaining forward jumps into if-blocks. At this stage
     // we still have `(label_idx, stmt)` pairs, so we can determine which
     // stmts fall before and after the jump target.
-    let output = resolve_labeled_forward_jumps(output);
+    let output = resolve_labeled_forward_jumps(output, OpcodeReturnScan::IncludeNestedFunctions);
 
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_name, &cases);
@@ -2638,20 +2609,6 @@ fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
         .position(|stmt| return_value_stmt(stmt).is_some())
 }
 
-fn invert_condition(test: &Expr) -> Box<Expr> {
-    if let Expr::Unary(unary) = test {
-        if unary.op == UnaryOp::Bang {
-            return unary.arg.clone();
-        }
-    }
-
-    Box::new(Expr::Unary(UnaryExpr {
-        span: DUMMY_SP,
-        op: UnaryOp::Bang,
-        arg: Box::new(test.clone()),
-    }))
-}
-
 fn expr_stmt_expr(stmt: &Stmt) -> Option<Box<Expr>> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
@@ -2665,38 +2622,6 @@ fn return_value_stmt(stmt: &Stmt) -> Option<&Stmt> {
     };
     ret.arg.as_ref()?;
     Some(stmt)
-}
-
-fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
-    match stmt {
-        Stmt::Return(_) => return_jump_target(stmt),
-        Stmt::Block(block) if block.stmts.len() == 1 => return_jump_target(&block.stmts[0]),
-        _ => None,
-    }
-}
-
-fn return_jump_target(stmt: &Stmt) -> Option<usize> {
-    let Stmt::Return(ret) = stmt else {
-        return None;
-    };
-    let Expr::Array(arr) = ret.arg.as_deref()? else {
-        return None;
-    };
-    if arr.elems.len() < 2 {
-        return None;
-    }
-    let opcode = jump_array_elem_number(arr.elems.first()?)?;
-    if opcode != 3 {
-        return None;
-    }
-    Some(jump_array_elem_number(arr.elems.get(1)?)? as usize)
-}
-
-fn jump_array_elem_number(elem: &Option<ExprOrSpread>) -> Option<u32> {
-    let Expr::Lit(Lit::Num(num)) = elem.as_ref()?.expr.as_ref() else {
-        return None;
-    };
-    Some(num.value as u32)
 }
 
 fn convert_jump_returns(
