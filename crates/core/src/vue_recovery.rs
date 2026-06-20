@@ -3536,6 +3536,58 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_unref_helper_alias_in_component_props_and_events() {
+        let input = r#"
+import { P as Panel } from "./Panel.vue";
+import { d as dc, _ as ur, q as ob, aa as cb } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "PanelHost",
+  setup() {
+    return () => (
+      ob(), cb(Panel, {
+        disabled: !ur(open),
+        items: ur(items),
+        onClose: ur(closePanel)
+      }, null, 8, ["disabled", "items", "onClose"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Panel :disabled=\"!open\" :items=\"items\" @close=\"closePanel\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_unref_helper_alias_in_render_conditions_and_lists() {
+        let input = r#"
+import { d as dc, _ as ur, q as ob, X as ce, F as Fragment, R as rl, Z as cc } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "PanelList",
+  setup() {
+    return () => (
+      ob(), ce(Fragment, null, [
+        ur(open) && ur(enabled)
+          ? (ob(), ce("p", { key: 0 }, "Open"))
+          : cc("", true),
+        (ob(true), ce(Fragment, null, rl(ur(items), (item) => (
+          ob(), ce("span", { key: item.id }, item.name, 1)
+        )), 128))
+      ], 64)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"open &amp;&amp; enabled\">Open</p>\n  <span v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</span>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_computed_value_alias() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock } from "vue";
