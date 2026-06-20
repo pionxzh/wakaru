@@ -4573,6 +4573,30 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_ref_object_member_extracted_values() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+import { storeToRefs } from "pinia";
+export default defineComponent({
+  __name: "StoreStatus",
+  setup() {
+    const currentUser = storeToRefs(useStore()).currentUser;
+    const refs = storeToRefs(useOtherStore());
+    const isLoaded = refs.isLoaded;
+    return () => (
+      openBlock(), createElementBlock("p", { title: currentUser.value.name }, toDisplayString(isLoaded.value), 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { storeToRefs } from \"pinia\";\n\nconst currentUser = storeToRefs(useStore()).currentUser;\nconst refs = storeToRefs(useOtherStore());\nconst isLoaded = refs.isLoaded;\n</script>\n\n<template>\n  <p :title=\"currentUser.name\">{{ isLoaded }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn emits_dependencies_for_inlined_setup_computed_values() {
         let input = r#"
 import { defineComponent, computed, openBlock, createElementBlock, Fragment, renderList } from "vue";
