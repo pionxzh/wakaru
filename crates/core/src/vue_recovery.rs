@@ -4864,6 +4864,43 @@ export const u = () => {
     }
 
     #[test]
+    fn recovers_imported_composable_callback_written_ref_values() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+import { u as useListState } from "./state.js";
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const { items, raw } = useListState();
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value, title: raw.value.name }, null, 8, ["items", "title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+export const u = () => {
+  const itemList = createList([]);
+  subscribe(() => {
+    itemList.value.push("ready");
+  });
+  const raw = { value: { name: "plain" } };
+  return { items: itemList, raw };
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_imported_composable_legacy_tuple_member_ref_values() {
         let input = r#"
 import { defineComponent, normalizeClass, openBlock, createElementBlock } from "vue";
@@ -4932,6 +4969,42 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nfunction useListState() {\n    const itemList = createList([]);\n    itemList.value.push(\"ready\");\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n}\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_imported_composable_shadowed_callback_value_members() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+import { u as useListState } from "./state.js";
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const { items } = useListState();
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value.name }, null, 8, ["items"])
+    );
+  }
+});
+"#;
+        let state = r#"
+export const u = () => {
+  const itemList = createList([]);
+  subscribe((itemList) => {
+    itemList.value.push("nested");
+  });
+  return { items: itemList };
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
         );
     }
 
