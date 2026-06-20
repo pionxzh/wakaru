@@ -158,7 +158,7 @@ fn script_local_reserved_bindings(module: &Module, ctx: &VueRecoveryContext) -> 
     reserved.extend(
         ctx.setup_local_bindings
             .iter()
-            .flat_map(|binding| binding.bindings.iter().cloned()),
+            .flat_map(|binding| binding.emitted_bindings.iter().cloned()),
     );
     reserved.extend(
         ctx.setup_ref_script_bindings
@@ -194,6 +194,37 @@ fn collect_decl_bindings(decl: &Decl, bindings: &mut HashSet<Atom>) {
         }
         _ => {}
     }
+}
+
+fn emitted_stmt_bindings(source: &str, ctx: &VueRecoveryContext, fallback: &[Atom]) -> Vec<Atom> {
+    let bindings = emitted_decl_bindings(source, ctx);
+    if bindings.is_empty() {
+        fallback.to_vec()
+    } else {
+        bindings
+    }
+}
+
+fn emitted_decl_bindings(source: &str, ctx: &VueRecoveryContext) -> Vec<Atom> {
+    let Ok(module) = super::parse_module(source, ctx.cm.clone()) else {
+        return Vec::new();
+    };
+
+    let mut bindings = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(decl)) => collect_decl_bindings(decl, &mut bindings),
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                collect_decl_bindings(&export.decl, &mut bindings);
+            }
+            _ => {}
+        }
+    }
+
+    let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+    bindings.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+    bindings.dedup();
+    bindings
 }
 
 fn collect_script_local_decl(
@@ -269,8 +300,10 @@ fn push_script_local_binding(
 
     if !source.is_empty() {
         let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+        let emitted_bindings = emitted_stmt_bindings(&source, ctx, &bindings);
         ctx.script_local_bindings.push(VueSetupLocalBinding {
             bindings,
+            emitted_bindings,
             refs: stmt_ident_refs(&cleaned_stmt),
             source,
             import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
@@ -308,9 +341,11 @@ pub(super) fn render_local_declaration_with_aliases(
     } else {
         declaration.bindings.clone()
     };
+    let emitted_bindings = emitted_stmt_bindings(&source, ctx, &bindings);
 
     Ok(VueSetupLocalBinding {
         bindings,
+        emitted_bindings,
         refs: stmt_ident_refs(&cleaned_stmt),
         source,
         import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
@@ -1314,8 +1349,10 @@ pub(super) fn collect_setup_context(
         let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
         let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
         if !source.is_empty() {
+            let emitted_bindings = emitted_stmt_bindings(&source, ctx, &bindings);
             ctx.setup_local_bindings.push(VueSetupLocalBinding {
                 bindings,
+                emitted_bindings,
                 refs: stmt_ident_refs(&cleaned_stmt),
                 source,
                 import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
