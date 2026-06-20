@@ -4,11 +4,11 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
     Decl, ImportDecl, ImportSpecifier, Module, ModuleDecl, ModuleItem, Stmt, Str,
 };
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::diagnostics::collect_duplicate_declaration_warnings;
-use super::io::{parse_js, print_js};
+use super::io::{apply_fixer, parse_js, print_js};
 use super::types::{UnpackWarning, UnpackWarningKind};
 use super::unpack_cleanup::{
     dedup_duplicate_exports, hoist_late_runtime_helpers, module_export_name_string,
@@ -299,7 +299,7 @@ fn build_merged_cycle_code(
                 dedup_duplicate_exports(&mut module);
                 hoist_late_runtime_helpers(&mut module);
             }
-            module.visit_mut_with(&mut fixer(None));
+            apply_fixer(&mut module)?;
             print_js(&module, cm)
         })
         .unwrap_or_else(|_| {
@@ -335,7 +335,7 @@ fn dedup_merged_cycle_imports(filename: &str, code: &str) -> Option<String> {
         module.visit_mut_with(&mut ImportDedup);
         dedup_duplicate_exports(&mut module);
         hoist_late_runtime_helpers(&mut module);
-        module.visit_mut_with(&mut fixer(None));
+        apply_fixer(&mut module).ok()?;
         print_js(&module, cm).ok()
     })
 }

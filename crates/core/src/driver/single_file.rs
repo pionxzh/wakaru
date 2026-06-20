@@ -1,13 +1,13 @@
 use anyhow::Result;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::diagnostics::{
     collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
     verify_output_parses,
 };
-use super::io::{parse_js_with_recovery, print_js};
+use super::io::{apply_fixer, parse_js_with_recovery, print_js};
 use super::types::{DecompileOptions, DecompileOutput};
 use crate::rules::{apply_rules, ImportDedup, RulePipelineOptions, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
@@ -74,7 +74,7 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
         {
             let span = tracing::info_span!("fixer");
             let _enter = span.enter();
-            module.visit_mut_with(&mut fixer(None));
+            apply_fixer(&mut module)?;
         }
 
         let code = {

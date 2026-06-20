@@ -7,11 +7,12 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::utils::swc_safety::apply_fixer;
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
@@ -178,7 +179,7 @@ fn emit_browserify_module(
     cm: Lrc<SourceMap>,
 ) -> Option<String> {
     let (mut synthetic_module, _) = normalize_extracted_browserify_module(factory, body_stmts);
-    synthetic_module.visit_mut_with(&mut fixer(None));
+    apply_fixer(&mut synthetic_module).ok()?;
 
     emit_module(&synthetic_module, cm).ok()
 }

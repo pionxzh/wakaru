@@ -2,10 +2,10 @@ use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
-use super::io::{parse_js, print_js};
+use super::io::{apply_fixer, parse_js, print_js};
 use super::single_file::decompile;
 use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
 #[cfg(test)]
@@ -364,7 +364,7 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
                 export_rename: false,
             },
         );
-        module.visit_mut_with(&mut fixer(None));
+        apply_fixer(&mut module)?;
         print_js(&module, cm)
     })
 }

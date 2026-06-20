@@ -7,6 +7,8 @@ pub mod webpack4;
 pub mod webpack5;
 mod wrappers;
 
+use std::panic::{self, AssertUnwindSafe};
+
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
@@ -183,7 +185,10 @@ pub(crate) fn parse_es_module(
         None,
     );
     let mut parser = Parser::new_from(lexer);
-    let parsed = parser.parse_module();
+    let parsed = match panic::catch_unwind(AssertUnwindSafe(|| parser.parse_module())) {
+        Ok(result) => result,
+        Err(_) => return Err(anyhow::anyhow!("SWC parser panicked on {filename}")),
+    };
     let parser_errors: Vec<String> = parser
         .take_errors()
         .into_iter()

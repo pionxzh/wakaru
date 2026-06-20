@@ -1,4 +1,5 @@
 use std::fmt;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
@@ -6,8 +7,8 @@ use swc_core::common::{sync::Lrc, FileName, SourceMap, Spanned};
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
-use swc_core::ecma::transforms::base::fixer::fixer;
-use swc_core::ecma::visit::VisitMutWith;
+
+pub(crate) use crate::utils::swc_safety::apply_fixer;
 
 #[derive(Debug, Clone)]
 pub(super) struct ParsedModule {
@@ -50,7 +51,10 @@ pub(super) fn parse_js_with_recovery(
 
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
     let mut parser = Parser::new_from(lexer);
-    let parsed = parser.parse_module();
+    let parsed = match panic::catch_unwind(AssertUnwindSafe(|| parser.parse_module())) {
+        Ok(result) => result,
+        Err(_) => return Err(anyhow!("SWC parser panicked on {filename}")),
+    };
     let parser_errors: Vec<ParseDiagnostic> = parser
         .take_errors()
         .into_iter()
@@ -103,7 +107,7 @@ pub(super) fn print_js(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
 
 pub(super) fn print_trace_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
     let mut printable = module.clone();
-    printable.visit_mut_with(&mut fixer(None));
+    apply_fixer(&mut printable)?;
     print_js(&printable, cm)
 }
 

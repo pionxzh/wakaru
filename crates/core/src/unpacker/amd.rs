@@ -4,12 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::transforms::base::fixer::fixer;
-use swc_core::ecma::visit::VisitMutWith;
 
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{sanitize_relative_path, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
+use crate::utils::swc_safety::apply_fixer;
 
 struct AmdDefine<'a> {
     id: String,
@@ -489,7 +488,7 @@ fn relative_import_specifier(from_filename: &str, to_filename: &str) -> String {
 }
 
 fn emit_module(mut module: Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
-    module.visit_mut_with(&mut fixer(None));
+    apply_fixer(&mut module)?;
     let mut output = Vec::new();
     {
         let mut emitter = Emitter {

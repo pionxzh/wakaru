@@ -14,10 +14,10 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOB
 use swc_core::ecma::ast::{
     CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberExpr, MemberProp, Module, Str,
 };
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::super::io::{parse_js, print_js};
+use super::super::io::{apply_fixer, parse_js, print_js};
 use super::super::types::{UnpackOutput, UnpackWarning, UnpackWarningKind};
 use crate::unpacker::UnpackedModule;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
@@ -313,7 +313,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                     unpacked.numeric_rewrite.as_ref(),
                     &numeric_rewrite_plan,
                 );
-                module.visit_mut_with(&mut fixer(None));
+                apply_fixer(&mut module)?;
                 print_js(&module, cm)
             }) {
                 Ok(code) => (unpacked.module.filename, code, None),
@@ -689,7 +689,7 @@ mod tests {
                 prepared[0].numeric_rewrite.as_ref(),
                 &plan,
             );
-            module.visit_mut_with(&mut fixer(None));
+            apply_fixer(&mut module).expect("fixer should not panic on fixture");
             print_js(&module, cm).expect("fixture should print")
         });
 

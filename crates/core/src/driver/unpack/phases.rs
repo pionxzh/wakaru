@@ -5,14 +5,14 @@ use anyhow::Result;
 use rayon::prelude::*;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::super::diagnostics::{
     collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
     verify_output_parses,
 };
-use super::super::io::{parse_js, parse_js_with_recovery, print_js};
+use super::super::io::{apply_fixer, parse_js, parse_js_with_recovery, print_js};
 use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
@@ -368,7 +368,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
                 }
 
-                module.visit_mut_with(&mut fixer(None));
+                apply_fixer(&mut module)?;
                 let code = print_js(&module, cm)?;
 
                 if options.diagnostics {

@@ -11,13 +11,14 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
+use crate::utils::swc_safety::apply_fixer;
 
 struct Webpack5RuntimeNormalizer {
     require_sym: Atom,
@@ -681,7 +682,7 @@ fn emit_webpack5_entry_module(
 ) -> Option<String> {
     let (mut synthetic_module, _) =
         normalize_extracted_webpack_entry_module(body_stmts, id_to_filename);
-    synthetic_module.visit_mut_with(&mut fixer(None));
+    apply_fixer(&mut synthetic_module).ok()?;
     emit_module(&synthetic_module, cm).ok()
 }
 
@@ -1096,7 +1097,7 @@ fn emit_webpack5_module(
     {
         let span = tracing::info_span!("webpack5: fixer+emit");
         let _enter = span.enter();
-        synthetic_module.visit_mut_with(&mut fixer(None));
+        apply_fixer(&mut synthetic_module).ok()?;
         emit_module(&synthetic_module, cm).ok()
     }
 }

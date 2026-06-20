@@ -11,12 +11,13 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::unpacker::{UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
+use crate::utils::swc_safety::apply_fixer;
 
 /// Identifies a webpack module by either its numeric index (array-form) or
 /// its string path (object-form, e.g. `"./src/index.js"`).
@@ -548,7 +549,9 @@ fn extract_webpack4_array_modules(
                 module.visit_mut_with(&mut id_rewriter);
             },
         );
-        synthetic_module.visit_mut_with(&mut fixer(None));
+        if apply_fixer(&mut synthetic_module).is_err() {
+            continue;
+        }
 
         let code = match emit_module(&synthetic_module, cm.clone()) {
             Ok(c) => c,
@@ -690,7 +693,9 @@ fn extract_webpack4_object_modules(
                 }
             },
         );
-        synthetic_module.visit_mut_with(&mut fixer(None));
+        if apply_fixer(&mut synthetic_module).is_err() {
+            continue;
+        }
 
         let code = match emit_module(&synthetic_module, cm.clone()) {
             Ok(c) => c,
@@ -1417,7 +1422,7 @@ mod polyfill_tests {
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
             unwrap_global_polyfill(&mut module, unresolved_mark);
-            module.visit_mut_with(&mut fixer(None));
+            apply_fixer(&mut module).expect("fixer should not panic on fixture");
             emit_module(&module, cm).expect("emit")
         })
     }
