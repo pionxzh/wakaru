@@ -12,7 +12,7 @@ wakaru-core = { path = "crates/core" }
 wakaru-formatter = { path = "crates/formatter" }
 anyhow = "1.0"
 sourcemap = "9"
-swc_core = { version = "65", features = [
+swc_core = { version = "=70.0.0", features = [
   "common",
   "ecma_ast",
   "ecma_codegen",
