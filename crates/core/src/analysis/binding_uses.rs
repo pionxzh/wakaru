@@ -85,9 +85,9 @@ impl BindingUseIndex {
 
     pub(crate) fn referenced_bindings(&self) -> HashSet<BindingId> {
         self.bindings
-            .iter()
-            .filter(|(_, info)| !info.uses.is_empty())
-            .map(|(binding, _)| binding.clone())
+            .keys()
+            .filter(|binding| self.use_count(binding) > 0)
+            .cloned()
             .collect()
     }
 
@@ -103,7 +103,6 @@ impl BindingUseIndex {
             .collect()
     }
 
-    #[cfg(test)]
     pub(crate) fn use_count(&self, binding: &BindingId) -> usize {
         self.bindings
             .get(binding)
