@@ -16,7 +16,10 @@ use super::syntax::{module_export_name, prop_name, string_lit};
 pub(super) fn composable_ref_props_from_source(source: &str) -> HashMap<String, HashSet<Atom>> {
     let cm: Lrc<SourceMap> = Default::default();
     if let Ok(module) = parse_module(source, cm) {
-        return composable_ref_props_from_module(&module);
+        let exports = composable_ref_props_from_module(&module);
+        if !exports.is_empty() {
+            return exports;
+        }
     }
 
     let Some(result) = crate::unpacker::unpack_bundle(source) else {
