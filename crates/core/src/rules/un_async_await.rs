@@ -3,15 +3,16 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CatchClause,
-    CondExpr, ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module,
-    Pat, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, TryStmt,
-    UnaryExpr, UnaryOp, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CondExpr,
+    ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop,
+    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, UnaryExpr, UnaryOp,
+    YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
+use super::state_machine::{reconstruct_with_regions, resolve_labeled_forward_jumps};
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
@@ -1130,99 +1131,6 @@ impl VisitMut for CatchValueReplacer {
     }
 }
 
-fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>; 4]]) -> Vec<Stmt> {
-    if trys.is_empty() {
-        return label_stmts.into_iter().flatten().collect();
-    }
-
-    let mut result: Vec<Stmt> = Vec::new();
-    let n = label_stmts.len();
-    let mut i = 0usize;
-
-    while i < n {
-        // Check if i is the start of a protected region
-        let region = trys.iter().find(|r| r[0] == Some(i));
-        if let Some(region) = region {
-            let [_try_start, catch_start, finally_start, next] = *region;
-
-            let try_end = catch_start.or(finally_start).unwrap_or(n);
-            let try_stmts: Vec<Stmt> = label_stmts[i..try_end.min(n)]
-                .iter()
-                .flatten()
-                .cloned()
-                .collect();
-
-            let catch_clause = if let Some(cs) = catch_start {
-                let catch_end = finally_start.or(next).unwrap_or(n);
-                let cs = cs.min(n);
-                let catch_stmts: Vec<Stmt> = label_stmts[cs..catch_end.min(n)]
-                    .iter()
-                    .flatten()
-                    .cloned()
-                    .collect();
-                Some(CatchClause {
-                    span: DUMMY_SP,
-                    param: Some(Pat::Ident(swc_core::ecma::ast::BindingIdent {
-                        id: Ident::new_no_ctxt("error".into(), DUMMY_SP),
-                        type_ann: None,
-                    })),
-                    body: BlockStmt {
-                        span: DUMMY_SP,
-                        ctxt: Default::default(),
-                        stmts: catch_stmts,
-                    },
-                })
-            } else {
-                None
-            };
-
-            let finally_block = if let Some(fs) = finally_start {
-                let finally_end = next.unwrap_or(n);
-                let fs = fs.min(n);
-                let finally_stmts: Vec<Stmt> = label_stmts[fs..finally_end.min(n)]
-                    .iter()
-                    .flatten()
-                    .cloned()
-                    .collect();
-                Some(BlockStmt {
-                    span: DUMMY_SP,
-                    ctxt: Default::default(),
-                    stmts: finally_stmts,
-                })
-            } else {
-                None
-            };
-
-            result.push(Stmt::Try(Box::new(TryStmt {
-                span: DUMMY_SP,
-                block: BlockStmt {
-                    span: DUMMY_SP,
-                    ctxt: Default::default(),
-                    stmts: try_stmts,
-                },
-                handler: catch_clause,
-                finalizer: finally_block,
-            })));
-
-            // Skip past the whole protected region
-            i = next.unwrap_or(n);
-        } else {
-            // Check if i is inside any region (but not the start) → already handled
-            let in_region = trys.iter().any(|r| {
-                let start = r[0].unwrap_or(usize::MAX);
-                let end = r[3].or(r[2]).or(r[1]).unwrap_or(0);
-                i > start && i < end
-            });
-            if !in_region {
-                result.extend(label_stmts[i].iter().cloned());
-            }
-            i += 1;
-        }
-    }
-
-    result
-}
-
 fn recover_index_loops(stmts: Vec<Stmt>) -> Vec<Stmt> {
     let mut result = Vec::new();
     let mut index = 0usize;
@@ -1293,62 +1201,6 @@ fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
     stmts
         .iter()
         .position(|stmt| return_value_stmt(stmt).is_some())
-}
-
-fn resolve_labeled_forward_jumps(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
-    let mut result = Vec::new();
-    let mut index = 0;
-    while index < stmts.len() {
-        if let Some((label, recovered, consumed)) =
-            try_resolve_labeled_forward_jump(&stmts[index..])
-        {
-            result.push((label, recovered));
-            index += consumed;
-        } else {
-            result.push(stmts[index].clone());
-            index += 1;
-        }
-    }
-    result
-}
-
-fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, Stmt, usize)> {
-    let (start_label, first_stmt) = stmts.first()?;
-    let Stmt::If(if_stmt) = first_stmt else {
-        return None;
-    };
-    if if_stmt.alt.is_some() {
-        return None;
-    }
-    let target = jump_target_stmt(&if_stmt.cons)?;
-    if target <= *start_label {
-        return None;
-    }
-
-    let max_remaining_label = stmts[1..].iter().map(|(l, _)| *l).max().unwrap_or(0);
-    if target <= max_remaining_label {
-        return None;
-    }
-
-    let body_stmts: Vec<Stmt> = stmts[1..].iter().map(|(_, s)| s.clone()).collect();
-    if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts) {
-        return None;
-    }
-
-    Some((
-        *start_label,
-        Stmt::If(swc_core::ecma::ast::IfStmt {
-            span: DUMMY_SP,
-            test: invert_condition(&if_stmt.test),
-            cons: Box::new(Stmt::Block(BlockStmt {
-                span: DUMMY_SP,
-                ctxt: Default::default(),
-                stmts: body_stmts,
-            })),
-            alt: None,
-        }),
-        stmts.len(),
-    ))
 }
 
 fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {

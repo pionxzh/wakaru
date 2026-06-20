@@ -24,6 +24,7 @@ pub(crate) mod rename_utils;
 mod simplify_sequence;
 mod smart_inline;
 mod smart_rename;
+pub(crate) mod state_machine;
 pub(crate) mod transpiler_helper_utils;
 mod un_argument_spread;
 mod un_array_concat_spread;
