@@ -1,9 +1,12 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, CatchClause, Expr, ExprOrSpread, Function, Ident, IfStmt, Lit, Pat, Stmt,
-    TryStmt, UnaryExpr, UnaryOp,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmt, CatchClause, CondExpr, Expr,
+    ExprOrSpread, ExprStmt, Function, Ident, IfStmt, Lit, Pat, SimpleAssignTarget, Stmt, TryStmt,
+    UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
+
+use super::helper_matcher::{binding_key, BindingKey};
 
 #[derive(Clone, Copy)]
 pub(crate) enum OpcodeReturnScan {
@@ -41,6 +44,11 @@ impl StateMachineProgram {
 
     pub(crate) fn resolve_labeled_forward_jumps(mut self, opcode_scan: OpcodeReturnScan) -> Self {
         self.blocks = resolve_labeled_forward_jump_blocks(self.blocks, opcode_scan);
+        self
+    }
+
+    pub(crate) fn recover_conditional_assignments(mut self) -> Self {
+        self.blocks = recover_conditional_assignment_blocks(self.blocks);
         self
     }
 
@@ -120,6 +128,111 @@ fn label_stmts_from_blocks(blocks: Vec<StateBlock>) -> Vec<Vec<Stmt>> {
         label_stmts[block.label].extend(block.stmts);
     }
     label_stmts
+}
+
+fn recover_conditional_assignment_blocks(blocks: Vec<StateBlock>) -> Vec<StateBlock> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < blocks.len() {
+        if let Some((block, consumed)) = try_recover_conditional_assignment(&blocks[index..]) {
+            result.push(block);
+            index += consumed;
+        } else {
+            result.push(blocks[index].clone());
+            index += 1;
+        }
+    }
+
+    result
+}
+
+fn try_recover_conditional_assignment(blocks: &[StateBlock]) -> Option<(StateBlock, usize)> {
+    let first_block = blocks.first()?;
+    let start_label = first_block.label;
+    let StateTerminator::ConditionalJump { test, target } = first_block.terminator() else {
+        return None;
+    };
+    if target <= start_label + 1 {
+        return None;
+    }
+
+    let mut cursor = 1usize;
+    let mut fallthrough_stmts = Vec::new();
+    while let Some(block) = blocks.get(cursor) {
+        if block.label >= target {
+            break;
+        }
+        fallthrough_stmts.extend(block.stmts.iter().cloned());
+        cursor += 1;
+    }
+
+    let mut target_stmts = Vec::new();
+    while let Some(block) = blocks.get(cursor) {
+        if block.label != target {
+            break;
+        }
+        target_stmts.extend(block.stmts.iter().cloned());
+        cursor += 1;
+    }
+
+    if fallthrough_stmts.len() != 1 || target_stmts.len() != 1 {
+        return None;
+    }
+
+    let (fallthrough_key, left, fallthrough_value) = conditional_assignment(&fallthrough_stmts[0])?;
+    let (target_key, _, target_value) = conditional_assignment(&target_stmts[0])?;
+    if fallthrough_key != target_key {
+        return None;
+    }
+
+    Some((
+        StateBlock::new(
+            start_label,
+            vec![assign_stmt(
+                left,
+                Box::new(Expr::Cond(CondExpr {
+                    span: DUMMY_SP,
+                    test,
+                    cons: target_value,
+                    alt: fallthrough_value,
+                })),
+            )],
+        ),
+        cursor,
+    ))
+}
+
+fn conditional_assignment(stmt: &Stmt) -> Option<(BindingKey, AssignTarget, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    Some((
+        binding_key(&left.id),
+        assign.left.clone(),
+        assign.right.clone(),
+    ))
+}
+
+fn assign_stmt(left: AssignTarget, right: Box<Expr>) -> Stmt {
+    Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left,
+            right,
+        })),
+    })
 }
 
 pub(crate) fn reconstruct_with_regions(
@@ -414,6 +527,29 @@ mod tests {
         assert_eq!(block.stmts.len(), 1);
     }
 
+    #[test]
+    fn program_recovers_conditional_assignments() {
+        let recovered = StateMachineProgram::from_labeled_stmts(
+            vec![
+                (0, if_jump("done", 2)),
+                (1, ident_assign_stmt("value", "fallback")),
+                (2, ident_assign_stmt("value", "target")),
+            ],
+            vec![],
+        )
+        .recover_conditional_assignments()
+        .into_reconstructed_stmts();
+
+        assert_eq!(recovered.len(), 1);
+        let Stmt::Expr(ExprStmt { expr, .. }) = &recovered[0] else {
+            panic!("expected assignment statement");
+        };
+        let Expr::Assign(assign) = expr.as_ref() else {
+            panic!("expected assignment expression");
+        };
+        assert!(matches!(assign.right.as_ref(), Expr::Cond(_)));
+    }
+
     fn if_jump(test: &str, target: usize) -> Stmt {
         Stmt::If(IfStmt {
             span: DUMMY_SP,
@@ -421,6 +557,23 @@ mod tests {
             cons: Box::new(jump_return(target)),
             alt: None,
         })
+    }
+
+    fn ident_assign_stmt(left: &str, right: &str) -> Stmt {
+        assign_stmt(ident_target(left), ident_expr(right))
+    }
+
+    fn ident_target(name: &str) -> AssignTarget {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(
+            swc_core::ecma::ast::BindingIdent {
+                id: Ident::new_no_ctxt(Atom::from(name), DUMMY_SP),
+                type_ann: None,
+            },
+        ))
+    }
+
+    fn ident_expr(name: &str) -> Box<Expr> {
+        Box::new(Expr::Ident(Ident::new_no_ctxt(Atom::from(name), DUMMY_SP)))
     }
 
     fn jump_return(target: usize) -> Stmt {

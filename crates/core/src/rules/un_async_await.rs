@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CondExpr,
-    ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop,
-    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, ContinueStmt,
+    Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop, PropName,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -557,10 +557,9 @@ fn decode_state_machine(
         }
     }
 
-    let output = recover_conditional_assignments(output);
-
     let recovered = recover_index_loops(
         StateMachineProgram::from_labeled_stmts(output, trys)
+            .recover_conditional_assignments()
             .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
             .into_reconstructed_stmts(),
     );
@@ -568,108 +567,6 @@ fn decode_state_machine(
         return None;
     }
     Some(recovered)
-}
-
-/// Recover `left = test ? a : b` ternaries from a decoded state-machine flat
-/// list where a forward `if (test) [goto T]` selects between a fallthrough
-/// assignment and the assignment at label T. Shared with the regenerator
-/// decoder, which lowers its conditional jumps to the same `[3, T]` opcode.
-pub(crate) fn recover_conditional_assignments(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
-    let mut result = Vec::new();
-    let mut index = 0usize;
-
-    while index < stmts.len() {
-        if let Some((stmt, consumed)) = try_recover_conditional_assignment(&stmts[index..]) {
-            result.push((stmts[index].0, stmt));
-            index += consumed;
-        } else {
-            result.push(stmts[index].clone());
-            index += 1;
-        }
-    }
-
-    result
-}
-
-fn try_recover_conditional_assignment(stmts: &[(usize, Stmt)]) -> Option<(Stmt, usize)> {
-    let (start_label, first_stmt) = stmts.first()?;
-    let (test, target_label) = jump_if_target(first_stmt)?;
-    if target_label <= *start_label + 1 {
-        return None;
-    }
-
-    let mut cursor = 1usize;
-    let mut fallthrough_stmts = Vec::new();
-    while let Some((label, stmt)) = stmts.get(cursor) {
-        if *label >= target_label {
-            break;
-        }
-        fallthrough_stmts.push(stmt.clone());
-        cursor += 1;
-    }
-
-    let mut target_stmts = Vec::new();
-    while let Some((label, stmt)) = stmts.get(cursor) {
-        if *label != target_label {
-            break;
-        }
-        target_stmts.push(stmt.clone());
-        cursor += 1;
-    }
-
-    if fallthrough_stmts.len() != 1 || target_stmts.len() != 1 {
-        return None;
-    }
-
-    let (fallthrough_key, left, fallthrough_value) = conditional_assignment(&fallthrough_stmts[0])?;
-    let (target_key, _, target_value) = conditional_assignment(&target_stmts[0])?;
-    if fallthrough_key != target_key {
-        return None;
-    }
-
-    Some((
-        assign_stmt(
-            left,
-            Box::new(Expr::Cond(CondExpr {
-                span: DUMMY_SP,
-                test,
-                cons: target_value,
-                alt: fallthrough_value,
-            })),
-        ),
-        cursor,
-    ))
-}
-
-fn jump_if_target(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
-    let Stmt::If(if_stmt) = stmt else {
-        return None;
-    };
-    if if_stmt.alt.is_some() {
-        return None;
-    }
-    let target = jump_target_stmt(&if_stmt.cons)?;
-    Some((if_stmt.test.clone(), target))
-}
-
-fn conditional_assignment(stmt: &Stmt) -> Option<(BindingKey, AssignTarget, Box<Expr>)> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
-    };
-    let Expr::Assign(assign) = expr.as_ref() else {
-        return None;
-    };
-    if assign.op != AssignOp::Assign {
-        return None;
-    }
-    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
-        return None;
-    };
-    Some((
-        binding_key(&left.id),
-        assign.left.clone(),
-        assign.right.clone(),
-    ))
 }
 
 fn is_catch_label(label_idx: usize, trys: &[[Option<usize>; 4]]) -> bool {

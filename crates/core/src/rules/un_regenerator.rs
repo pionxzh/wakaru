@@ -24,7 +24,7 @@ use super::state_machine::{
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
-use super::un_async_await::{recover_conditional_assignments, try_transform_ts_generator_body};
+use super::un_async_await::try_transform_ts_generator_body;
 
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
@@ -1600,16 +1600,12 @@ fn decode_babel_state_machine(
         }
     }
 
-    // Phase 3a: Recover `left = test ? a : b` ternaries from forward
-    // conditional jumps (`if (test) [3, T]`) selecting between a fallthrough
-    // assignment and the assignment at the jump target.
-    let output = recover_conditional_assignments(output);
-
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_name, &cases);
 
     let mut result = recover_index_loops(
         StateMachineProgram::from_labeled_stmts(output, trys)
+            .recover_conditional_assignments()
             .resolve_labeled_forward_jumps(OpcodeReturnScan::IncludeNestedFunctions)
             .into_reconstructed_stmts(),
     );
