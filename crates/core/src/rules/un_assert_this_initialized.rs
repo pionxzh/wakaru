@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use swc_core::common::util::take::Take;
 use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -77,7 +78,7 @@ impl VisitMut for AtiReplacer<'_> {
         }
 
         if matches!(call.args[0].expr.as_ref(), Expr::This(_)) {
-            *expr = *call.args[0].expr.clone();
+            *expr = *call.args[0].expr.take();
         }
     }
 }

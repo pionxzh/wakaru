@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{Callee, Expr, Module, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -91,7 +92,7 @@ impl VisitMut for TypeofReplacer<'_> {
         *expr = Expr::Unary(UnaryExpr {
             span: DUMMY_SP,
             op: UnaryOp::TypeOf,
-            arg: call.args[0].expr.clone(),
+            arg: call.args[0].expr.take(),
         });
     }
 }

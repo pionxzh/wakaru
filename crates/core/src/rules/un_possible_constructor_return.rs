@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use swc_core::common::util::take::Take;
 use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -75,6 +76,6 @@ impl VisitMut for PcrReplacer<'_> {
         }
 
         // Replace with the second argument (the super constructor return value)
-        *expr = *call.args[1].expr.clone();
+        *expr = *call.args[1].expr.take();
     }
 }

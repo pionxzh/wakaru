@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -216,7 +217,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
                     span: DUMMY_SP,
                     elems: vec![Some(ExprOrSpread {
                         spread: Some(DUMMY_SP),
-                        expr: call.args[0].expr.clone(),
+                        expr: call.args[0].expr.take(),
                     })],
                 });
                 return;
@@ -233,7 +234,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
                             span: DUMMY_SP,
                             elems: vec![Some(ExprOrSpread {
                                 spread: Some(DUMMY_SP),
-                                expr: call.args[1].expr.clone(),
+                                expr: call.args[1].expr.take(),
                             })],
                         });
                         return;

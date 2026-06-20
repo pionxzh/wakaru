@@ -1,3 +1,4 @@
+use swc_core::common::util::take::Take;
 use swc_core::ecma::ast::{CallExpr, Callee, Expr, Ident, Lit, SeqExpr, WithStmt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -68,8 +69,8 @@ impl VisitMut for UnIndirectCall {
                         span: *span,
                         ctxt: *ctxt,
                         callee: Callee::Expr(inner),
-                        args: args.clone(),
-                        type_args: type_args.clone(),
+                        args: args.take(),
+                        type_args: type_args.take(),
                     });
                 }
             }
@@ -84,8 +85,8 @@ impl VisitMut for UnIndirectCall {
                     span: *span,
                     ctxt: *ctxt,
                     callee: Callee::Expr(inner),
-                    args: args.clone(),
-                    type_args: type_args.clone(),
+                    args: args.take(),
+                    type_args: type_args.take(),
                 });
             }
         }

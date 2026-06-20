@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::util::take::Take;
 use swc_core::common::Mark;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
@@ -715,7 +716,7 @@ impl VisitMut for ElidedRestSpreadReplacer<'_> {
             }
         }
 
-        self.replacement_init = Some(spread.expr.clone());
+        self.replacement_init = Some(spread.expr.take());
         *spread.expr = Expr::Ident(self.rest_binding.id.clone());
     }
 }

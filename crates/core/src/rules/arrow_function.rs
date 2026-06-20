@@ -175,8 +175,8 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
         body: Box::new(arrow_body),
         is_async: fn_expr.function.is_async,
         is_generator: false,
-        type_params: fn_expr.function.type_params.clone(),
-        return_type: fn_expr.function.return_type.clone(),
+        type_params: fn_expr.function.type_params.take(),
+        return_type: fn_expr.function.return_type.take(),
     })
 }
 

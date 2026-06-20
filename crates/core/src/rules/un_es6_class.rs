@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
+use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
@@ -2703,7 +2704,7 @@ impl VisitMut for SuperOrThisSimplifier {
             return;
         }
         // Replace `super(...) || this` with just `super(...)`
-        *expr = *bin.left.clone();
+        *expr = *bin.left.take();
     }
 
     // Don't descend into nested functions/arrows
@@ -2779,7 +2780,7 @@ impl VisitMut for SuperCallRewriter<'_> {
                 // Second arg becomes a spread argument to super()
                 let spread_arg = ExprOrSpread {
                     spread: Some(DUMMY_SP),
-                    expr: call.args[1].expr.clone(),
+                    expr: call.args[1].expr.take(),
                 };
                 *expr = Expr::Call(CallExpr {
                     span: DUMMY_SP,
@@ -2843,7 +2844,7 @@ impl VisitMut for CallSuperRewriter<'_> {
                 Expr::Ident(id) if id.sym.as_ref() == "arguments" => {
                     vec![ExprOrSpread {
                         spread: Some(DUMMY_SP),
-                        expr: call.args[2].expr.clone(),
+                        expr: call.args[2].expr.take(),
                     }]
                 }
                 // _callSuper(this, Foo, [a, b]) → super(a, b)
@@ -2927,7 +2928,7 @@ impl VisitMut for ProtoGetPrototypeOfSuperRewriter {
                 }
                 let spread_arg = ExprOrSpread {
                     spread: Some(DUMMY_SP),
-                    expr: call.args[1].expr.clone(),
+                    expr: call.args[1].expr.take(),
                 };
                 *expr = Expr::Call(CallExpr {
                     span: DUMMY_SP,

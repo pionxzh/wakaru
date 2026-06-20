@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier, Lit, Module,
@@ -257,7 +258,7 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
 
         // Only unwrap when the first arg is require("...")
         if is_require_call(&call.args[0].expr, self.local_helpers) {
-            *expr = *call.args[0].expr.clone();
+            *expr = *call.args[0].expr.take();
         }
     }
 }

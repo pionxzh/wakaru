@@ -1,3 +1,4 @@
+use swc_core::common::util::take::Take;
 use swc_core::ecma::ast::{BinExpr, BinaryOp, Expr, Lit, Str, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -24,7 +25,7 @@ impl VisitMut for UnTypeof {
                     *expr = Expr::Bin(BinExpr {
                         span: *span,
                         op: next_op,
-                        left: left.clone(),
+                        left: left.take(),
                         right: undefined_string(*span),
                     });
                 }
@@ -41,7 +42,7 @@ impl VisitMut for UnTypeof {
                     *expr = Expr::Bin(BinExpr {
                         span: *span,
                         op: next_op,
-                        left: right.clone(),
+                        left: right.take(),
                         right: undefined_string(*span),
                     });
                 }

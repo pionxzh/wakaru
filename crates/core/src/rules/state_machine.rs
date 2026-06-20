@@ -1,3 +1,4 @@
+use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, CatchClause, Expr, ExprOrSpread, Function, Ident, IfStmt, Lit, Pat, Stmt,
@@ -115,7 +116,7 @@ pub(crate) fn reconstruct_with_regions(
 /// body; stmts at label N+ continue after the if-block. Only resolves jumps
 /// where the body between the jump and target is opcode-free.
 pub(crate) fn resolve_labeled_forward_jumps(
-    stmts: Vec<(usize, Stmt)>,
+    mut stmts: Vec<(usize, Stmt)>,
     opcode_scan: OpcodeReturnScan,
 ) -> Vec<(usize, Stmt)> {
     let mut result = Vec::new();
@@ -127,7 +128,8 @@ pub(crate) fn resolve_labeled_forward_jumps(
             result.push((recovered_label, recovered));
             index += consumed;
         } else {
-            result.push(stmts[index].clone());
+            let (label, stmt) = &mut stmts[index];
+            result.push((*label, stmt.take()));
             index += 1;
         }
     }
