@@ -317,6 +317,10 @@ struct RecoveredEventExpr {
 }
 
 fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<RecoveredEventExpr> {
+    if let Some(handler) = cached_event_modifier_handler(value, ctx) {
+        return recover_event_expr(handler, ctx);
+    }
+
     if let Expr::Call(call) = value {
         if matches!(
             helper_name(&call.callee, ctx),
@@ -328,6 +332,9 @@ fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<Recovere
                     let mut current = event_modifier_names(modifiers.expr.as_ref());
                     current.append(&mut event.modifiers);
                     event.modifiers = current;
+                }
+                if !event.modifiers.is_empty() && is_noop_event_handler(handler.expr.as_ref()) {
+                    event.expr = VueExpr::new("");
                 }
                 return Ok(event);
             }
@@ -344,6 +351,56 @@ fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<Recovere
         expr: printed_vue_expr(value, ctx)?,
         modifiers: Vec::new(),
     })
+}
+
+fn cached_event_modifier_handler<'a>(
+    value: &'a Expr,
+    ctx: &VueRecoveryContext,
+) -> Option<&'a Expr> {
+    let handler = cached_event_assignment_rhs(value)?;
+    match handler {
+        Expr::Call(call)
+            if matches!(
+                helper_name(&call.callee, ctx),
+                Some(VueHelper::WithModifiers | VueHelper::WithKeys)
+            ) =>
+        {
+            Some(handler)
+        }
+        _ => None,
+    }
+}
+
+fn cached_event_assignment_rhs(value: &Expr) -> Option<&Expr> {
+    match value {
+        Expr::Paren(paren) => cached_event_assignment_rhs(paren.expr.as_ref()),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+            cached_event_assignment_rhs(bin.right.as_ref())
+        }
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => Some(assign.right.as_ref()),
+        _ => None,
+    }
+}
+
+fn is_noop_event_handler(value: &Expr) -> bool {
+    match value {
+        Expr::Paren(paren) => is_noop_event_handler(paren.expr.as_ref()),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+            is_noop_event_handler(bin.right.as_ref())
+        }
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            is_noop_event_handler(assign.right.as_ref())
+        }
+        Expr::Arrow(arrow) => {
+            matches!(arrow.body.as_ref(), BlockStmtOrExpr::BlockStmt(block) if block.stmts.is_empty())
+        }
+        Expr::Fn(function) => function
+            .function
+            .body
+            .as_ref()
+            .is_some_and(|body| body.stmts.is_empty()),
+        _ => false,
+    }
 }
 
 fn event_modifier_names(expr: &Expr) -> Vec<String> {

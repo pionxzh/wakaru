@@ -5689,6 +5689,57 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_cached_event_modifier_handler() {
+        let input = r#"
+import { withModifiers, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return (openBlock(), createElementBlock("button", {
+    onClick: _cache[0] || (_cache[0] = withModifiers(($event) => _ctx.close("ok"), ["self"]))
+  }, "Close", 40, ["onClick"]));
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click.self='close(\"ok\")'>Close</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_cached_event_modifier_alias() {
+        let input = r#"
+import { q as ob, X as ce, aE as wm } from "./vendor-vue-C85wAS_L.js";
+export function render(_ctx, _cache) {
+  return ob(), ce("button", {
+    onClick: _cache[0] || (_cache[0] = wm(($event) => _ctx.close("ok"), ["self"]))
+  }, "Close", 40, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click.self='close(\"ok\")'>Close</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cached_event_modifier_noop_handler() {
+        let input = r#"
+import { q as ob, X as ce, aE as wm } from "./vendor-vue-C85wAS_L.js";
+export function render(_ctx, _cache) {
+  return ob(), ce("button", {
+    onClick: _cache[0] || (_cache[0] = wm(() => {}, ["stop"]))
+  }, "Close", 40, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click.stop>Close</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_vue_cached_event_and_class_array() {
         let input = r#"
 import { toDisplayString, normalizeClass, openBlock, createElementBlock } from "vue";

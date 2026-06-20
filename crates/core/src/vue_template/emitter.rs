@@ -405,7 +405,10 @@ impl TemplateEmitter {
                     self.out.push('.');
                     self.out.push_str(modifier);
                 }
-                self.emit_expr_attr_value(expr.as_str().trim());
+                let value = expr.as_str().trim();
+                if !value.is_empty() {
+                    self.emit_expr_attr_value(value);
+                }
             }
             VueAttr::Directive(directive) => self.emit_directive(directive),
             VueAttr::Spread(expr) => {
