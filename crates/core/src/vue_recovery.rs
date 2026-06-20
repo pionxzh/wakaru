@@ -54,6 +54,7 @@ struct VueRecoveryContext {
     setup_local_bindings: Vec<VueSetupLocalBinding>,
     setup_ref_script_bindings: Vec<VueSetupRefBinding>,
     setup_ref_bindings: HashSet<Atom>,
+    setup_composable_ref_bindings: HashSet<Atom>,
     setup_template_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
@@ -245,11 +246,13 @@ fn recover_vue_sfc_from_js_inner(
         .map(|resolver| collect_imported_vue_metadata(&module, resolver))
         .transpose()?
         .unwrap_or_default();
+    let mut composable_ref_props = imported_metadata.composable_ref_props;
+    composable_ref_props.extend(imports::local_composable_ref_props_from_module(&module));
     let mut ctx = collect_context(
         &module,
         cm,
         imported_metadata.component_bindings,
-        imported_metadata.composable_ref_props,
+        composable_ref_props,
     );
     let Some(render) = find_render_source(&module, preferred_component_name) else {
         return Ok(None);
@@ -1494,6 +1497,12 @@ fn setup_local_declarations<'a>(
     let expr_read_refs = template_expr_read_refs(root);
     let mut setup_wanted_refs = event_refs;
     let mut module_wanted_refs = HashSet::new();
+    setup_wanted_refs.extend(
+        expr_refs
+            .iter()
+            .filter(|binding| ctx.setup_composable_ref_bindings.contains(*binding))
+            .cloned(),
+    );
     for declaration in &candidates {
         if selects_safe_template_expr_local(ctx, declaration, &expr_refs, &expr_read_refs) {
             setup_wanted_refs.extend(
@@ -4820,6 +4829,41 @@ export const u = () => {
     }
 
     #[test]
+    fn recovers_imported_composable_written_ref_values() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+import { u as useListState } from "./state.js";
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const { items, raw } = useListState();
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value, title: raw.value.name }, null, 8, ["items", "title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+export const u = () => {
+  const itemList = createList([]);
+  itemList.value.push("ready");
+  const raw = { value: { name: "plain" } };
+  return { items: itemList, raw };
+};
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_imported_composable_legacy_tuple_member_ref_values() {
         let input = r#"
 import { defineComponent, normalizeClass, openBlock, createElementBlock } from "vue";
@@ -4860,6 +4904,34 @@ System.register([], function (_export) {
             .unwrap()
             .unwrap(),
             "<script setup>\nimport { u as useStatus } from \"./status-legacy.js\";\n\nconst selectedStatus = useStatus().selectedStatus;\n</script>\n\n<template>\n  <div :class='{ rise: selectedStatus === \"rise\" }' />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_local_composable_written_ref_values() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+function useListState() {
+  const itemList = createList([]);
+  itemList.value.push("ready");
+  const raw = { value: { name: "plain" } };
+  return { items: itemList, raw };
+}
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const { items, raw } = useListState();
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value, title: raw.value.name }, null, 8, ["items", "title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nfunction useListState() {\n    const itemList = createList([]);\n    itemList.value.push(\"ready\");\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n}\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
         );
     }
 
