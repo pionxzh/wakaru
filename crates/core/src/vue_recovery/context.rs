@@ -1458,6 +1458,11 @@ pub(super) fn collect_setup_context(
                                     }
                                     let is_ref_object_alias_source = is_ref_object
                                         && setup_ref_object_alias_refs.contains(&binding.id.sym);
+                                    if setup_value_member_refs.contains(&binding.id.sym)
+                                        && is_ref_object_member_expr(init, ctx)
+                                    {
+                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                    }
                                     if let Some(value) = computed_value_expr(init, ctx)? {
                                         ctx.setup_value_bindings
                                             .insert(binding.id.sym.clone(), value);
@@ -2511,6 +2516,13 @@ pub(super) fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool
         return false;
     };
     ctx.setup_ref_object_bindings.contains(&ident.sym)
+}
+
+fn is_ref_object_member_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    is_ref_object_expr(member.obj.as_ref(), ctx) || is_ref_object_alias(member.obj.as_ref(), ctx)
 }
 
 fn is_ref_object_helper(name: &str) -> bool {
