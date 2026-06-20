@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
     ExportSpecifier, Expr, Function, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
     Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDeclarator,
 };
@@ -333,28 +333,62 @@ fn function_value_member_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
 fn function_strong_value_member_bindings(function: FunctionLike<'_>) -> HashSet<Atom> {
     let mut collector = StrongValueMemberCollector {
         bindings: HashSet::new(),
+        shadowed: Vec::new(),
     };
     match function {
         FunctionLike::Function(function) => {
             if let Some(body) = &function.body {
-                body.visit_with(&mut collector);
+                for stmt in &body.stmts {
+                    stmt.visit_with(&mut collector);
+                }
             }
         }
-        FunctionLike::Arrow(arrow) => {
-            arrow.body.visit_with(&mut collector);
-        }
+        FunctionLike::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => {
+                for stmt in &block.stmts {
+                    stmt.visit_with(&mut collector);
+                }
+            }
+            BlockStmtOrExpr::Expr(expr) => {
+                expr.visit_with(&mut collector);
+            }
+        },
     }
     collector.bindings
 }
 
 struct StrongValueMemberCollector {
     bindings: HashSet<Atom>,
+    shadowed: Vec<HashSet<Atom>>,
 }
 
 impl StrongValueMemberCollector {
     fn collect_value_member_expr(&mut self, expr: &Expr) {
         if let Some(binding) = value_member_object(expr) {
-            self.bindings.insert(binding);
+            if !self.is_shadowed(&binding) {
+                self.bindings.insert(binding);
+            }
+        }
+    }
+
+    fn is_shadowed(&self, binding: &Atom) -> bool {
+        self.shadowed
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(binding))
+    }
+
+    fn enter_shadowed(&mut self, bindings: HashSet<Atom>) -> bool {
+        if bindings.is_empty() {
+            return false;
+        }
+        self.shadowed.push(bindings);
+        true
+    }
+
+    fn exit_shadowed(&mut self, entered: bool) {
+        if entered {
+            self.shadowed.pop();
         }
     }
 }
@@ -388,9 +422,104 @@ impl Visit for StrongValueMemberCollector {
         }
     }
 
-    fn visit_function(&mut self, _function: &Function) {}
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        let shadowed = block_shadowed_bindings(block);
+        let entered = self.enter_shadowed(shadowed);
+        block.visit_children_with(self);
+        self.exit_shadowed(entered);
+    }
 
-    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    fn visit_function(&mut self, function: &Function) {
+        let shadowed = function
+            .params
+            .iter()
+            .flat_map(|param| pat_bound_atoms(&param.pat))
+            .collect::<HashSet<_>>();
+        let entered = self.enter_shadowed(shadowed);
+        if let Some(body) = &function.body {
+            body.visit_with(self);
+        }
+        self.exit_shadowed(entered);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let shadowed = arrow
+            .params
+            .iter()
+            .flat_map(pat_bound_atoms)
+            .collect::<HashSet<_>>();
+        let entered = self.enter_shadowed(shadowed);
+        arrow.body.visit_with(self);
+        self.exit_shadowed(entered);
+    }
+}
+
+fn block_shadowed_bindings(block: &BlockStmt) -> HashSet<Atom> {
+    let mut bindings = HashSet::new();
+    for stmt in &block.stmts {
+        if let Stmt::Decl(decl) = stmt {
+            collect_decl_bound_atoms(decl, &mut bindings);
+        }
+    }
+    bindings
+}
+
+fn collect_decl_bound_atoms(decl: &Decl, bindings: &mut HashSet<Atom>) {
+    match decl {
+        Decl::Class(class) => {
+            bindings.insert(class.ident.sym.clone());
+        }
+        Decl::Fn(function) => {
+            bindings.insert(function.ident.sym.clone());
+        }
+        Decl::Var(var) => {
+            for declarator in &var.decls {
+                collect_pat_bound_atoms(&declarator.name, bindings);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn pat_bound_atoms(pat: &Pat) -> HashSet<Atom> {
+    let mut bindings = HashSet::new();
+    collect_pat_bound_atoms(pat, &mut bindings);
+    bindings
+}
+
+fn collect_pat_bound_atoms(pat: &Pat, bindings: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.insert(binding.id.sym.clone());
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_bound_atoms(elem, bindings);
+            }
+        }
+        Pat::Rest(rest) => {
+            collect_pat_bound_atoms(rest.arg.as_ref(), bindings);
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(key_value) => {
+                        collect_pat_bound_atoms(key_value.value.as_ref(), bindings);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                        bindings.insert(assign.key.sym.clone());
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                        collect_pat_bound_atoms(rest.arg.as_ref(), bindings);
+                    }
+                }
+            }
+        }
+        Pat::Assign(assign) => {
+            collect_pat_bound_atoms(assign.left.as_ref(), bindings);
+        }
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
 }
 
 struct ValueMemberCollector {
