@@ -20,7 +20,7 @@ use super::syntax::{string_lit, wtf8_to_string};
 use super::{RenderSource, VueRecoveryContext, VueRenderChildListSource};
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
-    VueTemplateScope, VueUnsupported,
+    VueTemplateScope,
 };
 
 pub(super) fn recover_render_root(
@@ -202,12 +202,10 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
 }
 
 fn recover_unsupported_vnode_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueNode> {
-    let printed = clean_expr(&print_expr(expr, ctx)?, ctx);
-    if let Some((binding, source)) = render_child_list_source_expr(expr, ctx) {
-        return Ok(unsupported_render_local_vnode_children_expr(
-            printed, binding, source,
-        ));
+    if let Some((_binding, source)) = render_child_list_source_expr(expr, ctx) {
+        return Ok(render_local_vnode_children_node(source));
     }
+    let printed = clean_expr(&print_expr(expr, ctx)?, ctx);
     Ok(unsupported_vnode_children_expr(printed))
 }
 
@@ -234,18 +232,11 @@ fn render_child_list_source_expr<'a>(
     }
 }
 
-fn unsupported_render_local_vnode_children_expr(
-    expr: String,
-    binding: &Atom,
-    source: VueRenderChildListSource,
-) -> VueNode {
+fn render_local_vnode_children_node(source: VueRenderChildListSource) -> VueNode {
     match source {
-        VueRenderChildListSource::SlotPartitionChildren => VueNode::Unsupported(
-            VueUnsupported::vnode_children_from_render_local_slot_partition(
-                expr,
-                binding.to_string(),
-            ),
-        ),
+        VueRenderChildListSource::SlotPartitionChildren => {
+            VueNode::Element(VueElement::new("slot"))
+        }
     }
 }
 
