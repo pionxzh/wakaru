@@ -4973,6 +4973,65 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_iife_composable_result_ref_values() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const state = ((enabled) => {
+      const itemList = createList([]);
+      subscribe(() => {
+        itemList.value.push("ready");
+      });
+      const raw = { value: { name: "plain" } };
+      return { items: itemList, raw };
+    })(true);
+    const { items, raw } = state;
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value, title: raw.value.name }, null, 8, ["items", "title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst state = ((enabled)=>{\n    const itemList = createList([]);\n    subscribe(()=>{\n        itemList.value.push(\"ready\");\n    });\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n})(true);\nconst { items, raw } = state;\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_iife_composable_shadowed_callback_value_members() {
+        let input = r#"
+import { defineComponent, openBlock, createBlock } from "vue";
+import { L as ListView } from "./ListView.vue";
+export default defineComponent({
+  __name: "UsesListState",
+  setup() {
+    const state = ((enabled) => {
+      const itemList = createList([]);
+      subscribe((itemList) => {
+        itemList.value.push("nested");
+      });
+      return { items: itemList };
+    })(true);
+    const { items } = state;
+    return () => (
+      openBlock(), createBlock(ListView, { items: items.value.name }, null, 8, ["items"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_imported_composable_shadowed_callback_value_members() {
         let input = r#"
 import { defineComponent, openBlock, createBlock } from "vue";
