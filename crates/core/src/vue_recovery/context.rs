@@ -1402,7 +1402,9 @@ pub(super) fn collect_setup_context(
         ctx.slot_bindings.insert(setup_slots.sym.clone());
     }
 
-    let setup_template_ref_refs = setup_render_template_ref_refs(render, setup_stmts, ctx);
+    let setup_tuple_value_candidates = setup_tuple_value_candidates(setup_stmts);
+    let setup_template_ref_refs =
+        setup_render_template_ref_refs(render, setup_stmts, ctx, &setup_tuple_value_candidates);
     let setup_template_ref_aliases = setup_render_template_ref_aliases(render);
     let setup_template_ref_alias_sources = setup_template_ref_aliases
         .iter()
@@ -1468,6 +1470,13 @@ pub(super) fn collect_setup_context(
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                                     }
                                     if let Some(value) = computed_value_expr(init, ctx)? {
+                                        if setup_value_member_refs.contains(&binding.id.sym) {
+                                            collect_setup_value_template_tuple_refs(
+                                                &value,
+                                                &setup_tuple_value_candidates,
+                                                ctx,
+                                            );
+                                        }
                                         ctx.setup_value_bindings
                                             .insert(binding.id.sym.clone(), value);
                                         let mut local_var = var.as_ref().clone();
@@ -1971,14 +1980,8 @@ fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
     collector.refs
 }
 
-fn setup_render_template_ref_refs(
-    render: &ArrowExpr,
-    setup_stmts: &[Stmt],
-    ctx: &VueRecoveryContext,
-) -> HashSet<Atom> {
+fn setup_tuple_value_candidates(setup_stmts: &[Stmt]) -> HashSet<Atom> {
     let mut tuple_value_candidates = HashSet::new();
-    let mut object_value_candidates = HashSet::new();
-    let mut unref_candidates = HashSet::new();
     for stmt in setup_stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
@@ -1992,11 +1995,32 @@ fn setup_render_template_ref_refs(
                 Pat::Ident(binding) if is_tuple_element_expr(init) => {
                     tuple_value_candidates.insert(binding.id.sym.clone());
                 }
-                Pat::Object(_) => {
-                    collect_pat_bindings(&decl.name, &mut object_value_candidates);
-                    collect_pat_bindings(&decl.name, &mut unref_candidates);
-                }
                 _ => {}
+            }
+        }
+    }
+    tuple_value_candidates
+}
+
+fn setup_render_template_ref_refs(
+    render: &ArrowExpr,
+    setup_stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+    tuple_value_candidates: &HashSet<Atom>,
+) -> HashSet<Atom> {
+    let mut object_value_candidates = HashSet::new();
+    let mut unref_candidates = HashSet::new();
+    for stmt in setup_stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Some(_init) = decl.init.as_deref() else {
+                continue;
+            };
+            if matches!(decl.name, Pat::Object(_)) {
+                collect_pat_bindings(&decl.name, &mut object_value_candidates);
+                collect_pat_bindings(&decl.name, &mut unref_candidates);
             }
         }
     }
@@ -2007,7 +2031,7 @@ fn setup_render_template_ref_refs(
     }
 
     let mut collector = RenderTemplateRefCollector {
-        tuple_value_candidates: &tuple_value_candidates,
+        tuple_value_candidates,
         object_value_candidates: &object_value_candidates,
         unref_candidates: &unref_candidates,
         ctx,
@@ -2025,6 +2049,33 @@ fn setup_render_template_ref_refs(
             .cloned(),
     );
     refs
+}
+
+fn collect_setup_value_template_tuple_refs(
+    value: &VueSetupValueBinding,
+    tuple_value_candidates: &HashSet<Atom>,
+    ctx: &mut VueRecoveryContext,
+) {
+    if tuple_value_candidates.is_empty() {
+        return;
+    }
+    let Some(expr) = value.expr.as_ref() else {
+        return;
+    };
+    for ref_name in value_member_refs_in_expr(expr) {
+        if tuple_value_candidates.contains(&ref_name) {
+            ctx.setup_template_ref_bindings.insert(ref_name);
+        }
+    }
+}
+
+fn value_member_refs_in_expr(expr: &Expr) -> HashSet<Atom> {
+    let mut collector = ValueMemberIdentRefCollector {
+        scopes: vec![HashSet::new()],
+        refs: HashSet::new(),
+    };
+    expr.visit_with(&mut collector);
+    collector.refs
 }
 
 struct RenderTemplateRefCollector<'a> {
