@@ -23,6 +23,7 @@ mod context;
 mod directives;
 mod expressions;
 mod helpers;
+mod imports;
 mod nodes;
 mod slots;
 mod syntax;
@@ -56,6 +57,7 @@ struct VueRecoveryContext {
     setup_template_ref_bindings: HashSet<Atom>,
     setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
+    imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
@@ -238,11 +240,16 @@ fn recover_vue_sfc_from_js_inner(
 ) -> Result<Option<VueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
-    let component_bindings = import_resolver
-        .map(|resolver| collect_imported_component_bindings(&module, resolver))
+    let imported_metadata = import_resolver
+        .map(|resolver| collect_imported_vue_metadata(&module, resolver))
         .transpose()?
         .unwrap_or_default();
-    let mut ctx = collect_context(&module, cm, component_bindings);
+    let mut ctx = collect_context(
+        &module,
+        cm,
+        imported_metadata.component_bindings,
+        imported_metadata.composable_ref_props,
+    );
     let Some(render) = find_render_source(&module, preferred_component_name) else {
         return Ok(None);
     };
@@ -284,12 +291,23 @@ fn recover_vue_sfc_from_js_inner(
     }))
 }
 
-fn collect_imported_component_bindings(
+#[derive(Default)]
+struct ImportedVueMetadata {
+    component_bindings: HashMap<Atom, String>,
+    composable_ref_props: HashMap<Atom, HashSet<Atom>>,
+}
+
+struct ResolvedImportMetadata {
+    component_exports: HashMap<String, String>,
+    composable_ref_props: HashMap<String, HashSet<Atom>>,
+}
+
+fn collect_imported_vue_metadata(
     module: &Module,
     resolve_import: &mut dyn FnMut(&str) -> Option<String>,
-) -> Result<HashMap<Atom, String>> {
-    let mut component_bindings = HashMap::new();
-    let mut export_cache: HashMap<String, HashMap<String, String>> = HashMap::new();
+) -> Result<ImportedVueMetadata> {
+    let mut metadata = ImportedVueMetadata::default();
+    let mut export_cache: HashMap<String, ResolvedImportMetadata> = HashMap::new();
 
     for item in &module.body {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
@@ -303,18 +321,22 @@ fn collect_imported_component_bindings(
             continue;
         }
 
-        let source_exports = if let Some(exports) = export_cache.get(&source) {
-            exports
+        let source_metadata = if let Some(metadata) = export_cache.get(&source) {
+            metadata
         } else {
-            let exports = resolve_import(&source)
-                .and_then(|source| component_exports_from_source(&source).ok())
-                .unwrap_or_default();
-            export_cache.insert(source.clone(), exports);
+            let resolved = resolve_import(&source).unwrap_or_default();
+            let source_metadata = ResolvedImportMetadata {
+                component_exports: component_exports_from_source(&resolved).unwrap_or_default(),
+                composable_ref_props: imports::composable_ref_props_from_source(&resolved),
+            };
+            export_cache.insert(source.clone(), source_metadata);
             export_cache
                 .get(&source)
                 .expect("inserted source export cache")
         };
-        if source_exports.is_empty() {
+        if source_metadata.component_exports.is_empty()
+            && source_metadata.composable_ref_props.is_empty()
+        {
             continue;
         }
 
@@ -326,13 +348,27 @@ fn collect_imported_component_bindings(
                         .as_ref()
                         .map(module_export_name)
                         .unwrap_or_else(|| named.local.sym.to_string());
-                    if let Some(component) = source_exports.get(&imported) {
-                        component_bindings.insert(named.local.sym.clone(), component.clone());
+                    if let Some(component) = source_metadata.component_exports.get(&imported) {
+                        metadata
+                            .component_bindings
+                            .insert(named.local.sym.clone(), component.clone());
+                    }
+                    if let Some(ref_props) = source_metadata.composable_ref_props.get(&imported) {
+                        metadata
+                            .composable_ref_props
+                            .insert(named.local.sym.clone(), ref_props.clone());
                     }
                 }
                 ImportSpecifier::Default(default) => {
-                    if let Some(component) = source_exports.get("default") {
-                        component_bindings.insert(default.local.sym.clone(), component.clone());
+                    if let Some(component) = source_metadata.component_exports.get("default") {
+                        metadata
+                            .component_bindings
+                            .insert(default.local.sym.clone(), component.clone());
+                    }
+                    if let Some(ref_props) = source_metadata.composable_ref_props.get("default") {
+                        metadata
+                            .composable_ref_props
+                            .insert(default.local.sym.clone(), ref_props.clone());
                     }
                 }
                 ImportSpecifier::Namespace(_) => {}
@@ -340,7 +376,7 @@ fn collect_imported_component_bindings(
         }
     }
 
-    Ok(component_bindings)
+    Ok(metadata)
 }
 
 fn component_exports_from_source(source: &str) -> Result<HashMap<String, String>> {
@@ -4516,6 +4552,89 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_imported_composable_returned_ref_values() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+import { u as useViewState } from "./state.js";
+export default defineComponent({
+  __name: "UsesViewState",
+  setup() {
+    const { page, selectedKey, raw } = useViewState();
+    const label = computed(() => {
+      const parts = [];
+      parts.push(page.name);
+      parts.push(selectedKey.value);
+      parts.push(raw.value);
+      return parts.join(":");
+    });
+    return () => (
+      openBlock(), createElementBlock("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+function trackedValue(source) {
+  const value = createRef();
+  watch(source, (next) => {
+    value.value = next;
+  });
+  return readonly(value);
+}
+const useViewState = () => {
+  const page = usePage();
+  const selectedKey = trackedValue(() => page.params.kind);
+  const raw = { value: "plain" };
+  return { page, selectedKey, raw };
+};
+export { useViewState as u };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { u as useViewState } from \"./state.js\";\n\nconst { page, selectedKey, raw } = useViewState();\n\nconst label = computed(()=>{\n    const parts = [];\n    parts.push(page.name);\n    parts.push(selectedKey);\n    parts.push(raw.value);\n    return parts.join(\":\");\n});\n</script>\n\n<template>\n  <p :title=\"label\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_imported_composable_returned_plain_value_members() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+import { u as usePlainState } from "./state.js";
+export default defineComponent({
+  __name: "UsesPlainState",
+  setup() {
+    const { currentUser } = usePlainState();
+    const label = computed(() => currentUser.value.name);
+    return () => (
+      openBlock(), createElementBlock("p", { title: label.value }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+        let state = r#"
+const usePlainState = () => {
+  const currentUser = { value: { name: "Ada" } };
+  return { currentUser };
+};
+export { usePlainState as u };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./state.js").then(|| state.to_string())
+            })
+            .unwrap()
+            .unwrap(),
             "<template>\n  <p :title=\"currentUser.value.name\" />\n</template>\n"
         );
     }
