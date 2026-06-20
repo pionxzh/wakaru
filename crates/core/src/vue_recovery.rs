@@ -1158,7 +1158,14 @@ fn render_setup_local_declarations(
             }
             rendered_module_bindings.extend(declaration.emitted_bindings.iter().cloned());
         }
-        let declaration = render_local_declaration_with_aliases(ctx, declaration, &aliases)?;
+        let declaration = render_local_declaration_with_aliases(
+            ctx,
+            declaration,
+            &aliases,
+            props_declaration
+                .as_ref()
+                .map(|(binding, _)| binding.as_str()),
+        )?;
         if !declaration.source.is_empty() {
             rendered.push(declaration);
         }
@@ -1387,11 +1394,7 @@ fn setup_local_declarations<'a>(
         .iter()
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
-    let setup_binding_refs = candidates
-        .iter()
-        .filter(|declaration| !declaration.module_scope)
-        .flat_map(|declaration| declaration.bindings.iter().cloned())
-        .collect::<HashSet<_>>();
+    let setup_scope_bindings = setup_scope_bindings(ctx, &candidates);
     let event_refs = template_event_expr_refs(root);
     let expr_refs = template_expr_refs(root);
     let expr_read_refs = template_expr_read_refs(root);
@@ -1417,7 +1420,7 @@ fn setup_local_declarations<'a>(
         module_wanted_refs.extend(
             setup_wanted_refs
                 .iter()
-                .filter(|binding| !setup_binding_refs.contains(*binding))
+                .filter(|binding| !setup_scope_bindings.contains(*binding))
                 .cloned(),
         );
         for (index, declaration) in candidates.iter().enumerate() {
@@ -1455,6 +1458,30 @@ fn setup_local_declarations<'a>(
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
         .collect()
+}
+
+fn setup_scope_bindings(
+    ctx: &VueRecoveryContext,
+    candidates: &[&VueSetupLocalBinding],
+) -> HashSet<Atom> {
+    let mut bindings = candidates
+        .iter()
+        .filter(|declaration| !declaration.module_scope)
+        .flat_map(|declaration| declaration.bindings.iter().cloned())
+        .collect::<HashSet<_>>();
+    if let Some(binding) = &ctx.setup_props_context {
+        bindings.insert(binding.clone());
+    }
+    bindings.extend(ctx.setup_props_aliases.iter().cloned());
+    if let Some(binding) = &ctx.setup_context {
+        bindings.insert(binding.clone());
+    }
+    if let Some(binding) = &ctx.setup_emit_context {
+        bindings.insert(binding.clone());
+    }
+    bindings.extend(ctx.setup_emit_aliases.iter().cloned());
+    bindings.extend(ctx.slot_bindings.iter().cloned());
+    bindings
 }
 
 fn selects_safe_template_expr_local(
@@ -3700,6 +3727,30 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { formatMsg } from \"./format.js\";\n\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <div :title=\"formatMsg(msg)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn rewrites_whole_setup_props_param_in_selected_local() {
+        let input = r#"
+import { useState } from "./state.js";
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    msg: String,
+  },
+  setup(e) {
+    const state = useState(e);
+    return () => (
+      openBlock(), createElementBlock("span", null, toDisplayString(state.msg), 1)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { useState } from \"./state.js\";\n\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n\nconst state = useState(props);\n</script>\n\n<template>\n  <span>{{ state.msg }}</span>\n</template>\n"
         );
     }
 
