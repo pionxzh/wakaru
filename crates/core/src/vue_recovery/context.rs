@@ -28,10 +28,12 @@ pub(super) fn collect_context(
     module: &Module,
     cm: Lrc<SourceMap>,
     component_bindings: HashMap<Atom, String>,
+    imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
 ) -> VueRecoveryContext {
     let mut ctx = VueRecoveryContext {
         cm,
         component_bindings,
+        imported_composable_ref_props,
         ..Default::default()
     };
     for item in &module.body {
@@ -1016,7 +1018,7 @@ fn is_fragment_patch_flag(expr: Option<&Expr>) -> bool {
     )
 }
 
-fn unwrap_paren_expr(expr: &Expr) -> &Expr {
+pub(super) fn unwrap_paren_expr(expr: &Expr) -> &Expr {
     match expr {
         Expr::Paren(paren) => unwrap_paren_expr(paren.expr.as_ref()),
         _ => expr,
@@ -1206,7 +1208,7 @@ fn is_open_block_call(args: &[ExprOrSpread]) -> bool {
         )
 }
 
-fn call_callee_ident(call: &CallExpr) -> Option<&swc_core::ecma::ast::Ident> {
+pub(super) fn call_callee_ident(call: &CallExpr) -> Option<&swc_core::ecma::ast::Ident> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
@@ -1328,11 +1330,9 @@ pub(super) fn collect_setup_context(
                                         .insert(binding.id.sym.clone(), alias.sym.clone());
                                     true
                                 } else {
-                                    if let Some(ref_props) = setup_provider_ref_props(
-                                        init,
-                                        ctx,
-                                        &provider_ref_object_bindings,
-                                    ) {
+                                    if let Some(ref_props) =
+                                        setup_ref_props(init, ctx, &provider_ref_object_bindings)
+                                    {
                                         provider_ref_object_bindings
                                             .insert(binding.id.sym.clone(), ref_props);
                                     }
@@ -1404,11 +1404,9 @@ pub(super) fn collect_setup_context(
                                 false
                             }
                             Pat::Object(object) => {
-                                if let Some(ref_props) = setup_provider_ref_props(
-                                    init,
-                                    ctx,
-                                    &provider_ref_object_bindings,
-                                ) {
+                                if let Some(ref_props) =
+                                    setup_ref_props(init, ctx, &provider_ref_object_bindings)
+                                {
                                     collect_provider_object_pat_bindings(
                                         object,
                                         &ref_props,
@@ -2524,14 +2522,26 @@ fn is_provider_ref_object_alias(expr: &Expr, ref_object_bindings: &HashSet<Atom>
     ref_object_bindings.contains(&ident.sym)
 }
 
-fn setup_provider_ref_props(
+fn setup_ref_props(
     expr: &Expr,
     ctx: &VueRecoveryContext,
     bindings: &HashMap<Atom, HashSet<Atom>>,
 ) -> Option<HashSet<Atom>> {
     provider_ref_props_from_expr(expr, ctx)
         .cloned()
+        .or_else(|| imported_composable_ref_props_from_expr(expr, ctx).cloned())
         .or_else(|| provider_ref_props_from_alias(expr, bindings).cloned())
+}
+
+fn imported_composable_ref_props_from_expr<'a>(
+    expr: &Expr,
+    ctx: &'a VueRecoveryContext,
+) -> Option<&'a HashSet<Atom>> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let callee = call_callee_ident(call)?;
+    ctx.imported_composable_ref_props.get(&callee.sym)
 }
 
 fn provider_ref_props_from_expr<'a>(
