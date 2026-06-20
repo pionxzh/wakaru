@@ -387,13 +387,18 @@ runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, UnRestArrayCopy);
 runner!(run_arrow_function, ArrowFunction);
 runner!(run_arrow_return, ArrowReturn);
-runner!(run_un_for_of, |ctx| {
-    if let Some(module_facts) = ctx.module_facts {
+fn run_un_for_of(module: &mut Module, ctx: RuleRunContext<'_>) {
+    if !UnForOf::should_run_with_level(ctx.rewrite_level, module) {
+        return;
+    }
+    let local_helpers = ctx.local_helpers(module);
+    let mut rule = if let Some(module_facts) = ctx.module_facts {
         UnForOf::new_with_mark_and_facts(ctx.unresolved_mark, ctx.rewrite_level, module_facts)
     } else {
         UnForOf::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
-    }
-});
+    };
+    rule.run_with_helpers(module, local_helpers.as_ref());
+}
 runner!(run_un_webpack_define_getters, |ctx| {
     UnWebpackDefineGetters::new(ctx.unresolved_mark)
 });
@@ -812,12 +817,34 @@ fn apply_rules_impl(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use swc_core::common::{DUMMY_SP, GLOBALS};
+    use swc_core::ecma::ast::{BlockStmt, ModuleItem, Stmt, TryStmt};
 
     use super::super::transpiler_helper_utils::{
         collect_transpiler_helpers_call_count, reset_collect_transpiler_helpers_call_count,
+        LocalHelperContext,
     };
     use super::*;
+
+    fn module_with_try_stmt() -> Module {
+        Module {
+            span: DUMMY_SP,
+            body: vec![ModuleItem::Stmt(Stmt::Try(Box::new(TryStmt {
+                span: DUMMY_SP,
+                block: BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    stmts: Vec::new(),
+                },
+                handler: None,
+                finalizer: None,
+            })))],
+            shebang: None,
+        }
+    }
 
     #[test]
     fn reuses_local_helper_context_within_stable_rule_spans() {
@@ -841,6 +868,28 @@ mod tests {
             // UnConditionals (ternary→if/else rewrites change helper body shapes
             // for UnClassFields/UnDefineProperty).
             assert_eq!(collect_transpiler_helpers_call_count(), 3);
+        });
+    }
+
+    #[test]
+    fn un_for_of_runner_uses_precomputed_local_helper_context() {
+        GLOBALS.set(&Default::default(), || {
+            let mut module = module_with_try_stmt();
+            let unresolved_mark = Mark::new();
+            let ctx = RuleRunContext {
+                unresolved_mark,
+                rewrite_level: RewriteLevel::Standard,
+                dce_mode: DceMode::Full,
+                module_facts: None,
+                local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
+                extracted_function_names: Default::default(),
+                pre_dead: None,
+            };
+
+            reset_collect_transpiler_helpers_call_count();
+            run_un_for_of(&mut module, ctx);
+
+            assert_eq!(collect_transpiler_helpers_call_count(), 0);
         });
     }
 }

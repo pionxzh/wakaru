@@ -73,6 +73,25 @@ impl<'a> UnForOf<'a> {
             helper_context: ForOfHelperContext::default(),
         }
     }
+
+    pub(crate) fn run_with_helpers(
+        &mut self,
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+    ) {
+        if !Self::should_run_with_level(self.level, module) {
+            return;
+        }
+        let helper_context = ForOfHelperContext::from_local_helpers(
+            module,
+            local_helpers,
+            self.unresolved_mark,
+            self.module_facts,
+        );
+        let previous = std::mem::replace(&mut self.helper_context, helper_context);
+        module.visit_mut_children_with(self);
+        self.helper_context = previous;
+    }
 }
 
 #[derive(Clone, Default)]
@@ -311,6 +330,10 @@ impl Default for UnForOf<'_> {
 }
 
 impl UnForOf<'_> {
+    pub(crate) fn should_run_with_level(level: RewriteLevel, module: &Module) -> bool {
+        level >= RewriteLevel::Standard && Self::should_run(module)
+    }
+
     fn should_run(module: &swc_core::ecma::ast::Module) -> bool {
         struct Scan {
             found: bool,
@@ -335,22 +358,14 @@ impl UnForOf<'_> {
 
 impl VisitMut for UnForOf<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        if self.level < RewriteLevel::Standard || !Self::should_run(module) {
+        if !Self::should_run_with_level(self.level, module) {
             return;
         }
         let local_helpers = self.unresolved_mark.map_or_else(
             || LocalHelperContext::collect(module),
             |mark| LocalHelperContext::collect_with_mark(module, mark),
         );
-        let helper_context = ForOfHelperContext::from_local_helpers(
-            module,
-            &local_helpers,
-            self.unresolved_mark,
-            self.module_facts,
-        );
-        let previous = std::mem::replace(&mut self.helper_context, helper_context);
-        module.visit_mut_children_with(self);
-        self.helper_context = previous;
+        self.run_with_helpers(module, &local_helpers);
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
