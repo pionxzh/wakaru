@@ -95,6 +95,7 @@ struct VueSetupValueBinding {
 #[derive(Clone)]
 struct VueSetupLocalBinding {
     bindings: Vec<Atom>,
+    emitted_bindings: Vec<Atom>,
     refs: HashSet<Atom>,
     source: String,
     import_refs: HashSet<Atom>,
@@ -492,7 +493,7 @@ fn component_name_from_filename(filename: &str) -> Option<String> {
     (starts_with_uppercase && !name.is_empty()).then(|| name.to_string())
 }
 
-fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
+pub(super) fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
     let fm = cm.new_source_file(
         FileName::Custom("vue-recovery.js".into()).into(),
         source.to_string(),
@@ -1149,13 +1150,13 @@ fn render_setup_local_declarations(
     for declaration in local_declarations {
         if declaration.module_scope {
             if declaration
-                .bindings
+                .emitted_bindings
                 .iter()
                 .any(|binding| rendered_module_bindings.contains(binding))
             {
                 continue;
             }
-            rendered_module_bindings.extend(declaration.bindings.iter().cloned());
+            rendered_module_bindings.extend(declaration.emitted_bindings.iter().cloned());
         }
         let declaration = render_local_declaration_with_aliases(ctx, declaration, &aliases)?;
         if !declaration.source.is_empty() {
@@ -1208,7 +1209,7 @@ fn script_local_binding_aliases(
         local_declarations
             .iter()
             .filter(|declaration| !declaration.module_scope)
-            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+            .flat_map(|declaration| declaration.emitted_bindings.iter().cloned()),
     );
 
     let mut aliases = HashMap::new();
@@ -1221,21 +1222,40 @@ fn script_local_binding_aliases(
             if aliases.contains_key(binding) {
                 continue;
             }
-            if !seen_module_bindings.insert(binding.clone()) {
+            let emitted_binding = emitted_binding_for_alias(declaration, binding);
+            if !seen_module_bindings.insert(emitted_binding.clone()) {
                 continue;
             }
-            if !is_valid_identifier_name(binding.as_ref()) {
+            if !is_valid_identifier_name(emitted_binding.as_ref()) {
                 continue;
             }
-            if used.contains(binding) {
-                let alias = unique_script_local_binding(binding, &mut used);
+            if used.contains(emitted_binding) {
+                let alias = unique_script_local_binding(emitted_binding, &mut used);
                 aliases.insert(binding.clone(), alias);
             } else {
-                used.insert(binding.clone());
+                used.insert(emitted_binding.clone());
             }
         }
     }
     aliases
+}
+
+fn emitted_binding_for_alias<'a>(
+    declaration: &'a VueSetupLocalBinding,
+    binding: &'a Atom,
+) -> &'a Atom {
+    if declaration
+        .emitted_bindings
+        .iter()
+        .any(|emitted| emitted == binding)
+    {
+        return binding;
+    }
+    if declaration.bindings.len() == 1 && declaration.emitted_bindings.len() == 1 {
+        &declaration.emitted_bindings[0]
+    } else {
+        binding
+    }
 }
 
 fn unique_script_local_binding(binding: &Atom, used: &mut HashSet<Atom>) -> Atom {
@@ -1367,13 +1387,19 @@ fn setup_local_declarations<'a>(
         .iter()
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
+    let setup_binding_refs = candidates
+        .iter()
+        .filter(|declaration| !declaration.module_scope)
+        .flat_map(|declaration| declaration.bindings.iter().cloned())
+        .collect::<HashSet<_>>();
     let event_refs = template_event_expr_refs(root);
     let expr_refs = template_expr_refs(root);
     let expr_read_refs = template_expr_read_refs(root);
-    let mut wanted_refs = event_refs;
+    let mut setup_wanted_refs = event_refs;
+    let mut module_wanted_refs = HashSet::new();
     for declaration in &candidates {
         if selects_safe_template_expr_local(ctx, declaration, &expr_refs, &expr_read_refs) {
-            wanted_refs.extend(
+            setup_wanted_refs.extend(
                 declaration
                     .bindings
                     .iter()
@@ -1382,16 +1408,27 @@ fn setup_local_declarations<'a>(
             );
         }
     }
-    wanted_refs.extend(setup_value_dependency_refs(ctx, root));
-    wanted_refs.extend(setup_script_binding_refs(ctx));
+    setup_wanted_refs.extend(setup_value_dependency_refs(ctx, root));
+    setup_wanted_refs.extend(setup_script_binding_refs(ctx));
     let mut selected = HashSet::new();
 
     loop {
         let mut changed = false;
+        module_wanted_refs.extend(
+            setup_wanted_refs
+                .iter()
+                .filter(|binding| !setup_binding_refs.contains(*binding))
+                .cloned(),
+        );
         for (index, declaration) in candidates.iter().enumerate() {
             if selected.contains(&index) {
                 continue;
             }
+            let wanted_refs = if declaration.module_scope {
+                &module_wanted_refs
+            } else {
+                &setup_wanted_refs
+            };
             let binds_wanted_ref = declaration.bindings.iter().any(|binding| {
                 is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
             });
@@ -1400,7 +1437,11 @@ fn setup_local_declarations<'a>(
             }
 
             selected.insert(index);
-            wanted_refs.extend(declaration.refs.iter().cloned());
+            if declaration.module_scope {
+                module_wanted_refs.extend(declaration.refs.iter().cloned());
+            } else {
+                setup_wanted_refs.extend(declaration.refs.iter().cloned());
+            }
             changed = true;
         }
 
@@ -2308,7 +2349,7 @@ fn script_setup_declared_bindings(
     declared.extend(
         local_declarations
             .iter()
-            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+            .flat_map(|declaration| declaration.emitted_bindings.iter().cloned()),
     );
     declared
 }
@@ -2419,7 +2460,7 @@ fn props_binding_reserved_names(
     reserved.extend(
         ctx.setup_local_bindings
             .iter()
-            .flat_map(|declaration| declaration.bindings.iter().cloned()),
+            .flat_map(|declaration| declaration.emitted_bindings.iter().cloned()),
     );
     reserved.extend(ctx.setup_alias_bindings.keys().cloned());
     reserved.extend(ctx.script_imports.keys().cloned());
@@ -2528,6 +2569,51 @@ fn is_ident_continue(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vue_template::VueExpr;
+
+    fn test_stmt(source: &str) -> Stmt {
+        let cm = Lrc::new(SourceMap::default());
+        let module = parse_module(source, cm).unwrap();
+        match module.body.into_iter().next().unwrap() {
+            ModuleItem::Stmt(stmt) => stmt,
+            _ => panic!("expected statement"),
+        }
+    }
+
+    fn test_atoms(names: &[&str]) -> Vec<Atom> {
+        names.iter().map(|name| Atom::from(*name)).collect()
+    }
+
+    fn test_atom_set(names: &[&str]) -> HashSet<Atom> {
+        names.iter().map(|name| Atom::from(*name)).collect()
+    }
+
+    fn test_local_binding(
+        source: &str,
+        bindings: &[&str],
+        emitted_bindings: &[&str],
+        refs: &[&str],
+    ) -> VueSetupLocalBinding {
+        test_local_binding_with_scope(source, bindings, emitted_bindings, refs, false)
+    }
+
+    fn test_local_binding_with_scope(
+        source: &str,
+        bindings: &[&str],
+        emitted_bindings: &[&str],
+        refs: &[&str],
+        module_scope: bool,
+    ) -> VueSetupLocalBinding {
+        VueSetupLocalBinding {
+            bindings: test_atoms(bindings),
+            emitted_bindings: test_atoms(emitted_bindings),
+            refs: test_atom_set(refs),
+            source: source.to_string(),
+            import_refs: HashSet::new(),
+            stmt: test_stmt(source),
+            module_scope,
+        }
+    }
 
     #[test]
     fn ignores_plain_render_function_without_vue_signal() {
@@ -3475,6 +3561,40 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { computed } from \"vue\";\nimport { normalizePadding } from \"./format.js\";\n\nconst props = defineProps({\n    padding: String\n});\nconst { padding } = props;\n\nconst style = computed(()=>{\n    const result = {};\n    const value = normalizePadding(padding);\n    if (value) {\n        result.padding = value;\n    }\n    return result;\n});\n</script>\n\n<template>\n  <div :style=\"style\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn setup_dependencies_do_not_select_shadowed_module_locals() {
+        let ctx = VueRecoveryContext {
+            script_local_bindings: vec![test_local_binding_with_scope(
+                "const t = document.createElement(\"style\");",
+                &["t"],
+                &["t"],
+                &[],
+                true,
+            )],
+            setup_local_bindings: vec![
+                test_local_binding(
+                    "const t = toRefs(props);",
+                    &["t"],
+                    &["t"],
+                    &["props", "toRefs"],
+                ),
+                test_local_binding("const value = t.event;", &["value"], &["value"], &["t"]),
+            ],
+            ..Default::default()
+        };
+        let root = VueNode::Interpolation(VueExpr::new("value.name"));
+
+        let selected = setup_local_declarations(&ctx, &root)
+            .into_iter()
+            .map(|declaration| declaration.source.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            selected,
+            vec!["const t = toRefs(props);", "const value = t.event;"]
         );
     }
 
