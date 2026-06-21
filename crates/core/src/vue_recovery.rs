@@ -5565,6 +5565,29 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn coalesces_multiple_dynamic_class_array_entries() {
+        let input = r#"
+import { normalizeClass, openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", {
+    class: normalizeClass([
+      "panel",
+      active ? "is-active" : "",
+      { disabled: disabled },
+      tone ? `tone-${tone}` : ""
+    ])
+  }, null, 2);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section class=\"panel\" :class='[ active &amp;&amp; \"is-active\", { disabled }, tone &amp;&amp; `tone-${tone}` ]' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_shorthand_event_handler() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
