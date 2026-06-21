@@ -16,7 +16,15 @@ struct WakaruModule {
 #[derive(Serialize)]
 struct WakaruUnpackResult {
     modules: Vec<WakaruModule>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    source_maps: Vec<WakaruSourceMap>,
     warnings: Vec<WakaruWarning>,
+}
+
+#[derive(Serialize)]
+struct WakaruSourceMap {
+    filename: String,
+    map: String,
 }
 
 #[derive(Serialize)]
@@ -29,6 +37,8 @@ struct WakaruWarning {
 #[derive(Serialize)]
 struct WakaruDecompileResult {
     code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_map: Option<String>,
     warnings: Vec<WakaruWarning>,
 }
 
@@ -39,6 +49,7 @@ pub fn decompile(
     sourcemap: Option<Vec<u8>>,
     diagnostics: Option<bool>,
     formatter: Option<bool>,
+    emit_source_map: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let formatter = parse_formatter(formatter);
@@ -47,6 +58,7 @@ pub fn decompile(
         sourcemap,
         level,
         diagnostics: diagnostics.unwrap_or(false),
+        emit_source_map: emit_source_map.unwrap_or(false),
         ..Default::default()
     };
     let output =
@@ -54,6 +66,7 @@ pub fn decompile(
     let formatted = format_code(output.code, "input.js", formatter);
     let result = WakaruDecompileResult {
         code: formatted.code,
+        source_map: output.source_map,
         warnings: collect_warnings(output.warnings, formatted.warning),
     };
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -66,6 +79,7 @@ pub fn unpack(
     heuristic_split: Option<bool>,
     diagnostics: Option<bool>,
     formatter: Option<bool>,
+    emit_source_map: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let formatter = parse_formatter(formatter);
@@ -74,6 +88,7 @@ pub fn unpack(
         level,
         heuristic_split: heuristic_split.unwrap_or(true),
         diagnostics: diagnostics.unwrap_or(false),
+        emit_source_map: emit_source_map.unwrap_or(false),
         ..Default::default()
     };
     let output =
@@ -93,6 +108,11 @@ pub fn unpack(
                     code: formatted.code,
                 }
             })
+            .collect(),
+        source_maps: output
+            .source_maps
+            .into_iter()
+            .map(|(filename, map)| WakaruSourceMap { filename, map })
             .collect(),
         warnings: collect_warnings(output.warnings, format_warnings),
     };
@@ -148,6 +168,7 @@ export interface WakaruModule {
 
 export interface WakaruDecompileResult {
     code: string;
+    source_map?: string;
     warnings: WakaruWarning[];
 }
 
@@ -157,10 +178,17 @@ export function decompile(
     sourcemap?: Uint8Array,
     diagnostics?: boolean,
     formatter?: boolean,
+    emitSourceMap?: boolean,
 ): WakaruDecompileResult;
+
+export interface WakaruSourceMap {
+    filename: string;
+    map: string;
+}
 
 export interface WakaruUnpackResult {
     modules: WakaruModule[];
+    source_maps?: WakaruSourceMap[];
     warnings: WakaruWarning[];
 }
 
@@ -184,6 +212,7 @@ export function unpack(
     heuristicSplit?: boolean,
     diagnostics?: boolean,
     formatter?: boolean,
+    emitSourceMap?: boolean,
 ): WakaruUnpackResult;
 
 export function ruleNames(): string[];

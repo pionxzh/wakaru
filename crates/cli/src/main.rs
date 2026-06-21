@@ -115,6 +115,11 @@ struct Cli {
     #[arg(long)]
     formatter: bool,
 
+    /// Emit a source map (.map) alongside each output file, mapping the
+    /// decompiled output back to the input. Requires -o/--output.
+    #[arg(long = "emit-source-map")]
+    emit_source_map: bool,
+
     /// Output machine-readable JSON to stdout instead of human-readable
     /// summaries. Warnings and errors are included in the JSON object.
     #[arg(long)]
@@ -271,6 +276,7 @@ fn run_default(cli: Cli) -> Result<()> {
             level: cli.level.into(),
             heuristic_split,
             diagnostics: cli.diagnostics,
+            emit_source_map: cli.emit_source_map,
         };
 
         let out_dir = cli.output.expect("checked above");
@@ -337,6 +343,20 @@ fn run_default(cli: Cli) -> Result<()> {
                 resolved
                     .par_iter()
                     .try_for_each(|(path, code)| write_file(path, code))?;
+            }
+        }
+
+        if !output.source_maps.is_empty() {
+            let srcmap_map: std::collections::HashMap<&str, &str> = output
+                .source_maps
+                .iter()
+                .map(|(f, m)| (f.as_str(), m.as_str()))
+                .collect();
+            for ((orig_filename, _), (out_path, _)) in pairs.iter().zip(resolved.iter()) {
+                if let Some(map_json) = srcmap_map.get(orig_filename.as_str()) {
+                    let map_path = append_map_extension(out_path);
+                    write_file(&map_path, map_json)?;
+                }
             }
         }
 
@@ -416,6 +436,7 @@ fn run_default(cli: Cli) -> Result<()> {
             level: cli.level.into(),
             heuristic_split,
             diagnostics: cli.diagnostics,
+            emit_source_map: cli.emit_source_map,
         };
 
         let start = Instant::now();
@@ -438,9 +459,15 @@ fn run_default(cli: Cli) -> Result<()> {
                 ensure_output_file(path, cli.force)?;
                 fs::write(path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
+                if let Some(ref map_json) = output.source_map {
+                    let map_path = append_map_extension(path);
+                    fs::write(&map_path, map_json)
+                        .with_context(|| format!("failed to write {}", map_path.display()))?;
+                }
             }
             let json = JsonDecompileOutput {
                 code: json_code,
+                source_map: output.source_map.clone(),
                 warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
                 elapsed_ms: elapsed.as_millis() as u64,
             };
@@ -454,6 +481,11 @@ fn run_default(cli: Cli) -> Result<()> {
                     ensure_output_file(&path, cli.force)?;
                     fs::write(&path, &code)
                         .with_context(|| format!("failed to write {}", path.display()))?;
+                    if let Some(ref map_json) = output.source_map {
+                        let map_path = append_map_extension(&path);
+                        fs::write(&map_path, map_json)
+                            .with_context(|| format!("failed to write {}", map_path.display()))?;
+                    }
                 }
                 None => {
                     print!("{code}");
@@ -688,6 +720,13 @@ fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<Unpac
         inputs: out,
         scan_stats,
     })
+}
+
+/// Append `.map` to a path's extension: `foo.js` → `foo.js.map`.
+fn append_map_extension(path: &Path) -> PathBuf {
+    let mut map_name = path.as_os_str().to_owned();
+    map_name.push(".map");
+    PathBuf::from(map_name)
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {

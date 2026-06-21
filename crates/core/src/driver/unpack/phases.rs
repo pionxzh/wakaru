@@ -12,7 +12,10 @@ use super::super::diagnostics::{
     collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
     verify_output_parses,
 };
-use super::super::io::{apply_fixer, parse_js, parse_js_with_recovery, print_js};
+use super::super::io::{
+    apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
+    print_js_with_srcmap,
+};
 use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
@@ -268,17 +271,24 @@ pub(super) fn unpack_multi_module_with_plan(
     let rename_ref = &rename_map;
     let phase2_inputs: Vec<_> = modules.into_iter().zip(prepared_modules).collect();
 
-    let decompile_module = |(unpacked, prepared): (
-        PreparedUnpackModule,
-        Option<Phase1PreparedModule>,
-    )|
-     -> (String, String, Vec<UnpackWarning>, Option<ImportReport>) {
-        let run_phase2_tail =
-            |mut module: Module,
-             cm: Lrc<SourceMap>,
-             unresolved_mark: Mark,
-             input_parse_warnings: Vec<UnpackWarning>|
-             -> Result<(String, Vec<UnpackWarning>, Option<ImportReport>)> {
+    let decompile_module =
+        |(unpacked, prepared): (PreparedUnpackModule, Option<Phase1PreparedModule>)| -> (
+            String,
+            String,
+            Vec<UnpackWarning>,
+            Option<ImportReport>,
+            Option<String>,
+        ) {
+            let run_phase2_tail = |mut module: Module,
+                                   cm: Lrc<SourceMap>,
+                                   unresolved_mark: Mark,
+                                   input_parse_warnings: Vec<UnpackWarning>|
+             -> Result<(
+                String,
+                Option<String>,
+                Vec<UnpackWarning>,
+                Option<ImportReport>,
+            )> {
                 // Late pass at the barrier
                 run_reexport_consolidation(&mut module, facts_ref);
                 run_namespace_decomposition(&mut module, facts_ref);
@@ -369,80 +379,88 @@ pub(super) fn unpack_multi_module_with_plan(
                 }
 
                 apply_fixer(&mut module)?;
-                let code = print_js(&module, cm)?;
+                let (code, srcmap_json) = if options.emit_source_map {
+                    let (code, srcmap_buf) = print_js_with_srcmap(&module, cm.clone())?;
+                    let map_json =
+                        build_output_sourcemap(&srcmap_buf, &cm, &unpacked.module.filename)?;
+                    (code, Some(map_json))
+                } else {
+                    (print_js(&module, cm)?, None)
+                };
 
                 if options.diagnostics {
                     diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
                 }
 
-                Ok((code, diag_warnings, report))
+                Ok((code, srcmap_json, diag_warnings, report))
             };
 
-        let result = if let Some(prepared) = prepared {
-            let Phase1PreparedModule {
-                globals,
-                module,
-                unresolved_mark,
-            } = prepared;
-            GLOBALS.set(&globals, || {
-                let cm: Lrc<SourceMap> = Default::default();
-                run_phase2_tail(module, cm, unresolved_mark, Vec::new())
-            })
-        } else {
-            GLOBALS.set(&Default::default(), || {
-                let cm: Lrc<SourceMap> = Default::default();
-                let parsed = parse_js_with_recovery(
-                    &unpacked.module.code,
-                    &unpacked.module.filename,
-                    cm.clone(),
-                )?;
-                let mut module = parsed.module;
-                let unresolved_mark = Mark::new();
-                let top_level_mark = Mark::new();
-                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-                apply_numeric_rewrites(
-                    &mut module,
+            let result = if let Some(prepared) = prepared {
+                let Phase1PreparedModule {
+                    globals,
+                    module,
                     unresolved_mark,
-                    unpacked.numeric_rewrite.as_ref(),
-                    &numeric_rewrite_plan,
-                );
+                } = prepared;
+                GLOBALS.set(&globals, || {
+                    let cm: Lrc<SourceMap> = Default::default();
+                    run_phase2_tail(module, cm, unresolved_mark, Vec::new())
+                })
+            } else {
+                GLOBALS.set(&Default::default(), || {
+                    let cm: Lrc<SourceMap> = Default::default();
+                    let parsed = parse_js_with_recovery(
+                        &unpacked.module.code,
+                        &unpacked.module.filename,
+                        cm.clone(),
+                    )?;
+                    let mut module = parsed.module;
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
+                    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                    apply_numeric_rewrites(
+                        &mut module,
+                        unresolved_mark,
+                        unpacked.numeric_rewrite.as_ref(),
+                        &numeric_rewrite_plan,
+                    );
 
-                // Through-UnEsm range.
-                apply_rules(
-                    &mut module,
-                    unresolved_mark,
-                    RulePipelineOptions::until("UnEsm"),
-                );
+                    // Through-UnEsm range.
+                    apply_rules(
+                        &mut module,
+                        unresolved_mark,
+                        RulePipelineOptions::until("UnEsm"),
+                    );
 
-                let input_parse_warnings = if options.diagnostics {
-                    collect_input_parse_warnings(&parsed.recoverable_errors)
-                } else {
-                    Vec::new()
-                };
-                run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
-            })
-        };
+                    let input_parse_warnings = if options.diagnostics {
+                        collect_input_parse_warnings(&parsed.recoverable_errors)
+                    } else {
+                        Vec::new()
+                    };
+                    run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
+                })
+            };
 
-        match result {
-            Ok((code, diag_warnings, report)) => {
-                let out_filename = rename_ref
-                    .get(&unpacked.module.filename)
-                    .cloned()
-                    .unwrap_or(unpacked.module.filename);
-                (out_filename, code, diag_warnings, report)
+            match result {
+                Ok((code, srcmap_json, diag_warnings, report)) => {
+                    let out_filename = rename_ref
+                        .get(&unpacked.module.filename)
+                        .cloned()
+                        .unwrap_or(unpacked.module.filename);
+                    (out_filename, code, diag_warnings, report, srcmap_json)
+                }
+                Err(e) => (
+                    unpacked.module.filename.clone(),
+                    unpacked.module.code,
+                    vec![UnpackWarning::new(
+                        unpacked.module.filename,
+                        UnpackWarningKind::DecompileFailed,
+                        format!("decompile failed, preserving raw code: {e}"),
+                    )],
+                    None,
+                    None,
+                ),
             }
-            Err(e) => (
-                unpacked.module.filename.clone(),
-                unpacked.module.code,
-                vec![UnpackWarning::new(
-                    unpacked.module.filename,
-                    UnpackWarningKind::DecompileFailed,
-                    format!("decompile failed, preserving raw code: {e}"),
-                )],
-                None,
-            ),
-        }
-    };
+        };
 
     let triples: Vec<_> = {
         let span = tracing::info_span!("phase2_decompile_modules");
@@ -453,15 +471,26 @@ pub(super) fn unpack_multi_module_with_plan(
             .collect()
     };
 
-    let mut modules = Vec::with_capacity(triples.len());
+    // Separate source maps from the tuples before dead-module elimination.
+    let mut srcmap_by_filename: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let triples_for_dead: Vec<(String, String, Vec<UnpackWarning>, Option<ImportReport>)> = triples
+        .into_iter()
+        .map(|(filename, code, warns, report, srcmap)| {
+            if let Some(map_json) = srcmap {
+                srcmap_by_filename.insert(filename.clone(), map_json);
+            }
+            (filename, code, warns, report)
+        })
+        .collect();
+
+    let mut modules = Vec::with_capacity(triples_for_dead.len());
     if eliminate_dead_modules {
-        // Post-Phase-2 barrier: drop dead helper modules and strip the vacuous
-        // side-effect imports their consumers were left with.
-        let (kept, module_warnings) = eliminate_dead_helper_modules(triples);
+        let (kept, module_warnings) = eliminate_dead_helper_modules(triples_for_dead);
         modules = kept;
         warnings.extend(module_warnings);
     } else {
-        for (filename, code, module_warnings, _report) in triples {
+        for (filename, code, module_warnings, _report) in triples_for_dead {
             modules.push((filename, code));
             warnings.extend(module_warnings);
         }
@@ -470,10 +499,20 @@ pub(super) fn unpack_multi_module_with_plan(
         warnings.extend(collect_import_cycle_warnings(&modules));
     }
 
+    let source_maps: Vec<(String, String)> = modules
+        .iter()
+        .filter_map(|(filename, _)| {
+            srcmap_by_filename
+                .remove(filename)
+                .map(|map| (filename.clone(), map))
+        })
+        .collect();
+
     Ok(UnpackOutput {
         modules,
         warnings,
         detected_formats: Vec::new(),
+        source_maps,
     })
 }
 

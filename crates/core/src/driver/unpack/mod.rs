@@ -61,19 +61,29 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
             }
             _ => {
                 let output = decompile(source, options)?;
+                let source_maps = output
+                    .source_map
+                    .map(|m| vec![("module.js".to_string(), m)])
+                    .unwrap_or_default();
                 Ok(UnpackOutput {
                     modules: vec![("module.js".to_string(), output.code)],
                     warnings: output.warnings,
                     detected_formats: Vec::new(),
+                    source_maps,
                 })
             }
         },
         None => {
             let output = decompile(source, options)?;
+            let source_maps = output
+                .source_map
+                .map(|m| vec![("module.js".to_string(), m)])
+                .unwrap_or_default();
             Ok(UnpackOutput {
                 modules: vec![("module.js".to_string(), output.code)],
                 warnings: output.warnings,
                 detected_formats: Vec::new(),
+                source_maps,
             })
         }
     }
@@ -247,12 +257,14 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                 modules,
                 warnings,
                 detected_formats: vec![format],
+                source_maps: Vec::new(),
             })
         }
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
             warnings: Vec::new(),
             detected_formats: Vec::new(),
+            source_maps: Vec::new(),
         }),
     }
 }

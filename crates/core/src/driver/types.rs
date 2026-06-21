@@ -40,6 +40,8 @@ pub struct DecompileOptions {
     /// Run post-transform diagnostic checks (lexical use-before-declaration,
     /// output parse verification). Results are returned as warnings.
     pub diagnostics: bool,
+    /// Generate a v3 source map mapping decompiled output back to the input.
+    pub emit_source_map: bool,
 }
 
 impl Default for DecompileOptions {
@@ -51,6 +53,7 @@ impl Default for DecompileOptions {
             level: RewriteLevel::Standard,
             heuristic_split: false,
             diagnostics: false,
+            emit_source_map: false,
         }
     }
 }
@@ -69,6 +72,9 @@ pub struct UnpackOutput {
     pub modules: Vec<(String, String)>,
     pub warnings: Vec<UnpackWarning>,
     pub detected_formats: Vec<BundleFormat>,
+    /// Per-module source maps (filename, source map JSON). Only populated when
+    /// `DecompileOptions::emit_source_map` is set.
+    pub source_maps: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +160,9 @@ impl UnpackOutput {
 pub struct DecompileOutput {
     pub code: String,
     pub warnings: Vec<UnpackWarning>,
+    /// v3 source map JSON mapping the decompiled output back to the input.
+    /// Only populated when `DecompileOptions::emit_source_map` is set.
+    pub source_map: Option<String>,
 }
 
 impl DecompileOutput {

@@ -295,6 +295,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                 .collect(),
             warnings: Vec::new(),
             detected_formats: Vec::new(),
+            source_maps: Vec::new(),
         });
     }
 
@@ -347,6 +348,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
         modules,
         warnings,
         detected_formats: Vec::new(),
+        source_maps: Vec::new(),
     })
 }
 

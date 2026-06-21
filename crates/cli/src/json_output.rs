@@ -14,6 +14,8 @@ pub struct JsonUnpackOutput {
 pub struct JsonDecompileOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_map: Option<String>,
     pub warnings: Vec<JsonWarning>,
     pub elapsed_ms: u64,
 }
