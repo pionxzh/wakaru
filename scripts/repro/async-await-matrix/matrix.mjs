@@ -170,6 +170,8 @@ const snippets = [
     // temps are inlined into the returned object.
     acceptForms: [
       "async function normalize_user(input) {\n  const source = input ?? await load_user();\n  const { id, profile: { name } = {}, tags: [primary, , backup] = [] } = source;\n  return {\n    id,\n    name,\n    primary,\n    backup: backup ?? await load_backup(id),\n    meta: await load_meta(id)\n  };\n}\n",
+      "async function normalize_user(input) {\n  let source;\n  let id;\n  let name;\n  let primary;\n  let backup;\n  let resolved_backup;\n  let meta;\n  let resolved;\n  resolved = input ?? await load_user();\n  ({ id, profile: { name } = {}, tags: [primary, , backup] = [] } = source = resolved);\n  resolved_backup = backup ?? await load_backup(id);\n  meta = await load_meta(id);\n  return { id, name, primary, backup: resolved_backup, meta };\n}\n",
+      "async function normalize_user(input) {\n  let source;\n  let resolved;\n  let id;\n  let name;\n  let primary;\n  let backup;\n  let resolved_backup;\n  let meta;\n  resolved = input ?? await load_user();\n  ({ id, profile: { name } = {}, tags: [primary, , backup] = [] } = source = resolved);\n  resolved_backup = backup ?? await load_backup(id);\n  meta = await load_meta(id);\n  return { id, name, primary, backup: resolved_backup, meta };\n}\n",
     ],
     expected: [
       "async function normalize_user(input)",

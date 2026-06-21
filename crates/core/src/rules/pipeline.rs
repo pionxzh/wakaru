@@ -440,6 +440,9 @@ runner!(run_smart_inline, |ctx| SmartInline::new_with_mark(
     ctx.rewrite_level,
     ctx.unresolved_mark
 ));
+runner!(run_un_esbuild_cjs_wrapper, |ctx| {
+    UnEsbuildCjsWrapper::new(ctx.unresolved_mark)
+});
 runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark
 ));
@@ -696,6 +699,9 @@ define_rule_registry! {
     // passes that can use empty declarations as hints.
     ("DeadUninitializedDecls", Cleanup, run_dead_uninitialized_decls, always_enabled, requires: [
         "SmartRename2"
+    ]),
+    ("UnEsbuildCjsWrapper", Cleanup, run_un_esbuild_cjs_wrapper, standard_or_above, requires: [
+        "DeadUninitializedDecls"
     ]),
     // DeadDecls first: removing dead helpers can leave import specifiers
     // unreferenced, which DeadImports then cleans up.
