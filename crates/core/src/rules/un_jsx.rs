@@ -1467,9 +1467,10 @@ fn string_child(value: &Str) -> Option<JSXElementChild> {
             expr: JSXExpr::Expr(Box::new(Expr::Lit(Lit::Str(value.clone())))),
         }));
     }
-    let needs_expr = text.contains(['{', '}', '<', '>', '\r', '\n'])
-        || text.starts_with(char::is_whitespace)
-        || text.ends_with(char::is_whitespace);
+    // Only characters that are syntactically invalid inside JSXText need wrapping.
+    // Leading/trailing whitespace is preserved by JSXText on a single line.
+    let needs_expr =
+        text.contains(['{', '}', '<', '>']) || text.contains('\r') || text.contains('\n');
     if needs_expr {
         return Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
             span: DUMMY_SP,
