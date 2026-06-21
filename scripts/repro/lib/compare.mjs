@@ -84,6 +84,35 @@ export function structurallyEqual(a, b, options = {}) {
 }
 
 /**
+ * Returns `{ validateRecovered, prewarm }` suitable for spreading into a
+ * `runMatrix()` config. Mangle shapes (tools containing "mangle") are
+ * compared structurally via alpha-renaming normalisation rather than by
+ * expected-needle substring matching.
+ */
+export function mangleValidator() {
+  return {
+    validateRecovered({ snippet, shape, recovered }) {
+      if (!shape.tools.some((tool) => tool.includes("mangle"))) {
+        return undefined;
+      }
+      const forms = [snippet.source, ...(snippet.acceptForms ?? [])];
+      if (matchesAnyForm(recovered, forms)) {
+        return { recovered: true, notes: "structurally equivalent to source (mangle-insensitive)" };
+      }
+      return undefined;
+    },
+    async prewarm(rows) {
+      const codes = [];
+      for (const { snippet, shape, recovered } of rows) {
+        if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
+        codes.push(recovered, snippet.source, ...(snippet.acceptForms ?? []));
+      }
+      await prewarmNormalize(codes, { rename: true });
+    },
+  };
+}
+
+/**
  * True when `recovered` is alpha-equivalent to any of the accepted full-program
  * `forms`. Use this for mangle shapes: the original snippet plus any genuinely
  * distinct structural variants wakaru may emit (e.g. for-loop vs for-of).

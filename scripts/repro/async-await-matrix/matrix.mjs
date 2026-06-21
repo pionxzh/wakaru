@@ -4,7 +4,7 @@ import {
   runMatrix, batchRunner, babelMultiPluginBatch, babelPresetEnvBatch,
   withTerserVariants, standardLowerers,
 } from "../lib/runner.mjs";
-import { matchesAnyForm, prewarmNormalize } from "../lib/compare.mjs";
+import { mangleValidator } from "../lib/compare.mjs";
 
 const snippets = [
   {
@@ -466,8 +466,10 @@ const snippets = [
 // shapes wakaru may legitimately emit (e.g. for-loop vs for-of) as full
 // programs — far fewer than the old per-name `expectedAny` groups, since
 // renaming already absorbs the name/whitespace variants.
-function validateRecovered({ snippet, shape, recovered }) {
-  const opcode = leakedStateOpcodeReturn(recovered);
+const { validateRecovered: mangleValidate, prewarm: prewarmComparison } = mangleValidator();
+
+function validateRecovered(ctx) {
+  const opcode = leakedStateOpcodeReturn(ctx.recovered);
   if (opcode) {
     return {
       recovered: false,
@@ -476,32 +478,12 @@ function validateRecovered({ snippet, shape, recovered }) {
       missing: [],
     };
   }
-
-  if (!shape.tools.some((tool) => tool.includes("mangle"))) {
-    return undefined;
-  }
-  const forms = [snippet.source, ...(snippet.acceptForms ?? [])];
-  if (matchesAnyForm(recovered, forms)) {
-    return { recovered: true, notes: "structurally equivalent to source (mangle-insensitive)" };
-  }
-  return undefined;
+  return mangleValidate(ctx);
 }
 
 function leakedStateOpcodeReturn(code) {
   const match = code.match(/\breturn\s+(?:[^;\n]*,\s*)?\[\s*([34])\s*,/s);
   return match ? `return [${match[1]}, ...]` : null;
-}
-
-// Normalize every mangle shape's recovered output and its candidate forms
-// concurrently, so the synchronous validateRecovered calls are cache hits
-// instead of serial `wakaru debug normalize` spawns.
-async function prewarmComparison(rows) {
-  const codes = [];
-  for (const { snippet, shape, recovered } of rows) {
-    if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
-    codes.push(recovered, snippet.source, ...(snippet.acceptForms ?? []));
-  }
-  await prewarmNormalize(codes, { rename: true });
 }
 
 const babelProfiles = [

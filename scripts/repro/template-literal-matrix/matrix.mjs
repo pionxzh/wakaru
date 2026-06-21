@@ -3,7 +3,7 @@
 import {
   runMatrix, batchRunner, babelBatch, withTerserVariants, standardLowerers,
 } from "../lib/runner.mjs";
-import { matchesAnyForm, prewarmNormalize } from "../lib/compare.mjs";
+import { mangleValidator } from "../lib/compare.mjs";
 
 const snippets = [
   {
@@ -128,31 +128,10 @@ function expectedNeedles(snippet) {
   return Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected];
 }
 
-function validateRecovered({ snippet, shape, recovered }) {
-  if (!shape.tools.some((tool) => tool.includes("mangle"))) {
-    return undefined;
-  }
-  const forms = [snippet.source, ...(snippet.acceptForms ?? [])];
-  if (matchesAnyForm(recovered, forms)) {
-    return { recovered: true, notes: "structurally equivalent to source (mangle-insensitive)" };
-  }
-  return undefined;
-}
-
-async function prewarmComparison(rows) {
-  const codes = [];
-  for (const { snippet, shape, recovered } of rows) {
-    if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
-    codes.push(recovered, snippet.source, ...(snippet.acceptForms ?? []));
-  }
-  await prewarmNormalize(codes, { rename: true });
-}
-
 runMatrix({
   name: "template-literal",
   snippets,
   transformers,
   expectedNeedles,
-  validateRecovered,
-  prewarm: prewarmComparison,
+  ...mangleValidator(),
 });
