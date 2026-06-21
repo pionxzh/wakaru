@@ -439,8 +439,41 @@ fn simplify_class_expr(expr: Expr) -> (Expr, bool) {
             let (object, changed) = simplify_class_object(object);
             (Expr::Object(object), changed)
         }
+        Expr::Cond(cond) => simplify_class_cond(cond),
         _ => (expr, false),
     }
+}
+
+fn simplify_class_cond(mut cond: CondExpr) -> (Expr, bool) {
+    let (cons, cons_changed) = simplify_class_expr(*cond.cons);
+    let (alt, alt_changed) = simplify_class_expr(*cond.alt);
+    cond.cons = Box::new(cons);
+    cond.alt = Box::new(alt);
+
+    if is_empty_string_expr(cond.alt.as_ref()) && is_optional_class_value(cond.cons.as_ref()) {
+        return (
+            Expr::Bin(BinExpr {
+                span: cond.span,
+                op: BinaryOp::LogicalAnd,
+                left: cond.test,
+                right: cond.cons,
+            }),
+            true,
+        );
+    }
+
+    (Expr::Cond(cond), cons_changed || alt_changed)
+}
+
+fn is_empty_string_expr(expr: &Expr) -> bool {
+    matches!(unwrap_paren_expr(expr), Expr::Lit(Lit::Str(str)) if wtf8_to_string(&str.value).is_empty())
+}
+
+fn is_optional_class_value(expr: &Expr) -> bool {
+    matches!(
+        unwrap_paren_expr(expr),
+        Expr::Lit(Lit::Str(_)) | Expr::Tpl(_)
+    )
 }
 
 fn simplify_class_object(object: ObjectLit) -> (ObjectLit, bool) {
