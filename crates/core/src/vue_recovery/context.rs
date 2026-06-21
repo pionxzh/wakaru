@@ -4,11 +4,12 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, Expr, ExprOrSpread, FnDecl,
     Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName,
+    PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -3377,6 +3378,9 @@ fn computed_block_value_expr(
         return Ok(None);
     };
     let prior_stmts = &stmts[..return_index];
+    if let Some(expr) = computed_array_push_expr(prior_stmts, expr, ctx)? {
+        return Ok(Some(expr));
+    }
     let local_exprs = computed_block_local_exprs(prior_stmts);
     let mutated_locals = computed_mutated_local_bindings(prior_stmts, &local_exprs);
     if computed_local_ref_counts(expr, &mutated_locals)
@@ -3398,6 +3402,144 @@ fn computed_block_value_expr(
         value: clean_expr(&print_expr(&expr, ctx)?, ctx),
         expr: Some(expr),
     }))
+}
+
+fn computed_array_push_expr(
+    stmts: &[Stmt],
+    return_expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueSetupValueBinding>> {
+    let Expr::Ident(return_ident) = unwrap_paren_expr(return_expr) else {
+        return Ok(None);
+    };
+    let Some((array_name, push_stmts)) = computed_array_builder_binding(stmts) else {
+        return Ok(None);
+    };
+    if return_ident.sym != array_name {
+        return Ok(None);
+    }
+    let Some(elems) = computed_array_push_elements(push_stmts, &array_name) else {
+        return Ok(None);
+    };
+    let expr = Expr::Array(ArrayLit {
+        span: DUMMY_SP,
+        elems: elems.into_iter().map(Some).collect(),
+    });
+    let expr = inline_computed_setup_prop_aliases(&expr, stmts, ctx);
+
+    Ok(Some(VueSetupValueBinding {
+        value: clean_expr(&print_expr(&expr, ctx)?, ctx),
+        expr: Some(expr),
+    }))
+}
+
+fn computed_array_builder_binding(stmts: &[Stmt]) -> Option<(Atom, &[Stmt])> {
+    let [first, rest @ ..] = stmts else {
+        return None;
+    };
+    let Stmt::Decl(Decl::Var(var)) = first else {
+        return None;
+    };
+    if var.kind != VarDeclKind::Const {
+        return None;
+    }
+    let [decl] = var.decls.as_slice() else {
+        return None;
+    };
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let init = decl.init.as_deref()?;
+    if !is_empty_array_expr(init) {
+        return None;
+    }
+    Some((binding.id.sym.clone(), rest))
+}
+
+fn is_empty_array_expr(expr: &Expr) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Array(array) => array.elems.is_empty(),
+        _ => false,
+    }
+}
+
+fn computed_array_push_elements(stmts: &[Stmt], array_name: &Atom) -> Option<Vec<ExprOrSpread>> {
+    let mut elems = Vec::new();
+    for stmt in stmts {
+        elems.extend(computed_array_push_stmt_elements(stmt, array_name)?);
+    }
+    Some(elems)
+}
+
+fn computed_array_push_stmt_elements(stmt: &Stmt, array_name: &Atom) -> Option<Vec<ExprOrSpread>> {
+    if let Some(expr) = computed_array_push_arg(stmt, array_name) {
+        return Some(vec![ExprOrSpread {
+            spread: None,
+            expr: Box::new(expr.clone()),
+        }]);
+    }
+
+    let Stmt::If(if_stmt) = stmt else {
+        return None;
+    };
+    Some(vec![ExprOrSpread {
+        spread: Some(DUMMY_SP),
+        expr: Box::new(Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Cond(CondExpr {
+                span: DUMMY_SP,
+                test: if_stmt.test.clone(),
+                cons: Box::new(array_expr_from_push_branch(&if_stmt.cons, array_name)?),
+                alt: Box::new(if_stmt.alt.as_deref().map_or_else(
+                    || Some(empty_array_expr()),
+                    |alt| array_expr_from_push_branch(alt, array_name),
+                )?),
+            })),
+        })),
+    }])
+}
+
+fn computed_array_push_arg<'a>(stmt: &'a Stmt, array_name: &Atom) -> Option<&'a Expr> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = unwrap_paren_expr(expr_stmt.expr.as_ref()) else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args.first()?.spread.is_some() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = unwrap_paren_expr(callee.as_ref()) else {
+        return None;
+    };
+    if !matches!(member.obj.as_ref(), Expr::Ident(object) if object.sym == *array_name) {
+        return None;
+    }
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "push") {
+        return None;
+    }
+    call.args.first().map(|arg| arg.expr.as_ref())
+}
+
+fn array_expr_from_push_branch(stmt: &Stmt, array_name: &Atom) -> Option<Expr> {
+    let elems = match stmt {
+        Stmt::Block(block) => computed_array_push_elements(&block.stmts, array_name)?,
+        stmt => computed_array_push_stmt_elements(stmt, array_name)?,
+    };
+    Some(Expr::Array(ArrayLit {
+        span: DUMMY_SP,
+        elems: elems.into_iter().map(Some).collect(),
+    }))
+}
+
+fn empty_array_expr() -> Expr {
+    Expr::Array(ArrayLit {
+        span: DUMMY_SP,
+        elems: Vec::new(),
+    })
 }
 
 fn computed_final_return_expr(stmts: &[Stmt]) -> Option<(usize, &Expr)> {
