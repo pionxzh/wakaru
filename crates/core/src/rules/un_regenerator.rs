@@ -5,9 +5,9 @@ use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function, Ident,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Number, Param,
-    ParenExpr, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, WhileStmt,
-    YieldExpr,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Number,
+    ObjectLit, Param, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -101,6 +101,7 @@ fn run_un_regenerator(
         .ts_helpers_of_kind(TsHelperKind::Generator)
         .into_iter()
         .collect();
+    let regenerator_runtime_helpers = collect_regenerator_runtime_helpers(module);
     let esbuild_async_helpers = collect_esbuild_async_helpers(module, unresolved_mark);
     let esbuild_yield_star_helpers = collect_esbuild_yield_star_helpers(module);
 
@@ -154,6 +155,9 @@ fn run_un_regenerator(
             .map(|(key, kind)| (key.clone(), *kind))
             .collect();
         local_helpers.remove_helpers_with_dependencies(module, roots);
+    }
+    if !regenerator_runtime_helpers.is_empty() {
+        local_helpers.remove_helpers_with_dependencies(module, regenerator_runtime_helpers);
     }
 
     remove_unused_helper_decls(module, &esbuild_async_helpers);
@@ -259,6 +263,145 @@ fn module_exports_helper(
             .iter()
             .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
     })
+}
+
+fn collect_regenerator_runtime_helpers(
+    module: &Module,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
+    let mut helpers = HashMap::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+                if is_regenerator_runtime_helper_fn(&fn_decl.function) =>
+            {
+                helpers.insert(
+                    (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt),
+                    TranspilerHelperKind::HelperDependency,
+                );
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = &decl.init else {
+                        continue;
+                    };
+                    if is_regenerator_runtime_helper_expr(init) {
+                        helpers.insert(
+                            (binding.id.sym.clone(), binding.id.ctxt),
+                            TranspilerHelperKind::HelperDependency,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    helpers
+}
+
+fn is_regenerator_runtime_helper_expr(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => is_regenerator_runtime_helper_fn(&fn_expr.function),
+        Expr::Arrow(arrow) => is_regenerator_runtime_helper_arrow(arrow),
+        _ => false,
+    }
+}
+
+fn is_regenerator_runtime_helper_fn(function: &Function) -> bool {
+    if !function.params.is_empty() {
+        return false;
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let mut finder = RegeneratorRuntimeHelperFinder::default();
+    body.visit_with(&mut finder);
+    finder.is_match()
+}
+
+fn is_regenerator_runtime_helper_arrow(arrow: &ArrowExpr) -> bool {
+    if !arrow.params.is_empty() {
+        return false;
+    }
+    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+        return false;
+    };
+    let mut finder = RegeneratorRuntimeHelperFinder::default();
+    body.visit_with(&mut finder);
+    finder.is_match()
+}
+
+#[derive(Default)]
+struct RegeneratorRuntimeHelperFinder {
+    found_runtime_exports: bool,
+    found_invoke_marker: bool,
+    found_generator_marker: bool,
+}
+
+impl RegeneratorRuntimeHelperFinder {
+    fn is_match(&self) -> bool {
+        self.found_runtime_exports && (self.found_invoke_marker || self.found_generator_marker)
+    }
+}
+
+impl Visit for RegeneratorRuntimeHelperFinder {
+    fn visit_object_lit(&mut self, obj: &ObjectLit) {
+        if object_lit_has_regenerator_runtime_exports(obj) {
+            self.found_runtime_exports = true;
+        }
+        obj.visit_children_with(self);
+    }
+
+    fn visit_lit(&mut self, lit: &Lit) {
+        let Lit::Str(str_lit) = lit else {
+            return;
+        };
+        match str_lit.value.as_str() {
+            Some("_invoke") => self.found_invoke_marker = true,
+            Some("GeneratorFunction") | Some("Generator is already running") => {
+                self.found_generator_marker = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn object_lit_has_regenerator_runtime_exports(obj: &ObjectLit) -> bool {
+    let mut has_wrap = false;
+    let mut has_mark = false;
+    for prop in &obj.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        let name = match prop.as_ref() {
+            Prop::KeyValue(kv) => prop_name_static(&kv.key),
+            Prop::Method(method) => prop_name_static(&method.key),
+            Prop::Getter(getter) => prop_name_static(&getter.key),
+            Prop::Setter(setter) => prop_name_static(&setter.key),
+            Prop::Shorthand(ident) => Some(ident.sym.as_ref()),
+            Prop::Assign(assign) => Some(assign.key.sym.as_ref()),
+        };
+        match name {
+            Some("wrap" | "w") => has_wrap = true,
+            Some("mark" | "m") => has_mark = true,
+            _ => {}
+        }
+    }
+    has_wrap && has_mark
+}
+
+fn prop_name_static(name: &PropName) -> Option<&str> {
+    match name {
+        PropName::Ident(ident) => Some(ident.sym.as_ref()),
+        PropName::Str(str_lit) => str_lit.value.as_str(),
+        PropName::Computed(computed) => match computed.expr.as_ref() {
+            Expr::Lit(Lit::Str(str_lit)) => str_lit.value.as_str(),
+            _ => None,
+        },
+        PropName::Num(_) | PropName::BigInt(_) => None,
+    }
 }
 
 fn require_source_from_interop_init(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {

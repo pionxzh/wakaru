@@ -1721,6 +1721,69 @@ async function load_user(app_id) {
 }
 
 #[test]
+fn async_to_generator_minified_babel_728_self_rewriting_trampoline() {
+    let input = r#"
+function t() {
+  function w() {}
+  function m() {}
+  n({}, "_invoke", function() {});
+  return (t = function() {
+    return { w: w, m: m };
+  })();
+}
+function n(t, r, e) {
+  Object.defineProperty(t, r, { value: e });
+}
+function r(t, n, r, e, o, i, u) {
+  try {
+    var c = t[i](u), a = c.value;
+  } catch (t) {
+    return void r(t);
+  }
+  c.done ? n(a) : Promise.resolve(a).then(e, o);
+}
+function e(t) {
+  return function() {
+    var n = this, o = arguments;
+    return new Promise(function(i, u) {
+      var c = t.apply(n, o);
+      function a(t) {
+        r(c, i, u, a, f, "next", t);
+      }
+      function f(t) {
+        r(c, i, u, a, f, "throw", t);
+      }
+      a(void 0);
+    });
+  };
+}
+function o(t) {
+  return i.apply(this, arguments);
+}
+function i() {
+  return (i = e(t().m(function n(r) {
+    return t().w(function(t) {
+      for (;;) switch (t.n) {
+        case 0:
+          t.n = 1;
+          return fetch_user(r);
+        case 1:
+          return t.a(2);
+      }
+    }, n);
+  }))).apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function o(r) {
+  await fetch_user(r);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_to_generator_babel_trampoline_with_regenerator_try_catch() {
     let input = r#"
 function _asyncToGenerator(fn) {
