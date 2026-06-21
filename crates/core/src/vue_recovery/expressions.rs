@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helpers::VueHelper;
 use super::VueRecoveryContext;
+use crate::rules::UnObjectSpread;
 use crate::vue_template::{VueExpr, VueNode, VueUnsupported};
 
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
@@ -20,7 +21,7 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
     expr.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
     expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, true));
 
-    let module = Module {
+    let mut module = Module {
         span: DUMMY_SP,
         body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
             span: DUMMY_SP,
@@ -39,6 +40,7 @@ pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
         }))))],
         shebang: None,
     };
+    module.visit_mut_with(&mut UnObjectSpread::new());
 
     let mut output = Vec::new();
     {

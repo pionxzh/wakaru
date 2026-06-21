@@ -857,6 +857,28 @@ const x = { ...y };
 }
 
 #[test]
+fn detects_inline_object_spread_callee() {
+    let input = r#"
+var x = (function(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = null != arguments[i] ? arguments[i] : {};
+        i % 2 ? ownKeys(Object(source), true).forEach(function(key) {
+            target[key] = source[key];
+        }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function(key) {
+            Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+        });
+    }
+    return target;
+})({ cursor: pointer }, padding && { padding: padding });
+"#;
+    let expected = r#"
+var x = { cursor: pointer, ...padding && { padding: padding } };
+"#;
+
+    assert_eq_normalized(&render_rule(input, |_| UnObjectSpread::new()), expected);
+}
+
+#[test]
 fn detects_var_assigned_extends() {
     let input = r#"
 var _extends = function() {
