@@ -4,7 +4,7 @@ use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     BlockStmt, BlockStmtOrExpr, Bool, Callee, Decl, Expr, ExprStmt, FnExpr, GetterProp, Ident, Lit,
     MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, Stmt, VarDeclarator,
+    ReturnStmt, Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -103,6 +103,8 @@ fn maybe_rewrite_webpack_namespace(
     unresolved_mark: Mark,
 ) -> Option<(ModuleItem, Vec<usize>)> {
     let mut require_r_indices = Vec::new();
+    let mut odp_getters = Vec::new();
+    let mut odp_indices = Vec::new();
     let mut index = decl_index + 1;
 
     while index < items.len() {
@@ -124,10 +126,26 @@ fn maybe_rewrite_webpack_namespace(
             return Some((replacement, require_r_indices));
         }
 
+        // Collect consecutive Object.defineProperty(target, name, { get: ... }) calls.
+        if let Some(getter) = extract_single_define_property_getter(&items[index], target) {
+            odp_getters.push(getter);
+            odp_indices.push(index);
+            index += 1;
+            continue;
+        }
+
         if module_item_references_binding(&items[index], target) {
-            return None;
+            break;
         }
         index += 1;
+    }
+
+    if odp_getters.len() >= 2 {
+        let mut replacement = items[decl_index].clone();
+        replace_module_item_init_with_getters(&mut replacement, odp_getters)?;
+        let mut removed = require_r_indices;
+        removed.extend(odp_indices);
+        return Some((replacement, removed));
     }
 
     None
@@ -136,14 +154,43 @@ fn maybe_rewrite_webpack_namespace(
 fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
     let mut original = std::mem::take(stmts);
     let mut rewritten = Vec::with_capacity(original.len());
+    let mut skip_until = 0;
     let mut i = 0;
 
     while i < original.len() {
+        if i < skip_until {
+            i += 1;
+            continue;
+        }
+
         if i + 1 < original.len() {
             if let Some(stmt) = maybe_rewrite_stmt_pair(&original[i], &original[i + 1]) {
                 rewritten.push(stmt);
                 i += 2;
                 continue;
+            }
+        }
+
+        if let Some(binding) = extract_empty_object_binding_from_stmt(&original[i]) {
+            let mut getters = Vec::new();
+            let mut j = i + 1;
+            while j < original.len() {
+                if let Some(getter) =
+                    extract_single_define_property_getter_from_stmt(&original[j], &binding)
+                {
+                    getters.push(getter);
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if getters.len() >= 2 {
+                if let Some(stmt) = rewrite_stmt_init_with_getters(original[i].clone(), getters) {
+                    rewritten.push(stmt);
+                    skip_until = j;
+                    i = j;
+                    continue;
+                }
             }
         }
 
@@ -278,6 +325,71 @@ fn extract_empty_object_binding_from_var_decl(decls: &[VarDeclarator]) -> Option
         return None;
     }
     Some((binding.id.sym.clone(), binding.id.ctxt))
+}
+
+/// Extract a getter from `Object.defineProperty(target, "name", { enumerable: true, get: ... })`.
+fn extract_single_define_property_getter(
+    item: &ModuleItem,
+    target: &BindingId,
+) -> Option<GetterProp> {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return None;
+    };
+    extract_single_define_property_getter_from_expr(expr.as_ref(), target)
+}
+
+fn extract_single_define_property_getter_from_stmt(
+    stmt: &Stmt,
+    target: &BindingId,
+) -> Option<GetterProp> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    extract_single_define_property_getter_from_expr(expr.as_ref(), target)
+}
+
+fn extract_single_define_property_getter_from_expr(
+    expr: &Expr,
+    target: &BindingId,
+) -> Option<GetterProp> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(object_ident) = member.obj.as_ref() else {
+        return None;
+    };
+    if object_ident.sym.as_ref() != "Object" {
+        return None;
+    }
+    let MemberProp::Ident(prop) = &member.prop else {
+        return None;
+    };
+    if prop.sym.as_ref() != "defineProperty" || call.args.len() != 3 {
+        return None;
+    }
+    if call.args.iter().any(|a| a.spread.is_some()) {
+        return None;
+    }
+
+    let Expr::Ident(target_ident) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    if target_ident.sym != target.0 || target_ident.ctxt != target.1 {
+        return None;
+    }
+
+    let prop_name = match call.args[1].expr.as_ref() {
+        Expr::Lit(Lit::Str(s)) => str_to_prop_name(s),
+        _ => return None,
+    };
+
+    extract_getter_descriptor(&prop_name, call.args[2].expr.as_ref())
 }
 
 fn extract_define_properties_getters(stmt: &Stmt, target: &BindingId) -> Option<Vec<GetterProp>> {
@@ -532,6 +644,25 @@ fn extract_getter_body(expr: &Expr) -> Option<BlockStmt> {
         }
         _ => None,
     }
+}
+
+fn str_to_prop_name(s: &Str) -> PropName {
+    match s.value.as_str() {
+        Some(value) if is_valid_ident(value) => PropName::Ident(value.into()),
+        _ => PropName::Str(s.clone()),
+    }
+}
+
+fn is_valid_ident(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 fn prop_name_as_str(name: &PropName) -> Option<&str> {
