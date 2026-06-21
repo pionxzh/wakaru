@@ -35,12 +35,14 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         msg.level,
         undefined,
         msg.diagnostics,
-        msg.formatter
+        msg.formatter,
+        msg.emitSourceMap
       );
       self.postMessage({
         type: "decompile-result",
         id: msg.id,
         code: result.code,
+        sourceMap: result.source_map,
         warnings: result.warnings,
       } satisfies WorkerResponse);
     } catch (e) {

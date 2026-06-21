@@ -18,11 +18,12 @@ impl VisitMut for ObjShorthand {
                     let PropName::Ident(key_ident) = &kv.key else {
                         return ObjectPatProp::KeyValue(kv);
                     };
+                    let key_span = key_ident.span;
 
                     match *kv.value {
                         Pat::Ident(binding) if key_ident.sym == binding.id.sym => {
                             ObjectPatProp::Assign(AssignPatProp {
-                                span: binding.id.span,
+                                span: key_span,
                                 key: binding,
                                 value: None,
                             })
@@ -37,7 +38,7 @@ impl VisitMut for ObjShorthand {
                                 unreachable!()
                             };
                             ObjectPatProp::Assign(AssignPatProp {
-                                span: binding.id.span,
+                                span: key_span,
                                 key: binding,
                                 value: Some(assign.right),
                             })
@@ -75,13 +76,18 @@ impl VisitMut for ObjShorthand {
         }
 
         // Extract the value ident (carries the binding's SyntaxContext)
+        // Use the key's span so the shorthand maps back to the property name in the source.
         let Prop::KeyValue(kv_owned) = std::mem::replace(prop, Prop::Shorthand(Default::default()))
         else {
             unreachable!()
         };
-        let Expr::Ident(val_ident) = *kv_owned.value else {
+        let PropName::Ident(key_name) = kv_owned.key else {
             unreachable!()
         };
+        let Expr::Ident(mut val_ident) = *kv_owned.value else {
+            unreachable!()
+        };
+        val_ident.span = key_name.span;
         *prop = Prop::Shorthand(val_ident);
     }
 }

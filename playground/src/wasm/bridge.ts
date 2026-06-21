@@ -44,7 +44,7 @@ export class WasmBridge {
         const pending = this.pendingRequests.get(msg.id);
         if (pending) {
           this.pendingRequests.delete(msg.id);
-          pending.resolve({ code: msg.code, warnings: msg.warnings });
+          pending.resolve({ code: msg.code, sourceMap: msg.sourceMap, warnings: msg.warnings });
         }
         break;
       }
@@ -67,7 +67,8 @@ export class WasmBridge {
     source: string,
     level: string,
     formatter: boolean,
-    diagnostics = true
+    diagnostics = true,
+    emitSourceMap = false
   ): Promise<DecompileResult> {
     await this.initPromise;
     const id = this.nextId++;
@@ -80,6 +81,7 @@ export class WasmBridge {
         level,
         formatter,
         diagnostics,
+        emitSourceMap,
       } satisfies WorkerRequest);
     });
   }

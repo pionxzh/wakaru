@@ -15,25 +15,31 @@ function ShareIcon() {
 interface ControlsProps {
   level: Level;
   formatter: boolean;
+  mapping: boolean;
   onLevelChange: (level: Level) => void;
   onFormatterChange: (formatter: boolean) => void;
+  onMappingChange: (mapping: boolean) => void;
   onShare: () => void;
   isLoading: boolean;
   wasmReady: boolean;
   elapsed: number | null;
   shareStatus: string | null;
+  coveragePct: number | null;
 }
 
 export function Controls({
   level,
   formatter,
+  mapping,
   onLevelChange,
   onFormatterChange,
+  onMappingChange,
   onShare,
   isLoading,
   wasmReady,
   elapsed,
   shareStatus,
+  coveragePct,
 }: ControlsProps) {
   return (
     <div className="controls">
@@ -64,6 +70,21 @@ export function Controls({
             <span className="controls-switch-thumb" />
           </button>
         </label>
+        <label className="controls-label">
+          Mapping
+          <button
+            className="controls-switch"
+            type="button"
+            role="switch"
+            aria-checked={mapping}
+            onClick={() => onMappingChange(!mapping)}
+          >
+            <span className="controls-switch-thumb" />
+          </button>
+        </label>
+        {mapping && coveragePct !== null && (
+          <span className="controls-elapsed">{coveragePct}% mapped</span>
+        )}
         <span className="controls-separator" aria-hidden="true" />
         <button className="controls-button controls-button-secondary" onClick={onShare}>
           <ShareIcon />

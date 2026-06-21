@@ -19,7 +19,8 @@ declare module "wakaru-wasm" {
     level?: string | null,
     sourcemap?: Uint8Array | null,
     diagnostics?: boolean | null,
-    formatter?: boolean | null
+    formatter?: boolean | null,
+    emitSourceMap?: boolean | null
   ): WakaruDecompileResult;
 
   export function unpack(
@@ -27,19 +28,27 @@ declare module "wakaru-wasm" {
     level?: string | null,
     heuristicSplit?: boolean | null,
     diagnostics?: boolean | null,
-    formatter?: boolean | null
+    formatter?: boolean | null,
+    emitSourceMap?: boolean | null
   ): WakaruUnpackResult;
 
   export function ruleNames(): string[];
 
   export interface WakaruDecompileResult {
     code: string;
+    source_map?: string;
     warnings: WakaruWarning[];
   }
 
   export interface WakaruUnpackResult {
     modules: WakaruModule[];
+    source_maps?: WakaruSourceMap[];
     warnings: WakaruWarning[];
+  }
+
+  export interface WakaruSourceMap {
+    filename: string;
+    map: string;
   }
 
   export interface WakaruModule {

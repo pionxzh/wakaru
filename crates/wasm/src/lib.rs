@@ -56,6 +56,7 @@ pub fn decompile(
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         sourcemap,
+        dce_mode: wakaru_core::DceMode::TransformOnly,
         level,
         diagnostics: diagnostics.unwrap_or(false),
         emit_source_map: emit_source_map.unwrap_or(false),

@@ -7,6 +7,7 @@ export type WorkerRequest =
       level: string;
       formatter: boolean;
       diagnostics: boolean;
+      emitSourceMap: boolean;
     };
 
 export type WorkerResponse =
@@ -16,6 +17,7 @@ export type WorkerResponse =
       type: "decompile-result";
       id: number;
       code: string;
+      sourceMap?: string;
       warnings: WakaruWarning[];
     }
   | { type: "decompile-error"; id: number; error: string };
@@ -28,5 +30,6 @@ export interface WakaruWarning {
 
 export interface DecompileResult {
   code: string;
+  sourceMap?: string;
   warnings: WakaruWarning[];
 }

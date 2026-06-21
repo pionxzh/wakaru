@@ -1,59 +1,63 @@
 export const DEFAULT_EXAMPLE = `\
-function formatUser(a) {
-    var b = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : "en";
-    var _a$profile;
-    var name = (_a$profile = a === null || a === void 0 ? void 0 : a.profile) !== null && _a$profile !== void 0 ? _a$profile : "Anonymous";
-    var greeting = "Hello, " + name + "! Your locale is " + b + ".";
-    var isActive = !!a && !1 !== a.active;
-    return { greeting: greeting, isActive: isActive };
+function _classCallCheck(a,b){if(!(a instanceof b))throw new TypeError("Cannot call a class as a function")}function _defineProperties(a,b){for(var c=0;c<b.length;c++){var d=b[c];d.enumerable=d.enumerable||!1,d.configurable=!0,"value"in d&&(d.writable=!0),Object.defineProperty(a,d.key,d)}}function _createClass(a,b,c){return b&&_defineProperties(a.prototype,b),c&&_defineProperties(a,c),a}
+
+var Store = function() {
+    function Store(a) {
+        _classCallCheck(this, Store);
+        this.name = a !== null && a !== void 0 ? a : "default";
+        this.items = [];
+    }
+    return _createClass(Store, [{
+        key: "add",
+        value: function(a) {
+            var b = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : 1;
+            this.items.push({ name: a, qty: b, added: Date.now() });
+            console.log("[".concat(this.name, "] Added ").concat(b, "x ").concat(a));
+        }
+    }, {
+        key: "find",
+        value: function(a) {
+            return this.items.filter(function(b) { return b.name === a; });
+        }
+    }, {
+        key: "summary",
+        value: function() {
+            var a = this.items;
+            var b = a.reduce(function(c, d) { return c + d.qty; }, 0);
+            return { store: this.name, count: a.length, total: b };
+        }
+    }]);
+}();
+
+function getLabel(a) {
+    var _a$meta;
+    var b = (_a$meta = a === null || a === void 0 ? void 0 : a.meta) !== null && _a$meta !== void 0 ? _a$meta : {};
+    var c = b.label;
+    var d = b.priority;
+    var e = c !== null && c !== void 0 ? c : "Untitled";
+    var f = d !== null && d !== void 0 ? d : 0;
+    return "".concat(e, " (priority: ").concat(f, ")");
 }
 
-var processItems = function (items) {
-    var _ref = items[0];
-    var head = _ref.id;
-    var rest = items.slice(1);
-    var result = rest.map(function (item) { return item.value * 2; });
-    var total = result.reduce(function (sum, val) { return sum + val; }, 0);
-    var config = items[0];
-    var x = config.enabled;
-    var y = config.label;
-    var z = config.threshold;
-    var msg = x !== null && x !== void 0 ? x : !1;
-    console.log("Processing " + rest.length + " items, total: " + total);
-    return { head: head, msg: msg, label: y, threshold: z };
-};
-
-function _j() {
-    var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "Info";
-    var b = arguments.length > 1 ? arguments[1] : undefined;
-    alert("[" + a + "] Message from " + b);
+function validate(a) {
+    var _a;
+    if ((_a = a) !== null && _a !== void 0 && (_a = _a.config) !== null && _a !== void 0 && _a.strict) {
+        var rules = a.rules;
+        for (var i = 0; i < rules.length; i++) {
+            var rule = rules[i];
+            if (rule.enabled === !1) console.warn("Rule " + rule.name + " is disabled");
+        }
+    }
 }
 
-var d = function (e) {
-    var t = e.children, n = e.className, c = e.visible, f = e.name;
-
-    return (useEffect(
-        function () {
-            var e = !0 == c ? "enter" : "leave";
-            c && !w && setW(!0);
-
-            for (; i < 10;) console.log(i);
-
-            var _e;
-            if ((_e = e) !== null && _e !== void 0 && (_e = _e.animation) !== null && _e !== void 0 && _e.enabled) {
-                var n = setTimeout(function () {
-                    setClass("".concat(f, "-").concat(e, " ").concat(f, "-").concat(e, "-active"));
-                    clearTimeout(n);
-                }, 1e3);
-
-                return function () {
-                    clearTimeout(n);
-                };
-            }
-        },
-        [c, w]
-    ),
-    createElement("div", { className: "".concat(n, " ").concat(g), ref: z }, t));
+var processAll = function(a) {
+    var b = a.filter(function(c) { return c.qty > 0; });
+    var c = b.map(function(d) {
+        var e = d.name, f = d.qty;
+        return { name: e, total: Math.pow(f, 2), label: getLabel(d) };
+    });
+    var d = c.reduce(function(e, f) { return e + f.total; }, 0);
+    console.log("Processed " + c.length + " items, sum: " + d);
+    return { items: c, sum: d };
 };
-d.displayName = "CssTransition";
 `;
