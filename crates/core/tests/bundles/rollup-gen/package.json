@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "devDependencies": {
+    "rollup": "^4.62.2",
+    "@rollup/plugin-terser": "^0.4.4"
+  }
+}

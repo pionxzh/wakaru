@@ -1,0 +1,170 @@
+---
+source: crates/core/tests/bun_unpack.rs
+expression: combined
+---
+// === E.js ===
+let __wakaru_E_cache;
+export function E() {
+    if (__wakaru_E_cache) {
+        return __wakaru_E_cache.exports;
+    }
+    const exports = {};
+    const y = {
+        exports
+    };
+    __wakaru_E_cache = y;
+    function add(t, o) {
+        return t + o;
+    }
+    function multiply(t, o) {
+        return t * o;
+    }
+    y.exports = {
+        add,
+        multiply
+    };
+    return y.exports;
+}
+
+// === S.js ===
+let __wakaru_S_cache;
+export function S() {
+    if (__wakaru_S_cache) {
+        return __wakaru_S_cache.exports;
+    }
+    const exports = {};
+    const h = {
+        exports
+    };
+    __wakaru_S_cache = h;
+    class l {
+        constructor(t){
+            this._prefix = t || "";
+        }
+        info(t) {
+            console.log(`[INFO] ${this._prefix}${t}`);
+        }
+        warn(t) {
+            console.warn(`[WARN] ${this._prefix}${t}`);
+        }
+    }
+    h.exports = l;
+    h.exports.Logger = l;
+    return h.exports;
+}
+
+// === entry.js ===
+import { E } from "./E.js";
+import { S } from "./S.js";
+const { getPrototypeOf, defineProperty, getOwnPropertyNames } = Object;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+function G(t) {
+    return this[t];
+}
+let H;
+let R;
+const x = (t, o, e)=>{
+    var i = t != null && typeof t === "object";
+    if (i) {
+        var s = o ? H ??= new WeakMap : R ??= new WeakMap;
+        var n = s.get(t);
+        if (n) {
+            return n;
+        }
+    }
+    e = t != null ? Object.create(getPrototypeOf(t)) : {};
+    let r = o || !t || !t.__esModule ? defineProperty(e, "default", {
+        value: t,
+        enumerable: true
+    }) : e;
+    for (let p of getOwnPropertyNames(t)){
+        if (!hasOwnProperty.call(r, p)) {
+            defineProperty(r, p, {
+                get: G.bind(t, p),
+                enumerable: true
+            });
+        }
+    }
+    if (i) {
+        s.set(t, r);
+    }
+    return r;
+};
+const a = x(E(), 1);
+function j(t) {
+    if (!t) {
+        return "";
+    }
+    return t.charAt(0).toUpperCase() + t.slice(1);
+}
+function F(t, o) {
+    if (t.length <= o) {
+        return t;
+    }
+    return `${t.slice(0, o - 3)}...`;
+}
+const u = j;
+const f = F;
+const A = x(S(), 1);
+const v = "change";
+class c {
+    constructor(t){
+        this._data = {
+            ...t
+        };
+        this._subs = [];
+    }
+    get(t) {
+        return this._data[t];
+    }
+    set(t, o) {
+        const e = this._data[t];
+        this._data[t] = o;
+        if (e !== o) {
+            this._notify(v, {
+                key: t,
+                old: e,
+                value: o
+            });
+        }
+    }
+    subscribe(t) {
+        this._subs.push(t);
+    }
+    _notify(t, o) {
+        for(let e = 0; e < this._subs.length; e++){
+            this._subs[e](t, o);
+        }
+    }
+}
+const g = c;
+const m = v;
+const _ = new A.default("app: ");
+export async function main() {
+    _.info("Starting app");
+    let t = [
+        10,
+        20,
+        30,
+        40,
+        50
+    ];
+    let o = t.reduce((n, r)=>a.add(n, r), 0);
+    let e = a.multiply(o, 1 / t.length);
+    let i = f(u("average value"), 10);
+    _.info(`${i}: ${e}`);
+    let s = new g({
+        count: 0
+    });
+    s.subscribe((n, r)=>{
+        if (n === m) {
+            _.info(`${r.key} = ${r.value}`);
+        }
+    });
+    s.set("count", o);
+    return {
+        total: o,
+        avg: e,
+        label: i
+    };
+}

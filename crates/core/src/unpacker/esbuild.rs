@@ -70,7 +70,11 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         .map(|factory| factory.helper_sym.clone())
         .collect();
 
-    let has_factories = factories.len() >= 5;
+    let has_cjs_factories = !commonjs_helper_syms.is_empty()
+        && factories
+            .iter()
+            .any(|f| commonjs_helper_syms.contains(&f.helper_sym));
+    let has_factories = has_cjs_factories || factories.len() >= 5;
 
     // Try scope-hoisted detection on the full module body (needed for
     // scope-only bundles that have no factories at all).

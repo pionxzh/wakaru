@@ -1,0 +1,167 @@
+---
+source: crates/core/tests/rollup_unpack.rs
+expression: output
+---
+function t(t) {
+    if (t) {
+        return t.charAt(0).toUpperCase() + t.slice(1);
+    }
+    return "";
+}
+function e(t) {
+    const e = new Date(t);
+    return `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, "0")}-${String(e.getDate()).padStart(2, "0")}`;
+}
+const s = Object.freeze({
+    DEBUG: 0,
+    INFO: 1,
+    WARN: 2,
+    ERROR: 3
+});
+class n {
+    constructor(t = s.INFO, e = ""){
+        this._level = t;
+        this._prefix = e;
+    }
+    _format(t, e) {
+        const n = [
+            (new Date).toISOString(),
+            `[${Object.keys(s).find((e)=>s[e] === t) || "UNKNOWN"}]`
+        ];
+        if (this._prefix) {
+            n.push(`(${this._prefix})`);
+        }
+        n.push(e);
+        return n.join(" ");
+    }
+    debug(t, ...e) {
+        if (this._level <= s.DEBUG) {
+            console.debug(this._format(s.DEBUG, t), ...e);
+        }
+    }
+    info(t, ...e) {
+        if (this._level <= s.INFO) {
+            console.info(this._format(s.INFO, t), ...e);
+        }
+    }
+    warn(t, ...e) {
+        if (this._level <= s.WARN) {
+            console.warn(this._format(s.WARN, t), ...e);
+        }
+    }
+    error(t, ...e) {
+        if (this._level <= s.ERROR) {
+            console.error(this._format(s.ERROR, t), ...e);
+        }
+    }
+    child(t) {
+        return new n(this._level, this._prefix ? `${this._prefix}:${t}` : t);
+    }
+}
+const r = new WeakMap;
+const o = new WeakMap;
+const i = Symbol("change");
+const a = Symbol("reset");
+class c {
+    constructor(t = {}){
+        r.set(this, {
+            ...t
+        });
+        o.set(this, []);
+    }
+    get(t) {
+        const e = r.get(this);
+        if (e) {
+            return e[t];
+        }
+    }
+    set(t, e) {
+        const s = r.get(this);
+        const n = s[t];
+        s[t] = e;
+        if (n !== e) {
+            this._notify(i, {
+                key: t,
+                old: n,
+                value: e
+            });
+        }
+    }
+    reset(t = {}) {
+        r.set(this, {
+            ...t
+        });
+        this._notify(a, t);
+    }
+    get size() {
+        return Object.keys(r.get(this)).length;
+    }
+    subscribe(t) {
+        const e = o.get(this);
+        e.push(t);
+        return ()=>{
+            const s = e.indexOf(t);
+            if (-1 !== s) {
+                e.splice(s, 1);
+            }
+        };
+    }
+    _notify(t, e) {
+        for (const s of o.get(this)){
+            s(t, e);
+        }
+    }
+}
+function h(t) {
+    return fetch(`https://api.example.com${t}`).then((t)=>{
+        if (!t.ok) {
+            throw new Error(`HTTP ${t.status}`);
+        }
+        return t.json();
+    });
+}
+const l = new n(s.INFO);
+export async function main() {
+    l.info("Starting app");
+    const s = await (n = 1, h(`/users/${n}`));
+    var n;
+    l.info(`User: ${t(s.name)}`);
+    let r;
+    const o = (await (r = s.id, h(`/users/${r}/posts`))).map((s)=>{
+        return {
+            title: (n = t(s.title), r = 50, n.length <= r ? n : `${n.slice(0, r - 3)}...`),
+            date: e(s.createdAt || (new Date).toISOString()),
+            wordCount: s.body ? s.body.split(" ").length : 0
+        };
+        var n;
+        var r;
+    });
+    const a = o.reduce((t, e)=>{
+        s = t;
+        n = e.wordCount;
+        return s + n;
+        var s;
+        var n;
+    }, 0);
+    const u = Math.round((f = a, g = 1 / o.length, f * g));
+    var f;
+    var g;
+    l.info(`${o.length} posts, avg ${u} words`);
+    const p = new c({
+        count: 0,
+        user: s.name
+    });
+    p.subscribe((t, e)=>{
+        if (t === i) {
+            l.debug(`${e.key} = ${e.value}`);
+        }
+    });
+    p.set("count", a);
+    return {
+        user: s,
+        summary: o,
+        totalWords: a,
+        avg: u
+    };
+}
+main().then((t)=>console.log("Done:", t));

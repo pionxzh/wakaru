@@ -1,0 +1,151 @@
+---
+source: crates/core/tests/bun_unpack.rs
+expression: output
+---
+const __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+    return this[key];
+}
+let __toESMCache_node;
+let __toESMCache_esm;
+const __toESM = (mod, isNodeMode, target)=>{
+    var canCache = mod != null && typeof mod === "object";
+    if (canCache) {
+        var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+        var cached = cache.get(mod);
+        if (cached) {
+            return cached;
+        }
+    }
+    target = mod != null ? Object.create(Object.getPrototypeOf(mod)) : {};
+    const to = isNodeMode || !mod || !mod.__esModule ? Object.defineProperty(target, "default", {
+        value: mod,
+        enumerable: true
+    }) : target;
+    for (let key of Object.getOwnPropertyNames(mod)){
+        if (!__hasOwnProp.call(to, key)) {
+            Object.defineProperty(to, key, {
+                get: __accessProp.bind(mod, key),
+                enumerable: true
+            });
+        }
+    }
+    if (canCache) {
+        cache.set(mod, to);
+    }
+    return to;
+};
+const __commonJS = (cb, mod)=>()=>{
+        if (!mod) {
+            cb((mod = {
+                exports: {}
+            }).exports, mod);
+        }
+        return mod.exports;
+    };
+const require_math = __commonJS((exports, module)=>{
+    function add(a, b) {
+        return a + b;
+    }
+    function multiply(a, b) {
+        return a * b;
+    }
+    module.exports = {
+        add,
+        multiply
+    };
+});
+const require_logger = __commonJS((exports, module)=>{
+    class Logger {
+        constructor(prefix){
+            this._prefix = prefix || "";
+        }
+        info(msg) {
+            console.log(`[INFO] ${this._prefix}${msg}`);
+        }
+        warn(msg) {
+            console.warn(`[WARN] ${this._prefix}${msg}`);
+        }
+    }
+    module.exports = Logger;
+    module.exports.Logger = Logger;
+});
+const import_math = __toESM(require_math(), 1);
+function capitalize(str) {
+    if (!str) {
+        return "";
+    }
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+function truncate(str, maxLen) {
+    if (str.length <= maxLen) {
+        return str;
+    }
+    return `${str.slice(0, maxLen - 3)}...`;
+}
+const $capitalize = capitalize;
+const $truncate = truncate;
+const import_logger = __toESM(require_logger(), 1);
+const CHANGE = "change";
+class Store {
+    constructor(initial){
+        this._data = {
+            ...initial
+        };
+        this._subs = [];
+    }
+    get(key) {
+        return this._data[key];
+    }
+    set(key, value) {
+        const old = this._data[key];
+        this._data[key] = value;
+        if (old !== value) {
+            this._notify(CHANGE, {
+                key,
+                old,
+                value
+            });
+        }
+    }
+    subscribe(fn) {
+        this._subs.push(fn);
+    }
+    _notify(type, payload) {
+        for(let i = 0; i < this._subs.length; i++){
+            this._subs[i](type, payload);
+        }
+    }
+}
+const $Store = Store;
+const $CHANGE = CHANGE;
+const log = new import_logger.default("app: ");
+async function main() {
+    log.info("Starting app");
+    const items = [
+        10,
+        20,
+        30,
+        40,
+        50
+    ];
+    const total = items.reduce((sum, n)=>import_math.add(sum, n), 0);
+    const avg = import_math.multiply(total, 1 / items.length);
+    const label = $truncate($capitalize("average value"), 10);
+    log.info(`${label}: ${avg}`);
+    const store = new $Store({
+        count: 0
+    });
+    store.subscribe((type, payload)=>{
+        if (type === $CHANGE) {
+            log.info(`${payload.key} = ${payload.value}`);
+        }
+    });
+    store.set("count", total);
+    return {
+        total,
+        avg,
+        label
+    };
+}
+export { main };
