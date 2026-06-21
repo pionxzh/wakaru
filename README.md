@@ -122,6 +122,17 @@ wakaru input.js --level standard      # default
 wakaru input.js --level aggressive
 ```
 
+### JSON output
+
+```bash
+wakaru bundle.js --unpack --json -o out/    # machine-readable JSON to stdout
+echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
+```
+
+`--json` writes structured JSON to stdout instead of human-readable summaries.
+Warnings and errors are included in the JSON object. Useful for CI pipelines
+and tooling integration.
+
 ### Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
