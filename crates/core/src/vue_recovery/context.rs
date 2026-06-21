@@ -22,9 +22,18 @@ use super::syntax::{
 use super::{
     component_prop_names, RenderSource, VueRecoveryContext, VueRenderChildListBinding,
     VueRenderChildListSource, VueScriptImport, VueSetupLocalBinding, VueSetupRefBinding,
-    VueSetupValueBinding,
+    VueSetupScriptBinding, VueSetupValueBinding,
 };
 use crate::js_names::is_valid_identifier_name;
+
+const MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN: usize = 80;
+
+struct SetupLocalCandidate {
+    bindings: Vec<Atom>,
+    stmt: Stmt,
+    template_selectable: bool,
+    setup_order: usize,
+}
 
 pub(super) fn collect_context(
     module: &Module,
@@ -157,7 +166,7 @@ fn script_local_reserved_bindings(module: &Module, ctx: &VueRecoveryContext) -> 
     reserved.extend(
         ctx.setup_script_bindings
             .iter()
-            .map(|(binding, _)| binding.clone()),
+            .map(|binding| binding.binding.clone()),
     );
     reserved.extend(
         ctx.setup_local_bindings
@@ -314,6 +323,7 @@ fn push_script_local_binding(
             stmt: cleaned_stmt,
             module_scope: true,
             template_selectable: true,
+            setup_order: 0,
         });
     }
     Ok(())
@@ -363,6 +373,7 @@ pub(super) fn render_local_declaration_with_aliases(
         stmt: cleaned_stmt,
         module_scope: declaration.module_scope,
         template_selectable: declaration.template_selectable,
+        setup_order: declaration.setup_order,
     })
 }
 
@@ -1457,13 +1468,23 @@ pub(super) fn collect_setup_context(
     let mut composable_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
 
-    for stmt in setup_stmts {
+    for (setup_order, stmt) in setup_stmts.iter().enumerate() {
         match stmt {
             Stmt::Decl(Decl::Fn(function)) => {
-                local_candidates.push((vec![function.ident.sym.clone()], stmt.clone(), true));
+                local_candidates.push(SetupLocalCandidate {
+                    bindings: vec![function.ident.sym.clone()],
+                    stmt: stmt.clone(),
+                    template_selectable: true,
+                    setup_order,
+                });
             }
             Stmt::Decl(Decl::Class(class)) => {
-                local_candidates.push((vec![class.ident.sym.clone()], stmt.clone(), true));
+                local_candidates.push(SetupLocalCandidate {
+                    bindings: vec![class.ident.sym.clone()],
+                    stmt: stmt.clone(),
+                    template_selectable: true,
+                    setup_order,
+                });
             }
             Stmt::Decl(Decl::Var(var)) => {
                 let mut local_decls = Vec::new();
@@ -1537,18 +1558,22 @@ pub(super) fn collect_setup_context(
                                             .insert(binding.id.sym.clone(), value);
                                         let mut local_var = var.as_ref().clone();
                                         local_var.decls = vec![decl.clone()];
-                                        local_candidates.push((
-                                            vec![binding.id.sym.clone()],
-                                            Stmt::Decl(Decl::Var(Box::new(local_var))),
-                                            false,
-                                        ));
+                                        local_candidates.push(SetupLocalCandidate {
+                                            bindings: vec![binding.id.sym.clone()],
+                                            stmt: Stmt::Decl(Decl::Var(Box::new(local_var))),
+                                            template_selectable: false,
+                                            setup_order,
+                                        });
                                         true
                                     } else if let Some((value, import_refs)) =
                                         computed_script_setup_expr(init, ctx)?
                                     {
                                         ctx.setup_script_import_refs.extend(import_refs);
-                                        ctx.setup_script_bindings
-                                            .push((binding.id.sym.clone(), value));
+                                        ctx.setup_script_bindings.push(VueSetupScriptBinding {
+                                            binding: binding.id.sym.clone(),
+                                            value,
+                                            setup_order,
+                                        });
                                         ctx.setup_ref_bindings.insert(binding.id.sym.clone());
                                         true
                                     } else if (!is_ref_object_alias_source
@@ -1687,11 +1712,12 @@ pub(super) fn collect_setup_context(
                     bindings.dedup();
                     let mut local_var = var.as_ref().clone();
                     local_var.decls = local_decls;
-                    local_candidates.push((
+                    local_candidates.push(SetupLocalCandidate {
                         bindings,
-                        Stmt::Decl(Decl::Var(Box::new(local_var))),
-                        true,
-                    ));
+                        stmt: Stmt::Decl(Decl::Var(Box::new(local_var))),
+                        template_selectable: true,
+                        setup_order,
+                    });
                 }
             }
             _ => {}
@@ -1711,20 +1737,21 @@ pub(super) fn collect_setup_context(
 
     assign_setup_prop_bindings(ctx, &local_candidates);
 
-    for (bindings, stmt, template_selectable) in local_candidates {
-        let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    for candidate in local_candidates {
+        let cleaned_stmt = clean_setup_stmt(&candidate.stmt, ctx);
         let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
         if !source.is_empty() {
-            let emitted_bindings = emitted_stmt_bindings(&source, ctx, &bindings);
+            let emitted_bindings = emitted_stmt_bindings(&source, ctx, &candidate.bindings);
             ctx.setup_local_bindings.push(VueSetupLocalBinding {
-                bindings,
+                bindings: candidate.bindings,
                 emitted_bindings,
                 refs: stmt_ident_refs(&cleaned_stmt),
                 source,
                 import_refs: stmt_import_refs(&cleaned_stmt, &ctx.script_imports),
                 stmt: cleaned_stmt,
                 module_scope: false,
-                template_selectable,
+                template_selectable: candidate.template_selectable,
+                setup_order: candidate.setup_order,
             });
         }
     }
@@ -2330,7 +2357,7 @@ fn is_zero_member_prop(prop: &MemberProp) -> bool {
 
 fn assign_setup_prop_bindings(
     ctx: &mut VueRecoveryContext,
-    local_candidates: &[(Vec<Atom>, Stmt, bool)],
+    local_candidates: &[SetupLocalCandidate],
 ) {
     ctx.setup_prop_bindings.clear();
     let prop_names = ctx
@@ -2353,12 +2380,12 @@ fn assign_setup_prop_bindings(
     reserved.extend(
         local_candidates
             .iter()
-            .flat_map(|(bindings, _, _)| bindings.iter().cloned()),
+            .flat_map(|candidate| candidate.bindings.iter().cloned()),
     );
     reserved.extend(
         ctx.setup_script_bindings
             .iter()
-            .map(|(binding, _)| binding.clone()),
+            .map(|binding| binding.binding.clone()),
     );
     reserved.extend(
         ctx.setup_ref_script_bindings
@@ -3073,10 +3100,23 @@ fn computed_value_expr(
 
 fn should_inline_computed_template_binding(binding: &VueSetupValueBinding) -> bool {
     !computed_value_contains_block_function(&binding.value)
+        && !should_preserve_long_computed_template_binding(&binding.value)
 }
 
 fn computed_value_contains_block_function(value: &str) -> bool {
     value.contains("function") || value_contains_block_arrow(value)
+}
+
+fn should_preserve_long_computed_template_binding(value: &str) -> bool {
+    let mut value = value.trim();
+    while let Some(inner) = value.strip_prefix('(') {
+        value = inner.trim_start();
+    }
+    // Keep class/style-friendly literal values inline; preserve long computed
+    // expressions where a named binding is usually easier to read.
+    value.len() > MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN
+        && !value.starts_with('[')
+        && !value.starts_with('{')
 }
 
 fn value_contains_block_arrow(value: &str) -> bool {
