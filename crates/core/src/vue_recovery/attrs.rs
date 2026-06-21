@@ -5,7 +5,7 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignOp, BinExpr, BinaryOp, BlockStmtOrExpr, CondExpr, Decl, Expr,
     ExprOrSpread, Function, Lit, MemberExpr, MemberProp, ModuleItem, ObjectLit, Pat, Prop,
-    PropOrSpread, Stmt,
+    PropName, PropOrSpread, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -17,6 +17,7 @@ use super::expressions::{
 use super::helpers::{helper_call_name, helper_name, VueHelper};
 use super::syntax::{prop_name, string_lit, wtf8_to_string};
 use super::VueRecoveryContext;
+use crate::js_names::is_valid_identifier_name;
 use crate::vue_template::{VueAttr, VueDirective, VueDirectiveArg, VueExpr};
 
 #[derive(Clone, Copy)]
@@ -369,6 +370,13 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     }
 
     let Expr::Array(array) = first.expr.as_ref() else {
+        let (first_expr, first_changed) = simplify_class_expr(*first.expr.clone());
+        if first_changed {
+            return Ok(Some(vec![VueAttr::Bind {
+                name: "class".to_string(),
+                expr: printed_class_expr(&first_expr, ctx)?,
+            }]));
+        }
         return Ok(Some(vec![VueAttr::Bind {
             name: "class".to_string(),
             expr: helper_first_class_arg_expr(value, ctx)?,
@@ -427,7 +435,56 @@ fn simplify_class_expr(expr: Expr) -> (Expr, bool) {
             let (array, changed) = simplify_class_array(array);
             (Expr::Array(array), changed)
         }
+        Expr::Object(object) => {
+            let (object, changed) = simplify_class_object(object);
+            (Expr::Object(object), changed)
+        }
         _ => (expr, false),
+    }
+}
+
+fn simplify_class_object(object: ObjectLit) -> (ObjectLit, bool) {
+    let mut changed = false;
+    let props = object
+        .props
+        .into_iter()
+        .map(|prop| match prop {
+            PropOrSpread::Prop(prop) => {
+                let mut prop = *prop;
+                changed |= simplify_class_object_prop(&mut prop);
+                PropOrSpread::Prop(Box::new(prop))
+            }
+            prop => prop,
+        })
+        .collect();
+    (ObjectLit { props, ..object }, changed)
+}
+
+fn simplify_class_object_prop(prop: &mut Prop) -> bool {
+    let shorthand = match prop {
+        Prop::KeyValue(key_value) => {
+            let Expr::Ident(value) = key_value.value.as_ref() else {
+                return false;
+            };
+            if !class_object_key_matches_ident(&key_value.key, value.sym.as_ref()) {
+                return false;
+            }
+            value.clone()
+        }
+        _ => return false,
+    };
+    *prop = Prop::Shorthand(shorthand);
+    true
+}
+
+fn class_object_key_matches_ident(key: &PropName, value: &str) -> bool {
+    match key {
+        PropName::Ident(key) => key.sym.as_ref() == value,
+        PropName::Str(key) => {
+            let key = wtf8_to_string(&key.value);
+            key == value && is_valid_identifier_name(&key)
+        }
+        _ => false,
     }
 }
 
@@ -512,6 +569,10 @@ fn class_array_branch_expr(expr: &Expr) -> Option<Option<Expr>> {
 
 fn helper_first_class_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
     let printed = helper_first_arg_expr(expr, ctx)?;
+    simplified_printed_class_expr(printed, ctx)
+}
+
+fn simplified_printed_class_expr(printed: String, ctx: &VueRecoveryContext) -> Result<VueExpr> {
     let Some(expr) = parse_printed_expr(&printed, ctx) else {
         return Ok(VueExpr::new(printed));
     };
@@ -526,11 +587,16 @@ fn class_array_elem_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExp
     if let Some(expr) = setup_value_class_expr(expr, ctx) {
         return printed_class_expr(&expr, ctx);
     }
-    printed_vue_expr(expr, ctx)
+    let (class_expr, changed) = simplify_class_expr(expr.clone());
+    if changed {
+        return printed_class_expr(&class_expr, ctx);
+    }
+    let printed = printed_vue_expr(expr, ctx)?;
+    simplified_printed_class_expr(printed.as_str().to_string(), ctx)
 }
 
 fn parse_printed_expr(expr: &str, ctx: &VueRecoveryContext) -> Option<Expr> {
-    if !expr.contains("...") {
+    if !(expr.contains("...") || expr.contains(':')) {
         return None;
     }
     let module =

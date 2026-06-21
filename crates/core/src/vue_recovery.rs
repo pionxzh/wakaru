@@ -5519,6 +5519,24 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_shorthand_class_object_entries() {
+        let input = r#"
+import { normalizeClass, openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", {
+    class: normalizeClass(["panel", { "active": active, "panel-ready": ready, expanded: expanded }])
+  }, null, 2);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section class=\"panel\" :class='{ active, \"panel-ready\": ready, expanded }' />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_shorthand_event_handler() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
