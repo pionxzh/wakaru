@@ -17,6 +17,12 @@ pub struct DeadDecls {
     pre_dead_spans: Option<HashSet<(BytePos, BytePos)>>,
 }
 
+#[derive(Clone, Copy)]
+struct RemovableBinding {
+    span: Span,
+    preserve_in_delta: bool,
+}
+
 impl DeadDecls {
     pub fn full() -> Self {
         Self {
@@ -48,7 +54,17 @@ impl VisitMut for DeadDecls {
 
         if let Some(pre_dead_spans) = &self.pre_dead_spans {
             dead.retain(|key| {
-                let span = candidates_with_spans.get(key).copied().unwrap_or(DUMMY_SP);
+                let info = candidates_with_spans
+                    .get(key)
+                    .copied()
+                    .unwrap_or(RemovableBinding {
+                        span: DUMMY_SP,
+                        preserve_in_delta: false,
+                    });
+                if info.preserve_in_delta {
+                    return false;
+                }
+                let span = info.span;
                 if span == DUMMY_SP {
                     return true;
                 }
@@ -536,12 +552,12 @@ pub(crate) fn compute_pre_dead_decl_spans(module: &Module) -> HashSet<(BytePos, 
     let alive = compute_alive(module, &candidates);
     candidates_with_spans
         .into_iter()
-        .filter(|(key, span)| !alive.contains(key) && *span != DUMMY_SP)
-        .map(|(_, span)| (span.lo, span.hi))
+        .filter(|(key, info)| !alive.contains(key) && info.span != DUMMY_SP)
+        .map(|(_, info)| (info.span.lo, info.span.hi))
         .collect()
 }
 
-fn collect_removable_bindings_with_spans(module: &Module) -> HashMap<BindingKey, Span> {
+fn collect_removable_bindings_with_spans(module: &Module) -> HashMap<BindingKey, RemovableBinding> {
     let mut bindings = HashMap::new();
     let mut poisoned = HashSet::new();
     for item in &module.body {
@@ -549,7 +565,18 @@ fn collect_removable_bindings_with_spans(module: &Module) -> HashMap<BindingKey,
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
                 let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
                 if !poisoned.contains(&key) {
-                    bindings.insert(key, fn_decl.ident.span);
+                    bindings.insert(
+                        key,
+                        RemovableBinding {
+                            span: fn_decl.ident.span,
+                            // Regenerator/async recovery can remove helper-only
+                            // references to an existing user function. In
+                            // transform-only DCE, preserve that recovered
+                            // declaration while still letting runtime helpers die.
+                            preserve_in_delta: fn_decl.function.is_async
+                                || fn_decl.function.is_generator,
+                        },
+                    );
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
@@ -564,7 +591,13 @@ fn collect_removable_bindings_with_spans(module: &Module) -> HashMap<BindingKey,
                     };
                     if is_helper {
                         if !poisoned.contains(&key) {
-                            bindings.insert(key, ident.span);
+                            bindings.insert(
+                                key,
+                                RemovableBinding {
+                                    span: ident.span,
+                                    preserve_in_delta: false,
+                                },
+                            );
                         }
                     } else {
                         bindings.remove(&key);

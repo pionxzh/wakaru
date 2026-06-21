@@ -174,6 +174,41 @@ export { Bar };
 }
 
 #[test]
+fn transform_only_preserves_regenerator_function_after_mark_cleanup() {
+    let input = r#"
+function _regenerator() {}
+var _marked = _regenerator().m(read_items);
+function read_items(items) {
+    return _regenerator().w(function(_context) {
+        while (1) switch (_context.n) {
+            case 0:
+                _context.n = 1;
+                return first_item(items);
+            case 1:
+                _context.n = 2;
+                return second_item(items);
+            case 2:
+                return _context.a(2);
+        }
+    }, _marked);
+}
+"#;
+    let output = decompile_with_dce(input, DceMode::TransformOnly);
+    assert!(
+        output.contains("function* read_items(items)"),
+        "recovered generator should be preserved in TransformOnly mode:\n{output}"
+    );
+    assert!(
+        output.contains("yield first_item(items)") && output.contains("yield second_item(items)"),
+        "generator yields should be recovered:\n{output}"
+    );
+    assert!(
+        !output.contains("_regenerator"),
+        "dead regenerator runtime helper should still be removed:\n{output}"
+    );
+}
+
+#[test]
 fn default_dce_mode_is_off() {
     let opts = DecompileOptions::default();
     assert_eq!(
