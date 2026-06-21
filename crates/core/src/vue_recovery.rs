@@ -1441,7 +1441,8 @@ fn setup_ref_declarations(
     root: &VueNode,
     render: RenderSource<'_>,
 ) -> Vec<(String, String, String)> {
-    let expr_refs = template_expr_refs(root);
+    let mut expr_refs = template_expr_refs(root);
+    expr_refs.extend(setup_script_binding_refs(ctx));
     let template_refs = template_static_ref_names(root);
     let render_value_refs = render_value_member_refs(render, ctx);
     let mut declared = HashSet::new();
@@ -3712,6 +3713,86 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { ref } from \"vue\";\n\nconst sortedItems = ref([]);\n</script>\n\n<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_complex_computed_template_binding() {
+        let input = r#"
+import { defineComponent, ref, computed, openBlock, createVNode } from "vue";
+import { L as ListView } from "./ListView.vue";
+export default defineComponent({
+  __name: "GroupedList",
+  setup() {
+    const items = ref([]);
+    const groups = computed(() => items.value.map((item) => {
+      const label = format(item.name);
+      return { label, item };
+    }));
+    return () => (
+      openBlock(), createVNode(ListView, { groups: groups.value }, null, 8, ["groups"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst items = ref([]);\n\nconst groups = computed(()=>items.map((item)=>{\n        const label = format(item.name);\n        return {\n            label,\n            item\n        };\n    }));\n</script>\n\n<template>\n  <ListView :groups=\"groups\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_complex_computed_object_binding() {
+        let input = r#"
+import { defineComponent, ref, computed, openBlock, createVNode } from "vue";
+import { P as Panel } from "./Panel.vue";
+export default defineComponent({
+  __name: "PanelWrapper",
+  setup() {
+    const visible = ref(true);
+    const config = computed(() => ({
+      title: visible.value ? "Open" : "Closed",
+      onClose: () => {
+        closePanel();
+      },
+    }));
+    return () => (
+      openBlock(), createVNode(Panel, { config: config.value }, null, 8, ["config"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst visible = ref(true);\n\nconst config = computed(()=>({\n        title: visible ? \"Open\" : \"Closed\",\n        onClose: ()=>{\n            closePanel();\n        }\n    }));\n</script>\n\n<template>\n  <Panel :config=\"config\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn inlines_plain_computed_object_style_binding() {
+        let input = r#"
+import { defineComponent, ref, computed, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "Badge",
+  setup() {
+    const clickable = ref(true);
+    const padding = ref("4px");
+    const style = computed(() => ({
+      cursor: clickable.value ? "pointer" : "default",
+      ...padding.value && { padding: padding.value },
+    }));
+    return () => (
+      openBlock(), createElementBlock("span", { style: style.value }, "Badge", 4)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst clickable = ref(true);\nconst padding = ref(\"4px\");\n</script>\n\n<template>\n  <span :style='{ cursor: clickable ? \"pointer\" : \"default\", ...padding &amp;&amp; { padding: padding } }'>Badge</span>\n</template>\n"
         );
     }
 

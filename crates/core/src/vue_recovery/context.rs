@@ -3061,7 +3061,36 @@ fn computed_value_expr(
     let Some(arg) = call.args.first() else {
         return Ok(None);
     };
-    computed_getter_expr(arg.expr.as_ref(), ctx)
+    let Some(binding) = computed_getter_expr(arg.expr.as_ref(), ctx)? else {
+        return Ok(None);
+    };
+    if should_inline_computed_template_binding(&binding) {
+        Ok(Some(binding))
+    } else {
+        Ok(None)
+    }
+}
+
+fn should_inline_computed_template_binding(binding: &VueSetupValueBinding) -> bool {
+    !computed_value_contains_block_function(&binding.value)
+}
+
+fn computed_value_contains_block_function(value: &str) -> bool {
+    value.contains("function") || value_contains_block_arrow(value)
+}
+
+fn value_contains_block_arrow(value: &str) -> bool {
+    let mut cursor = 0;
+    while let Some(relative_arrow) = value[cursor..].find("=>") {
+        let arrow = cursor + relative_arrow + "=>".len();
+        let rest = &value[arrow..];
+        let body = rest.trim_start();
+        if body.starts_with('{') {
+            return true;
+        }
+        cursor = arrow;
+    }
+    false
 }
 
 fn computed_script_setup_expr(
@@ -3077,9 +3106,51 @@ fn computed_script_setup_expr(
     if !is_computed_script_setup_call(call, arg.expr.as_ref(), ctx) {
         return Ok(None);
     }
-    let getter = clean_expr(&print_expr(arg.expr.as_ref(), ctx)?, ctx);
+    let getter = computed_script_setup_getter(arg.expr.as_ref(), ctx)?;
     let import_refs = script_import_refs(arg.expr.as_ref(), &ctx.script_imports);
     Ok(Some((format!("computed({getter})"), import_refs)))
+}
+
+fn computed_script_setup_getter(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
+    let getter = clean_expr(&print_expr(expr, ctx)?, ctx);
+    if arrow_returns_object_expr(expr) {
+        Ok(wrap_arrow_object_return(&getter))
+    } else {
+        Ok(getter)
+    }
+}
+
+fn arrow_returns_object_expr(expr: &Expr) -> bool {
+    let Expr::Arrow(arrow) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    matches!(
+        arrow.body.as_ref(),
+        BlockStmtOrExpr::Expr(expr) if matches!(unwrap_paren_expr(expr.as_ref()), Expr::Object(_))
+    )
+}
+
+fn wrap_arrow_object_return(getter: &str) -> String {
+    let Some(arrow_index) = getter.find("=>") else {
+        return getter.to_string();
+    };
+    let body_start = arrow_index + "=>".len();
+    let leading_ws = getter[body_start..]
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    let object_start = body_start + leading_ws;
+    if !getter[object_start..].starts_with('{') {
+        return getter.to_string();
+    }
+
+    let mut output = String::with_capacity(getter.len() + 2);
+    output.push_str(&getter[..object_start]);
+    output.push('(');
+    output.push_str(&getter[object_start..]);
+    output.push(')');
+    output
 }
 
 fn is_computed_script_setup_call(call: &CallExpr, getter: &Expr, ctx: &VueRecoveryContext) -> bool {
