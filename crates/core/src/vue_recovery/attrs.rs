@@ -162,15 +162,30 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
                     };
                     attrs.extend(attrs_from_key_value(&name, key_value.value.as_ref(), ctx)?);
                 }
-                Prop::Shorthand(ident) => attrs.push(VueAttr::Bind {
-                    name: ident.sym.to_string(),
-                    expr: VueExpr::new(ident.sym.to_string()),
-                }),
+                Prop::Shorthand(ident) => {
+                    let name = ident.sym.to_string();
+                    attrs.push(shorthand_attr(&name));
+                }
                 _ => {}
             },
         }
     }
     Ok(collapse_template_ref_attrs(attrs))
+}
+
+fn shorthand_attr(name: &str) -> VueAttr {
+    if let Some(event_name) = event_name_from_prop(name) {
+        return VueAttr::On {
+            name: event_name,
+            expr: VueExpr::new(name.to_string()),
+            modifiers: Vec::new(),
+        };
+    }
+
+    VueAttr::Bind {
+        name: name.to_string(),
+        expr: VueExpr::new(name.to_string()),
+    }
 }
 
 fn collapse_template_ref_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
@@ -212,10 +227,10 @@ fn attrs_from_key_value(
     value: &Expr,
     ctx: &VueRecoveryContext,
 ) -> Result<Vec<VueAttr>> {
-    if let Some(event_name) = name.strip_prefix("on").filter(|s| !s.is_empty()) {
+    if let Some(event_name) = event_name_from_prop(name) {
         let event = recover_event_expr(value, ctx)?;
         return Ok(vec![VueAttr::On {
-            name: lower_first(event_name),
+            name: event_name,
             expr: event.expr,
             modifiers: event.modifiers,
         }]);
@@ -266,6 +281,12 @@ fn html_directive_name(name: &str) -> Option<&'static str> {
         "textContent" => Some("text"),
         _ => None,
     }
+}
+
+fn event_name_from_prop(name: &str) -> Option<String> {
+    name.strip_prefix("on")
+        .filter(|s| !s.is_empty())
+        .map(lower_first)
 }
 
 fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Option<Vec<VueAttr>>> {

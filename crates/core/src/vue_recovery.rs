@@ -5519,6 +5519,39 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_shorthand_event_handler() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", { onClick }, "Go", 8, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click=\"onClick\">Go</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_component_shorthand_event_handler() {
+        let input = r#"
+import { B as Badge } from "./Badge.vue";
+import { openBlock, createVNode } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createVNode(Badge, { onClick }, null, 8, ["onClick"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Badge @click=\"onClick\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_template_ref_key_attrs() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
