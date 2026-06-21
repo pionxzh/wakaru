@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     Bool, CallExpr, Callee, Decl, Expr, ExprStmt, Ident, IdentName, KeyValueProp, Lit, Module,
     ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str, VarDeclarator,
@@ -102,16 +102,26 @@ fn maybe_build_define_properties_item(
     target: &BindingId,
     unresolved_mark: Mark,
 ) -> (Option<ModuleItem>, usize) {
-    let (descriptors, next_index) =
+    let (descriptors, first_span, next_index) =
         collect_require_d_descriptors_module(items, start, target, unresolved_mark);
     if descriptors.len() < 2 {
         return (None, start);
     }
 
+    let stmt_span = if first_span.lo.0 != 0 {
+        first_span
+    } else {
+        DUMMY_SP
+    };
+
     (
         Some(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(build_define_properties_call(target.clone(), descriptors)),
+            span: stmt_span,
+            expr: Box::new(build_define_properties_call(
+                target.clone(),
+                descriptors,
+                stmt_span,
+            )),
         }))),
         next_index,
     )
@@ -123,16 +133,26 @@ fn maybe_build_define_properties_stmt(
     target: &BindingId,
     unresolved_mark: Mark,
 ) -> (Option<Stmt>, usize) {
-    let (descriptors, next_index) =
+    let (descriptors, first_span, next_index) =
         collect_require_d_descriptors_stmt(stmts, start, target, unresolved_mark);
     if descriptors.len() < 2 {
         return (None, start);
     }
 
+    let stmt_span = if first_span.lo.0 != 0 {
+        first_span
+    } else {
+        DUMMY_SP
+    };
+
     (
         Some(Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(build_define_properties_call(target.clone(), descriptors)),
+            span: stmt_span,
+            expr: Box::new(build_define_properties_call(
+                target.clone(),
+                descriptors,
+                stmt_span,
+            )),
         })),
         next_index,
     )
@@ -143,10 +163,11 @@ fn collect_require_d_descriptors_module(
     start: usize,
     target: &BindingId,
     unresolved_mark: Mark,
-) -> (Vec<(String, Box<Expr>)>, usize) {
+) -> (Vec<(String, Box<Expr>)>, Span, usize) {
     let mut descriptors = Vec::new();
     let mut seen = HashSet::new();
     let mut index = start;
+    let mut first_span = DUMMY_SP;
 
     while index < items.len() {
         let ModuleItem::Stmt(stmt) = &items[index] else {
@@ -156,14 +177,17 @@ fn collect_require_d_descriptors_module(
         else {
             break;
         };
+        if index == start {
+            first_span = stmt.span();
+        }
         if !seen.insert(name.clone()) {
-            return (Vec::new(), start);
+            return (Vec::new(), DUMMY_SP, start);
         }
         descriptors.push((name, getter));
         index += 1;
     }
 
-    (descriptors, index)
+    (descriptors, first_span, index)
 }
 
 fn collect_require_d_descriptors_stmt(
@@ -171,10 +195,11 @@ fn collect_require_d_descriptors_stmt(
     start: usize,
     target: &BindingId,
     unresolved_mark: Mark,
-) -> (Vec<(String, Box<Expr>)>, usize) {
+) -> (Vec<(String, Box<Expr>)>, Span, usize) {
     let mut descriptors = Vec::new();
     let mut seen = HashSet::new();
     let mut index = start;
+    let mut first_span = DUMMY_SP;
 
     while index < stmts.len() {
         let Some((name, getter)) =
@@ -182,14 +207,17 @@ fn collect_require_d_descriptors_stmt(
         else {
             break;
         };
+        if index == start {
+            first_span = stmts[index].span();
+        }
         if !seen.insert(name.clone()) {
-            return (Vec::new(), start);
+            return (Vec::new(), DUMMY_SP, start);
         }
         descriptors.push((name, getter));
         index += 1;
     }
 
-    (descriptors, index)
+    (descriptors, first_span, index)
 }
 
 fn extract_empty_object_binding_from_module_item(item: &ModuleItem) -> Option<BindingId> {
@@ -277,7 +305,11 @@ fn extract_require_d_descriptor(
     }
 }
 
-fn build_define_properties_call(target: BindingId, descriptors: Vec<(String, Box<Expr>)>) -> Expr {
+fn build_define_properties_call(
+    target: BindingId,
+    descriptors: Vec<(String, Box<Expr>)>,
+    span: Span,
+) -> Expr {
     let descriptor_props: Vec<PropOrSpread> = descriptors
         .into_iter()
         .map(|(name, getter)| {
@@ -304,7 +336,7 @@ fn build_define_properties_call(target: BindingId, descriptors: Vec<(String, Box
         .collect();
 
     Expr::Call(CallExpr {
-        span: DUMMY_SP,
+        span,
         ctxt: Default::default(),
         callee: Expr::Member(swc_core::ecma::ast::MemberExpr {
             span: DUMMY_SP,

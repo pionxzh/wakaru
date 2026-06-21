@@ -1,5 +1,5 @@
 use swc_core::atoms::{Atom, Wtf8Atom};
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr,
     Callee, ComputedPropName, Decl, Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit,
@@ -76,7 +76,7 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
 
                 // Try standalone enum IIFE (without preceding bare var)
                 if let Some((ident, members)) = parse_enum_iife_standalone(&stmt) {
-                    let new_stmt = build_enum_assign_stmt(ident, members);
+                    let new_stmt = build_enum_assign_stmt(ident, members, stmt.span());
                     items.push(ModuleItem::Stmt(new_stmt));
                     continue;
                 }
@@ -118,7 +118,7 @@ fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
         }
 
         if let Some((ident, members)) = parse_enum_iife_standalone(&stmt) {
-            let new_stmt = build_enum_assign_stmt(ident, members);
+            let new_stmt = build_enum_assign_stmt(ident, members, stmt.span());
             stmts.push(new_stmt);
             continue;
         }
@@ -598,8 +598,13 @@ fn build_enum_var_decl(ident: &Ident, members: Vec<EnumMember>, original_stmt: &
         VarDeclKind::Var
     };
 
+    let var_span = if original_stmt.span().lo.0 != 0 {
+        original_stmt.span()
+    } else {
+        DUMMY_SP
+    };
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: var_span,
         ctxt: Default::default(),
         kind,
         declare: false,
@@ -617,10 +622,15 @@ fn build_enum_var_decl(ident: &Ident, members: Vec<EnumMember>, original_stmt: &
 
 /// Build an assignment statement for standalone IIFE (no preceding bare var):
 /// `Name = { ... }` as an ExprStmt
-fn build_enum_assign_stmt(ident: Ident, members: Vec<EnumMember>) -> Stmt {
+fn build_enum_assign_stmt(ident: Ident, members: Vec<EnumMember>, original_span: Span) -> Stmt {
     let obj = build_enum_object(members);
+    let stmt_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
     Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span: stmt_span,
         expr: Box::new(Expr::Assign(AssignExpr {
             span: DUMMY_SP,
             op: AssignOp::Assign,

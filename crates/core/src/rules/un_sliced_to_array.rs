@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
     ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
@@ -631,13 +631,19 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
         return false;
     }
 
+    let original_span = stmts[start].span();
+    let var_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
     stmts[start] = Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: var_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Var,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span: var_span,
             name: Pat::Array(ArrayPat {
                 span: DUMMY_SP,
                 elems: vec![Some(Pat::Ident(first)), Some(Pat::Ident(second))],
@@ -708,13 +714,19 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
         return false;
     }
 
+    let original_span = stmts[start].span();
+    let var_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
     stmts[start] = Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: var_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Var,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span: var_span,
             name: Pat::Array(ArrayPat {
                 span: DUMMY_SP,
                 elems,

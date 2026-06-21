@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr,
     BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr,
@@ -1683,7 +1683,12 @@ struct InlineTempDefaultRewriter<'a> {
 impl VisitMut for InlineTempDefaultRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if extract_temp_default_expr(expr, self.temp, self.unresolved_mark).is_some() {
-            *expr = Expr::Ident(self.replacement.clone());
+            let original_span = expr.span();
+            let mut replacement = self.replacement.clone();
+            if original_span.lo.0 != 0 {
+                replacement.span = original_span;
+            }
+            *expr = Expr::Ident(replacement);
             return;
         }
         expr.visit_mut_children_with(self);
@@ -2618,9 +2623,10 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 
         if let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
         {
+            let original_span = expr.span();
             let preferred_ident = self.preferred_param_ident(idx);
             if param_slot_can_use_ident(self.params, idx, &preferred_ident) {
-                if let Some(ident) = ensure_default_param(
+                if let Some(mut ident) = ensure_default_param(
                     self.params,
                     idx,
                     preferred_ident,
@@ -2628,6 +2634,9 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
                     self.body_bindings,
                 ) {
                     self.mark_param_name_consumed(idx);
+                    if original_span.lo.0 != 0 {
+                        ident.span = original_span;
+                    }
                     *expr = Expr::Ident(ident);
                 }
             }
@@ -2638,10 +2647,14 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
             return;
         };
 
+        let original_span = expr.span();
         let preferred_ident = self.preferred_param_ident(idx);
         if param_slot_can_use_ident(self.params, idx, &preferred_ident) {
-            if let Some(ident) = ensure_plain_param(self.params, idx, preferred_ident) {
+            if let Some(mut ident) = ensure_plain_param(self.params, idx, preferred_ident) {
                 self.mark_param_name_consumed(idx);
+                if original_span.lo.0 != 0 {
+                    ident.span = original_span;
+                }
                 *expr = Expr::Ident(ident);
             }
         }

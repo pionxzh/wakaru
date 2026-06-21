@@ -531,11 +531,16 @@ fn build_class_decl(candidate: &ClassCandidate, original_stmt: &Stmt) -> Option<
     // Add collected methods
     members.extend(candidate.members.iter().cloned());
 
+    let class_span = if fn_decl.function.span.lo.0 != 0 {
+        fn_decl.function.span
+    } else {
+        DUMMY_SP
+    };
     Some(ClassDecl {
         ident: fn_decl.ident.clone(),
         declare: false,
         class: Box::new(Class {
-            span: DUMMY_SP,
+            span: class_span,
             ctxt: Default::default(),
             decorators: vec![],
             body: members,
@@ -1126,8 +1131,13 @@ impl VisitMut for ParentCallRewriter<'_> {
                     return;
                 }
                 let super_args: Vec<ExprOrSpread> = call.args[1..].to_vec();
+                let original_span = call.span;
                 *expr = Expr::Call(CallExpr {
-                    span: DUMMY_SP,
+                    span: if original_span.lo.0 != 0 {
+                        original_span
+                    } else {
+                        DUMMY_SP
+                    },
                     ctxt: Default::default(),
                     callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
                     args: super_args,
@@ -1149,8 +1159,13 @@ impl VisitMut for ParentCallRewriter<'_> {
                     spread: Some(DUMMY_SP),
                     expr: call.args[1].expr.clone(),
                 };
+                let original_span = call.span;
                 *expr = Expr::Call(CallExpr {
-                    span: DUMMY_SP,
+                    span: if original_span.lo.0 != 0 {
+                        original_span
+                    } else {
+                        DUMMY_SP
+                    },
                     ctxt: Default::default(),
                     callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
                     args: vec![spread_arg],

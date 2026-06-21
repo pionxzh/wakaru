@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
     CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, ImportSpecifier, Lit,
@@ -505,7 +505,7 @@ fn try_convert_iterator_helper_sequence(stmts: &[Stmt]) -> Option<SequenceRewrit
         return None;
     }
 
-    let for_of = build_helper_for_of(helper_loop, iterable, item_ident)?;
+    let for_of = build_helper_for_of(helper_loop, iterable, item_ident, stmts[0].span())?;
     Some(SequenceRewrite {
         consumed_stmts,
         preserved_stmts,
@@ -527,7 +527,7 @@ fn try_convert_iterator_helper_decl_first_sequence(stmts: &[Stmt]) -> Option<Seq
         return None;
     }
 
-    let for_of = build_helper_for_of(helper_loop, iterable, item_ident)?;
+    let for_of = build_helper_for_of(helper_loop, iterable, item_ident, stmts[0].span())?;
     Some(SequenceRewrite {
         consumed_stmts: 3,
         preserved_stmts: Vec::new(),
@@ -563,7 +563,7 @@ fn try_convert_loose_iterator_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite
     let Stmt::Block(body) = &*for_stmt.body else {
         return None;
     };
-    let for_of = build_helper_for_of(body.clone(), iterable, item_ident)?;
+    let for_of = build_helper_for_of(body.clone(), iterable, item_ident, stmts[0].span())?;
     Some(SequenceRewrite {
         consumed_stmts: 2,
         preserved_stmts: Vec::new(),
@@ -590,6 +590,7 @@ fn try_convert_ts_values_sequence(
         helper_loop.loop_body,
         helper_loop.iterable,
         helper_loop.result_ident,
+        stmts[0].span(),
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 3,
@@ -629,6 +630,7 @@ fn try_convert_swc_iterator_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> 
         helper_loop.loop_body,
         helper_loop.iterable,
         helper_loop.result_ident,
+        stmts[0].span(),
     )?;
     Some(SequenceRewrite {
         consumed_stmts: 4,
@@ -775,6 +777,7 @@ fn build_helper_for_of(
     mut body: BlockStmt,
     iterable: Box<Expr>,
     item_ident: Ident,
+    span: Span,
 ) -> Option<ForOfStmt> {
     let mut element = extract_iterator_value_element(&body.stmts, &item_ident);
     if element.is_none() {
@@ -840,8 +843,9 @@ fn build_helper_for_of(
         VarDeclKind::Const
     };
 
+    let for_span = if span.lo.0 != 0 { span } else { DUMMY_SP };
     Some(ForOfStmt {
-        span: DUMMY_SP,
+        span: for_span,
         is_await: false,
         left: ForHead::VarDecl(Box::new(VarDecl {
             span: DUMMY_SP,
