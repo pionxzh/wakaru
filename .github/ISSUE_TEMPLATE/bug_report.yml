@@ -1,6 +1,6 @@
-name: "\U0001F41E Unminify Bug Report"
-description: Report an issue with unminify
-labels: ["pending triage", "scope: unminify"]
+name: "\U0001F41E Decompiler Bug Report"
+description: Report an issue with decompilation or bundle unpacking
+labels: ["pending triage"]
 body:
   - type: textarea
     id: bug-description
@@ -12,19 +12,37 @@ body:
         I am doing ... What I expect is ... What actually happening is ...
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: |
+        Output of `wakaru --version` or the npm package version.
+      placeholder: "1.5.0"
+    validations:
+      required: false
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      description: |
+        The full command you ran. If you used the playground, write "playground" instead. Adding `--diagnostics` to your command may surface extra warnings that help with debugging.
+      placeholder: "wakaru bundle.js --unpack -o out/"
+    validations:
+      required: false
   - type: textarea
     id: code
     attributes:
       label: Input code
       description: |
-        If applicable, add code samples to help explain your problem. If the code is long, please provide the code with [playground](https://wakaru.vercel.app/) or paste it to [gist](https://gist.github.com/) and provide the link in the Reproduction field.
-      render: typescript
+        If applicable, add code samples to help explain your problem. If the code is long, please provide the code with the [playground](https://wakaru.vercel.app/playground) or paste it to a [gist](https://gist.github.com/) and provide the link in the Reproduction field.
+      render: javascript
   - type: input
     id: reproduction
     attributes:
       label: Reproduction
       description: |
-        Please provide a link via [wakaru playground](https://wakaru.vercel.app/) that can reproduce the problem you ran into. If your input is huge and fail to run on the playground, provide a link to a repo or [gist](https://gist.github.com/) with the code. A [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) is required ([Why?](https://antfu.me/posts/why-reproductions-are-required)).
+        Please provide a link via the [wakaru playground](https://wakaru.vercel.app/playground) that can reproduce the problem you ran into. If your input is huge and fails to run on the playground, provide a link to a repo or [gist](https://gist.github.com/) with the code. A [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) is required ([Why?](https://antfu.me/posts/why-reproductions-are-required)).
       placeholder: Reproduction URL
     validations:
   - type: textarea
