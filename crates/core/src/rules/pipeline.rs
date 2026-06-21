@@ -379,6 +379,10 @@ runner!(run_merge_declaration_init, |ctx| MergeDeclarationInit::new(
 runner!(run_var_decl_to_let_const, |ctx| {
     VarDeclToLetConst::new_with_level(ctx.rewrite_level)
 });
+runner!(
+    run_class_expression_to_declaration,
+    ClassExpressionToDeclaration
+);
 runner!(run_obj_shorthand, ObjShorthand);
 runner!(run_obj_method_shorthand, ObjMethodShorthand);
 runner!(run_un_prototype_class, UnPrototypeClass);
@@ -603,6 +607,9 @@ define_rule_registry! {
     ("UnThenCatch", Modernization, run_un_then_catch, always_enabled),
     ("UnUndefinedInit", Modernization, run_un_undefined_init, always_enabled),
     ("VarDeclToLetConst", Modernization, run_var_decl_to_let_const, always_enabled),
+    ("ClassExpressionToDeclaration", Modernization, run_class_expression_to_declaration, always_enabled, requires: [
+        "VarDeclToLetConst"
+    ]),
     ("ObjShorthand", Modernization, run_obj_shorthand, always_enabled),
     ("ObjMethodShorthand", Modernization, run_obj_method_shorthand, always_enabled),
     ("UnPrototypeClass", Modernization, run_un_prototype_class, always_enabled),

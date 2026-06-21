@@ -2,6 +2,7 @@ mod arg_rest;
 mod arrow_function;
 mod arrow_return;
 pub(crate) mod binding_facts;
+mod class_expression_to_declaration;
 pub(crate) mod cross_module_helper_refs;
 pub(crate) mod dead_decls;
 pub(crate) mod dead_imports;
@@ -156,6 +157,7 @@ impl RewritePolicy {
 pub use arg_rest::ArgRest;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
+pub use class_expression_to_declaration::ClassExpressionToDeclaration;
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;
 pub use exponent::Exponent;
