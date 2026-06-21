@@ -6161,6 +6161,40 @@ export const _ = dc({
     }
 
     #[test]
+    fn recovers_inline_object_spread_helper_in_style_attr() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+function ownKeys(object, enumerableOnly) {
+  return Object.keys(object);
+}
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("span", {
+    style: (function(target) {
+      for (let index = 1; index < arguments.length; index++) {
+        var source = arguments[index] ?? {};
+        if (index % 2) {
+          ownKeys(Object(source), true).forEach((key) => { target[key] = source[key]; });
+        } else if (Object.getOwnPropertyDescriptors) {
+          Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+        } else {
+          ownKeys(Object(source)).forEach((key) => {
+            Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+          });
+        }
+      }
+      return target;
+    })({ cursor: _ctx.clickable ? "pointer" : "default" }, _ctx.padding && { padding: _ctx.padding })
+  }, "Badge", 4);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span :style='{ cursor: clickable ? \"pointer\" : \"default\", ...padding &amp;&amp; { padding: padding } }'>Badge</span>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_setup_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, ref, openBlock, createElementBlock } from "vue";

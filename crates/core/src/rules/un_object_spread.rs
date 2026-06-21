@@ -165,11 +165,13 @@ fn run_un_object_spread(
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
     let tslib_namespaces = local_helper_context.tslib_namespaces();
+    let has_inline_object_spread_call = has_inline_object_spread_call(module);
     if helpers.is_empty()
         && cross_module_ts_assign_refs.namespaces.is_empty()
         && swc_numeric_helper_namespaces.is_empty()
         && cross_module_helper_refs.namespaces.is_empty()
         && tslib_namespaces.is_empty()
+        && !has_inline_object_spread_call
     {
         return;
     }
@@ -1072,9 +1074,37 @@ fn is_swc_numeric_object_spread_member(expr: &Expr, namespaces: &HashSet<Binding
     namespaces.contains(&binding_key(obj)) && static_member_prop_name(&member.prop) == Some("pi")
 }
 
+fn has_inline_object_spread_call(module: &Module) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if let Callee::Expr(callee) = &call.callee {
+                if is_inline_object_spread_helper(callee.as_ref()) {
+                    self.found = true;
+                    return;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
 fn is_inline_object_spread_helper(expr: &Expr) -> bool {
     match strip_parens(expr) {
-        Expr::Fn(fn_expr) => function_matches_inline_object_spread(&fn_expr.function),
+        Expr::Fn(fn_expr) => {
+            function_matches_inline_object_spread(&fn_expr.function)
+                || function_matches_arguments_object_spread(&fn_expr.function)
+        }
         Expr::Arrow(arrow) => {
             let Some((target, source)) = arrow_param_pair(&arrow.params) else {
                 return false;
@@ -1101,6 +1131,94 @@ fn function_matches_inline_object_spread(function: &Function) -> bool {
         return false;
     };
     block_matches_inline_object_spread(&body.stmts, target, source)
+}
+
+fn function_matches_arguments_object_spread(function: &Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let [param] = function.params.as_slice() else {
+        return false;
+    };
+    let Pat::Ident(target) = &param.pat else {
+        return false;
+    };
+    if !matches!(
+        body.stmts.last(),
+        Some(Stmt::Return(ret)) if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, &target.id))
+    ) {
+        return false;
+    }
+
+    let mut marker = ArgumentsSpreadMarker::new(&target.id);
+    body.stmts.visit_with(&mut marker);
+    marker.is_match()
+}
+
+struct ArgumentsSpreadMarker<'a> {
+    target: &'a Ident,
+    saw_arguments_ref: bool,
+    saw_target_write: bool,
+    saw_object_define_property: bool,
+    saw_object_get_own_property_descriptor: bool,
+}
+
+impl<'a> ArgumentsSpreadMarker<'a> {
+    fn new(target: &'a Ident) -> Self {
+        Self {
+            target,
+            saw_arguments_ref: false,
+            saw_target_write: false,
+            saw_object_define_property: false,
+            saw_object_get_own_property_descriptor: false,
+        }
+    }
+
+    fn is_match(&self) -> bool {
+        self.saw_arguments_ref
+            && self.saw_target_write
+            && self.saw_object_define_property
+            && self.saw_object_get_own_property_descriptor
+    }
+}
+
+impl Visit for ArgumentsSpreadMarker<'_> {
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+            if matches!(member.obj.as_ref(), Expr::Ident(ident) if ident_matches(ident, self.target))
+            {
+                self.saw_target_write = true;
+            }
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = strip_parens(callee.as_ref()) {
+                if let Expr::Ident(obj) = member.obj.as_ref() {
+                    if obj.sym.as_ref() == "Object" {
+                        match static_member_prop_name(&member.prop) {
+                            Some("defineProperty" | "defineProperties") => {
+                                self.saw_object_define_property = true;
+                            }
+                            Some("getOwnPropertyDescriptor" | "getOwnPropertyDescriptors") => {
+                                self.saw_object_get_own_property_descriptor = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym.as_ref() == "arguments" {
+            self.saw_arguments_ref = true;
+        }
+    }
 }
 
 fn block_matches_inline_object_spread(stmts: &[Stmt], target: &Ident, source: &Ident) -> bool {
