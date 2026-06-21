@@ -41,8 +41,9 @@ cargo clippy -- -D warnings  # lints
 cargo test              # all tests
 ```
 
-Snapshots auto-update when you run `cargo test` (configured in `.cargo/config.toml`).
-Review changes with `git diff` before committing.
+`.cargo/config.toml` sets `INSTA_UPDATE=new`, so a changed snapshot **fails**
+the test and writes a `.snap.new` file. Review the diff, then accept intentional
+changes with `cargo insta accept`.
 
 ## Project Structure
 
@@ -56,8 +57,8 @@ wakaru is a Cargo workspace with three crates:
 
 Almost all development happens in `wakaru-core`. Key directories within it:
 
-- `src/rules/` -- one file per transformation rule, plus `mod.rs` which defines pipeline ordering
-- `src/unpacker/` -- bundle format detection and module extraction (webpack4, webpack5, browserify, esbuild)
+- `src/rules/` -- one file per transformation rule; `pipeline.rs` defines the ordered rule registry
+- `src/unpacker/` -- bundle format detection and module extraction
 - `src/driver.rs` -- orchestrates the full decompile and unpack pipelines
 - `tests/` -- per-rule test files, pipeline integration tests, and snapshot fixtures
 
@@ -105,12 +106,8 @@ Then guard identifier matches with `id.ctxt.outer() == self.unresolved_mark`. Se
 
 ### 2. Register the rule in the pipeline
 
-In `crates/core/src/rules/mod.rs`:
-
-1. Add `mod my_rule;` to the module declarations at the top.
-2. Add `pub use my_rule::MyRule;` to the re-exports.
-3. Add a `run!(MyRule, "MyRule");` line (or `run!(MyRule::new(unresolved_mark), "MyRule");`) at the appropriate position in `apply_rules_range_impl()`.
-4. Add `"MyRule"` to the `rule_names()` list at the matching position.
+1. In `crates/core/src/rules/mod.rs`, add `mod my_rule;` and `pub use my_rule::MyRule;`.
+2. In `crates/core/src/rules/pipeline.rs`, add a `runner!` macro invocation for your rule and a `RuleDescriptor` entry in the `define_rule_registry!` block at the right position. Entries specify a name, stage, runner function, enablement gate, and optional dependency list.
 
 Pipeline placement matters -- see the "Pipeline Ordering" section below.
 
@@ -204,7 +201,7 @@ For the full debugging guide (snapshot layers, fixture repo workflow), see [docs
 
 ## Pipeline Ordering
 
-Rules run in a fixed order defined in `crates/core/src/rules/mod.rs`. The pipeline has six stages:
+Rules run in a fixed order defined in `crates/core/src/rules/pipeline.rs`. The pipeline has six stages:
 
 1. **Stage 1: Syntax normalization** -- simplify sequences, flip comparisons, remove void, etc.
 2. **Stage 2: Transpiler helper unwrapping** -- remove Babel/TypeScript helpers, reconstruct module systems

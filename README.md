@@ -25,7 +25,7 @@ npx @wakaru/cli dist/ --unpack -o out/              # scan a bundle output direc
 
 ## Features
 
-- ✅ Bundle splitting — webpack 4/5, esbuild, Bun, Browserify
+- ✅ Bundle splitting — webpack 4/5, esbuild, Bun, Browserify, SystemJS, AMD
 - ✅ Transpiler & minifier recovery — Terser, Babel, SWC, TypeScript
 - ✅ Source map support for better names & import deduplication
 - ✅ Rewrite levels: `minimal` | `standard` | `aggressive`
@@ -69,9 +69,10 @@ cat input.js | wakaru > output.js
 
 ```bash
 wakaru bundle.js --unpack -o out/
-wakaru bundle.js --unpack --raw -o out/    # raw split, no readability transforms
-wakaru entry.js chunk.js --unpack -o out/  # unpack multiple explicit files
-wakaru dist/ --unpack -o out/              # recursively scan a directory
+wakaru bundle.js --unpack --raw -o out/       # raw split, no readability transforms
+wakaru bundle.js --unpack=strict -o out/      # structural detection only, no heuristic fallback
+wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
+wakaru dist/ --unpack -o out/                 # recursively scan a directory
 ```
 
 Directory inputs are supported only with `--unpack`. Wakaru recursively scans
@@ -93,10 +94,14 @@ wakaru bundle.js --unpack --formatter -o out/
 
 ```bash
 wakaru input.js --source-map input.js.map -o output.js
+wakaru input.js --emit-source-map -o output.js    # emit output .map alongside decompiled file
 ```
 
 Source maps enable identifier recovery and import deduplication. They are
 currently supported only with a single input file.
+
+`--emit-source-map` writes a `.map` file alongside each output file, mapping
+the decompiled output back to the input.
 
 ### Extract original sources
 
@@ -120,7 +125,11 @@ Wakaru offers three rewrite levels so you can choose the right tradeoff for your
 wakaru input.js --level minimal
 wakaru input.js --level standard      # default
 wakaru input.js --level aggressive
+wakaru input.js --dce                 # remove all dead code (full reachability sweep)
 ```
+
+By default, only transform-induced dead code is removed; pre-existing dead code
+in the input is preserved. `--dce` opts into a full reachability sweep.
 
 ### JSON output
 
@@ -132,6 +141,14 @@ echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
 `--json` writes structured JSON to stdout instead of human-readable summaries.
 Warnings and errors are included in the JSON object. Useful for CI pipelines
 and tooling integration.
+
+### Diagnostics and profiling
+
+```bash
+wakaru input.js --diagnostics                  # post-transform diagnostic checks to stderr
+wakaru input.js --profile trace.json           # Chrome trace (open with chrome://tracing)
+wakaru input.js --profile trace.json --profile-rules  # include per-rule spans
+```
 
 ### Overwrite protection
 
