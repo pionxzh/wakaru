@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function, Ident,
@@ -885,8 +885,9 @@ impl VisitMut for FunctionTransformer<'_> {
                             self.async_to_gen_callees,
                             self.generator_helpers,
                         ) {
+                            let callee_span = callee_expr.span();
                             **callee_expr = Expr::Paren(ParenExpr {
-                                span: DUMMY_SP,
+                                span: callee_span,
                                 expr: Box::new(transformed),
                             });
                             if let Some(mark_key) = mark_key {
@@ -902,9 +903,10 @@ impl VisitMut for FunctionTransformer<'_> {
             if let Some(mut stmts) =
                 extract_esbuild_async_call_body(expr, self.esbuild_async_helpers)
             {
+                let original_span = expr.span();
                 replace_yield_with_await(&mut stmts);
                 *expr = Expr::Call(CallExpr {
-                    span: DUMMY_SP,
+                    span: original_span,
                     ctxt: Default::default(),
                     callee: Callee::Expr(Box::new(Expr::Paren(ParenExpr {
                         span: DUMMY_SP,
@@ -2614,7 +2616,10 @@ impl VisitMut for SentReplacer {
         // Replace _ctx.sent property access
         if let Expr::Member(member) = expr {
             if is_ident_with_name(&member.obj, &self.state_name) && is_sent_prop(&member.prop) {
-                *expr = *self.replacement.clone();
+                let original_span = expr.span();
+                let mut replacement = *self.replacement.clone();
+                propagate_span(&mut replacement, original_span);
+                *expr = replacement;
                 return;
             }
         }
@@ -2625,7 +2630,10 @@ impl VisitMut for SentReplacer {
                     if is_ident_with_name(&member.obj, &self.state_name)
                         && is_sent_prop(&member.prop)
                     {
-                        *expr = *self.replacement.clone();
+                        let original_span = expr.span();
+                        let mut replacement = *self.replacement.clone();
+                        propagate_span(&mut replacement, original_span);
+                        *expr = replacement;
                         return;
                     }
                 }
@@ -2981,7 +2989,9 @@ struct AsyncTrampolineIifeCollapser;
 impl VisitMut for AsyncTrampolineIifeCollapser {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
-        if let Some(collapsed) = try_collapse_async_trampoline_iife(expr) {
+        if let Some(mut collapsed) = try_collapse_async_trampoline_iife(expr) {
+            let original_span = expr.span();
+            propagate_span(&mut collapsed, original_span);
             *expr = collapsed;
         }
     }
@@ -3000,9 +3010,11 @@ struct AsyncTrampolineSequenceCollapser {
 impl VisitMut for AsyncTrampolineSequenceCollapser {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
-        if let Some(collapsed) =
+        if let Some(mut collapsed) =
             try_collapse_async_trampoline_sequence(expr, &self.binding_ref_counts)
         {
+            let original_span = expr.span();
+            propagate_span(&mut collapsed, original_span);
             *expr = collapsed;
         }
     }
@@ -4029,6 +4041,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
 
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
             if let Expr::Yield(y) = expr {
+                let yield_span = y.span;
                 let arg = y.arg.take().unwrap_or_else(|| {
                     Box::new(Expr::Ident(Ident::new_no_ctxt(
                         "undefined".into(),
@@ -4036,7 +4049,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
                     )))
                 });
                 *expr = Expr::Await(AwaitExpr {
-                    span: DUMMY_SP,
+                    span: yield_span,
                     arg,
                 });
                 expr.visit_mut_children_with(self);
@@ -4116,6 +4129,24 @@ fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
 // ============================================================
 // Shared helpers
 // ============================================================
+
+/// Set the span on the outermost node of a replacement expression, covering the
+/// expr types this rule produces at replacement sites. Only touches the outer
+/// wrapper -- inner sub-nodes keep their original (or DUMMY) spans.
+fn propagate_span(expr: &mut Expr, span: Span) {
+    if span.lo.0 == 0 {
+        return;
+    }
+    match expr {
+        Expr::Call(e) => e.span = span,
+        Expr::Fn(e) => e.function.span = span,
+        Expr::Await(e) => e.span = span,
+        Expr::Yield(e) => e.span = span,
+        Expr::Paren(e) => e.span = span,
+        Expr::Member(e) => e.span = span,
+        _ => {}
+    }
+}
 
 fn is_ident_with_name(expr: &Expr, name: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == *name)

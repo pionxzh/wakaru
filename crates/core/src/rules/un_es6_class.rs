@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName,
@@ -225,6 +225,7 @@ impl VisitMut for UnEs6ClassInner {
                         &scoped_inner.helpers.call_super_helpers,
                         self.unresolved_mark,
                         self.rewrite_level,
+                        var_decl.span,
                     ) {
                         stmts.push(Stmt::Decl(Decl::Class(class_decl)));
                         converted_any = true;
@@ -267,6 +268,7 @@ impl VisitMut for UnEs6ClassInner {
                         &self.helpers.call_super_helpers,
                         self.unresolved_mark,
                         self.rewrite_level,
+                        var_decl.span,
                     ) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
                         converted_any = true;
@@ -275,8 +277,8 @@ impl VisitMut for UnEs6ClassInner {
                     }
                 }
                 ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    span: export_span,
                     decl: Decl::Var(ref var_decl),
-                    ..
                 })) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
@@ -286,9 +288,10 @@ impl VisitMut for UnEs6ClassInner {
                         &self.helpers.call_super_helpers,
                         self.unresolved_mark,
                         self.rewrite_level,
+                        var_decl.span,
                     ) {
                         items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                            span: DUMMY_SP,
+                            span: export_span,
                             decl: Decl::Class(class_decl),
                         })));
                         converted_any = true;
@@ -984,6 +987,7 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
 
 /// Attempt to convert a `var Foo = (function(...) { ... }(...))` pattern into a ClassDecl.
 /// Returns None if the pattern doesn't match.
+#[allow(clippy::too_many_arguments)]
 fn try_iife_to_class(
     var: &VarDecl,
     inherits_helpers: &HashSet<BindingKey>,
@@ -992,6 +996,7 @@ fn try_iife_to_class(
     call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
+    original_span: Span,
 ) -> Option<ClassDecl> {
     // Must be a single declarator
     if var.decls.len() != 1 {
@@ -1090,11 +1095,19 @@ fn try_iife_to_class(
         return None;
     }
 
+    // Use the original statement's span for the class so that source maps
+    // can map the synthesized class back to the input IIFE/var declaration.
+    let class_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
+
     Some(ClassDecl {
         ident: class_name.clone(),
         declare: false,
         class: Box::new(Class {
-            span: DUMMY_SP,
+            span: class_span,
             ctxt: Default::default(),
             decorators: vec![],
             body: class_body,

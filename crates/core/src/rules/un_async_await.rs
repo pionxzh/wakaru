@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CallExpr, Callee, Expr,
     ExprOrSpread, ExprStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop, PropName,
@@ -149,7 +149,7 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
 }
 
 // ============================================================
-// __generator state-machine → function*
+// __generator state-machine -> function*
 // ============================================================
 
 pub(crate) fn try_transform_ts_generator_body(
@@ -240,9 +240,9 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
 /// decoder expects. Terser merges individual statements into comma sequences
 /// and folds conditional branches into ternary returns:
 ///
-///   `a, b, _a.label = 1;`    →  `a; b; _a.label = 1;`
-///   `return index++, [3, 1]` →  `index++; return [3, 1];`
-///   `return t ? [4, X] : [3, N]` →  `if (!t) return [3, N]; return [4, X];`
+///   `a, b, _a.label = 1;`    ->  `a; b; _a.label = 1;`
+///   `return index++, [3, 1]` ->  `index++; return [3, 1];`
+///   `return t ? [4, X] : [3, N]` ->  `if (!t) return [3, N]; return [4, X];`
 fn expand_terser_case_stmts(stmts: &[Stmt]) -> Vec<Stmt> {
     let mut result = Vec::new();
     let mut i = 0;
@@ -281,7 +281,7 @@ fn try_rearrange_if_goto_pair(stmts: &[Stmt], result: &mut Vec<Stmt>) -> Option<
         return None;
     }
     result.push(Stmt::If(IfStmt {
-        span: DUMMY_SP,
+        span: if_stmt.span,
         test: invert_condition(&if_stmt.test),
         cons: Box::new(stmts[1].clone()),
         alt: None,
@@ -333,20 +333,20 @@ fn expand_one_stmt(result: &mut Vec<Stmt>, stmt: &Stmt) {
             return expand_one_stmt(
                 result,
                 &Stmt::Return(ReturnStmt {
-                    span: DUMMY_SP,
+                    span: ret.span,
                     arg: Some(paren.expr.clone()),
                 }),
             );
         }
     }
     match stmt {
-        Stmt::Expr(ExprStmt { expr, .. }) if matches!(expr.as_ref(), Expr::Seq(_)) => {
+        Stmt::Expr(ExprStmt { span, expr, .. }) if matches!(expr.as_ref(), Expr::Seq(_)) => {
             let Expr::Seq(seq) = expr.as_ref() else {
                 unreachable!()
             };
             for sub in &seq.exprs {
                 result.push(Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
+                    span: *span,
                     expr: sub.clone(),
                 }));
             }
@@ -362,14 +362,14 @@ fn expand_one_stmt(result: &mut Vec<Stmt>, stmt: &Stmt) {
             };
             for sub in &seq.exprs[..seq.exprs.len() - 1] {
                 result.push(Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
+                    span: ret.span,
                     expr: sub.clone(),
                 }));
             }
             expand_one_stmt(
                 result,
                 &Stmt::Return(ReturnStmt {
-                    span: DUMMY_SP,
+                    span: ret.span,
                     arg: Some(seq.exprs.last().unwrap().clone()),
                 }),
             );
@@ -385,10 +385,10 @@ fn expand_one_stmt(result: &mut Vec<Stmt>, stmt: &Stmt) {
             };
             if is_opcode_like(&cond.cons) || is_opcode_like(&cond.alt) {
                 result.push(Stmt::If(IfStmt {
-                    span: DUMMY_SP,
+                    span: ret.span,
                     test: invert_condition(&cond.test),
                     cons: Box::new(Stmt::Return(ReturnStmt {
-                        span: DUMMY_SP,
+                        span: ret.span,
                         arg: Some(cond.alt.clone()),
                     })),
                     alt: None,
@@ -396,7 +396,7 @@ fn expand_one_stmt(result: &mut Vec<Stmt>, stmt: &Stmt) {
                 expand_one_stmt(
                     result,
                     &Stmt::Return(ReturnStmt {
-                        span: DUMMY_SP,
+                        span: ret.span,
                         arg: Some(cond.cons.clone()),
                     }),
                 );
@@ -436,8 +436,8 @@ fn unwrap_seq_last(expr: &Expr) -> &Expr {
 ///
 /// Phase 1: Collect (label_idx, Stmt) pairs in case order, decoding opcodes.
 /// Phase 2: Merge `_a.sent()` usages with the previous yield:
-///   - standalone `_a.sent();` → drop
-///   - `v = _a.sent()` → pop prev `yield X;`, push `v = yield X;`
+///   - standalone `_a.sent();` -> drop
+///   - `v = _a.sent()` -> pop prev `yield X;`, push `v = yield X;`
 ///
 /// Phase 3: Group by label and reconstruct try/catch/finally blocks.
 fn decode_state_machine(
@@ -491,7 +491,7 @@ fn decode_state_machine(
     let mut catch_aliases: Vec<BindingKey> = Vec::new();
     for (idx, stmt) in flat {
         if is_standalone_sent(&state_name, &stmt) {
-            // Standalone _a.sent(); — the caller discards the yielded value. Drop.
+            // Standalone _a.sent(); -- the caller discards the yielded value. Drop.
             continue;
         }
         let in_catch = is_catch_label(idx, &trys);
@@ -526,9 +526,9 @@ fn decode_state_machine(
             }
             // Pop the previous yield and embed it into this assignment/expression.
             let merged = if let Some((_, prev)) = output.last() {
-                extract_yield_from_stmt(prev).map(|(arg, delegate)| {
+                extract_yield_from_stmt(prev).map(|(arg, delegate, yield_span)| {
                     let yield_expr = Box::new(Expr::Yield(YieldExpr {
-                        span: DUMMY_SP,
+                        span: yield_span,
                         delegate,
                         arg: Some(arg),
                     }));
@@ -547,7 +547,7 @@ fn decode_state_machine(
                 output.pop();
                 output.push((idx, merged_stmt));
             } else {
-                // No previous yield — replace sent with undefined
+                // No previous yield -- replace sent with undefined
                 let mut replacer = SentReplacer {
                     state_name: state_name.clone(),
                     replacement: Box::new(Expr::Ident(Ident::new_no_ctxt(
@@ -580,8 +580,8 @@ fn is_catch_label(label_idx: usize, trys: &[[Option<usize>; 4]]) -> bool {
     trys.iter().any(|region| region[1] == Some(label_idx))
 }
 
-/// If `stmt` is `ExprStmt(yield X)`, return `(X, delegate)`.
-fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool)> {
+/// If `stmt` is `ExprStmt(yield X)`, return `(X, delegate, yield_span)`.
+fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool, Span)> {
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Yield(y) = expr.as_ref() {
             let arg = y.arg.clone().unwrap_or_else(|| {
@@ -590,27 +590,28 @@ fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool)> {
                     DUMMY_SP,
                 )))
             });
-            return Some((arg, y.delegate));
+            return Some((arg, y.delegate, y.span));
         }
     }
     None
 }
 
 fn split_sent_consuming_stmt(state_name: &Atom, stmt: &Stmt, prev: &Stmt) -> Option<Vec<Stmt>> {
-    let (arg, delegate) = extract_yield_from_stmt(prev)?;
+    let (arg, delegate, yield_span) = extract_yield_from_stmt(prev)?;
+    let stmt_span = stmt.span();
     let yielded = Box::new(Expr::Yield(YieldExpr {
-        span: DUMMY_SP,
+        span: yield_span,
         delegate,
         arg: Some(arg),
     }));
 
     if let Some((left, followup)) = split_yield_arg_sent_assignment(state_name, stmt) {
         return Some(vec![
-            assign_stmt(left, yielded),
+            assign_stmt(left, yielded, stmt_span),
             Stmt::Expr(ExprStmt {
-                span: DUMMY_SP,
+                span: stmt_span,
                 expr: Box::new(Expr::Yield(YieldExpr {
-                    span: DUMMY_SP,
+                    span: stmt_span,
                     delegate: false,
                     arg: Some(followup),
                 })),
@@ -620,9 +621,9 @@ fn split_sent_consuming_stmt(state_name: &Atom, stmt: &Stmt, prev: &Stmt) -> Opt
 
     if let Some((left, returned)) = split_return_sent_assignment(state_name, stmt) {
         return Some(vec![
-            assign_stmt(left, yielded),
+            assign_stmt(left, yielded, stmt_span),
             Stmt::Return(swc_core::ecma::ast::ReturnStmt {
-                span: DUMMY_SP,
+                span: stmt_span,
                 arg: Some(returned),
             }),
         ]);
@@ -689,11 +690,11 @@ fn split_return_sent_assignment(
     Some((assign.left.clone(), Box::new(Expr::Ident(left.id.clone()))))
 }
 
-fn assign_stmt(left: AssignTarget, right: Box<Expr>) -> Stmt {
+fn assign_stmt(left: AssignTarget, right: Box<Expr>, span: Span) -> Stmt {
     Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span,
         expr: Box::new(Expr::Assign(AssignExpr {
-            span: DUMMY_SP,
+            span,
             op: AssignOp::Assign,
             left,
             right,
@@ -873,19 +874,21 @@ fn decode_return_opcode_with_backedge(
         .and_then(|e| e.as_ref())
         .map(|e| e.expr.clone());
 
+    let ret_span = ret.span;
+
     match opcode {
         2 => {
             // return(value?)
             let s = argument.map(|a| {
                 Stmt::Return(swc_core::ecma::ast::ReturnStmt {
-                    span: DUMMY_SP,
+                    span: ret_span,
                     arg: Some(a),
                 })
             });
             Some(s)
         }
         3 => {
-            // goto(label) — preserve back-edges for loop recovery and
+            // goto(label) -- preserve back-edges for loop recovery and
             // non-fallthrough forward jumps that mark if/else joins.
             if let Some(target) = argument.as_deref().and_then(|e| {
                 if let Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) = e {
@@ -913,9 +916,9 @@ fn decode_return_opcode_with_backedge(
                 )))
             });
             Some(Some(Stmt::Expr(ExprStmt {
-                span: DUMMY_SP,
+                span: ret_span,
                 expr: Box::new(Expr::Yield(YieldExpr {
-                    span: DUMMY_SP,
+                    span: ret_span,
                     delegate: false,
                     arg: Some(expr),
                 })),
@@ -932,9 +935,9 @@ fn decode_return_opcode_with_backedge(
                     )))
                 });
             Some(Some(Stmt::Expr(ExprStmt {
-                span: DUMMY_SP,
+                span: ret_span,
                 expr: Box::new(Expr::Yield(YieldExpr {
-                    span: DUMMY_SP,
+                    span: ret_span,
                     delegate: true,
                     arg: Some(expr),
                 })),
@@ -1109,7 +1112,9 @@ fn fold_memoized_member_apply_calls_in_stmt(stmt: &mut Stmt) {
 }
 
 fn try_fold_memoized_member_apply_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
-    let (method_key, member) = extract_memoized_member_assign(stmts.first()?)?;
+    let first = stmts.first()?;
+    let first_span = first.span();
+    let (method_key, member) = extract_memoized_member_assign(first)?;
     let call = extract_bound_memoized_member_call(stmts.get(1)?, &method_key, &member)?;
     let mut keys = vec![method_key];
     keys.extend(memoized_member_temp_keys(&member));
@@ -1122,7 +1127,7 @@ fn try_fold_memoized_member_apply_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> 
 
     Some((
         Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
+            span: first_span,
             expr: Box::new(Expr::Call(call)),
         }),
         2,
@@ -1133,6 +1138,7 @@ struct MemoizedMember {
     receiver: Box<Expr>,
     receiver_key: Option<BindingKey>,
     prop: swc_core::ecma::ast::MemberProp,
+    member_span: Span,
 }
 
 fn extract_memoized_member_assign(stmt: &Stmt) -> Option<(BindingKey, MemoizedMember)> {
@@ -1158,6 +1164,7 @@ fn extract_memoized_member_assign(stmt: &Stmt) -> Option<(BindingKey, MemoizedMe
             receiver: memoized_member_receiver(&member.obj)?,
             receiver_key: memoized_receiver_key(&member.obj),
             prop: member.prop.clone(),
+            member_span: member.span,
         },
     ))
 }
@@ -1243,7 +1250,7 @@ fn extract_bound_memoized_apply(call: &CallExpr, member: &MemoizedMember) -> Opt
 
 fn memoized_call_callee(member: &MemoizedMember) -> Callee {
     Callee::Expr(Box::new(Expr::Member(MemberExpr {
-        span: DUMMY_SP,
+        span: member.member_span,
         obj: member.receiver.clone(),
         prop: member.prop.clone(),
     })))
@@ -1364,7 +1371,7 @@ fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> 
 }
 
 // ============================================================
-// __awaiter wrapper → async function
+// __awaiter wrapper -> async function
 // ============================================================
 
 fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
@@ -1425,10 +1432,11 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     Some(body.stmts)
 }
 
-/// Transform a standalone `__awaiter(this, void0, void0, function*() {…})`
-/// expression into `(async function() {…})()`. Handles the IIFE pattern where
-/// `__awaiter(…)` appears at expression level rather than inside a function body.
+/// Transform a standalone `__awaiter(this, void0, void0, function*() {...})`
+/// expression into `(async function() {...})()`. Handles the IIFE pattern where
+/// `__awaiter(...)` appears at expression level rather than inside a function body.
 fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
+    let original_span = expr.span();
     let Expr::Call(call) = expr else { return };
     if !helpers.is_awaiter_call(call) || call.args.len() < 4 {
         return;
@@ -1442,6 +1450,7 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     let Some(body) = &fn_expr.function.body else {
         return;
     };
+    let fn_span = fn_expr.function.span;
 
     let mut stmts = body.stmts.clone();
     replace_yield_with_await(&mut stmts);
@@ -1451,7 +1460,7 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
         function: Box::new(Function {
             params: vec![],
             decorators: vec![],
-            span: DUMMY_SP,
+            span: fn_span,
             ctxt: Default::default(),
             body: Some(BlockStmt {
                 span: DUMMY_SP,
@@ -1465,11 +1474,11 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
         }),
     });
     *expr = Expr::Call(swc_core::ecma::ast::CallExpr {
-        span: DUMMY_SP,
+        span: original_span,
         ctxt: Default::default(),
         callee: swc_core::ecma::ast::Callee::Expr(Box::new(Expr::Paren(
             swc_core::ecma::ast::ParenExpr {
-                span: DUMMY_SP,
+                span: original_span,
                 expr: Box::new(async_fn),
             },
         ))),
@@ -1487,6 +1496,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
 
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
             if let Expr::Yield(y) = expr {
+                let yield_span = y.span;
                 let arg = y.arg.take().unwrap_or_else(|| {
                     Box::new(Expr::Ident(Ident::new_no_ctxt(
                         "undefined".into(),
@@ -1494,7 +1504,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
                     )))
                 });
                 *expr = Expr::Await(AwaitExpr {
-                    span: DUMMY_SP,
+                    span: yield_span,
                     arg,
                 });
                 expr.visit_mut_children_with(self);

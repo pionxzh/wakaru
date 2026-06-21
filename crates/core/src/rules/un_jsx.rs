@@ -266,8 +266,13 @@ impl UnJsx {
             if pragma == CLASSIC_PRAGMA {
                 self.converted_classic_pragma = true;
             }
+            let outer_span = if call.span.lo.0 != 0 {
+                call.span
+            } else {
+                DUMMY_SP
+            };
             return Some(Expr::JSXFragment(JSXFragment {
-                span: DUMMY_SP,
+                span: outer_span,
                 opening: JSXOpeningFragment { span: DUMMY_SP },
                 children,
                 closing: JSXClosingFragment { span: DUMMY_SP },
@@ -283,8 +288,13 @@ impl UnJsx {
         if pragma == CLASSIC_PRAGMA {
             self.converted_classic_pragma = true;
         }
+        let outer_span = if call.span.lo.0 != 0 {
+            call.span
+        } else {
+            DUMMY_SP
+        };
         Some(Expr::JSXElement(Box::new(JSXElement {
-            span: DUMMY_SP,
+            span: outer_span,
             opening: JSXOpeningElement {
                 name: tag,
                 span: DUMMY_SP,

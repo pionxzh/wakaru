@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
-use swc_core::common::Mark;
+use swc_core::common::{Mark, Span, Spanned};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
@@ -247,7 +247,9 @@ fn run_un_object_rest(
             let mut preceding_accesses = preceding_scan.accesses;
             preceding_accesses.append(&mut inline_accesses);
             let scope_names = collect_scope_names_module(&new_body);
+            let original_span = stmt.span();
             let new_stmt = build_rest_destructuring(
+                original_span,
                 &rest_binding,
                 &source,
                 &excluded_keys,
@@ -258,7 +260,7 @@ fn run_un_object_rest(
             new_body.push(ModuleItem::Stmt(new_stmt));
             if !after.is_empty() {
                 let after_stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                    span: DUMMY_SP,
+                    span: original_span,
                     ctxt: Default::default(),
                     kind: VarDeclKind::Var,
                     declare: false,
@@ -278,11 +280,13 @@ fn run_un_object_rest(
             &cross_module_helpers.namespaces,
             &exclusion_arrays,
         ) {
+            let original_span = stmt.span();
             let preceding_scan =
                 scan_preceding_detailed(&recent_stmts, &source, &excluded_keys, unresolved_mark);
             let scope_names = collect_scope_names_module(&new_body);
             if preceding_scan.absorbed > 0 {
                 if let Some(new_stmt) = build_rest_assignment(
+                    original_span,
                     &rest_binding,
                     &source,
                     &excluded_keys,
@@ -409,7 +413,9 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 let mut preceding_accesses = preceding_scan.accesses;
                 preceding_accesses.append(&mut inline_accesses);
                 let scope_names = collect_scope_names(&new_stmts);
+                let original_span = stmt.span();
                 new_stmts.push(build_rest_destructuring(
+                    original_span,
                     &rest_binding,
                     &source,
                     &excluded_keys,
@@ -418,7 +424,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 ));
                 if !after.is_empty() {
                     new_stmts.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                        span: DUMMY_SP,
+                        span: original_span,
                         ctxt: Default::default(),
                         kind: VarDeclKind::Var,
                         declare: false,
@@ -436,6 +442,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 self.cross_module_namespaces,
                 &exclusion_arrays,
             ) {
+                let original_span = stmt.span();
                 let preceding_scan = scan_preceding_detailed(
                     &new_stmts,
                     &source,
@@ -445,6 +452,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 let scope_names = collect_scope_names(&new_stmts);
                 if preceding_scan.absorbed > 0 {
                     if let Some(new_stmt) = build_rest_assignment(
+                        original_span,
                         &rest_binding,
                         &source,
                         &excluded_keys,
@@ -1720,8 +1728,13 @@ fn match_source_member_object(obj: &Expr, source_name: &Atom) -> Option<Option<A
 }
 
 fn build_source_init_stmt(assign: AssignExpr) -> Stmt {
+    let stmt_span = if assign.span.lo.0 != 0 {
+        assign.span
+    } else {
+        DUMMY_SP
+    };
     Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span: stmt_span,
         expr: Box::new(Expr::Assign(assign)),
     })
 }
@@ -1895,6 +1908,7 @@ fn match_undefined_check(
 }
 
 fn build_rest_destructuring(
+    original_span: Span,
     rest_binding: &BindingIdent,
     source: &Expr,
     excluded_keys: &[Atom],
@@ -2006,8 +2020,13 @@ fn build_rest_destructuring(
         type_ann: None,
     }));
 
+    let var_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: var_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Const,
         declare: false,
@@ -2026,6 +2045,7 @@ fn build_rest_destructuring(
 }
 
 fn build_rest_assignment(
+    original_span: Span,
     rest_binding: &BindingIdent,
     source: &Expr,
     excluded_keys: &[Atom],
@@ -2113,10 +2133,15 @@ fn build_rest_assignment(
         type_ann: None,
     }));
 
+    let stmt_span = if original_span.lo.0 != 0 {
+        original_span
+    } else {
+        DUMMY_SP
+    };
     Some(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span: stmt_span,
         expr: Box::new(Expr::Assign(AssignExpr {
-            span: DUMMY_SP,
+            span: stmt_span,
             op: AssignOp::Assign,
             left: AssignTarget::Pat(AssignTargetPat::Object(ObjectPat {
                 span: DUMMY_SP,
