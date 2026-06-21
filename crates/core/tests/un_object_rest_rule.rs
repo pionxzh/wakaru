@@ -1034,6 +1034,99 @@ use(id, token, options);
 }
 
 #[test]
+fn named_owp_helper_assignment_absorbs_source_initializing_member_access() {
+    let input = r#"
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+let source;
+let id;
+let token;
+let options;
+let tmp;
+tmp = config != null ? config : fallback();
+id = (source = tmp).id;
+token = source.token;
+options = __rest(source, ["id", "token"]);
+use(source, id, token, options);
+"#;
+    let expected = r#"
+let source;
+let id;
+let token;
+let options;
+let tmp;
+tmp = config ?? fallback();
+source = tmp;
+({ id, token, ...options } = source);
+use(source, id, token, options);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn named_owp_helper_assignment_absorbs_source_initializing_member_access_in_function_body() {
+    let input = r#"
+var excluded = ["id", "token"];
+function objectWithoutProperties(source, excluded) {
+    if (source == null) return {};
+    var key, index, rest = objectWithoutPropertiesLoose(source, excluded);
+    if (Object.getOwnPropertySymbols) {
+        var symbols = Object.getOwnPropertySymbols(source);
+        for (index = 0; index < symbols.length; index++)
+            key = symbols[index], -1 === excluded.indexOf(key) && {}.propertyIsEnumerable.call(source, key) && (rest[key] = source[key]);
+    }
+    return rest;
+}
+function objectWithoutPropertiesLoose(source, excluded) {
+    if (source == null) return {};
+    var rest = {};
+    for (var key in source) if ({}.hasOwnProperty.call(source, key)) {
+        if (-1 !== excluded.indexOf(key)) continue;
+        rest[key] = source[key];
+    }
+    return rest;
+}
+const load_user = async (config) => {
+    let source;
+    let id;
+    let token;
+    let options;
+    let tmp;
+    tmp = config != null ? config : await load_config();
+    id = (source = tmp).id;
+    token = source.token;
+    options = objectWithoutProperties(source, excluded);
+    return fetch_user(id, token, options);
+};
+use(load_user);
+"#;
+    let expected = r#"
+const load_user = async (config) => {
+    let source;
+    let id;
+    let token;
+    let options;
+    let tmp;
+    tmp = config ?? await load_config();
+    source = tmp;
+    ({ id, token, ...options } = source);
+    return fetch_user(id, token, options);
+};
+use(load_user);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn named_owp_helper_swc_rest_helper() {
     let input = r#"
 function _object_without_properties(source, excluded) {

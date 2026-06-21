@@ -233,12 +233,18 @@ fn run_un_object_rest(
                 continue;
             }
             let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
-            let (absorbed, mut preceding_accesses) =
-                scan_preceding(&recent_stmts, &source, &excluded_keys, unresolved_mark);
-            for _ in 0..absorbed {
+            let preceding_scan =
+                scan_preceding_detailed(&recent_stmts, &source, &excluded_keys, unresolved_mark);
+            for _ in 0..preceding_scan.absorbed {
                 recent_stmts.pop();
                 new_body.pop();
             }
+            if let Some(source_init) = preceding_scan.source_init.clone() {
+                let source_init_stmt = build_source_init_stmt(source_init);
+                recent_stmts.push(source_init_stmt.clone());
+                new_body.push(ModuleItem::Stmt(source_init_stmt));
+            }
+            let mut preceding_accesses = preceding_scan.accesses;
             preceding_accesses.append(&mut inline_accesses);
             let scope_names = collect_scope_names_module(&new_body);
             let new_stmt = build_rest_destructuring(
@@ -272,20 +278,25 @@ fn run_un_object_rest(
             &cross_module_helpers.namespaces,
             &exclusion_arrays,
         ) {
-            let (absorbed, preceding_accesses) =
-                scan_preceding(&recent_stmts, &source, &excluded_keys, unresolved_mark);
+            let preceding_scan =
+                scan_preceding_detailed(&recent_stmts, &source, &excluded_keys, unresolved_mark);
             let scope_names = collect_scope_names_module(&new_body);
-            if absorbed > 0 {
+            if preceding_scan.absorbed > 0 {
                 if let Some(new_stmt) = build_rest_assignment(
                     &rest_binding,
                     &source,
                     &excluded_keys,
-                    &preceding_accesses,
+                    &preceding_scan.accesses,
                     &scope_names,
                 ) {
-                    for _ in 0..absorbed {
+                    for _ in 0..preceding_scan.absorbed {
                         recent_stmts.pop();
                         new_body.pop();
+                    }
+                    if let Some(source_init) = preceding_scan.source_init {
+                        let source_init_stmt = build_source_init_stmt(source_init);
+                        recent_stmts.push(source_init_stmt.clone());
+                        new_body.push(ModuleItem::Stmt(source_init_stmt));
                     }
                     recent_stmts.push(new_stmt.clone());
                     new_body.push(ModuleItem::Stmt(new_stmt));
@@ -367,11 +378,19 @@ impl VisitMut for ObjectRestProcessor<'_> {
                     continue;
                 }
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
-                let (absorbed, mut preceding_accesses) =
-                    scan_preceding(&new_stmts, &source, &excluded_keys, self.unresolved_mark);
-                for _ in 0..absorbed {
+                let preceding_scan = scan_preceding_detailed(
+                    &new_stmts,
+                    &source,
+                    &excluded_keys,
+                    self.unresolved_mark,
+                );
+                for _ in 0..preceding_scan.absorbed {
                     new_stmts.pop();
                 }
+                if let Some(source_init) = preceding_scan.source_init.clone() {
+                    new_stmts.push(build_source_init_stmt(source_init));
+                }
+                let mut preceding_accesses = preceding_scan.accesses;
                 preceding_accesses.append(&mut inline_accesses);
                 let scope_names = collect_scope_names(&new_stmts);
                 new_stmts.push(build_rest_destructuring(
@@ -401,19 +420,26 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 self.cross_module_namespaces,
                 &exclusion_arrays,
             ) {
-                let (absorbed, preceding_accesses) =
-                    scan_preceding(&new_stmts, &source, &excluded_keys, self.unresolved_mark);
+                let preceding_scan = scan_preceding_detailed(
+                    &new_stmts,
+                    &source,
+                    &excluded_keys,
+                    self.unresolved_mark,
+                );
                 let scope_names = collect_scope_names(&new_stmts);
-                if absorbed > 0 {
+                if preceding_scan.absorbed > 0 {
                     if let Some(new_stmt) = build_rest_assignment(
                         &rest_binding,
                         &source,
                         &excluded_keys,
-                        &preceding_accesses,
+                        &preceding_scan.accesses,
                         &scope_names,
                     ) {
-                        for _ in 0..absorbed {
+                        for _ in 0..preceding_scan.absorbed {
                             new_stmts.pop();
+                        }
+                        if let Some(source_init) = preceding_scan.source_init {
+                            new_stmts.push(build_source_init_stmt(source_init));
                         }
                         new_stmts.push(new_stmt);
                         continue;
@@ -1313,21 +1339,49 @@ fn scan_preceding(
     excluded_keys: &[Atom],
     unresolved_mark: Mark,
 ) -> (usize, Vec<PrecedingAccess>) {
+    let scan = scan_preceding_detailed(preceding, source, excluded_keys, unresolved_mark);
+    (scan.absorbed, scan.accesses)
+}
+
+struct PrecedingScan {
+    absorbed: usize,
+    accesses: Vec<PrecedingAccess>,
+    source_init: Option<AssignExpr>,
+}
+
+fn scan_preceding_detailed(
+    preceding: &[Stmt],
+    source: &Expr,
+    excluded_keys: &[Atom],
+    unresolved_mark: Mark,
+) -> PrecedingScan {
     let source_name = match source {
         Expr::Ident(id) => &id.sym,
-        _ => return (0, vec![]),
+        _ => {
+            return PrecedingScan {
+                absorbed: 0,
+                accesses: vec![],
+                source_init: None,
+            };
+        }
     };
 
     let mut absorbed = 0;
     let mut accesses = Vec::new();
+    let mut source_init = None;
     let mut idx = preceding.len();
 
     while idx > 0 {
         idx -= 1;
         let stmt = &preceding[idx];
 
-        if let Some(access) = try_match_preceding(stmt, source_name, excluded_keys) {
+        if let Some((access, init_assign)) =
+            try_match_preceding_detailed(stmt, source_name, excluded_keys)
+        {
             absorbed += 1;
+            if source_init.is_none() {
+                source_init = init_assign;
+            }
             accesses.push(access);
             continue;
         }
@@ -1352,7 +1406,11 @@ fn scan_preceding(
     }
 
     accesses.reverse();
-    (absorbed, accesses)
+    PrecedingScan {
+        absorbed,
+        accesses,
+        source_init,
+    }
 }
 
 fn has_jsx_tag_default_pair(
@@ -1496,11 +1554,11 @@ fn declarators_to_accesses(
     accesses
 }
 
-fn try_match_preceding(
+fn try_match_preceding_detailed(
     stmt: &Stmt,
     source_name: &Atom,
     excluded_keys: &[Atom],
-) -> Option<PrecedingAccess> {
+) -> Option<(PrecedingAccess, Option<AssignExpr>)> {
     // Case 1: const { a, b } = source
     if let Stmt::Decl(Decl::Var(var)) = stmt {
         if var.decls.len() == 1 {
@@ -1549,7 +1607,7 @@ fn try_match_preceding(
                                 }
                             }
                             if !pairs.is_empty() {
-                                return Some(PrecedingAccess::Destructuring(pairs));
+                                return Some((PrecedingAccess::Destructuring(pairs), None));
                             }
                         }
                     }
@@ -1560,16 +1618,17 @@ fn try_match_preceding(
             if let Pat::Ident(bi) = &decl.name {
                 if let Some(init) = &decl.init {
                     if let Expr::Member(MemberExpr { obj, prop, .. }) = init.as_ref() {
-                        if let Expr::Ident(obj_id) = obj.as_ref() {
-                            if obj_id.sym == *source_name {
-                                if let Some(pname) = member_prop_atom(prop) {
-                                    if excluded_keys.contains(&pname) {
-                                        return Some(PrecedingAccess::PropAccess {
+                        if let Some(source_init) = match_source_member_object(obj, source_name) {
+                            if let Some(pname) = member_prop_atom(prop) {
+                                if excluded_keys.contains(&pname) {
+                                    return Some((
+                                        PrecedingAccess::PropAccess {
                                             prop: pname,
                                             binding: bi.id.sym.clone(),
                                             ctxt: bi.id.ctxt,
-                                        });
-                                    }
+                                        },
+                                        source_init,
+                                    ));
                                 }
                             }
                         }
@@ -1585,16 +1644,17 @@ fn try_match_preceding(
             if assign.op == AssignOp::Assign {
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left {
                     if let Expr::Member(MemberExpr { obj, prop, .. }) = assign.right.as_ref() {
-                        if let Expr::Ident(obj_id) = obj.as_ref() {
-                            if obj_id.sym == *source_name {
-                                if let Some(pname) = member_prop_atom(prop) {
-                                    if excluded_keys.contains(&pname) {
-                                        return Some(PrecedingAccess::PropAccess {
+                        if let Some(source_init) = match_source_member_object(obj, source_name) {
+                            if let Some(pname) = member_prop_atom(prop) {
+                                if excluded_keys.contains(&pname) {
+                                    return Some((
+                                        PrecedingAccess::PropAccess {
                                             prop: pname,
                                             binding: binding.id.sym.clone(),
                                             ctxt: binding.id.ctxt,
-                                        });
-                                    }
+                                        },
+                                        source_init,
+                                    ));
                                 }
                             }
                         }
@@ -1607,12 +1667,10 @@ fn try_match_preceding(
     // Case 4: source.prop; (bare expression statement)
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Member(MemberExpr { obj, prop, .. }) = expr.as_ref() {
-            if let Expr::Ident(obj_id) = obj.as_ref() {
-                if obj_id.sym == *source_name {
-                    if let Some(pname) = member_prop_atom(prop) {
-                        if excluded_keys.contains(&pname) {
-                            return Some(PrecedingAccess::BareAccess { _prop: pname });
-                        }
+            if let Some(source_init) = match_source_member_object(obj, source_name) {
+                if let Some(pname) = member_prop_atom(prop) {
+                    if excluded_keys.contains(&pname) {
+                        return Some((PrecedingAccess::BareAccess { _prop: pname }, source_init));
                     }
                 }
             }
@@ -1620,6 +1678,29 @@ fn try_match_preceding(
     }
 
     None
+}
+
+fn match_source_member_object(obj: &Expr, source_name: &Atom) -> Option<Option<AssignExpr>> {
+    match strip_parens(obj) {
+        Expr::Ident(obj_id) if obj_id.sym == *source_name => Some(None),
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+                return None;
+            };
+            if left.id.sym != *source_name {
+                return None;
+            }
+            Some(Some(assign.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn build_source_init_stmt(assign: AssignExpr) -> Stmt {
+    Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(assign)),
+    })
 }
 
 /// Try to match a two-statement pair:
