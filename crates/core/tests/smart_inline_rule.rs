@@ -72,6 +72,120 @@ bar(t);
 }
 
 #[test]
+fn standard_forwards_adjacent_assignment_alias() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    h = cached ?? await load_backup(id);
+    value = h;
+    return value;
+}
+"#;
+    let expected = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    value = cached ?? await load_backup(id);
+    return value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_preserves_adjacent_assignment_alias() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    h = cached ?? await load_backup(id);
+    value = h;
+    return value;
+}
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_forward_assignment_alias_when_temp_read_later() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    h = await load_backup(id);
+    value = h;
+    observe(h);
+    return value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_forward_assignment_alias_when_temp_captured() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    const read = () => h;
+    h = await load_backup(id);
+    value = h;
+    return read();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_forward_assignment_alias_with_direct_eval() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    let value;
+    h = await load_backup(id);
+    value = h;
+    eval("h");
+    return value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_forward_assignment_alias_from_initialized_temp() {
+    let input = r#"
+async function loadValue(id) {
+    let h = cached;
+    let value;
+    h = await load_backup(id);
+    value = h;
+    return value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_forward_assignment_alias_to_unresolved_target() {
+    let input = r#"
+async function loadValue(id) {
+    let h;
+    h = await load_backup(id);
+    value = h;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn no_inline_multi_use_temp_var() {
     // t is used twice — should NOT be inlined
     let input = r#"

@@ -12,12 +12,13 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::is_stable_builtin_alias_root;
-use crate::utils::paren::strip_parens;
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 use super::decl_utils::{
     can_remove_prior_uninitialized_decls, remove_prior_uninitialized_decls, same_ident,
     UninitializedDeclKind,
 };
+use super::eval_utils::is_direct_eval_call;
 use super::helper_matcher::BindingKey;
 use super::RewriteLevel;
 
@@ -207,6 +208,9 @@ fn process_stmts(
     }
     // Pass 1: inline single-use const declarations (temp vars)
     let stmts = inline_temp_vars(stmts, context_for_init_bindings);
+    // Pass 1a: forward adjacent assignment aliases created by async/state-machine
+    // recovery: `tmp = expr; target = tmp;` -> `target = expr;`.
+    let stmts = forward_adjacent_assignment_aliases(stmts, unresolved_mark);
     // Pass 1b: recover the React useState tuple pattern without making generic
     // numeric property reads iterable.
     let stmts = fold_use_state_tuple_reads(stmts, use_state_bindings);
@@ -740,6 +744,241 @@ fn inline_temp_vars(
     }
 
     result
+}
+
+fn forward_adjacent_assignment_aliases(
+    stmts: Vec<Stmt>,
+    unresolved_mark: Option<Mark>,
+) -> Vec<Stmt> {
+    if stmts.len() < 2 {
+        return stmts;
+    }
+
+    let mut result = Vec::with_capacity(stmts.len());
+    let mut idx = 0;
+    while idx < stmts.len() {
+        if idx + 1 < stmts.len() {
+            if let Some((temp, target)) =
+                extract_adjacent_assignment_alias(&stmts[idx], &stmts[idx + 1])
+            {
+                if can_forward_adjacent_assignment_alias(
+                    &stmts,
+                    idx,
+                    &temp,
+                    &target.id,
+                    unresolved_mark,
+                ) {
+                    let mut stmt = stmts[idx].clone();
+                    replace_assignment_target_ident(&mut stmt, target);
+                    result.push(stmt);
+                    idx += 2;
+                    continue;
+                }
+            }
+        }
+
+        result.push(stmts[idx].clone());
+        idx += 1;
+    }
+
+    result
+}
+
+fn extract_adjacent_assignment_alias(first: &Stmt, second: &Stmt) -> Option<(Ident, BindingIdent)> {
+    let (temp, _) = assignment_stmt_to_ident(first)?;
+    let (target, rhs) = assignment_stmt_to_ident(second)?;
+    let Expr::Ident(source) = strip_parens(rhs) else {
+        return None;
+    };
+    if !same_ident(&temp.id, source) || same_ident(&temp.id, &target.id) {
+        return None;
+    }
+
+    Some((temp.id.clone(), target.clone()))
+}
+
+fn assignment_stmt_to_ident(stmt: &Stmt) -> Option<(&BindingIdent, &Expr)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return None;
+    };
+
+    Some((target, assign.right.as_ref()))
+}
+
+fn replace_assignment_target_ident(stmt: &mut Stmt, target: BindingIdent) {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return;
+    };
+    let Expr::Assign(assign) = strip_parens_mut(expr) else {
+        return;
+    };
+
+    assign.left = AssignTarget::Simple(SimpleAssignTarget::Ident(target));
+}
+
+fn can_forward_adjacent_assignment_alias(
+    stmts: &[Stmt],
+    assignment_idx: usize,
+    temp: &Ident,
+    target: &Ident,
+    unresolved_mark: Option<Mark>,
+) -> bool {
+    if same_ident(temp, target) {
+        return false;
+    }
+    if unresolved_mark.is_some_and(|mark| target.ctxt.outer() == mark) {
+        return false;
+    }
+
+    let temp_decls = collect_local_var_decl_matches(stmts, temp);
+    if temp_decls.len() != 1 {
+        return false;
+    }
+    let temp_decl = temp_decls[0];
+    if temp_decl.kind == VarDeclKind::Const
+        || temp_decl.has_init
+        || temp_decl.stmt_idx > assignment_idx
+    {
+        return false;
+    }
+
+    if !has_local_var_decl(stmts, target, assignment_idx) {
+        return false;
+    }
+
+    let usage = AssignmentAliasUsage::collect(stmts, temp);
+    !usage.has_direct_eval && usage.read_count == 1 && usage.write_count == 1
+}
+
+#[derive(Clone, Copy)]
+struct LocalVarDeclMatch {
+    stmt_idx: usize,
+    kind: VarDeclKind,
+    has_init: bool,
+}
+
+fn collect_local_var_decl_matches(stmts: &[Stmt], ident: &Ident) -> Vec<LocalVarDeclMatch> {
+    let mut matches = Vec::new();
+    for (stmt_idx, stmt) in stmts.iter().enumerate() {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if same_ident(&binding.id, ident) {
+                matches.push(LocalVarDeclMatch {
+                    stmt_idx,
+                    kind: var.kind,
+                    has_init: decl.init.is_some(),
+                });
+            }
+        }
+    }
+
+    matches
+}
+
+fn has_local_var_decl(stmts: &[Stmt], ident: &Ident, assignment_idx: usize) -> bool {
+    collect_local_var_decl_matches(stmts, ident)
+        .into_iter()
+        .any(|decl| decl.kind != VarDeclKind::Const && decl.stmt_idx <= assignment_idx)
+}
+
+#[derive(Default)]
+struct AssignmentAliasUsage {
+    read_count: usize,
+    write_count: usize,
+    has_direct_eval: bool,
+}
+
+impl AssignmentAliasUsage {
+    fn collect(stmts: &[Stmt], target: &Ident) -> Self {
+        let mut usage = Self::default();
+        for stmt in stmts {
+            stmt.visit_with(&mut AssignmentAliasUsageCollector {
+                usage: &mut usage,
+                target,
+            });
+        }
+        usage
+    }
+}
+
+struct AssignmentAliasUsageCollector<'a> {
+    usage: &'a mut AssignmentAliasUsage,
+    target: &'a Ident,
+}
+
+impl AssignmentAliasUsageCollector<'_> {
+    fn matches_target(&self, ident: &Ident) -> bool {
+        same_ident(ident, self.target)
+    }
+
+    fn record_lhs(&mut self, target: &AssignTarget) {
+        match target {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                if self.matches_target(&binding.id) {
+                    self.usage.write_count += 1;
+                }
+            }
+            other => other.visit_children_with(self),
+        }
+    }
+}
+
+impl Visit for AssignmentAliasUsageCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self.matches_target(ident) {
+            self.usage.read_count += 1;
+        }
+    }
+
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        decl.init.visit_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        self.record_lhs(&assign.left);
+        assign.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(ident) = update.arg.as_ref() {
+            if self.matches_target(ident) {
+                self.usage.read_count += 1;
+                self.usage.write_count += 1;
+                return;
+            }
+        }
+
+        update.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if is_direct_eval_call(call) {
+            self.usage.has_direct_eval = true;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_prop_name(&mut self, _: &PropName) {}
 }
 
 fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
