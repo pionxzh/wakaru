@@ -116,3 +116,45 @@ function load_user(app_id) {
         "async function should still be recovered after helper cleanup: {output}"
     );
 }
+
+#[test]
+fn late_nullish_pass_rewrites_async_recovered_ternary() {
+    let input = r#"
+var __awaiter = this && this.__awaiter || function(thisArg, _arguments, P, generator) {
+  return new (P || (P = Promise))(function(resolve) {
+    resolve(generator.apply(thisArg, _arguments || []).next());
+  });
+}, __generator = this && this.__generator || function(thisArg, body) {
+  return body.call(thisArg, { label: 0, sent: function() {}, trys: [], ops: [] });
+};
+function load_user(config) {
+  return __awaiter(this, void 0, void 0, function() {
+    var source, tmp;
+    return __generator(this, function(_a) {
+      switch (_a.label) {
+        case 0:
+          if (config != null) return [3, 2];
+          return [4, load_config()];
+        case 1:
+          tmp = _a.sent();
+          return [3, 3];
+        case 2:
+          tmp = config;
+        case 3:
+          source = tmp;
+          return [2, source];
+      }
+    });
+  });
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("config ?? await load_config()"),
+        "late nullish pass should rewrite the conditional exposed by async recovery: {output}"
+    );
+    assert!(
+        !output.contains("config != null ? config : await load_config()"),
+        "recovered async ternary should not survive after late nullish pass: {output}"
+    );
+}

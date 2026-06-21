@@ -627,6 +627,7 @@ use(name);
 #[test]
 fn reconstructs_assignment_array_from_sliced_default_access() {
     let input = r#"
+import n from "@babel/runtime/helpers/slicedToArray";
 let source;
 let tmp;
 let _ref;
@@ -634,12 +635,13 @@ let primary;
 let backup;
 source = input;
 tmp = source.tags;
-_ref = _sliced_to_array(tmp === undefined ? [] : tmp, 3);
+_ref = n(tmp === undefined ? [] : tmp, 3);
 primary = _ref[0];
 backup = _ref[2];
 use(primary, backup);
 "#;
     let expected = r#"
+import n from "@babel/runtime/helpers/slicedToArray";
 let source;
 let primary;
 let backup;
@@ -737,11 +739,100 @@ function nested({ outer: { value = fallbackValue } = {} } = {}) {
 #[test]
 fn sliced_to_array_folded_into_object_destructuring_assignment() {
     let input = r#"
+import n from "@babel/runtime/helpers/slicedToArray";
 source = _t;
 id = source.id;
 _source$profile = source.profile;
 _source$profile2 = _source$profile === void 0 ? {} : _source$profile;
 name = _source$profile2.name;
+_source$tags = source.tags;
+_source$tags2 = _source$tags === void 0 ? [] : _source$tags;
+_source$tags3 = n(_source$tags2, 3);
+primary = _source$tags3[0];
+backup = _source$tags3[2];
+"#;
+    let expected = r#"
+import n from "@babel/runtime/helpers/slicedToArray";
+source = _t;
+({
+  id,
+  profile: { name } = {},
+  tags: [primary, , backup] = []
+} = source);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minified_sliced_to_array_body_folded_into_object_destructuring_assignment() {
+    let input = r#"
+function c(e) {
+    if (Array.isArray(e)) return e;
+}
+function n(e, t) {
+    return c(e) || o(e, t) || s(e, t) || l();
+}
+source = _t;
+id = source.id;
+_source$profile = source.profile;
+_source$profile2 = _source$profile === void 0 ? {} : _source$profile;
+name = _source$profile2.name;
+_source$tags = source.tags;
+_source$tags2 = _source$tags === void 0 ? [] : _source$tags;
+_source$tags3 = n(_source$tags2, 3);
+primary = _source$tags3[0];
+backup = _source$tags3[2];
+"#;
+    let expected = r#"
+function c(e) {
+    if (Array.isArray(e)) return e;
+}
+source = _t;
+({
+  id,
+  profile: { name } = {},
+  tags: [primary, , backup] = []
+} = source);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_removes_minified_sliced_to_array_helper_consumed_in_function_body() {
+    let input = r#"
+function c(e) {
+    if (Array.isArray(e)) return e;
+}
+function n(e, t) {
+    return c(e) || o(e, t) || s(e, t) || l();
+}
+function f(source) {
+    let tmp;
+    let ref;
+    let primary;
+    let backup;
+    tmp = source.tags;
+    ref = n(tmp === undefined ? [] : tmp, 3);
+    primary = ref[0];
+    backup = ref[2];
+    return { primary, backup };
+}
+"#;
+    let output = render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard);
+    assert!(
+        output.contains("tags: [primary, , backup] = []"),
+        "should recover array holes from minified sliced helper:\n{output}"
+    );
+    assert!(
+        !output.contains("function n(") && !output.contains("function c("),
+        "consumed sliced helper and its dependency should be removed:\n{output}"
+    );
+}
+
+#[test]
+fn sliced_to_array_name_without_helper_identity_is_not_reconstructed() {
+    let input = r#"
+source = _t;
 _source$tags = source.tags;
 _source$tags2 = _source$tags === void 0 ? [] : _source$tags;
 _source$tags3 = _slicedToArray(_source$tags2, 3);
@@ -750,11 +841,10 @@ backup = _source$tags3[2];
 "#;
     let expected = r#"
 source = _t;
-({
-  id,
-  profile: { name } = {},
-  tags: [primary, , backup] = []
-} = source);
+({ tags: _source$tags2 = [] } = source);
+_source$tags3 = _slicedToArray(_source$tags2, 3);
+primary = _source$tags3[0];
+backup = _source$tags3[2];
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

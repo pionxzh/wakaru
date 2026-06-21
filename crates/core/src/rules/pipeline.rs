@@ -10,7 +10,7 @@ use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
 use super::dead_imports::compute_pre_dead_import_spans;
-use super::transpiler_helper_utils::LocalHelperContext;
+use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,9 +410,29 @@ runner!(run_un_import_rename, |ctx| UnImportRename::new(
     ctx.unresolved_mark
 ));
 runner!(run_un_export_rename, UnExportRename);
-runner!(run_un_destructuring, |ctx| {
-    UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
-});
+fn run_un_destructuring(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    let mut rule = UnDestructuring::new_with_helpers(
+        ctx.unresolved_mark,
+        ctx.rewrite_level,
+        local_helpers.as_ref(),
+    );
+    module.visit_mut_with(&mut rule);
+
+    let consumed_helpers = rule.consumed_sliced_to_array_helpers();
+    if consumed_helpers.is_empty() {
+        return;
+    }
+
+    local_helpers.remove_helpers_with_dependencies(
+        module,
+        consumed_helpers
+            .into_iter()
+            .map(|key| (key, TranspilerHelperKind::SlicedToArray))
+            .collect(),
+    );
+    ctx.invalidate_local_helpers();
+}
 runner!(run_un_to_array, |ctx| UnToArray::new_with_mark(
     ctx.unresolved_mark
 ));
@@ -605,11 +625,16 @@ define_rule_registry! {
         "UnImportRename",
         "UnExportRename"
     ]),
+    // Async recovery can expose nullish ternaries, but keep this after
+    // UnDestructuring so temp/index reads remain available for pattern recovery.
+    ("UnNullishCoalescing2", Cleanup, run_un_nullish_coalescing, always_enabled, requires: [
+        "UnDestructuring"
+    ]),
     // Strip the `toArray` helper around a recovered array-rest destructuring
     // source (`[a, ...b] = _toArray(x)` -> `[a, ...b] = x`). Runs after
     // UnDestructuring, which builds the `[a, ...b]` pattern this rule keys on.
     ("UnToArray", Cleanup, run_un_to_array, standard_or_above, requires: [
-        "UnDestructuring"
+        "UnNullishCoalescing2"
     ]),
     // UnDestructuring can expose param === undefined ? {} : param initializers.
     ("UnParameters2", Cleanup, run_un_parameters, always_enabled, requires: [

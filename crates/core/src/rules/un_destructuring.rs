@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
@@ -14,6 +16,7 @@ use super::decl_utils::{
     UninitializedDeclKind,
 };
 use super::helper_matcher::{binding_key, BindingKey};
+use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind, TsHelperKind};
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 use crate::utils::paren::strip_parens;
 
@@ -26,6 +29,8 @@ use crate::utils::paren::strip_parens;
 pub struct UnDestructuring {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    sliced_to_array_helpers: Option<HashSet<BindingKey>>,
+    consumed_sliced_to_array_helpers: HashSet<BindingKey>,
 }
 
 impl UnDestructuring {
@@ -37,7 +42,26 @@ impl UnDestructuring {
         Self {
             unresolved_mark,
             level,
+            sliced_to_array_helpers: None,
+            consumed_sliced_to_array_helpers: HashSet::new(),
         }
+    }
+
+    pub(crate) fn new_with_helpers(
+        unresolved_mark: Mark,
+        level: RewriteLevel,
+        local_helpers: &LocalHelperContext,
+    ) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+            sliced_to_array_helpers: Some(collect_sliced_to_array_helpers(local_helpers)),
+            consumed_sliced_to_array_helpers: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn consumed_sliced_to_array_helpers(&self) -> HashSet<BindingKey> {
+        self.consumed_sliced_to_array_helpers.clone()
     }
 }
 
@@ -72,17 +96,33 @@ enum PropKey {
 
 impl VisitMut for UnDestructuring {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        if self.sliced_to_array_helpers.is_none() {
+            let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
+            self.sliced_to_array_helpers = Some(collect_sliced_to_array_helpers(&local_helpers));
+        }
         module.visit_mut_children_with(self);
-        module.body = process_module_items(
+        let (items, consumed_helpers) = process_module_items(
             std::mem::take(&mut module.body),
             self.unresolved_mark,
             self.level,
+            self.sliced_to_array_helpers(),
         );
+        self.consumed_sliced_to_array_helpers
+            .extend(consumed_helpers);
+        module.body = items;
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        *stmts = process_stmts(std::mem::take(stmts), self.unresolved_mark, self.level);
+        let (processed, consumed_helpers) = process_stmts(
+            std::mem::take(stmts),
+            self.unresolved_mark,
+            self.level,
+            self.sliced_to_array_helpers(),
+        );
+        self.consumed_sliced_to_array_helpers
+            .extend(consumed_helpers);
+        *stmts = processed;
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -95,24 +135,47 @@ impl VisitMut for UnDestructuring {
     }
 }
 
+impl UnDestructuring {
+    fn sliced_to_array_helpers(&self) -> &HashSet<BindingKey> {
+        self.sliced_to_array_helpers
+            .as_ref()
+            .expect("UnDestructuring should collect helper facts before visiting statements")
+    }
+}
+
+fn collect_sliced_to_array_helpers(local_helpers: &LocalHelperContext) -> HashSet<BindingKey> {
+    let mut helpers: HashSet<_> = local_helpers
+        .helpers_of_kind(TranspilerHelperKind::SlicedToArray)
+        .keys()
+        .cloned()
+        .collect();
+    helpers.extend(local_helpers.ts_helpers_of_kind(TsHelperKind::Read));
+    helpers
+}
+
 fn process_module_items(
     items: Vec<ModuleItem>,
     unresolved_mark: Mark,
     level: RewriteLevel,
-) -> Vec<ModuleItem> {
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+) -> (Vec<ModuleItem>, Vec<BindingKey>) {
     let mut result = Vec::with_capacity(items.len());
     let mut stmt_buf = Vec::new();
+    let mut consumed_sliced_to_array_helpers = Vec::new();
 
     for item in items {
         match item {
             ModuleItem::Stmt(stmt) => stmt_buf.push(stmt),
             other => {
                 if !stmt_buf.is_empty() {
-                    result.extend(
-                        process_stmts(std::mem::take(&mut stmt_buf), unresolved_mark, level)
-                            .into_iter()
-                            .map(ModuleItem::Stmt),
+                    let (processed, consumed_helpers) = process_stmts(
+                        std::mem::take(&mut stmt_buf),
+                        unresolved_mark,
+                        level,
+                        sliced_to_array_helpers,
                     );
+                    consumed_sliced_to_array_helpers.extend(consumed_helpers);
+                    result.extend(processed.into_iter().map(ModuleItem::Stmt));
                 }
                 result.push(other);
             }
@@ -120,26 +183,35 @@ fn process_module_items(
     }
 
     if !stmt_buf.is_empty() {
-        result.extend(
-            process_stmts(stmt_buf, unresolved_mark, level)
-                .into_iter()
-                .map(ModuleItem::Stmt),
-        );
+        let (processed, consumed_helpers) =
+            process_stmts(stmt_buf, unresolved_mark, level, sliced_to_array_helpers);
+        consumed_sliced_to_array_helpers.extend(consumed_helpers);
+        result.extend(processed.into_iter().map(ModuleItem::Stmt));
     }
 
-    result
+    (result, consumed_sliced_to_array_helpers)
 }
 
-fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -> Vec<Stmt> {
+fn process_stmts(
+    stmts: Vec<Stmt>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+) -> (Vec<Stmt>, Vec<BindingKey>) {
     let mut stmts = hoist_conditional_test_assignments(stmts);
     let mut result = Vec::with_capacity(stmts.len());
     let mut consumed_helpers: Vec<BindingKey> = Vec::new();
     let mut i = 0;
 
     while i < stmts.len() {
-        if let Some(group) =
-            try_reconstruct_group(&stmts, i, unresolved_mark, level, &mut consumed_helpers)
-        {
+        if let Some(group) = try_reconstruct_group(
+            &stmts,
+            i,
+            unresolved_mark,
+            level,
+            sliced_to_array_helpers,
+            &mut consumed_helpers,
+        ) {
             remove_prior_uninitialized_decls_for_bindings(
                 &mut result,
                 &group.remove_prior_bindings,
@@ -161,7 +233,13 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
         remove_unreferenced_helpers(&mut result, &consumed_helpers);
     }
 
-    result
+    let consumed_sliced_to_array_helpers = consumed_helpers
+        .iter()
+        .filter(|key| sliced_to_array_helpers.contains(*key))
+        .cloned()
+        .collect();
+
+    (result, consumed_sliced_to_array_helpers)
 }
 
 struct ReconstructedGroup {
@@ -317,34 +395,66 @@ fn try_reconstruct_group(
     start: usize,
     unresolved_mark: Mark,
     level: RewriteLevel,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
-    try_reconstruct_assignment_group(stmts, start, unresolved_mark)
-        .or_else(|| try_reconstruct_ref_group(stmts, start, unresolved_mark, consumed_helpers))
-        .or_else(|| {
-            (level >= RewriteLevel::Aggressive)
-                .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
-                .flatten()
-        })
+    let mut group_helpers = Vec::new();
+    if let Some(group) = try_reconstruct_assignment_group(
+        stmts,
+        start,
+        unresolved_mark,
+        sliced_to_array_helpers,
+        &mut group_helpers,
+    ) {
+        consumed_helpers.extend(group_helpers);
+        return Some(group);
+    }
+
+    let mut group_helpers = Vec::new();
+    if let Some(group) =
+        try_reconstruct_ref_group(stmts, start, unresolved_mark, &mut group_helpers)
+    {
+        consumed_helpers.extend(group_helpers);
+        return Some(group);
+    }
+
+    (level >= RewriteLevel::Aggressive)
+        .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
+        .flatten()
 }
 
 fn try_reconstruct_assignment_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
-    let first = try_extract_assignment_access(stmts, start, None, unresolved_mark)?;
+    let first = try_extract_assignment_access(
+        stmts,
+        start,
+        None,
+        unresolved_mark,
+        sliced_to_array_helpers,
+    )?;
     let source = first.source;
     let init = first.init;
     let mut accesses = vec![first.access];
     let mut removed_temps = first.removed_temps;
+    let mut matched_helpers = first.consumed_helpers;
 
     let mut i = start + first.consumed;
     while i < stmts.len() {
-        if let Some(next) = try_extract_assignment_access(stmts, i, Some(&source), unresolved_mark)
-        {
+        if let Some(next) = try_extract_assignment_access(
+            stmts,
+            i,
+            Some(&source),
+            unresolved_mark,
+            sliced_to_array_helpers,
+        ) {
             accesses.push(next.access);
             removed_temps.extend(next.removed_temps);
+            matched_helpers.extend(next.consumed_helpers);
             i += next.consumed;
         } else {
             break;
@@ -369,6 +479,7 @@ fn try_reconstruct_assignment_group(
     }
 
     let stmt = build_assignment_destructuring_stmt(accesses, init)?;
+    consumed_helpers.extend(matched_helpers);
     Some(ReconstructedGroup {
         stmt,
         consumed: i - start,
@@ -382,6 +493,7 @@ struct AssignmentAccess {
     access: Access,
     consumed: usize,
     removed_temps: Vec<BindingKey>,
+    consumed_helpers: Vec<BindingKey>,
 }
 
 fn try_extract_assignment_access(
@@ -389,10 +501,15 @@ fn try_extract_assignment_access(
     index: usize,
     expected_source: Option<&Ident>,
     unresolved_mark: Mark,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
 ) -> Option<AssignmentAccess> {
-    if let Some(extracted) =
-        try_extract_assignment_sliced_default_access(stmts, index, expected_source, unresolved_mark)
-    {
+    if let Some(extracted) = try_extract_assignment_sliced_default_access(
+        stmts,
+        index,
+        expected_source,
+        unresolved_mark,
+        sliced_to_array_helpers,
+    ) {
         return Some(extracted);
     }
 
@@ -402,24 +519,30 @@ fn try_extract_assignment_access(
         return Some(extracted);
     }
 
-    if let Some(extracted) =
-        try_extract_assignment_fused_default_access(stmts, index, expected_source, unresolved_mark)
-    {
+    if let Some(extracted) = try_extract_assignment_fused_default_access(
+        stmts,
+        index,
+        expected_source,
+        unresolved_mark,
+        sliced_to_array_helpers,
+    ) {
         return Some(extracted);
     }
 
     if let Some(mut extracted) =
         try_extract_assignment_default_access(stmts, index, expected_source, unresolved_mark)
     {
-        if let Some((nested_pat, extra)) = try_nest_assignment_default_binding(
+        if let Some((nested_pat, extra, consumed_helpers)) = try_nest_assignment_default_binding(
             &extracted.access,
             stmts,
             index + extracted.consumed,
             unresolved_mark,
             &mut extracted.removed_temps,
+            sliced_to_array_helpers,
         ) {
             replace_access_left(&mut extracted.access, nested_pat);
             extracted.consumed += extra;
+            extracted.consumed_helpers.extend(consumed_helpers);
         }
         return Some(extracted);
     }
@@ -444,6 +567,7 @@ fn try_extract_assignment_access(
         access,
         consumed: 1,
         removed_temps: Vec::new(),
+        consumed_helpers: Vec::new(),
     })
 }
 
@@ -493,6 +617,7 @@ fn try_extract_assignment_member_default_access(
         access,
         consumed: 2,
         removed_temps: vec![temp_key],
+        consumed_helpers: Vec::new(),
     })
 }
 
@@ -501,6 +626,7 @@ fn try_extract_assignment_sliced_default_access(
     index: usize,
     expected_source: Option<&Ident>,
     unresolved_mark: Mark,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
 ) -> Option<AssignmentAccess> {
     let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
     let (source, source_init, source_access) =
@@ -513,7 +639,8 @@ fn try_extract_assignment_sliced_default_access(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    if !is_sliced_to_array_callee_name(callee.as_ref()) || call.args.len() != 2 {
+    let helper_key = sliced_to_array_callee_binding(callee.as_ref(), sliced_to_array_helpers)?;
+    if call.args.len() != 2 {
         return None;
     }
     let (default, fused_temp) =
@@ -533,6 +660,7 @@ fn try_extract_assignment_sliced_default_access(
         &ref_binding.id,
         unresolved_mark,
         &mut removed_temps,
+        sliced_to_array_helpers,
     );
     if collected.accesses.is_empty() {
         return None;
@@ -555,6 +683,11 @@ fn try_extract_assignment_sliced_default_access(
         access,
         consumed: 2 + collected.consumed,
         removed_temps,
+        consumed_helpers: {
+            let mut helpers = vec![helper_key];
+            helpers.extend(collected.consumed_helpers);
+            helpers
+        },
     })
 }
 
@@ -568,6 +701,7 @@ fn try_extract_assignment_fused_default_access(
     index: usize,
     expected_source: Option<&Ident>,
     unresolved_mark: Mark,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
 ) -> Option<AssignmentAccess> {
     let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
     let (source, source_init, source_access) =
@@ -617,6 +751,7 @@ fn try_extract_assignment_fused_default_access(
         &ref_binding.id,
         unresolved_mark,
         &mut removed_temps,
+        sliced_to_array_helpers,
     );
     let consumed = 2 + collected.consumed;
     accesses.extend(collected.accesses);
@@ -643,6 +778,7 @@ fn try_extract_assignment_fused_default_access(
         access,
         consumed,
         removed_temps,
+        consumed_helpers: collected.consumed_helpers,
     })
 }
 
@@ -680,6 +816,7 @@ fn try_extract_assignment_default_access(
         access,
         consumed: 2,
         removed_temps: vec![temp_key],
+        consumed_helpers: Vec::new(),
     })
 }
 
@@ -689,7 +826,8 @@ fn try_nest_assignment_default_binding(
     nested_start: usize,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
-) -> Option<(Pat, usize)> {
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+) -> Option<(Pat, usize, Vec<BindingKey>)> {
     let default_binding = match access {
         Access::Object { pat, .. } | Access::Array { pat, .. } => {
             let Pat::Assign(assign) = pat else {
@@ -709,6 +847,7 @@ fn try_nest_assignment_default_binding(
         default_binding,
         unresolved_mark,
         removed_temps,
+        sliced_to_array_helpers,
     );
 
     if collected.accesses.is_empty() {
@@ -723,7 +862,7 @@ fn try_nest_assignment_default_binding(
 
     removed_temps.push(nested_key);
     let nested_pat = build_pat_from_accesses(collected.accesses)?;
-    Some((nested_pat, collected.consumed))
+    Some((nested_pat, collected.consumed, collected.consumed_helpers))
 }
 
 fn collect_assignment_accesses_on(
@@ -732,21 +871,34 @@ fn collect_assignment_accesses_on(
     ref_ident: &Ident,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
 ) -> CollectedAccesses {
     let mut accesses = Vec::new();
+    let mut consumed_helpers = Vec::new();
     let mut i = start;
 
     while i < stmts.len() {
-        if let Some(extracted) =
-            try_extract_assignment_access(stmts, i, Some(ref_ident), unresolved_mark)
-        {
+        if let Some(extracted) = try_extract_assignment_access(
+            stmts,
+            i,
+            Some(ref_ident),
+            unresolved_mark,
+            sliced_to_array_helpers,
+        ) {
             accesses.push(extracted.access);
             removed_temps.extend(extracted.removed_temps);
+            consumed_helpers.extend(extracted.consumed_helpers);
             i += extracted.consumed;
-        } else if let Some((nested, consumed)) =
-            try_expand_sliced_to_array_accesses(stmts, i, ref_ident, unresolved_mark, removed_temps)
-        {
+        } else if let Some((nested, consumed, helpers)) = try_expand_sliced_to_array_accesses(
+            stmts,
+            i,
+            ref_ident,
+            unresolved_mark,
+            removed_temps,
+            sliced_to_array_helpers,
+        ) {
             accesses.extend(nested);
+            consumed_helpers.extend(helpers);
             i += consumed;
         } else {
             break;
@@ -756,6 +908,7 @@ fn collect_assignment_accesses_on(
     CollectedAccesses {
         accesses,
         consumed: i - start,
+        consumed_helpers,
     }
 }
 
@@ -771,7 +924,8 @@ fn try_expand_sliced_to_array_accesses(
     expected_source: &Ident,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
-) -> Option<(Vec<Access>, usize)> {
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+) -> Option<(Vec<Access>, usize, Vec<BindingKey>)> {
     let (ref_binding, ref_init) = extract_binding_assignment(stmts.get(index)?)?;
     let Expr::Call(call) = strip_parens(ref_init) else {
         return None;
@@ -779,7 +933,8 @@ fn try_expand_sliced_to_array_accesses(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    if !is_sliced_to_array_callee_name(callee.as_ref()) || call.args.len() != 2 {
+    let helper_key = sliced_to_array_callee_binding(callee.as_ref(), sliced_to_array_helpers)?;
+    if call.args.len() != 2 {
         return None;
     }
     let source_arg = strip_parens(call.args[0].expr.as_ref());
@@ -798,6 +953,7 @@ fn try_expand_sliced_to_array_accesses(
         &ref_binding.id,
         unresolved_mark,
         removed_temps,
+        sliced_to_array_helpers,
     );
     if collected.accesses.is_empty() {
         return None;
@@ -806,7 +962,9 @@ fn try_expand_sliced_to_array_accesses(
     if ident_used_in_stmts(&stmts[after..], &binding_key(&ref_binding.id)) {
         return None;
     }
-    Some((collected.accesses, 1 + collected.consumed))
+    let mut helpers = vec![helper_key];
+    helpers.extend(collected.consumed_helpers);
+    Some((collected.accesses, 1 + collected.consumed, helpers))
 }
 
 fn try_reconstruct_ref_group(
@@ -867,6 +1025,7 @@ fn try_reconstruct_ref_group(
 struct CollectedAccesses {
     accesses: Vec<Access>,
     consumed: usize,
+    consumed_helpers: Vec<BindingKey>,
 }
 
 fn collect_accesses_on(
@@ -899,6 +1058,7 @@ fn collect_accesses_on(
     CollectedAccesses {
         accesses,
         consumed: i - start,
+        consumed_helpers: Vec::new(),
     }
 }
 
@@ -1435,14 +1595,15 @@ fn source_access_from_member_prop(prop: &MemberProp) -> Option<SourceAccess> {
     }
 }
 
-fn is_sliced_to_array_callee_name(expr: &Expr) -> bool {
+fn sliced_to_array_callee_binding(
+    expr: &Expr,
+    sliced_to_array_helpers: &HashSet<BindingKey>,
+) -> Option<BindingKey> {
     let Expr::Ident(callee) = strip_parens(expr) else {
-        return false;
+        return None;
     };
-    matches!(
-        callee.sym.as_ref(),
-        "_sliced_to_array" | "_slicedToArray" | "_slicedToArrayLoose" | "_sliced_to_array_loose"
-    )
+    let key = binding_key(callee);
+    sliced_to_array_helpers.contains(&key).then_some(key)
 }
 
 fn extract_assignment_source_expr(

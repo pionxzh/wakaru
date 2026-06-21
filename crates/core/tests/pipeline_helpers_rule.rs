@@ -320,6 +320,8 @@ fn rule_descriptors_expose_dependency_metadata() {
             "UnWebpackInterop"
         ]
     );
+    assert_eq!(requires("UnObjectRest3"), &["UnAsyncAwait"]);
+    assert_eq!(requires("UnNullishCoalescing2"), &["UnDestructuring"]);
     assert_eq!(requires("UnWebpackInterop2"), &["UnObjectRest3"]);
     assert_eq!(requires("UnWebpackInterop3"), &["UnEsm"]);
     assert_eq!(requires("UnParameters2"), &["UnDestructuring"]);
