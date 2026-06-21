@@ -49,9 +49,12 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
 5. **SystemJS** — top-level `System.register(...)` modules
-6. **esbuild / Bun-compatible scope-hoisted ESM** — scope-hoisted ESM
-   namespace boundaries (`__export(ns, ...)`) and esbuild lazy-module helpers
-   (`__commonJS` / `__esm`)
+6. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
+   (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
+   Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
+   bundles from Bun are detected and split by this unpacker. Pure ESM
+   scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
+   `__export` or `__commonJS` markers falls through to single-file decompile
 
 Unpackers emit module code strings. They do not run the normal decompile rule
 pipeline — that's the driver's job. Webpack4 is the exception only for
@@ -292,8 +295,8 @@ crates/
         webpack5.rs                 — webpack5 splitter
         browserify.rs               — browserify splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
-        esbuild.rs                  — esbuild splitter
-        scope_hoist.rs              — esbuild/Bun scope-hoisted ESM extraction
+        esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
+        scope_hoist.rs              — scope-hoisted ESM extraction (esbuild, Bun, Vite)
       utils/
         matcher.rs                  — AST helper predicates
     tests/
