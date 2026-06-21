@@ -222,6 +222,8 @@ struct TraceArgs {
 }
 
 fn main() -> Result<()> {
+    install_panic_hook();
+
     let cli = Cli::parse();
     let _profile_guard = init_profile(cli.profile.as_deref(), cli.profile_rules)?;
 
@@ -496,6 +498,23 @@ fn format_elapsed(d: Duration) -> String {
     } else {
         format!("{}ms", d.as_millis())
     }
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        let version = env!("CARGO_PKG_VERSION");
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let body = format!("**Version:** {version}%0A**OS:** {os} {arch}%0A%0A```%0A<paste panic output here>%0A```");
+        eprintln!();
+        eprintln!("wakaru {version} ({os} {arch}) encountered an internal error.");
+        eprintln!("This is a bug. Please report it at:");
+        eprintln!(
+            "  https://github.com/pionxzh/wakaru/issues/new?labels=pending+triage&title=Internal+error+in+wakaru+{version}&body={body}"
+        );
+    }));
 }
 
 fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
