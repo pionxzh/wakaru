@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   existsSync,
@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import {
   dirname,
   extname,
@@ -565,6 +565,101 @@ export function discoverTests(test262Root, paths) {
   return files;
 }
 
+function defaultConcurrency() {
+  return Math.max(1, Math.min(16, (cpus().length || 4) - 2));
+}
+
+async function runPool(items, worker, concurrency = defaultConcurrency()) {
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await worker(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+}
+
+function withTimeout(promise, timeoutMs, relativePath) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        resolve({
+          result: rejected(
+            relativePath,
+            "case-timeout",
+            new Error(`case timed out after ${timeoutMs}ms`),
+            "case-timeout",
+          ),
+        });
+      }, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function resolveWakaruCmd() {
+  const configured = process.env.WAKARU;
+  if (configured) {
+    return { command: configured, prefix: [] };
+  }
+  const debugBinary = join(
+    repoRoot,
+    "target",
+    "debug",
+    process.platform === "win32" ? "wakaru.exe" : "wakaru",
+  );
+  if (existsSync(debugBinary)) {
+    return { command: debugBinary, prefix: [] };
+  }
+  throw new Error(
+    `missing wakaru binary: run "cargo build -p wakaru-cli" first, or set WAKARU to a wakaru executable`,
+  );
+}
+
+function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
+  const { command, prefix } = wakaruCmd;
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, [...prefix, "--level", level, "-"], {
+      cwd: repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    let timer = null;
+
+    function finish(error, result) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolvePromise(result);
+    }
+
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        child.kill();
+        const err = new Error(`wakaru timed out after ${timeoutMs}ms`);
+        err.isTimeout = true;
+        finish(err);
+      }, timeoutMs);
+    }
+
+    child.stdin.on("error", () => {});
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", (err) => finish(err));
+    child.on("close", (code) => {
+      if (code === 0) finish(null, stdout);
+      else finish(new Error(`wakaru exited ${code}\n${stderr || stdout}`));
+    });
+    child.stdin.end(source);
+  });
+}
+
 export async function runRoundTrip(options) {
   const tests = options.rerunFrom
     ? discoverTestsFromReport(options.test262Root, options.rerunFrom, options.rerunStatuses)
@@ -601,6 +696,10 @@ export async function runRoundTrip(options) {
   writeReportOutputs(report, options);
 
   try {
+    // Phase 1: classify tests, run baseline + transform + transformed-runtime checks.
+    // Tests that pass all pre-decompile checks are collected for batch decompilation.
+    const pending = [];
+
     for (const filePath of tests) {
       const source = readFileSync(filePath, "utf8");
       const metadata = parseTestMetadata(source);
@@ -638,29 +737,64 @@ export async function runRoundTrip(options) {
 
       report.totals.runnable += 1;
       const harnessSource = buildHarnessSource(options.test262Root, metadata);
-      const result = await runOneTestWithTimeout({
-        filePath,
-        relativePath,
-        source,
-        harnessSource,
-        variants,
-        tmpRoot,
-        options,
-        knownBlockers,
-      });
-      report.results.push(result);
-      report.totals.processed += 1;
-      if (result.status === "passed") {
-        report.totals.passed += 1;
-      } else if (result.status === "unsupported") {
-        report.totals.unsupported += 1;
-      } else if (result.status === "rejected") {
-        report.totals.rejected += 1;
-      } else {
-        report.totals.failed += 1;
+      const isModule = variants.some((v) => v.module);
+
+      const prepPromise = isModule
+        ? prepareModuleTest({ filePath, relativePath, harnessSource, tmpRoot, options, knownBlockers })
+        : prepareScriptTest({ filePath, relativePath, source, harnessSource, variants, options, knownBlockers });
+
+      const prep = await withTimeout(prepPromise, options.caseTimeoutMs, relativePath);
+
+      if (prep.result) {
+        recordResult(report, prep.result, options);
+        continue;
       }
-      writeReportOutputs(report, options);
+
+      pending.push(prep);
     }
+
+    // Phase 2: batch-decompile all pending tests in parallel.
+    if (pending.length > 0) {
+      const wakaruCmd = resolveWakaruCmd();
+      const decompileJobs = [];
+
+      for (const entry of pending) {
+        if (entry.isModule) {
+          for (const [modPath, modSource] of entry.transformedSources) {
+            decompileJobs.push({ entry, source: modSource, modulePath: modPath });
+          }
+        } else {
+          decompileJobs.push({ entry, source: entry.transformed });
+        }
+      }
+
+      await runPool(decompileJobs, async (job) => {
+        if (job.entry.decompileError) return;
+        try {
+          const code = await runWakaruAsync(job.source, {
+            level: options.level,
+            timeoutMs: options.caseTimeoutMs,
+            wakaruCmd,
+          });
+          if (job.modulePath != null) {
+            job.entry.decompiledSources.set(job.modulePath, code);
+          } else {
+            job.entry.decompiled = code;
+          }
+        } catch (error) {
+          job.entry.decompileError = error;
+        }
+      });
+    }
+
+    // Phase 3: verify decompiled results against the Test262 harness.
+    for (const entry of pending) {
+      const result = entry.isModule
+        ? await verifyModuleTest(entry)
+        : await verifyScriptTest(entry);
+      recordResult(report, result, options);
+    }
+
     report.complete = true;
     writeReportOutputs(report, options);
   } finally {
@@ -680,54 +814,15 @@ export function discoverTestsFromReport(test262Root, reportPath, statuses) {
   return discoverTests(test262Root, [...new Set(selected)]);
 }
 
-async function runOneTestWithTimeout(args) {
-  const timeoutMs = args.options.caseTimeoutMs;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return runOneTest(args);
-  }
-  let timer = null;
-  try {
-    return await Promise.race([
-      runOneTest(args),
-      new Promise((resolve) => {
-        timer = setTimeout(() => {
-          resolve(
-            rejected(
-              args.relativePath,
-              "case-timeout",
-              new Error(`case timed out after ${timeoutMs}ms`),
-              "case-timeout",
-            ),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function runOneTest({
+async function prepareScriptTest({
   filePath,
   relativePath,
   source,
   harnessSource,
   variants,
-  tmpRoot,
   options,
   knownBlockers,
 }) {
-  if (variants.some((variant) => variant.module)) {
-    return runOneModuleTest({
-      filePath,
-      relativePath,
-      harnessSource,
-      tmpRoot,
-      options,
-      knownBlockers,
-    });
-  }
-
   try {
     for (const variant of variants) {
       await executeTestSource({
@@ -738,20 +833,22 @@ async function runOneTest({
       });
     }
   } catch (error) {
-    return unsupported(relativePath, "baseline", error, "node-vm-baseline");
+    return { result: unsupported(relativePath, "baseline", error, "node-vm-baseline") };
   }
 
   let transformed;
   try {
     transformed = await transformSource(source, options);
   } catch (error) {
-    return rejected(
-      relativePath,
-      "transform",
-      error,
-      knownTransformRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
-        "transform-reject",
-    );
+    return {
+      result: rejected(
+        relativePath,
+        "transform",
+        error,
+        knownTransformRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
+          "transform-reject",
+      ),
+    };
   }
 
   try {
@@ -764,39 +861,138 @@ async function runOneTest({
       });
     }
   } catch (error) {
-    return rejected(
-      relativePath,
-      "transformed-runtime",
-      error,
-      knownTransformedRuntimeRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
-        "transform-runtime",
-    );
+    return {
+      result: rejected(
+        relativePath,
+        "transformed-runtime",
+        error,
+        knownTransformedRuntimeRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
+          "transform-runtime",
+      ),
+    };
   }
 
-  let decompiled;
+  return {
+    isModule: false,
+    relativePath,
+    variants,
+    harnessSource,
+    transformed,
+    knownBlockers,
+    decompiled: null,
+    decompileError: null,
+  };
+}
+
+async function prepareModuleTest({
+  filePath,
+  relativePath,
+  harnessSource,
+  tmpRoot,
+  options,
+  knownBlockers,
+}) {
+  let originalGraph;
   try {
-    decompiled = runWakaru(transformed, {
-      level: options.level,
+    originalGraph = readModuleGraph(options.test262Root, filePath);
+  } catch (error) {
+    return { result: unsupported(relativePath, "baseline", error, "module-graph-baseline") };
+  }
+
+  try {
+    executeModuleGraph({
+      harnessSource,
+      entryPath: relativePath,
+      sources: originalGraph.sources,
       tmpRoot,
-      basename: relativePath.replaceAll("/", "__"),
+      phase: "original",
       timeoutMs: options.caseTimeoutMs,
     });
   } catch (error) {
-    if (isTimeoutError(error)) {
-      return rejected(relativePath, "case-timeout", error, "case-timeout");
+    return { result: unsupported(relativePath, "baseline", error, "node-module-baseline") };
+  }
+
+  let transformedSources;
+  try {
+    transformedSources = new Map();
+    for (const [path, moduleSource] of originalGraph.sources) {
+      transformedSources.set(path, await transformSource(moduleSource, options, { module: true }));
+    }
+  } catch (error) {
+    return {
+      result: rejected(
+        relativePath,
+        "transform",
+        error,
+        knownTransformRejectReason({
+          path: relativePath,
+          error,
+          variants: [{ name: "module", strict: true, module: true }],
+          knownBlockers,
+        }) ?? "transform-reject",
+      ),
+    };
+  }
+
+  try {
+    executeModuleGraph({
+      harnessSource,
+      entryPath: relativePath,
+      sources: transformedSources,
+      tmpRoot,
+      phase: "transformed",
+      timeoutMs: options.caseTimeoutMs,
+    });
+  } catch (error) {
+    return {
+      result: rejected(
+        relativePath,
+        "transformed-runtime",
+        error,
+        knownTransformedRuntimeRejectReason({
+          path: relativePath,
+          error,
+          variants: [{ name: "module", strict: true, module: true }],
+          knownBlockers,
+        }) ?? "transform-runtime",
+      ),
+    };
+  }
+
+  return {
+    isModule: true,
+    relativePath,
+    harnessSource,
+    transformedSources,
+    originalGraphSize: originalGraph.sources.size,
+    tmpRoot,
+    caseTimeoutMs: options.caseTimeoutMs,
+    knownBlockers,
+    decompiledSources: new Map(),
+    decompileError: null,
+  };
+}
+
+async function verifyScriptTest(entry) {
+  const { relativePath, variants, harnessSource, transformed, knownBlockers } = entry;
+
+  if (entry.decompileError) {
+    if (isTimeoutError(entry.decompileError)) {
+      return rejected(relativePath, "case-timeout", entry.decompileError, "case-timeout");
     }
     const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
-      error,
+      entry.decompileError,
       variants,
       relativePath,
       knownBlockers,
     );
     if (parseUnsupportedReason) {
-      return unsupported(relativePath, "wakaru-parse", error, parseUnsupportedReason);
+      return unsupported(relativePath, "wakaru-parse", entry.decompileError, parseUnsupportedReason);
     }
-    return failure(relativePath, "wakaru", error, { transformed });
+    return failure(relativePath, "wakaru", entry.decompileError, { transformed });
   }
 
+  const decompiled = entry.decompiled;
   try {
     for (const variant of variants) {
       await executeTestSource({
@@ -844,104 +1040,26 @@ async function runOneTest({
   };
 }
 
-async function runOneModuleTest({
-  filePath,
-  relativePath,
-  harnessSource,
-  tmpRoot,
-  options,
-  knownBlockers,
-}) {
-  let originalGraph;
-  try {
-    originalGraph = readModuleGraph(options.test262Root, filePath);
-  } catch (error) {
-    return unsupported(relativePath, "baseline", error, "module-graph-baseline");
-  }
+async function verifyModuleTest(entry) {
+  const {
+    relativePath, harnessSource, transformedSources, originalGraphSize,
+    tmpRoot, caseTimeoutMs, knownBlockers, decompiledSources,
+  } = entry;
 
-  try {
-    executeModuleGraph({
-      harnessSource,
-      entryPath: relativePath,
-      sources: originalGraph.sources,
-      tmpRoot,
-      phase: "original",
-      timeoutMs: options.caseTimeoutMs,
-    });
-  } catch (error) {
-    return unsupported(relativePath, "baseline", error, "node-module-baseline");
-  }
-
-  let transformedSources;
-  try {
-    transformedSources = new Map();
-    for (const [path, moduleSource] of originalGraph.sources) {
-      transformedSources.set(path, await transformSource(moduleSource, options, { module: true }));
-    }
-  } catch (error) {
-    return rejected(
-      relativePath,
-      "transform",
-      error,
-      knownTransformRejectReason({
-        path: relativePath,
-        error,
-        variants: [{ name: "module", strict: true, module: true }],
-        knownBlockers,
-      }) ?? "transform-reject",
-    );
-  }
-
-  try {
-    executeModuleGraph({
-      harnessSource,
-      entryPath: relativePath,
-      sources: transformedSources,
-      tmpRoot,
-      phase: "transformed",
-      timeoutMs: options.caseTimeoutMs,
-    });
-  } catch (error) {
-    return rejected(
-      relativePath,
-      "transformed-runtime",
-      error,
-      knownTransformedRuntimeRejectReason({
-        path: relativePath,
-        error,
-        variants: [{ name: "module", strict: true, module: true }],
-        knownBlockers,
-      }) ?? "transform-runtime",
-    );
-  }
-
-  const decompiledSources = new Map();
-  try {
-    for (const [path, moduleSource] of transformedSources) {
-      decompiledSources.set(
-        path,
-        runWakaru(moduleSource, {
-          level: options.level,
-          tmpRoot,
-          basename: `${relativePath.replaceAll("/", "__")}__${path.replaceAll("/", "__")}`,
-          timeoutMs: options.caseTimeoutMs,
-        }),
-      );
-    }
-  } catch (error) {
-    if (isTimeoutError(error)) {
-      return rejected(relativePath, "case-timeout", error, "case-timeout");
+  if (entry.decompileError) {
+    if (isTimeoutError(entry.decompileError)) {
+      return rejected(relativePath, "case-timeout", entry.decompileError, "case-timeout");
     }
     const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
-      error,
+      entry.decompileError,
       [{ name: "module", strict: true, module: true }],
       relativePath,
       knownBlockers,
     );
     if (parseUnsupportedReason) {
-      return unsupported(relativePath, "wakaru-parse", error, parseUnsupportedReason);
+      return unsupported(relativePath, "wakaru-parse", entry.decompileError, parseUnsupportedReason);
     }
-    return failure(relativePath, "wakaru", error, {
+    return failure(relativePath, "wakaru", entry.decompileError, {
       transformed: Object.fromEntries(transformedSources),
     });
   }
@@ -953,7 +1071,7 @@ async function runOneModuleTest({
       sources: decompiledSources,
       tmpRoot,
       phase: "decompiled",
-      timeoutMs: options.caseTimeoutMs,
+      timeoutMs: caseTimeoutMs,
     });
   } catch (error) {
     const decompiled = decompiledSources.get(relativePath) ?? "";
@@ -991,8 +1109,23 @@ async function runOneModuleTest({
     path: relativePath,
     status: "passed",
     variants: ["module"],
-    modules: originalGraph.sources.size,
+    modules: originalGraphSize,
   };
+}
+
+function recordResult(report, result, options) {
+  report.results.push(result);
+  report.totals.processed += 1;
+  if (result.status === "passed") {
+    report.totals.passed += 1;
+  } else if (result.status === "unsupported") {
+    report.totals.unsupported += 1;
+  } else if (result.status === "rejected") {
+    report.totals.rejected += 1;
+  } else if (result.status === "failed") {
+    report.totals.failed += 1;
+  }
+  writeReportOutputs(report, options);
 }
 
 function failure(path, phase, error, extra = {}) {
@@ -1210,25 +1343,6 @@ function anyStartsWith(value, prefixes) {
 
 function allRegexMatch(value, patterns) {
   return !patterns || patterns.every((pattern) => new RegExp(pattern).test(value));
-}
-
-function runWakaru(source, { level, tmpRoot, basename, timeoutMs }) {
-  const input = join(tmpRoot, `${basename}.js`);
-  writeFileSync(input, source);
-
-  const configured = process.env.WAKARU;
-  if (configured) {
-    return runChecked(configured, ["--level", level, input], { timeoutMs }).stdout;
-  }
-
-  const debugBinary = join(repoRoot, "target", "debug", process.platform === "win32" ? "wakaru.exe" : "wakaru");
-  if (existsSync(debugBinary)) {
-    return runChecked(debugBinary, ["--level", level, input], { timeoutMs }).stdout;
-  }
-
-  throw new Error(
-    `missing wakaru binary: run "cargo build -p wakaru-cli" first, or set WAKARU to a wakaru executable`,
-  );
 }
 
 async function ensureTerser(toolRoot) {
@@ -1475,6 +1589,7 @@ function formatError(error) {
 }
 
 function isTimeoutError(error) {
+  if (error?.isTimeout) return true;
   const message = formatError(error);
   return /\bETIMEDOUT\b/.test(message) || /spawnSync .* ETIMEDOUT/.test(message);
 }

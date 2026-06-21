@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, relative, resolve } from "node:path";
 
@@ -143,7 +144,36 @@ export function formatCommand(job) {
   return [job.command, ...job.args].map(shellQuote).join(" ");
 }
 
-export function runBaselineMatrix(options) {
+function defaultConcurrency() {
+  return Math.max(1, Math.min(4, (cpus().length || 4) - 2));
+}
+
+async function runPool(items, worker, concurrency = defaultConcurrency()) {
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await worker(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+}
+
+function spawnJobAsync(job) {
+  return new Promise((resolvePromise) => {
+    const child = spawn(job.command, job.args, {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stdout.resume();
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", (err) => resolvePromise({ code: 1, stderr: err.message }));
+    child.on("close", (code) => resolvePromise({ code: code ?? 1, stderr }));
+  });
+}
+
+export async function runBaselineMatrix(options) {
   const jobs = buildBaselineMatrixJobs(options);
   if (options.dryRun) {
     for (const job of jobs) {
@@ -163,19 +193,24 @@ export function runBaselineMatrix(options) {
     }
   }
 
-  for (const job of jobs) {
-    const displaySummary = relative(repoRoot, job.summary);
-    console.log(`\n=== ${job.producer} / ${job.slice} -> ${displaySummary} ===`);
-    const result = spawnSync(job.command, job.args, {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-    if (result.status !== 0) {
-      return result.status ?? 1;
-    }
-  }
+  const concurrency = defaultConcurrency();
+  let failCount = 0;
 
-  return 0;
+  console.log(`Running ${jobs.length} jobs with concurrency ${concurrency}...`);
+
+  await runPool(jobs, async (job) => {
+    const displaySummary = relative(repoRoot, job.summary);
+    const { code, stderr } = await spawnJobAsync(job);
+    if (code !== 0) {
+      console.log(`FAIL ${job.producer} / ${job.slice} -> ${displaySummary} (exit ${code})`);
+      if (stderr.trim()) console.log(stderr.trim());
+      failCount++;
+    } else {
+      console.log(`DONE ${job.producer} / ${job.slice} -> ${displaySummary}`);
+    }
+  }, concurrency);
+
+  return failCount > 0 ? 1 : 0;
 }
 
 export function usage() {
@@ -243,7 +278,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.log(usage());
       process.exit(0);
     }
-    process.exitCode = runBaselineMatrix(options);
+    process.exitCode = await runBaselineMatrix(options);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

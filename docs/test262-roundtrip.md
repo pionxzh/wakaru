@@ -160,6 +160,11 @@ is already set.
 The lower-level roundtrip runner does not fall back to `cargo run`; build the
 CLI first or set `WAKARU` before calling it directly.
 
+Both runners use parallel decompilation internally: the roundtrip runner batches
+all wakaru invocations and runs them concurrently (bounded by `cpus - 2`), and
+the matrix runner runs producer/slice jobs in parallel. A full 3-producer ×
+20-slice matrix that previously took hours completes in minutes.
+
 `swc-minify` and `esbuild-minify` are standalone producer pipelines; they are
 not followed by Terser.
 
@@ -263,3 +268,19 @@ Treat baseline movement as follows:
 - `failed` going up needs investigation.
 - `unsupported`/`rejected` moving is acceptable only when the reason is
   understood and documented in the JSON/report.
+
+## Stats
+
+`scripts/correctness/test262-stats.json` caches the current baseline totals so
+other sessions can read them without regenerating all summaries. Update after
+baseline changes:
+
+```powershell
+node scripts\correctness\test262-collect-stats.mjs                               # update all
+node scripts\correctness\test262-collect-stats.mjs --producer swc-minify         # one producer
+node scripts\correctness\test262-collect-stats.mjs --slice classes --slice scope  # specific slices
+node scripts\correctness\test262-collect-stats.mjs --check                        # verify freshness
+```
+
+When `--producer` or `--slice` is given, only matching entries are re-collected;
+the rest are kept from the existing stats file.
