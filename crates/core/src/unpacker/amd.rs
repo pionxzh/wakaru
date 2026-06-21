@@ -6,7 +6,7 @@ use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
-use crate::unpacker::{sanitize_relative_path, UnpackResult, UnpackedModule};
+use crate::unpacker::{sanitize_relative_path, BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -148,7 +148,7 @@ fn emit_define_modules(defines: Vec<AmdDefine<'_>>, cm: Lrc<SourceMap>) -> Optio
         });
     }
 
-    Some(UnpackResult::new(modules))
+    Some(UnpackResult::new(modules, BundleFormat::Amd))
 }
 
 fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
@@ -171,12 +171,15 @@ fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackRe
     let factory = factory?;
 
     let synthetic = factory_to_module(factory, &[], "module.js", "module", &HashMap::new())?;
-    Some(UnpackResult::new(vec![UnpackedModule {
-        id: "module".to_string(),
-        is_entry: true,
-        code: emit_module(synthetic, cm).ok()?,
-        filename: "module.js".to_string(),
-    }]))
+    Some(UnpackResult::new(
+        vec![UnpackedModule {
+            id: "module".to_string(),
+            is_entry: true,
+            code: emit_module(synthetic, cm).ok()?,
+            filename: "module.js".to_string(),
+        }],
+        BundleFormat::Amd,
+    ))
 }
 
 fn is_directive_expr(expr: &Expr) -> bool {

@@ -16,7 +16,9 @@ use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
-use crate::unpacker::{module_item_declared_binding_ids, BindingId, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    module_item_declared_binding_ids, BindingId, BundleFormat, UnpackResult, UnpackedModule,
+};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
@@ -846,7 +848,10 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         });
     }
 
-    Some(UnpackResult::without_cycle_premerge(modules))
+    Some(UnpackResult::without_cycle_premerge(
+        modules,
+        BundleFormat::Esbuild,
+    ))
 }
 
 fn emit_esm_init_function_code(

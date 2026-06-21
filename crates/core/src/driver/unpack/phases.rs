@@ -470,7 +470,11 @@ pub(super) fn unpack_multi_module_with_plan(
         warnings.extend(collect_import_cycle_warnings(&modules));
     }
 
-    Ok(UnpackOutput { modules, warnings })
+    Ok(UnpackOutput {
+        modules,
+        warnings,
+        detected_formats: Vec::new(),
+    })
 }
 
 fn should_premerge_import_cycles(_modules: &[PreparedUnpackModule]) -> bool {

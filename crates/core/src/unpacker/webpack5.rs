@@ -16,7 +16,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
-use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -271,12 +271,15 @@ pub(super) fn detect_runtime_entry_from_module(
             continue;
         };
         if is_webpack5_runtime_entry_body(bootstrap_body) {
-            return Some(UnpackResult::new(vec![UnpackedModule {
-                id: "entry".to_string(),
-                is_entry: true,
-                code: source.to_string(),
-                filename: "entry.js".to_string(),
-            }]));
+            return Some(UnpackResult::new(
+                vec![UnpackedModule {
+                    id: "entry".to_string(),
+                    is_entry: true,
+                    code: source.to_string(),
+                    filename: "entry.js".to_string(),
+                }],
+                BundleFormat::Webpack5,
+            ));
         }
     }
     None
@@ -341,7 +344,7 @@ pub(super) fn detect_chunk_from_module(
         return None;
     }
 
-    Some(UnpackResult::new(all_modules))
+    Some(UnpackResult::new(all_modules, BundleFormat::Webpack5))
 }
 
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
@@ -672,7 +675,7 @@ fn extract_webpack5_modules(
         return None;
     }
 
-    Some(UnpackResult::new(modules))
+    Some(UnpackResult::new(modules, BundleFormat::Webpack5))
 }
 
 fn emit_webpack5_entry_module(

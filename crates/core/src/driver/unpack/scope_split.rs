@@ -48,6 +48,7 @@ pub(super) fn maybe_split_scope_hoisted_modules(
     UnpackResult {
         modules,
         allow_cycle_premerge: result.allow_cycle_premerge && !did_split,
+        format: result.format,
     }
 }
 
@@ -358,6 +359,7 @@ fn resolve_relative_module_filename(current_filename: &str, specifier: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unpacker::BundleFormat;
 
     #[test]
     fn disabled_nested_scope_split_preserves_detected_module() {
@@ -369,6 +371,7 @@ mod tests {
                 filename: "module-100.js".to_string(),
             }],
             allow_cycle_premerge: true,
+            format: BundleFormat::Webpack5,
         };
 
         let output = maybe_split_scope_hoisted_modules(result, false);
@@ -389,6 +392,7 @@ mod tests {
                 filename: "module-100.js".to_string(),
             }],
             allow_cycle_premerge: true,
+            format: BundleFormat::Webpack5,
         };
 
         let output = maybe_split_scope_hoisted_modules(result, true);

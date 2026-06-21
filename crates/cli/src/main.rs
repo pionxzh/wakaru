@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,12 +15,16 @@ use wakaru_core::{
     NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
+mod color;
 mod discovery;
 mod formatter;
+mod json_output;
 mod output;
 
+use color::Styled;
 use discovery::{scan_directory_for_unpack_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
+use json_output::{JsonDecompileOutput, JsonModule, JsonUnpackOutput, JsonWarning};
 use output::{canonicalize_output_dir, resolve_unpack_output_path, write_file, write_if_changed};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -108,6 +114,11 @@ struct Cli {
     /// Run a final formatter pass on decompiled output.
     #[arg(long)]
     formatter: bool,
+
+    /// Output machine-readable JSON to stdout instead of human-readable
+    /// summaries. Warnings and errors are included in the JSON object.
+    #[arg(long)]
+    json: bool,
 
     /// Write a Chrome trace profile to the given file (open with chrome://tracing).
     #[arg(long, value_name = "FILE")]
@@ -228,6 +239,11 @@ fn run_default(cli: Cli) -> Result<()> {
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
     let formatter = selected_formatter(cli.formatter);
+    let styled = if cli.json {
+        Styled::off()
+    } else {
+        Styled::for_stderr()
+    };
 
     if cli.unpack.is_some() {
         let input_set = read_unpack_inputs(&cli.inputs, heuristic_split)?;
@@ -259,6 +275,7 @@ fn run_default(cli: Cli) -> Result<()> {
         let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
         let out_dir = canonicalize_output_dir(&out_dir)?;
 
+        let start = Instant::now();
         let output = if inputs.len() == 1 {
             let input = inputs.into_iter().next().expect("checked input length");
             if cli.raw {
@@ -271,9 +288,19 @@ fn run_default(cli: Cli) -> Result<()> {
         } else {
             unpack_files(inputs, options)?
         };
+        let elapsed = start.elapsed();
 
-        print_warnings(&output.warnings);
-        let has_errors = output.has_errors();
+        if !cli.json {
+            print_warnings(&output.warnings, &styled);
+        }
+        let error_modules: Vec<&str> = output
+            .warnings
+            .iter()
+            .filter(|w| w.kind.is_error())
+            .map(|w| w.filename.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
 
         let pairs = output.modules;
         let pairs: Vec<(String, String)> = pairs
@@ -287,7 +314,6 @@ fn run_default(cli: Cli) -> Result<()> {
         let resolved: Vec<(PathBuf, &str)> = {
             let span = tracing::info_span!("cli_resolve_output_paths");
             let _enter = span.enter();
-            // Resolve output paths (serial — deduplication needs mutable seen set).
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             pairs
                 .iter()
@@ -301,7 +327,6 @@ fn run_default(cli: Cli) -> Result<()> {
         {
             let span = tracing::info_span!("cli_write_output_files", count = resolved.len());
             let _enter = span.enter();
-            // Write files in parallel.
             if check_existing_writes {
                 resolved
                     .par_iter()
@@ -313,18 +338,57 @@ fn run_default(cli: Cli) -> Result<()> {
             }
         }
 
-        if io::stderr().is_terminal() {
+        if cli.json {
+            let json = JsonUnpackOutput {
+                detected_formats: output
+                    .detected_formats
+                    .iter()
+                    .map(|f| f.as_str().to_string())
+                    .collect(),
+                modules: pairs
+                    .iter()
+                    .map(|(filename, _)| JsonModule {
+                        filename: filename.clone(),
+                    })
+                    .collect(),
+                warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
+                total: resolved.len(),
+                failed: error_modules.len(),
+                elapsed_ms: elapsed.as_millis() as u64,
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&json).expect("JSON serialization")
+            );
+        } else if io::stderr().is_terminal() {
             if let Some(stats) = scan_stats {
                 eprintln!(
                     "scanned: {} file(s), detected: {} bundle/chunk file(s), skipped: {} file(s)",
                     stats.scanned, stats.detected, stats.skipped
                 );
             }
-            eprintln!("total: {} module(s)", resolved.len());
+            if !output.detected_formats.is_empty() {
+                let names: Vec<&str> = output.detected_formats.iter().map(|f| f.as_str()).collect();
+                eprintln!("detected: {}", names.join(", "));
+            }
+            let fail_info = if error_modules.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} failed)", error_modules.len())
+            };
+            eprintln!(
+                "total: {} module(s){fail_info} in {}",
+                styled.bold(&resolved.len().to_string()),
+                format_elapsed(elapsed),
+            );
         }
 
-        if has_errors {
-            bail!("diagnostics reported errors");
+        if !error_modules.is_empty() {
+            bail!(
+                "errors in {} module(s): {}",
+                error_modules.len(),
+                error_modules.join(", ")
+            );
         }
     } else {
         if cli.inputs.len() > 1 {
@@ -351,39 +415,86 @@ fn run_default(cli: Cli) -> Result<()> {
             heuristic_split,
             diagnostics: cli.diagnostics,
         };
-        let output = decompile(&input, options)?;
 
-        print_warnings(&output.warnings);
+        let start = Instant::now();
+        let output = decompile(&input, options)?;
+        let elapsed = start.elapsed();
+
+        if !cli.json {
+            print_warnings(&output.warnings, &styled);
+        }
         let has_errors = output.has_errors();
         let code = format_cli_output(output.code, &output_filename, formatter);
 
-        match cli.output {
-            Some(path) => {
-                ensure_output_file(&path, cli.force)?;
-                fs::write(&path, &code)
+        if cli.json {
+            let json_code = if cli.output.is_none() {
+                Some(code.clone())
+            } else {
+                None
+            };
+            if let Some(ref path) = cli.output {
+                ensure_output_file(path, cli.force)?;
+                fs::write(path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
             }
-            None => {
-                print!("{code}");
+            let json = JsonDecompileOutput {
+                code: json_code,
+                warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
+                elapsed_ms: elapsed.as_millis() as u64,
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&json).expect("JSON serialization")
+            );
+        } else {
+            match cli.output {
+                Some(path) => {
+                    ensure_output_file(&path, cli.force)?;
+                    fs::write(&path, &code)
+                        .with_context(|| format!("failed to write {}", path.display()))?;
+                }
+                None => {
+                    print!("{code}");
+                }
             }
         }
 
         if has_errors {
-            bail!("diagnostics reported errors");
+            let failing: Vec<&str> = output
+                .warnings
+                .iter()
+                .filter(|w| w.kind.is_error())
+                .map(|w| w.filename.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            bail!(
+                "errors in {} module(s): {}",
+                failing.len(),
+                failing.join(", ")
+            );
         }
     }
 
     Ok(())
 }
 
-fn print_warnings(warnings: &[wakaru_core::UnpackWarning]) {
+fn print_warnings(warnings: &[wakaru_core::UnpackWarning], styled: &Styled) {
     for warning in warnings {
         let label = if warning.kind.is_error() {
-            "error"
+            styled.error("error")
         } else {
-            "warning"
+            styled.warning("warning")
         };
         eprintln!("{label}: {warning}");
+    }
+}
+
+fn format_elapsed(d: Duration) -> String {
+    if d.as_secs() >= 1 {
+        format!("{:.2}s", d.as_secs_f64())
+    } else {
+        format!("{}ms", d.as_millis())
     }
 }
 

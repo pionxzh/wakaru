@@ -10,6 +10,7 @@ mod unpack;
 mod unpack_cleanup;
 mod unpack_cycles;
 
+pub use crate::unpacker::BundleFormat;
 pub use discovery::is_detected_unpack_input;
 pub use normalize::{normalize, NormalizeOptions};
 pub use output::{deduplicate_path, safe_relative_module_path};

@@ -13,7 +13,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     let mut registers = Vec::new();
@@ -56,7 +56,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         });
     }
 
-    Some(UnpackResult::new(modules))
+    Some(UnpackResult::new(modules, BundleFormat::SystemJs))
 }
 
 fn try_unpack_dynamic_export_bundle(

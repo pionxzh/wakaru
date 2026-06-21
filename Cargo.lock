@@ -2136,6 +2136,8 @@ dependencies = [
  "anyhow",
  "clap",
  "rayon",
+ "serde",
+ "serde_json",
  "sourcemap",
  "tracing",
  "tracing-chrome",

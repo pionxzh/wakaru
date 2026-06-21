@@ -19,7 +19,9 @@ use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, RewriteLevel, RulePipelineOptions, SmartRename, UnEsm,
     UnExportRename, UnIife,
 };
-use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    scope_hoist, try_unpack_bundle, webpack5, BundleFormat, UnpackResult, UnpackedModule,
+};
 
 mod dead_module;
 mod filename_recovery;
@@ -42,21 +44,27 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
 
     match detect_bundle(source, &options.filename)? {
         Some(result) => {
+            let format = result.format;
             let result =
                 maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
-            unpack_unpack_result(result, options)
+            let mut output = unpack_unpack_result(result, options)?;
+            output.detected_formats.push(format);
+            Ok(output)
         }
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
             Some(result) if result.modules.len() > 1 => {
                 let mut opts = options.clone();
                 opts.dce_mode = super::types::DceMode::Off;
-                unpack_unpack_result(result, opts)
+                let mut output = unpack_unpack_result(result, opts)?;
+                output.detected_formats.push(BundleFormat::ScopeHoisted);
+                Ok(output)
             }
             _ => {
                 let output = decompile(source, options)?;
                 Ok(UnpackOutput {
                     modules: vec![("module.js".to_string(), output.code)],
                     warnings: output.warnings,
+                    detected_formats: Vec::new(),
                 })
             }
         },
@@ -65,6 +73,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
             Ok(UnpackOutput {
                 modules: vec![("module.js".to_string(), output.code)],
                 warnings: output.warnings,
+                detected_formats: Vec::new(),
             })
         }
     }
@@ -88,9 +97,14 @@ pub fn unpack_files(
     let _enter = span.enter();
 
     let mut modules = Vec::new();
+    let mut detected_formats = Vec::new();
     for input in inputs {
         match detect_bundle(&input.source, &input.filename)? {
             Some(result) => {
+                let format = result.format;
+                if !detected_formats.contains(&format) {
+                    detected_formats.push(format);
+                }
                 let result =
                     maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
@@ -108,6 +122,9 @@ pub fn unpack_files(
             None if options.heuristic_split => {
                 match scope_hoist::split_scope_hoisted(&input.source) {
                     Some(result) if result.modules.len() > 1 => {
+                        if !detected_formats.contains(&BundleFormat::ScopeHoisted) {
+                            detected_formats.push(BundleFormat::ScopeHoisted);
+                        }
                         modules.extend(result.modules.into_iter().map(MultiSourceModule::fallback))
                     }
                     _ => modules.push(MultiSourceModule::fallback(
@@ -136,7 +153,9 @@ pub fn unpack_files(
     }
 
     let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
-    unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options)
+    let mut output = unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options)?;
+    output.detected_formats = detected_formats;
+    Ok(output)
 }
 
 /// Unpack a bundle without running the decompiler rule pipeline.
@@ -147,16 +166,18 @@ pub fn unpack_files(
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
     let result = detect_bundle_raw(source, &options.filename)?
         .map(|result| {
+            let format = result.format;
             (
                 maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options)),
                 false,
+                format,
             )
         })
         .or_else(|| {
             if options.heuristic_split {
                 let r = scope_hoist::split_scope_hoisted(source)?;
                 if r.modules.len() > 1 {
-                    Some((r, true))
+                    Some((r, true, BundleFormat::ScopeHoisted))
                 } else {
                     None
                 }
@@ -165,7 +186,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
             }
         });
     match result {
-        Some((result, normalize_for_runnable_split)) => {
+        Some((result, normalize_for_runnable_split, format)) => {
             let (modules, warnings) = if normalize_for_runnable_split {
                 // Heuristic scope-hoisted fallback does not get the esbuild
                 // detector's bundler-specific cleanup, so keep the narrow
@@ -222,11 +243,16 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                     Vec::new(),
                 )
             };
-            Ok(UnpackOutput { modules, warnings })
+            Ok(UnpackOutput {
+                modules,
+                warnings,
+                detected_formats: vec![format],
+            })
         }
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
             warnings: Vec::new(),
+            detected_formats: Vec::new(),
         }),
     }
 }
@@ -251,6 +277,7 @@ pub fn unpack_files_raw(
     }
 
     let mut modules = Vec::new();
+    let mut detected_formats = Vec::new();
 
     for input in inputs {
         let result = detect_bundle_raw(&input.source, &input.filename)?.or_else(|| {
@@ -268,6 +295,10 @@ pub fn unpack_files_raw(
 
         match result {
             Some(result) => {
+                let format = result.format;
+                if !detected_formats.contains(&format) {
+                    detected_formats.push(format);
+                }
                 let result =
                     maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options));
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
@@ -291,7 +322,9 @@ pub fn unpack_files_raw(
     }
 
     let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
-    emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)
+    let mut output = emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?;
+    output.detected_formats = detected_formats;
+    Ok(output)
 }
 
 fn filename_for_fallback_input(filename: &str) -> String {

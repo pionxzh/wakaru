@@ -294,6 +294,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                 .map(|module| (module.module.filename, module.module.code))
                 .collect(),
             warnings: Vec::new(),
+            detected_formats: Vec::new(),
         });
     }
 
@@ -342,7 +343,11 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
         }
     }
 
-    Ok(UnpackOutput { modules, warnings })
+    Ok(UnpackOutput {
+        modules,
+        warnings,
+        detected_formats: Vec::new(),
+    })
 }
 
 struct WebpackNumericReferenceRewriter<'a> {

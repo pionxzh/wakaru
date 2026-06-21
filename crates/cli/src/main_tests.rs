@@ -1,5 +1,5 @@
 use super::*;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn parses_extract_without_js_input() {
@@ -96,6 +96,39 @@ fn parses_formatter_option() {
     let cli = Cli::try_parse_from(["wakaru", "input.js", "--formatter"])
         .expect("formatter option should parse");
     assert!(cli.formatter);
+}
+
+#[test]
+fn parses_json_flag() {
+    let cli =
+        Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
+    assert!(cli.json);
+}
+
+#[test]
+fn parses_json_with_unpack() {
+    let cli = Cli::try_parse_from(["wakaru", "bundle.js", "--unpack", "--json", "-o", "out"])
+        .expect("json with unpack should parse");
+    assert!(cli.json);
+    assert!(cli.unpack.is_some());
+}
+
+#[test]
+fn format_elapsed_uses_seconds_for_long_durations() {
+    let d = Duration::from_millis(1234);
+    assert_eq!(format_elapsed(d), "1.23s");
+}
+
+#[test]
+fn format_elapsed_uses_millis_for_short_durations() {
+    let d = Duration::from_millis(456);
+    assert_eq!(format_elapsed(d), "456ms");
+}
+
+#[test]
+fn format_elapsed_zero() {
+    let d = Duration::from_millis(0);
+    assert_eq!(format_elapsed(d), "0ms");
 }
 
 #[test]

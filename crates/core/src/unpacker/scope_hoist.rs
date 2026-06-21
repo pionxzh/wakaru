@@ -6,7 +6,7 @@ use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::{module_item_declared_names, UnpackResult, UnpackedModule};
+use super::{module_item_declared_names, BundleFormat, UnpackResult, UnpackedModule};
 
 const MIN_DECLARATIONS: usize = 10;
 
@@ -49,7 +49,10 @@ fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult
 
     // Phase 5: emit modules.
     let modules = emit_clusters(body, &items, clusters, cm);
-    Some(UnpackResult::without_cycle_premerge(modules))
+    Some(UnpackResult::without_cycle_premerge(
+        modules,
+        BundleFormat::ScopeHoisted,
+    ))
 }
 
 /// Detect and unwrap an IIFE wrapper: `(()=>{ ... })()` or `(function(){ ... })()`

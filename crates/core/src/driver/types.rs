@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::rules::RewriteLevel;
+use crate::unpacker::BundleFormat;
 
 /// Controls how dead-code elimination behaves in the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,7 @@ pub struct UnpackInput {
 pub struct UnpackOutput {
     pub modules: Vec<(String, String)>,
     pub warnings: Vec<UnpackWarning>,
+    pub detected_formats: Vec<BundleFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

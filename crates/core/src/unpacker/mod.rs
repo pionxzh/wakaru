@@ -21,23 +21,54 @@ pub struct UnpackedModule {
     pub filename: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BundleFormat {
+    Webpack5,
+    Webpack4,
+    Browserify,
+    SystemJs,
+    Esbuild,
+    Amd,
+    ScopeHoisted,
+}
+
+impl BundleFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Webpack5 => "webpack5",
+            Self::Webpack4 => "webpack4",
+            Self::Browserify => "browserify",
+            Self::SystemJs => "systemjs",
+            Self::Esbuild => "esbuild",
+            Self::Amd => "amd",
+            Self::ScopeHoisted => "scope-hoisted",
+        }
+    }
+}
+
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
     pub allow_cycle_premerge: bool,
+    pub format: BundleFormat,
 }
 
 impl UnpackResult {
-    pub(crate) fn new(modules: Vec<UnpackedModule>) -> Self {
+    pub(crate) fn new(modules: Vec<UnpackedModule>, format: BundleFormat) -> Self {
         Self {
             modules,
             allow_cycle_premerge: true,
+            format,
         }
     }
 
-    pub(crate) fn without_cycle_premerge(modules: Vec<UnpackedModule>) -> Self {
+    pub(crate) fn without_cycle_premerge(
+        modules: Vec<UnpackedModule>,
+        format: BundleFormat,
+    ) -> Self {
         Self {
             modules,
             allow_cycle_premerge: false,
+            format,
         }
     }
 }

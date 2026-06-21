@@ -11,7 +11,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
 
-use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::swc_safety::apply_fixer;
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -107,7 +107,7 @@ fn extract_browserify_modules(
         return None;
     }
 
-    Some(UnpackResult::new(modules))
+    Some(UnpackResult::new(modules, BundleFormat::Browserify))
 }
 
 fn extract_entry_ids(entry_array: &ArrayLit) -> Option<Vec<usize>> {
