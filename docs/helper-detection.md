@@ -103,7 +103,8 @@ Rules still own domain-specific shape recognition. For example:
   polyfills.
 - `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`.
 - `un_template_literal.rs` recognizes Babel/SWC/TypeScript tagged-template
-  helper calls and cache factories.
+  helper calls and cache factories. Detection uses body-shape signals —
+  see "Tagged template body shapes" below.
 - `un_webpack_interop.rs` recognizes webpack `require.n`, `require.t`, and
   `require.o` helper forms.
 - `un_object_spread.rs` recognizes esbuild's mangled `__spreadValues` /
@@ -176,6 +177,29 @@ Priority targets, roughly ordered by real-world frequency:
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
+
+### Tagged template body shapes
+
+`taggedTemplateLiteral` detection uses signal-based matching on a 2-param
+function body. Three transpiler variants are recognized:
+
+| Variant | Signals required | Body pattern |
+|---|---|---|
+| Babel spec | `slice_copy` + `freeze_define_raw` | `Object.freeze(Object.defineProperties(strings, {raw: {value: Object.freeze(raws)}}))` |
+| Babel loose | `slice_copy` + `raw_assignment` | `strings.raw = raws` (simple property assignment) |
+| TypeScript | `define_property_raw` | `Object.defineProperty(strings, "raw", {value: raws})` |
+
+`slice_copy` matches `strings.slice(0)` (the fallback copy when `raws` is
+absent). `raw_assignment` matches `strings.raw = raws` as an `AssignExpr`.
+`define_property_raw` matches `Object.defineProperty(strings, "raw", ...)`.
+
+The spec variant uses `Object.freeze` and `Object.defineProperties` as global
+anchors, making it reliably detectable even when mangled. The loose variant
+has no global anchors — it's detected only by the `slice(0)` + `.raw =`
+combination on the two params. The esbuild variant aliases `Object.freeze` and
+`Object.defineProperty` into local variables, which breaks global-anchored
+matching; it is handled by the esbuild-specific stateful matcher in
+`un_template_literal.rs` rather than the central body-shape scanner.
 
 ## Handling version drift
 

@@ -249,7 +249,73 @@ INSTA_UPDATE=always cargo test  # one-off: bulk-accept inline during a run
 **When snapshots change unexpectedly:** see the "Snapshot Layers" section in
 [debugging.md](debugging.md) for how to trace the cause.
 
+## Choosing `render` vs `render_rule`
+
+`render_rule` runs a single rule in isolation (resolver + one rule + fixer).
+`render` runs the full decompile pipeline. Most rule tests use `render_rule`,
+but some rules depend on earlier normalization:
+
+- **Helper-detection-dependent rules** (UnTemplateLiteral, UnAsyncAwait, etc.)
+  rely on `LocalHelperContext::collect` scanning function bodies. Body-shape
+  matchers may expect normalized forms — e.g. SimplifySequence splits comma
+  returns into separate statements before tagged template body matching runs.
+  If `render_rule` produces unchanged output but `render` works, the rule
+  depends on earlier normalization. Use `render` for the test.
+
+- **Rules after Stage 1 normalization** — if your test input has `void 0`,
+  bracket notation, indirect calls, or comma expressions, those are normalized
+  before your rule runs in the real pipeline. Either pre-normalize the test
+  input manually, or use `render` / `render_pipeline_until`.
+
+When in doubt, check with `debug trace` on the raw input to see what the AST
+looks like when your rule receives it.
+
+## Reproduction Matrices
+
+Reproduction matrices under `scripts/repro/` test recovery across transpiler
+versions, modes, and minification levels. Results are tracked in
+`scripts/repro/stats.json` — read this file to see the current recovery rates
+without re-running everything.
+
+```bash
+# Regenerate stats.json after rule/matrix changes
+node scripts/repro/collect-stats.mjs
+
+# Check whether stats.json matches a fresh run
+node scripts/repro/collect-stats.mjs --check
+
+# Run a single matrix with details
+node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
+
+# Dump one shape for debugging
+node scripts/repro/parameters-matrix/matrix.mjs --dump nested-default babel-7.8-loose
+```
+
+### Writing a new matrix
+
+Every matrix should spread `...mangleValidator()` from `lib/compare.mjs` into
+its `runMatrix()` config. This uses alpha-renaming normalization to compare
+mangled shapes structurally rather than by substring needle matching — without
+it, correctly-recovered mangled shapes show as false negatives.
+
+```js
+import { mangleValidator } from "../lib/compare.mjs";
+
+runMatrix({
+  name: "my-feature",
+  snippets,
+  transformers,
+  ...mangleValidator(),
+});
+```
+
+For snippets with legitimate structural variants in the output, add
+`acceptForms` with the alternative full-program forms. For snippets where the
+expected needle has multiple acceptable forms, use `expectedAny` (array of
+needle-arrays — passes if any group is fully present).
+
 ## Test Pitfalls
 
 - Don't use bare literal expression statements as test inputs (e.g. `65536;`) -- `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.
 - When a test uses `render()` (full pipeline), other rules may transform the input before your rule runs. If your test fails unexpectedly, use `render_rule()` to isolate, or `render_pipeline_until()` to stop at a specific point. See [debugging.md](debugging.md) for more investigation workflows.
+- `stmts_reference_ident` in `un_parameters.rs` matches by **emitted name** (ignoring SyntaxContext). A parameter named `e` will collide with any `e` in a nested function. This is intentional (prevents invalid parameter lists after rewriting) but can cause fold functions to bail out unexpectedly when an alias is inlined to a short parameter name.
