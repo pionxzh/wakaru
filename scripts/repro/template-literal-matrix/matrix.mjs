@@ -24,7 +24,11 @@ const snippets = [
   {
     name: "template-escaped-newline",
     source: "var out = `line 1\\n${value}\\t${tail}`;\nuse(out);\n",
-    expected: ["`line 1\\n${value}\\t${tail}`"],
+    expectedAny: [
+      ["`line 1\\n${value}\\t${tail}`"],
+      ["`line 1\n${value}\\t${tail}`"],
+      ["`line 1\n${value}\t${tail}`"],
+    ],
   },
   {
     name: "template-nested-expression",

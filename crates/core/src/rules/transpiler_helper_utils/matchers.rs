@@ -209,12 +209,24 @@ fn is_tagged_template_literal_fn(func: &Function) -> bool {
     };
 
     let signals = collect_tagged_template_literal_signals(body, &ctx);
-    signals.slice_copy && signals.freeze_define_raw
+
+    // Spec: Object.freeze(Object.defineProperties(strings, {raw: ...}))
+    if signals.slice_copy && signals.freeze_define_raw {
+        return true;
+    }
+    // Loose: strings.raw = raws (simple assignment) + strings.slice(0)
+    if signals.slice_copy && signals.raw_assignment {
+        return true;
+    }
+    // tsc: Object.defineProperty(strings, "raw", {value: raws})
+    signals.define_property_raw
 }
 #[derive(Default)]
 struct TaggedTemplateLiteralSignals {
     slice_copy: bool,
     freeze_define_raw: bool,
+    raw_assignment: bool,
+    define_property_raw: bool,
 }
 fn collect_tagged_template_literal_signals(
     body: &BlockStmt,
@@ -233,7 +245,17 @@ fn collect_tagged_template_literal_signals(
             if is_freeze_define_raw_call(call, self.ctx) {
                 self.signals.freeze_define_raw = true;
             }
+            if is_define_property_raw_call(call, self.ctx) {
+                self.signals.define_property_raw = true;
+            }
             call.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if is_raw_assignment(assign, self.ctx) {
+                self.signals.raw_assignment = true;
+            }
+            assign.visit_children_with(self);
         }
     }
 
@@ -243,6 +265,29 @@ fn collect_tagged_template_literal_signals(
     };
     body.visit_with(&mut visitor);
     visitor.signals
+}
+
+fn is_raw_assignment(assign: &AssignExpr, ctx: &MatchContext) -> bool {
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return false;
+    };
+    ctx.is_binding(&member.obj, "strings") && member_prop_name(&member.prop, "raw")
+}
+
+fn is_define_property_raw_call(call: &CallExpr, ctx: &MatchContext) -> bool {
+    if !is_object_static_call(call, "defineProperty") || call.args.len() < 3 {
+        return false;
+    }
+    if !ctx.is_binding(&call.args[0].expr, "strings") {
+        return false;
+    }
+    matches!(
+        strip_parens(&call.args[1].expr),
+        Expr::Lit(Lit::Str(s)) if &*s.value == "raw"
+    )
 }
 fn is_strings_slice_zero_call(call: &CallExpr, ctx: &MatchContext) -> bool {
     let Callee::Expr(callee) = &call.callee else {

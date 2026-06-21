@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render, render_rule};
 use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::{RewriteLevel, UnTemplateLiteral};
 
@@ -464,6 +464,36 @@ var out = css.div`line\n${value}`;
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_mangled_babel_loose_tagged_template() {
+    // babel-7.8-loose-terser-compress-mangle: the helper body is
+    // `n.raw = r` with a `.slice(0)` copy — no Object.freeze.
+    // Full pipeline: SimplifySequence normalizes the comma-return into
+    // separate statements before helper detection runs.
+    let input = r#"
+function n(){const t=r(["hello ",""]);return n=function(){return t},t}
+function r(n,r){return r||(r=n.slice(0)),n.raw=r,n}
+var t=tag(n(),name);
+"#;
+    let expected = r#"
+const t = tag`hello ${name}`;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn restores_mangled_tsc_tagged_template() {
+    // tsc-es5-terser-compress-mangle: uses Object.defineProperty(e, "raw", ...)
+    // instead of Object.freeze(Object.defineProperties(...)).
+    let input = r#"
+var e=this&&this.__makeTemplateObject||function(e,t){return Object.defineProperty?Object.defineProperty(e,"raw",{value:t}):e.raw=t,e},t=tag(e(["hello ",""],["hello ",""]),name);
+"#;
+    let expected = r#"
+const t = tag`hello ${name}`;
+"#;
+    assert_eq_normalized(&render(input), expected);
 }
 
 #[test]
