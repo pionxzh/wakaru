@@ -384,26 +384,29 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     };
 
     let mut static_classes = Vec::new();
-    let mut attrs = Vec::new();
+    let mut dynamic_classes = Vec::new();
     for elem in array.elems.iter().flatten() {
-        if let Expr::Lit(Lit::Str(str)) = elem.expr.as_ref() {
-            static_classes.push(wtf8_to_string(&str.value));
-        } else {
-            attrs.push(VueAttr::Bind {
-                name: "class".to_string(),
-                expr: class_array_elem_expr(elem.expr.as_ref(), ctx)?,
-            });
+        if elem.spread.is_none() {
+            if let Expr::Lit(Lit::Str(str)) = elem.expr.as_ref() {
+                static_classes.push(wtf8_to_string(&str.value));
+                continue;
+            }
         }
+        dynamic_classes.push(recovered_class_array_elem(elem, ctx));
     }
 
+    let mut attrs = Vec::new();
     if !static_classes.is_empty() {
-        attrs.insert(
-            0,
-            VueAttr::Static {
-                name: "class".to_string(),
-                value: Some(static_classes.join(" ")),
-            },
-        );
+        attrs.push(VueAttr::Static {
+            name: "class".to_string(),
+            value: Some(static_classes.join(" ")),
+        });
+    }
+    if !dynamic_classes.is_empty() {
+        attrs.push(VueAttr::Bind {
+            name: "class".to_string(),
+            expr: class_array_binding_expr(dynamic_classes, ctx)?,
+        });
     }
     Ok(Some(attrs))
 }
@@ -598,6 +601,39 @@ fn class_array_branch_expr(expr: &Expr) -> Option<Option<Expr>> {
         return optional_class_expr_from_spread(elem.expr.as_ref()).map(Some);
     }
     Some(Some(simplify_class_expr(*elem.expr.clone()).0))
+}
+
+fn recovered_class_array_elem(elem: &ExprOrSpread, ctx: &VueRecoveryContext) -> ExprOrSpread {
+    if elem.spread.is_none() {
+        if let Some(expr) = setup_value_class_expr(elem.expr.as_ref(), ctx) {
+            return ExprOrSpread {
+                spread: None,
+                expr: Box::new(expr),
+            };
+        }
+    }
+
+    simplify_class_array_elem(elem.clone()).0
+}
+
+fn class_array_binding_expr(
+    mut elems: Vec<ExprOrSpread>,
+    ctx: &VueRecoveryContext,
+) -> Result<VueExpr> {
+    if elems.len() == 1 {
+        let elem = elems.remove(0);
+        if elem.spread.is_none() {
+            return class_array_elem_expr(elem.expr.as_ref(), ctx);
+        }
+        elems.push(elem);
+    }
+
+    let expr = Expr::Array(ArrayLit {
+        span: DUMMY_SP,
+        elems: elems.into_iter().map(Some).collect(),
+    });
+    let printed = clean_attr_expr(&print_expr(&expr, ctx)?, ctx);
+    simplified_printed_class_expr(printed, ctx)
 }
 
 fn helper_first_class_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
