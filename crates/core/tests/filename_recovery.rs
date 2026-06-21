@@ -75,6 +75,32 @@ fn rewrites_importer_source_to_recovered_filename() {
 }
 
 #[test]
+fn recovered_filename_is_used_in_source_map_file_field() {
+    let output = unpack_files(
+        sentry_annotated_inputs(),
+        DecompileOptions {
+            emit_source_map: true,
+            ..Default::default()
+        },
+    )
+    .expect("two modules should unpack with source maps");
+
+    let map_json = output
+        .source_maps
+        .iter()
+        .find(|(filename, _)| filename == "myAwesomeComponent.jsx")
+        .map(|(_, map)| map)
+        .expect("renamed module should have a source map");
+    let sm = sourcemap::SourceMap::from_reader(map_json.as_bytes()).expect("source map parses");
+
+    assert_eq!(
+        sm.get_file(),
+        Some("myAwesomeComponent.jsx"),
+        "source map file field should match the emitted module name"
+    );
+}
+
+#[test]
 fn rewrites_surviving_require_source_to_recovered_filename() {
     let mut inputs = sentry_annotated_inputs();
     inputs[1].source = r#"export default require("./a.js");"#.to_string();

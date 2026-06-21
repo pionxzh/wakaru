@@ -125,7 +125,7 @@ pub(super) fn unpack_multi_module_with_plan(
         .as_deref()
         .map(parse_sourcemap)
         .transpose()?;
-    let can_reuse_phase1_ast = parsed_sourcemap.is_none();
+    let can_reuse_phase1_ast = parsed_sourcemap.is_none() && !options.emit_source_map;
     // Filename recovery from provenance markers is a readability rewrite, gated
     // to standard+ like other speculative recovery.
     let recover_filenames = !matches!(options.level, RewriteLevel::Minimal);
@@ -370,19 +370,18 @@ pub(super) fn unpack_multi_module_with_plan(
                     None
                 };
 
+                let final_filename = rename_ref
+                    .get(&unpacked.module.filename)
+                    .map(|s| s.as_str())
+                    .unwrap_or(&unpacked.module.filename);
                 if !matches!(options.level, RewriteLevel::Minimal) {
-                    let final_filename = rename_ref
-                        .get(&unpacked.module.filename)
-                        .map(|s| s.as_str())
-                        .unwrap_or(&unpacked.module.filename);
                     crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
                 }
 
                 apply_fixer(&mut module)?;
                 let (code, srcmap_json) = if options.emit_source_map {
                     let (code, srcmap_buf) = print_js_with_srcmap(&module, cm.clone())?;
-                    let map_json =
-                        build_output_sourcemap(&srcmap_buf, &cm, &unpacked.module.filename)?;
+                    let map_json = build_output_sourcemap(&srcmap_buf, &cm, final_filename)?;
                     (code, Some(map_json))
                 } else {
                     (print_js(&module, cm)?, None)
@@ -773,6 +772,38 @@ export { helper };
         assert!(
             setup_call < define_property && define_property < helper,
             "normal unpack should preserve declaration order; raw runnable cleanup owns helper hoisting:\n{code}"
+        );
+    }
+
+    #[test]
+    fn unpack_emit_source_map_uses_phase2_parser_source_map() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: "const value = input + 1;\nexport { value };".to_string(),
+            filename: "entry.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("module should decompile with source maps");
+
+        assert_eq!(
+            output.source_maps.len(),
+            1,
+            "unpack should emit one source map per kept module"
+        );
+        let sm = sourcemap::SourceMap::from_reader(output.source_maps[0].1.as_bytes())
+            .expect("source map should parse");
+        assert_eq!(sm.get_file(), Some("entry.js"));
+        assert!(
+            sm.get_token_count() > 0,
+            "source map should contain generated-to-input mappings"
         );
     }
 }
