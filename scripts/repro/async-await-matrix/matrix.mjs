@@ -303,6 +303,9 @@ const snippets = [
     // Clean mangle recovery: `== null ? :` folds to `??`.
     acceptForms: [
       "const load_user = async (config) => {\n  const source = config ?? await load_config();\n  const { id, token, ...options } = source;\n  const session = await open_session(token);\n  return await fetch_user(id, { ...options, session });\n};\nuse(load_user);\n",
+      // Mangle recovery can preserve split temps and assignment-form
+      // destructuring after regenerator recovery exposes the helper callsite.
+      "const load_user = async (config) => {\n  let source;\n  let id;\n  let token;\n  let options;\n  let session;\n  let resolved;\n  resolved = config ?? await load_config();\n  source = resolved;\n  ({ id, token, ...options } = source);\n  session = await open_session(token);\n  return await fetch_user(id, { ...options, session });\n};\nuse(load_user);\n",
     ],
     expected: [
       "const load_user = async (config)",

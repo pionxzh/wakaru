@@ -158,3 +158,100 @@ function load_user(config) {
         "recovered async ternary should not survive after late nullish pass: {output}"
     );
 }
+
+#[test]
+fn async_recovered_object_rest_keeps_helper_identity_for_late_pass() {
+    let input = r#"
+var excluded = ["id", "token"];
+function objectWithoutProperties(source, excluded) {
+  if (source == null) return {};
+  var key, index, target = objectWithoutPropertiesLoose(source, excluded);
+  if (Object.getOwnPropertySymbols) {
+    var symbols = Object.getOwnPropertySymbols(source);
+    for (index = 0; index < symbols.length; index++) {
+      key = symbols[index];
+      if (excluded.indexOf(key) < 0 && Object.prototype.propertyIsEnumerable.call(source, key)) {
+        target[key] = source[key];
+      }
+    }
+  }
+  return target;
+}
+function objectWithoutPropertiesLoose(source, excluded) {
+  if (source == null) return {};
+  var target = {};
+  for (var key in source) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      if (excluded.indexOf(key) >= 0) continue;
+      target[key] = source[key];
+    }
+  }
+  return target;
+}
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(regeneratorRuntime.mark(function _callee(config) {
+    var temp, source, id, token, options, session;
+    return regeneratorRuntime.wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          if (config != null) {
+            _context.next = 3;
+            break;
+          }
+          _context.next = 2;
+          return load_config();
+        case 2:
+          temp = _context.sent;
+          _context.next = 4;
+          break;
+        case 3:
+          temp = config;
+        case 4:
+          id = (source = temp).id;
+          token = source.token;
+          options = objectWithoutProperties(source, excluded);
+          _context.next = 5;
+          return open_session(token);
+        case 5:
+          session = _context.sent;
+          return _context.abrupt("return", fetch_user(id, options, session));
+        case 6:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("async function load_user(config)"),
+        "async trampoline should be recovered: {output}"
+    );
+    assert!(
+        output.contains("{ id, token, ...options } = source"),
+        "late object-rest pass should fold the async-exposed helper call: {output}"
+    );
+    assert!(
+        !output.contains("options = objectWithoutProperties(source, excluded)"),
+        "object-rest helper call should not survive after async recovery: {output}"
+    );
+}

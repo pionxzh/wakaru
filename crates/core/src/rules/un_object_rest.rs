@@ -7,9 +7,9 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
     BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, CondExpr, Decl, Expr,
-    ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget,
-    Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ExprStmt, FnDecl, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -339,6 +339,22 @@ struct ObjectRestProcessor<'a> {
 }
 
 impl VisitMut for ObjectRestProcessor<'_> {
+    fn visit_mut_fn_decl(&mut self, decl: &mut FnDecl) {
+        if self.is_named_helper(&decl.ident) {
+            return;
+        }
+        decl.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        if let Pat::Ident(binding) = &decl.name {
+            if self.is_named_helper(&binding.id) {
+                return;
+            }
+        }
+        decl.visit_mut_children_with(self);
+    }
+
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
         reattach_elided_object_rest_in_stmts(
@@ -452,6 +468,13 @@ impl VisitMut for ObjectRestProcessor<'_> {
         }
 
         *stmts = new_stmts;
+    }
+}
+
+impl ObjectRestProcessor<'_> {
+    fn is_named_helper(&self, ident: &Ident) -> bool {
+        self.named_helpers
+            .contains_key(&(ident.sym.clone(), ident.ctxt))
     }
 }
 
