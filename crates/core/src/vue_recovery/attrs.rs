@@ -3,11 +3,13 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, Function, Lit, ObjectLit, Pat, Prop,
+    ArrayLit, ArrowExpr, AssignOp, BinExpr, BinaryOp, BlockStmtOrExpr, CondExpr, Decl, Expr,
+    ExprOrSpread, Function, Lit, MemberExpr, MemberProp, ModuleItem, ObjectLit, Pat, Prop,
     PropOrSpread, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::context::unwrap_paren_expr;
 use super::directives::directive_modifiers;
 use super::expressions::{
     clean_attr_expr, clean_expr, clean_vue_expr, print_expr, printed_vue_expr,
@@ -359,11 +361,17 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     let Some(first) = call.args.first() else {
         return Ok(None);
     };
+    if let Some(expr) = setup_value_class_expr(first.expr.as_ref(), ctx) {
+        return Ok(Some(vec![VueAttr::Bind {
+            name: "class".to_string(),
+            expr: printed_class_expr(&expr, ctx)?,
+        }]));
+    }
 
     let Expr::Array(array) = first.expr.as_ref() else {
         return Ok(Some(vec![VueAttr::Bind {
             name: "class".to_string(),
-            expr: VueExpr::new(helper_first_arg_expr(value, ctx)?),
+            expr: helper_first_class_arg_expr(value, ctx)?,
         }]));
     };
 
@@ -375,7 +383,7 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
         } else {
             attrs.push(VueAttr::Bind {
                 name: "class".to_string(),
-                expr: printed_vue_expr(elem.expr.as_ref(), ctx)?,
+                expr: class_array_elem_expr(elem.expr.as_ref(), ctx)?,
             });
         }
     }
@@ -390,6 +398,152 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
         );
     }
     Ok(Some(attrs))
+}
+
+fn setup_value_class_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Expr> {
+    let member = setup_value_member(expr)?;
+    let Expr::Ident(object) = unwrap_paren_expr(member.obj.as_ref()) else {
+        return None;
+    };
+    let binding = ctx.setup_value_bindings.get(&object.sym)?;
+    let expr = binding.expr.clone()?;
+    let (expr, changed) = simplify_class_expr(expr);
+    changed.then_some(expr)
+}
+
+fn setup_value_member(expr: &Expr) -> Option<&MemberExpr> {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
+        return None;
+    }
+    Some(member)
+}
+
+fn simplify_class_expr(expr: Expr) -> (Expr, bool) {
+    match expr {
+        Expr::Array(array) => {
+            let (array, changed) = simplify_class_array(array);
+            (Expr::Array(array), changed)
+        }
+        _ => (expr, false),
+    }
+}
+
+fn simplify_class_array(array: ArrayLit) -> (ArrayLit, bool) {
+    let mut changed = false;
+    let elems = array
+        .elems
+        .into_iter()
+        .map(|elem| {
+            elem.map(|elem| {
+                let (elem, elem_changed) = simplify_class_array_elem(elem);
+                changed |= elem_changed;
+                elem
+            })
+        })
+        .collect();
+    (ArrayLit { elems, ..array }, changed)
+}
+
+fn simplify_class_array_elem(elem: ExprOrSpread) -> (ExprOrSpread, bool) {
+    if elem.spread.is_some() {
+        if let Some(expr) = optional_class_expr_from_spread(elem.expr.as_ref()) {
+            return (
+                ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(expr),
+                },
+                true,
+            );
+        }
+    }
+
+    let (expr, changed) = simplify_class_expr(*elem.expr);
+    (
+        ExprOrSpread {
+            spread: elem.spread,
+            expr: Box::new(expr),
+        },
+        changed,
+    )
+}
+
+fn optional_class_expr_from_spread(expr: &Expr) -> Option<Expr> {
+    let Expr::Cond(cond) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let cons = class_array_branch_expr(cond.cons.as_ref())?;
+    let alt = class_array_branch_expr(cond.alt.as_ref())?;
+    match (cons, alt) {
+        (Some(cons), Some(alt)) => Some(Expr::Cond(CondExpr {
+            span: cond.span,
+            test: cond.test.clone(),
+            cons: Box::new(cons),
+            alt: Box::new(alt),
+        })),
+        (Some(cons), None) => Some(Expr::Bin(BinExpr {
+            span: cond.span,
+            op: BinaryOp::LogicalAnd,
+            left: cond.test.clone(),
+            right: Box::new(cons),
+        })),
+        _ => None,
+    }
+}
+
+fn class_array_branch_expr(expr: &Expr) -> Option<Option<Expr>> {
+    let Expr::Array(array) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let mut elems = array.elems.iter().flatten();
+    let Some(elem) = elems.next() else {
+        return Some(None);
+    };
+    if elems.next().is_some() {
+        return None;
+    }
+    if elem.spread.is_some() {
+        return optional_class_expr_from_spread(elem.expr.as_ref()).map(Some);
+    }
+    Some(Some(simplify_class_expr(*elem.expr.clone()).0))
+}
+
+fn helper_first_class_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
+    let printed = helper_first_arg_expr(expr, ctx)?;
+    let Some(expr) = parse_printed_expr(&printed, ctx) else {
+        return Ok(VueExpr::new(printed));
+    };
+    let (expr, changed) = simplify_class_expr(expr);
+    if !changed {
+        return Ok(VueExpr::new(printed));
+    }
+    printed_class_expr(&expr, ctx)
+}
+
+fn class_array_elem_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
+    if let Some(expr) = setup_value_class_expr(expr, ctx) {
+        return printed_class_expr(&expr, ctx);
+    }
+    printed_vue_expr(expr, ctx)
+}
+
+fn parse_printed_expr(expr: &str, ctx: &VueRecoveryContext) -> Option<Expr> {
+    if !expr.contains("...") {
+        return None;
+    }
+    let module =
+        super::parse_module(&format!("const __wakaru_expr = {expr};"), ctx.cm.clone()).ok()?;
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = module.body.first()? else {
+        return None;
+    };
+    let decl = var.decls.first()?;
+    decl.init.as_deref().cloned()
+}
+
+fn printed_class_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
+    Ok(VueExpr::new(clean_attr_expr(&print_expr(expr, ctx)?, ctx)))
 }
 
 struct RecoveredEventExpr {

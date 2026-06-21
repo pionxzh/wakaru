@@ -6007,17 +6007,24 @@ export default defineComponent({
   setup() {
     const level = "info";
     const size = "sm";
+    const align = "left";
+    const mirrored = false;
     const classes = computed(() => {
       const out = [];
       out.push(`stateTag-${level}`);
       if (size) {
         out.push(`stateTag-${size}`);
       }
+      if (align === "left") {
+        out.push("stateTag-left");
+      } else if (mirrored) {
+        out.push("stateTag-right");
+      }
       return out;
     });
     return () => (
       openBlock(), createElementBlock("span", {
-        class: normalizeClass(classes.value)
+        class: normalizeClass(["stateTag", classes.value])
       }, "Ok", 2)
     );
   }
@@ -6026,7 +6033,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nconst level = \"info\";\nconst size = \"sm\";\n</script>\n\n<template>\n  <span :class=\"[ `stateTag-${level}`, ...(size ? [ `stateTag-${size}` ] : []) ]\">Ok</span>\n</template>\n"
+            "<script setup>\nconst level = \"info\";\nconst size = \"sm\";\nconst align = \"left\";\nconst mirrored = false;\n</script>\n\n<template>\n  <span class=\"stateTag\" :class='[ `stateTag-${level}`, size &amp;&amp; `stateTag-${size}`, align === \"left\" ? \"stateTag-left\" : mirrored &amp;&amp; \"stateTag-right\" ]'>Ok</span>\n</template>\n"
         );
     }
 
