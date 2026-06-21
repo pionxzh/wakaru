@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
     BinaryOp, BindingIdent, BlockStmt, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt,
@@ -383,7 +383,7 @@ fn take_member_assign_operand(
         return None;
     }
     let hoisted = Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span: assign.span,
         expr: Box::new(Expr::Assign(assign.clone())),
     });
     **operand = Expr::Ident(ident.id.clone());
@@ -478,7 +478,8 @@ fn try_reconstruct_assignment_group(
         }
     }
 
-    let stmt = build_assignment_destructuring_stmt(accesses, init)?;
+    let first_span = stmts[start].span();
+    let stmt = build_assignment_destructuring_stmt(first_span, accesses, init)?;
     consumed_helpers.extend(matched_helpers);
     Some(ReconstructedGroup {
         stmt,
@@ -1847,7 +1848,11 @@ fn build_direct_array_destructuring_stmt(
     ))
 }
 
-fn build_assignment_destructuring_stmt(accesses: Vec<Access>, init: Box<Expr>) -> Option<Stmt> {
+fn build_assignment_destructuring_stmt(
+    span: Span,
+    accesses: Vec<Access>,
+    init: Box<Expr>,
+) -> Option<Stmt> {
     let pat = build_pat_from_accesses(accesses)?;
     let left = match pat {
         Pat::Array(array) => AssignTarget::Pat(AssignTargetPat::Array(array)),
@@ -1856,9 +1861,9 @@ fn build_assignment_destructuring_stmt(accesses: Vec<Access>, init: Box<Expr>) -
     };
 
     Some(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span,
         expr: Box::new(Expr::Assign(AssignExpr {
-            span: DUMMY_SP,
+            span,
             op: AssignOp::Assign,
             left,
             right: init,

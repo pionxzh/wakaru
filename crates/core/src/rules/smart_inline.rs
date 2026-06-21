@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee,
     ComputedPropName, Decl, DoWhileStmt, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident,
@@ -508,7 +508,9 @@ impl VisitMut for BuiltinAliasInliner<'_> {
         if let Expr::Ident(id) = expr {
             let key = (id.sym.clone(), id.ctxt);
             if let Some(replacement) = self.map.get(&key) {
+                let original_span = id.span;
                 *expr = *replacement.clone();
+                set_expr_span(expr, original_span);
             }
         }
     }
@@ -1490,7 +1492,9 @@ impl VisitMut for IdentInliner<'_> {
         // Replace ident with its mapped expr before recursing
         if let Expr::Ident(id) = expr {
             if let Some(replacement) = self.map.get(&(id.sym.clone(), id.ctxt)) {
+                let original_span = id.span;
                 *expr = *replacement.clone();
+                set_expr_span(expr, original_span);
                 return; // No need to recurse into the replacement
             }
         }
@@ -1517,11 +1521,15 @@ enum AccessKind {
     Property {
         binding: Option<BindingIdent>,
         prop_key: PropKey,
+        /// Span of the original statement this access was extracted from.
+        span: Span,
     },
     /// obj[n] — maps to (binding_name, index)
     Index {
         binding: Option<BindingIdent>,
         index: usize,
+        /// Span of the original statement this access was extracted from.
+        span: Span,
     },
 }
 
@@ -1663,13 +1671,14 @@ fn try_fold_use_state_tuple_at(
         return None;
     }
 
+    let decl_span = decl_stmt.span();
     Some(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: decl_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Const,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span: decl_span,
             name: Pat::Array(ArrayPat {
                 span: DUMMY_SP,
                 elems: vec![
@@ -1758,7 +1767,12 @@ fn try_fold_use_state_decl_assignment_tuple_at(
     }
 
     Some(FoldedUseStateAssignment {
-        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        stmt: build_use_state_assignment_tuple_stmt(
+            decl_stmt.span(),
+            init,
+            first.clone(),
+            second.clone(),
+        ),
         consumed: 3,
         removable_bindings: vec![first.id.clone(), second.id.clone()],
         recovered_bindings: vec![first.id, second.id],
@@ -1784,7 +1798,12 @@ fn try_fold_use_state_ref_assignment_tuple_at(
     }
 
     Some(FoldedUseStateAssignment {
-        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        stmt: build_use_state_assignment_tuple_stmt(
+            assign_stmt.span(),
+            init,
+            first.clone(),
+            second.clone(),
+        ),
         consumed: 3,
         removable_bindings: vec![tuple, first.id.clone(), second.id.clone()],
         recovered_bindings: vec![first.id, second.id],
@@ -1806,7 +1825,12 @@ fn try_fold_use_state_nested_assignment_tuple_at(
     }
 
     Some(FoldedUseStateAssignment {
-        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        stmt: build_use_state_assignment_tuple_stmt(
+            first_stmt.span(),
+            init,
+            first.clone(),
+            second.clone(),
+        ),
         consumed: 2,
         removable_bindings: vec![tuple, first.id.clone(), second.id.clone()],
         recovered_bindings: vec![first.id, second.id],
@@ -1814,17 +1838,18 @@ fn try_fold_use_state_nested_assignment_tuple_at(
 }
 
 fn build_use_state_assignment_tuple_stmt(
+    span: Span,
     init: Box<Expr>,
     first: BindingIdent,
     second: BindingIdent,
 ) -> Stmt {
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span,
         ctxt: Default::default(),
         kind: VarDeclKind::Const,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span,
             name: Pat::Array(ArrayPat {
                 span: DUMMY_SP,
                 elems: vec![Some(Pat::Ident(first)), Some(Pat::Ident(second))],
@@ -2101,6 +2126,7 @@ fn group_destructuring(mut stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     while i < stmts_count {
         let stmt = &stmts[i];
 
+        let stmt_span = stmt.span();
         let next_access = try_extract_prop_access(stmt)
             .map(|(obj, key, binding)| {
                 (
@@ -2108,12 +2134,21 @@ fn group_destructuring(mut stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
                     AccessKind::Property {
                         binding,
                         prop_key: key,
+                        span: stmt_span,
                     },
                 )
             })
             .or_else(|| {
-                try_extract_index_access(stmt)
-                    .map(|(obj, index, binding)| (obj, AccessKind::Index { binding, index }))
+                try_extract_index_access(stmt).map(|(obj, index, binding)| {
+                    (
+                        obj,
+                        AccessKind::Index {
+                            binding,
+                            index,
+                            span: stmt_span,
+                        },
+                    )
+                })
             });
 
         if let Some((obj_name, access)) = next_access {
@@ -2276,11 +2311,23 @@ fn flush_property_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<Access
         }
         return;
     }
+
+    // Use the first access's original span for the synthesized VarDecl.
+    let group_span = accesses
+        .first()
+        .map(|a| match a {
+            AccessKind::Property { span, .. } | AccessKind::Index { span, .. } => *span,
+        })
+        .unwrap_or(DUMMY_SP);
+
     // Build ObjectPat
     let mut props: Vec<ObjectPatProp> = Vec::new();
 
     for acc in &accesses {
-        let AccessKind::Property { binding, prop_key } = acc else {
+        let AccessKind::Property {
+            binding, prop_key, ..
+        } = acc
+        else {
             continue;
         };
         let prop_name: PropName = match prop_key {
@@ -2331,12 +2378,12 @@ fn flush_property_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<Access
     }
 
     result.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: group_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Const,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span: group_span,
             name: Pat::Object(ObjectPat {
                 span: DUMMY_SP,
                 props,
@@ -2356,6 +2403,15 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
         }
         return;
     }
+
+    // Use the first access's original span for the synthesized VarDecl.
+    let group_span = accesses
+        .first()
+        .map(|a| match a {
+            AccessKind::Property { span, .. } | AccessKind::Index { span, .. } => *span,
+        })
+        .unwrap_or(DUMMY_SP);
+
     // Find max index
     let max_idx = accesses
         .iter()
@@ -2374,7 +2430,7 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
     let non_inlined: Vec<Stmt> = Vec::new();
 
     for acc in &accesses {
-        let AccessKind::Index { binding, index } = acc else {
+        let AccessKind::Index { binding, index, .. } = acc else {
             continue;
         };
         if let Some(alias) = binding {
@@ -2383,12 +2439,12 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
     }
 
     result.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-        span: DUMMY_SP,
+        span: group_span,
         ctxt: Default::default(),
         kind: VarDeclKind::Const,
         declare: false,
         decls: vec![VarDeclarator {
-            span: DUMMY_SP,
+            span: group_span,
             name: Pat::Array(ArrayPat {
                 span: DUMMY_SP,
                 elems,
@@ -2403,9 +2459,23 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
     result.extend(non_inlined);
 }
 
+/// Set the top-level span of an `Expr` to `span`.
+/// Covers the variants produced by inlining in this module (Ident, Member).
+fn set_expr_span(expr: &mut Expr, span: Span) {
+    match expr {
+        Expr::Ident(id) => id.span = span,
+        Expr::Member(m) => m.span = span,
+        _ => {}
+    }
+}
+
 fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
     match acc {
-        AccessKind::Property { binding, prop_key } => {
+        AccessKind::Property {
+            binding,
+            prop_key,
+            span: acc_span,
+        } => {
             let prop = match &prop_key {
                 PropKey::Ident(s) => {
                     MemberProp::Ident(swc_core::ecma::ast::IdentName::new(s.clone(), DUMMY_SP))
@@ -2420,22 +2490,22 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
                 }),
             };
             let member_expr = Expr::Member(MemberExpr {
-                span: DUMMY_SP,
+                span: acc_span,
                 obj: Box::new(Expr::Ident(obj.clone())),
                 prop,
             });
             match binding {
                 None => Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
+                    span: acc_span,
                     expr: Box::new(member_expr),
                 }),
                 Some(alias) => Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                    span: DUMMY_SP,
+                    span: acc_span,
                     ctxt: Default::default(),
                     kind: VarDeclKind::Const,
                     declare: false,
                     decls: vec![VarDeclarator {
-                        span: DUMMY_SP,
+                        span: acc_span,
                         name: Pat::Ident(alias),
                         init: Some(Box::new(member_expr)),
                         definite: false,
@@ -2443,9 +2513,13 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
                 }))),
             }
         }
-        AccessKind::Index { binding, index } => {
+        AccessKind::Index {
+            binding,
+            index,
+            span: acc_span,
+        } => {
             let member_expr = Expr::Member(MemberExpr {
-                span: DUMMY_SP,
+                span: acc_span,
                 obj: Box::new(Expr::Ident(obj.clone())),
                 prop: MemberProp::Computed(ComputedPropName {
                     span: DUMMY_SP,
@@ -2458,16 +2532,16 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
             });
             match binding {
                 None => Stmt::Expr(ExprStmt {
-                    span: DUMMY_SP,
+                    span: acc_span,
                     expr: Box::new(member_expr),
                 }),
                 Some(alias) => Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                    span: DUMMY_SP,
+                    span: acc_span,
                     ctxt: Default::default(),
                     kind: VarDeclKind::Const,
                     declare: false,
                     decls: vec![VarDeclarator {
-                        span: DUMMY_SP,
+                        span: acc_span,
                         name: Pat::Ident(alias),
                         init: Some(Box::new(member_expr)),
                         definite: false,

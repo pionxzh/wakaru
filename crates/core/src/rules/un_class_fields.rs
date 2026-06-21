@@ -955,10 +955,11 @@ impl VisitMut for PrivateFieldAccessRewriter<'_> {
         let Some((private_name, value)) = self.extract_private_helper_access(call) else {
             return;
         };
-        let member = private_member_expr(private_name);
+        let original_span = call.span;
+        let member = private_member_expr(private_name, original_span);
         if let Some(value) = value {
             *expr = Expr::Assign(AssignExpr {
-                span: DUMMY_SP,
+                span: original_span,
                 op: AssignOp::Assign,
                 left: AssignTarget::Simple(SimpleAssignTarget::Member(member)),
                 right: value,
@@ -1024,9 +1025,9 @@ fn is_private_field_kind(expr: &Expr) -> bool {
     matches!(expr, Expr::Lit(Lit::Str(str_lit)) if str_lit.value.as_str() == Some("f"))
 }
 
-fn private_member_expr(private_name: Atom) -> MemberExpr {
+fn private_member_expr(private_name: Atom, span: swc_core::common::Span) -> MemberExpr {
     MemberExpr {
-        span: DUMMY_SP,
+        span,
         obj: Box::new(Expr::This(swc_core::ecma::ast::ThisExpr { span: DUMMY_SP })),
         prop: MemberProp::PrivateName(PrivateName {
             span: DUMMY_SP,

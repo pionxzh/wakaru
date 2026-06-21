@@ -141,7 +141,7 @@ fn try_convert_assignment_only_expr_stmt(span: Span, expr: Expr) -> Vec<Stmt> {
             right,
             ..
         }) if is_assignment_only_expr(&right) => vec![Stmt::If(IfStmt {
-            span: DUMMY_SP,
+            span,
             test: left,
             cons: Box::new(expr_to_assignment_only_block_stmt(*right)),
             alt: None,
@@ -152,7 +152,7 @@ fn try_convert_assignment_only_expr_stmt(span: Span, expr: Expr) -> Vec<Stmt> {
             right,
             ..
         }) if is_assignment_only_expr(&right) => vec![Stmt::If(IfStmt {
-            span: DUMMY_SP,
+            span,
             test: negate_expr(*left),
             cons: Box::new(expr_to_assignment_only_block_stmt(*right)),
             alt: None,
@@ -219,6 +219,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
                 })];
             }
             vec![convert_cond_to_if(
+                span,
                 *cond_expr.test,
                 cond_expr.cons,
                 cond_expr.alt,
@@ -239,7 +240,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
                 })];
             }
             vec![Stmt::If(IfStmt {
-                span: DUMMY_SP,
+                span,
                 test: left,
                 cons: Box::new(expr_to_block_stmt(*right)),
                 alt: None,
@@ -259,7 +260,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
                 })];
             }
             vec![Stmt::If(IfStmt {
-                span: DUMMY_SP,
+                span,
                 test: negate_expr(*left),
                 cons: Box::new(expr_to_block_stmt(*right)),
                 alt: None,
@@ -423,7 +424,9 @@ fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
             .into_iter()
             .flat_map(|expr| expr_to_case_stmts(*expr, false))
             .collect(),
-        Expr::Cond(cond) => vec![convert_cond_to_if(*cond.test, cond.cons, cond.alt)],
+        Expr::Cond(cond) => vec![convert_cond_to_if(
+            cond.span, *cond.test, cond.cons, cond.alt,
+        )],
         other => convert_stmt(Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
             expr: Box::new(other),
@@ -467,12 +470,12 @@ fn unparen_expr(expr: &Expr) -> &Expr {
 }
 
 /// Convert a ternary expression to an if statement.
-fn convert_cond_to_if(test: Expr, cons: Box<Expr>, alt: Box<Expr>) -> Stmt {
+fn convert_cond_to_if(span: Span, test: Expr, cons: Box<Expr>, alt: Box<Expr>) -> Stmt {
     let cons_stmt = convert_cons_branch_to_stmt(*cons);
     let alt_stmt = convert_alt_branch_to_stmt(*alt);
 
     Stmt::If(IfStmt {
-        span: DUMMY_SP,
+        span,
         test: Box::new(test),
         cons: Box::new(cons_stmt),
         alt: Some(Box::new(alt_stmt)),
@@ -485,7 +488,7 @@ fn convert_cons_branch_to_stmt(expr: Expr) -> Stmt {
     match expr {
         Expr::Cond(inner) => {
             // Nested ternary in cons position → convert to if, wrapped in a block
-            let inner_if = convert_cond_to_if(*inner.test, inner.cons, inner.alt);
+            let inner_if = convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt);
             Stmt::Block(BlockStmt {
                 span: DUMMY_SP,
                 ctxt: Default::default(),
@@ -501,7 +504,7 @@ fn convert_cons_branch_to_stmt(expr: Expr) -> Stmt {
 fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
     match expr {
         // Another ternary → becomes else-if chain
-        Expr::Cond(inner) => convert_cond_to_if(*inner.test, inner.cons, inner.alt),
+        Expr::Cond(inner) => convert_cond_to_if(inner.span, *inner.test, inner.cons, inner.alt),
         // Logical AND in alt → convert to if statement (not wrapped in block)
         Expr::Bin(BinExpr {
             op: BinaryOp::LogicalAnd,

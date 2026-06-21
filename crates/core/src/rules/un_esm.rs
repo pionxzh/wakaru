@@ -1,7 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportDecl, ExportDefaultExpr,
@@ -83,7 +83,7 @@ enum CjsExportKind {
 enum Classified {
     ExistingImport(ImportDecl),
     CjsRequire(CjsRequireKind),
-    CjsExport { kind: CjsExportKind },
+    CjsExport { span: Span, kind: CjsExportKind },
     Keep(ModuleItem),
 }
 
@@ -165,7 +165,7 @@ impl VisitMut for UnEsm {
 
         let mut export_entries: Vec<ExportEntry> = Vec::new();
         for (idx, c) in classified.iter().enumerate() {
-            if let Classified::CjsExport { kind } = c {
+            if let Classified::CjsExport { kind, .. } = c {
                 let (name, is_void) = match kind {
                     CjsExportKind::EsModuleFlag => continue,
                     CjsExportKind::ModuleExportsDefault { .. } => (None, false),
@@ -407,6 +407,7 @@ impl VisitMut for UnEsm {
                         expr,
                         is_void: false,
                     },
+                ..
             } = c
             {
                 let is_ident = matches!(expr.as_ref(), Expr::Ident(_));
@@ -448,7 +449,7 @@ impl VisitMut for UnEsm {
                 for c in classified.iter_mut() {
                     match c {
                         Classified::Keep(item) => rename_bindings(item, &renames),
-                        Classified::CjsExport { kind } => rename_export_kind(kind, &renames),
+                        Classified::CjsExport { kind, .. } => rename_export_kind(kind, &renames),
                         _ => {}
                     }
                 }
@@ -462,11 +463,11 @@ impl VisitMut for UnEsm {
             match c {
                 Classified::ExistingImport(_) => {} // skip, already absorbed
                 Classified::CjsRequire(_) => {}     // skip, replaced by import
-                Classified::CjsExport { kind } => {
+                Classified::CjsExport { span, kind } => {
                     if drop_set.contains(&idx) {
-                        new_body.extend(build_dropped_export_side_effect_items(kind));
+                        new_body.extend(build_dropped_export_side_effect_items(span, kind));
                     } else {
-                        new_body.extend(build_export_items(kind));
+                        new_body.extend(build_export_items(span, kind));
                     }
                 }
                 Classified::Keep(item) => {
@@ -526,12 +527,13 @@ fn merge_decl_and_named_export(body: &mut Vec<ModuleItem>) {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = body.remove(i) else {
                 unreachable!();
             };
+            let orig_span = var_decl.span;
             let kind = var_decl.kind;
             let decl = var_decl.decls.into_iter().next().unwrap();
             body[i] = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: DUMMY_SP,
+                span: orig_span,
                 decl: Decl::Var(Box::new(VarDecl {
-                    span: DUMMY_SP,
+                    span: orig_span,
                     ctxt: Default::default(),
                     kind,
                     declare: false,
@@ -662,6 +664,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     let mut deferred_default: Vec<ModuleItem> = Vec::new();
 
     for item in std::mem::take(&mut module.body) {
+        let item_span = module_item_span(&item);
         if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
             for (name, expr) in exports {
                 if name.as_ref() == "default" {
@@ -672,7 +675,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
                         // bypassing CJS classification (which would snapshot).
                         deferred_default.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                             NamedExport {
-                                span: DUMMY_SP,
+                                span: item_span,
                                 specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
                                     span: DUMMY_SP,
                                     orig: ModuleExportName::Ident(ident),
@@ -687,12 +690,18 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
                             },
                         )));
                     } else {
-                        deferred_default
-                            .push(make_exports_assign_expr_item((name, expr), unresolved_mark));
+                        deferred_default.push(make_exports_assign_expr_item(
+                            item_span,
+                            (name, expr),
+                            unresolved_mark,
+                        ));
                     }
                 } else {
-                    deferred_named
-                        .push(make_exports_assign_expr_item((name, expr), unresolved_mark));
+                    deferred_named.push(make_exports_assign_expr_item(
+                        item_span,
+                        (name, expr),
+                        unresolved_mark,
+                    ));
                 }
             }
             continue;
@@ -704,9 +713,9 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
             // Keep them in-place to preserve adjacency with their declarations
             // for merge_decl_and_named_export.
             new_body.extend(
-                exports
-                    .into_iter()
-                    .map(|export| make_exports_assign_expr_item(export, unresolved_mark)),
+                exports.into_iter().map(|export| {
+                    make_exports_assign_expr_item(item_span, export, unresolved_mark)
+                }),
             );
             continue;
         }
@@ -770,10 +779,11 @@ fn extract_unused_iife_webpack_export_getter_body(
         return None;
     }
 
+    let outer_span = expr_stmt.span;
     let mut items = Vec::with_capacity(call.args.len() + block.stmts.len());
     items.extend(call.args.iter().map(|arg| {
         ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
+            span: outer_span,
             expr: arg.expr.clone(),
         }))
     }));
@@ -1135,11 +1145,12 @@ fn extract_single_return_expr(block: &BlockStmt) -> Option<Box<Expr>> {
 }
 
 fn make_exports_assign_expr_item(
+    span: Span,
     (name, expr): (Atom, Box<Expr>),
     unresolved_mark: Mark,
 ) -> ModuleItem {
     ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
+        span,
         expr: Box::new(Expr::Assign(AssignExpr {
             span: DUMMY_SP,
             op: AssignOp::Assign,
@@ -1455,20 +1466,14 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
     }
 }
 
-fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
+fn build_export_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
     match kind {
         CjsExportKind::EsModuleFlag => vec![],
         CjsExportKind::ModuleExportsDefault { expr } => vec![ModuleItem::ModuleDecl(
-            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
-                span: DUMMY_SP,
-                expr,
-            }),
+            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { span, expr }),
         )],
         CjsExportKind::NamedDefault { expr } => vec![ModuleItem::ModuleDecl(
-            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
-                span: DUMMY_SP,
-                expr,
-            }),
+            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { span, expr }),
         )],
         CjsExportKind::DefaultMirror => vec![],
         CjsExportKind::Named {
@@ -1481,7 +1486,7 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
                     // export { foo }
                     vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                         NamedExport {
-                            span: DUMMY_SP,
+                            span,
                             specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
                                 span: DUMMY_SP,
                                 orig: ModuleExportName::Ident(id),
@@ -1497,7 +1502,7 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
                     // export { id as name }
                     vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                         NamedExport {
-                            span: DUMMY_SP,
+                            span,
                             specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
                                 span: DUMMY_SP,
                                 orig: ModuleExportName::Ident(id),
@@ -1513,7 +1518,7 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
             } else {
                 // export const name = expr
                 vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                    span: DUMMY_SP,
+                    span,
                     decl: Decl::Var(Box::new(VarDecl {
                         span: DUMMY_SP,
                         ctxt: Default::default(),
@@ -1537,7 +1542,7 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
     }
 }
 
-fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem> {
+fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
     let expr = match kind {
         CjsExportKind::ModuleExportsDefault { expr }
         | CjsExportKind::NamedDefault { expr }
@@ -1552,10 +1557,7 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
         | CjsExportKind::SelfRef => return vec![],
     };
 
-    vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
-        expr,
-    }))]
+    vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt { span, expr }))]
 }
 
 // ============================================================
@@ -1969,7 +1971,11 @@ fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
         ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Classified::ExistingImport(import),
         ModuleItem::Stmt(ref stmt) => {
             if let Some(kind) = try_classify_cjs_export(stmt, unresolved_mark) {
-                return Classified::CjsExport { kind };
+                let span = match stmt {
+                    Stmt::Expr(expr_stmt) => expr_stmt.span,
+                    _ => DUMMY_SP,
+                };
+                return Classified::CjsExport { span, kind };
             }
             if let Some(kind) = try_classify_cjs_require(stmt, unresolved_mark) {
                 return Classified::CjsRequire(kind);
@@ -1984,11 +1990,14 @@ fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark:
     let mut saw_safe_named_default = false;
     for item in classified {
         if let Classified::CjsExport {
+            span,
             kind: CjsExportKind::ModuleExportsDefault { expr },
         } = item
         {
             if saw_safe_named_default && is_exports_default_expr(expr.as_ref(), unresolved_mark) {
+                let orig_span = *span;
                 *item = Classified::CjsExport {
+                    span: orig_span,
                     kind: CjsExportKind::DefaultMirror,
                 };
             }
@@ -1999,7 +2008,8 @@ fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark:
         if matches!(
             item,
             Classified::CjsExport {
-                kind: CjsExportKind::NamedDefault { .. }
+                kind: CjsExportKind::NamedDefault { .. },
+                ..
             }
         ) {
             saw_safe_named_default = true;
@@ -2134,7 +2144,7 @@ fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
                 });
                 // exports.X = s
                 export_stmts.push(Stmt::Expr(swc_core::ecma::ast::ExprStmt {
-                    span: DUMMY_SP,
+                    span: var.span,
                     expr: Box::new(Expr::Assign(swc_core::ecma::ast::AssignExpr {
                         span: DUMMY_SP,
                         op: AssignOp::Assign,
@@ -2220,7 +2230,7 @@ fn lower_exported_cjs_requires(module: &mut Module, unresolved_mark: Mark) {
                 if !specifiers.is_empty() {
                     new_body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                         NamedExport {
-                            span: DUMMY_SP,
+                            span,
                             specifiers,
                             src: None,
                             type_only: false,
@@ -2742,6 +2752,28 @@ fn make_unresolved_ident(sym: Atom, unresolved_mark: Mark) -> Ident {
         DUMMY_SP,
         SyntaxContext::empty().apply_mark(unresolved_mark),
     )
+}
+
+/// Extract the span from a ModuleItem. Returns DUMMY_SP for items without
+/// a meaningful span (e.g. synthesized items).
+fn module_item_span(item: &ModuleItem) -> Span {
+    match item {
+        ModuleItem::Stmt(stmt) => match stmt {
+            Stmt::Expr(expr_stmt) => expr_stmt.span,
+            Stmt::Decl(Decl::Var(var)) => var.span,
+            Stmt::Decl(Decl::Fn(f)) => f.function.span,
+            _ => DUMMY_SP,
+        },
+        ModuleItem::ModuleDecl(decl) => match decl {
+            ModuleDecl::Import(i) => i.span,
+            ModuleDecl::ExportDecl(e) => e.span,
+            ModuleDecl::ExportNamed(e) => e.span,
+            ModuleDecl::ExportDefaultExpr(e) => e.span,
+            ModuleDecl::ExportDefaultDecl(e) => e.span,
+            ModuleDecl::ExportAll(e) => e.span,
+            _ => DUMMY_SP,
+        },
+    }
 }
 
 fn wtf8_to_string(value: &swc_core::atoms::Wtf8Atom) -> String {

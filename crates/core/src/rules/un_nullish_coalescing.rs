@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit, Module,
     SimpleAssignTarget,
@@ -49,7 +49,7 @@ impl VisitMut for UnNullishCoalescing {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Some(result) = try_nullish_coalescing(
+        if let Some(mut result) = try_nullish_coalescing(
             expr,
             self.unresolved_mark,
             self.policy,
@@ -63,6 +63,9 @@ impl VisitMut for UnNullishCoalescing {
                 &self.uninitialized_bindings,
                 &self.binding_references,
             );
+            if let Expr::Bin(bin) = &mut result {
+                bin.span = expr.span();
+            }
             *expr = result;
         }
     }

@@ -1,4 +1,4 @@
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, BinExpr, BinaryOp, CallExpr, Expr, ExprOrSpread, Ident, Lit, Number, Str, UnaryExpr,
     UnaryOp,
@@ -31,6 +31,7 @@ impl VisitMut for UnTypeConstructor {
         }
         expr.visit_mut_children_with(self);
 
+        let original_span = expr.span();
         match expr {
             // +x → Number(x) — only when x is an Ident
             Expr::Unary(UnaryExpr {
@@ -46,7 +47,7 @@ impl VisitMut for UnTypeConstructor {
                         raw: None,
                     }))),
                 );
-                *expr = make_call("Number", arg);
+                *expr = make_call("Number", arg, original_span);
             }
 
             // x + "" → String(x)  OR  "str" + "" → "str"
@@ -57,7 +58,6 @@ impl VisitMut for UnTypeConstructor {
                 ..
             }) if is_empty_string(right) => {
                 if is_string_lit(left) {
-                    // "str" + "" → "str"  (simplify to just left)
                     let left = std::mem::replace(
                         left,
                         Box::new(Expr::Lit(Lit::Num(Number {
@@ -76,7 +76,7 @@ impl VisitMut for UnTypeConstructor {
                             raw: None,
                         }))),
                     );
-                    *expr = make_call("String", left);
+                    *expr = make_call("String", left, original_span);
                 }
             }
 
@@ -90,6 +90,7 @@ impl VisitMut for UnTypeConstructor {
                         value: n as f64,
                         raw: None,
                     }))),
+                    original_span,
                 );
             }
 
@@ -98,9 +99,9 @@ impl VisitMut for UnTypeConstructor {
     }
 }
 
-fn make_call(name: &str, arg: Box<Expr>) -> Expr {
+fn make_call(name: &str, arg: Box<Expr>, span: Span) -> Expr {
     Expr::Call(CallExpr {
-        span: DUMMY_SP,
+        span,
         ctxt: Default::default(),
         callee: Expr::Ident(Ident::new_no_ctxt(name.into(), DUMMY_SP)).as_callee(),
         args: vec![arg.as_arg()],

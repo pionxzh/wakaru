@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Ident, IfStmt,
     Lit, MemberExpr, MemberProp, Module, OptCall, OptChainBase, OptChainExpr, SimpleAssignTarget,
@@ -58,7 +58,7 @@ impl VisitMut for UnOptionalChaining {
             &self.binding_references,
         ) {
             self.record_consumed_expr_bindings(expr, &result);
-            *expr = result;
+            replace_expr_preserving_span(expr, result);
             expr.visit_mut_children_with(self);
             return;
         }
@@ -71,11 +71,11 @@ impl VisitMut for UnOptionalChaining {
             &self.binding_references,
         ) {
             self.record_consumed_expr_bindings(expr, &result);
-            *expr = result;
+            replace_expr_preserving_span(expr, result);
             expr.visit_mut_children_with(self);
             if let Some(result) = try_optional_call_cleanup(expr) {
                 self.record_consumed_expr_bindings(expr, &result);
-                *expr = result;
+                replace_expr_preserving_span(expr, result);
             }
             return;
         }
@@ -84,7 +84,7 @@ impl VisitMut for UnOptionalChaining {
 
         if let Some(result) = try_optional_call_cleanup(expr) {
             self.record_consumed_expr_bindings(expr, &result);
-            *expr = result;
+            replace_expr_preserving_span(expr, result);
             return;
         }
 
@@ -96,7 +96,7 @@ impl VisitMut for UnOptionalChaining {
             &self.binding_references,
         ) {
             self.record_consumed_expr_bindings(expr, &result);
-            *expr = result;
+            replace_expr_preserving_span(expr, result);
         }
     }
 
@@ -126,6 +126,26 @@ impl VisitMut for UnOptionalChaining {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
         }
+    }
+}
+
+/// Replace `*expr` with `result`, copying the original expression's span onto
+/// the outermost node of the replacement for source map fidelity.
+fn replace_expr_preserving_span(expr: &mut Expr, mut result: Expr) {
+    let original_span = expr.span();
+    if original_span.lo.0 != 0 {
+        propagate_span(&mut result, original_span);
+    }
+    *expr = result;
+}
+
+fn propagate_span(expr: &mut Expr, span: Span) {
+    match expr {
+        Expr::OptChain(e) => e.span = span,
+        Expr::Bin(e) => e.span = span,
+        Expr::Member(e) => e.span = span,
+        Expr::Call(e) => e.span = span,
+        _ => {}
     }
 }
 
