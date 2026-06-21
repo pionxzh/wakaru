@@ -6000,6 +6000,37 @@ export default defineComponent({
     }
 
     #[test]
+    fn recovers_computed_array_push_class_binding() {
+        let input = r#"
+import { defineComponent, computed, normalizeClass, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    const level = "info";
+    const size = "sm";
+    const classes = computed(() => {
+      const out = [];
+      out.push(`stateTag-${level}`);
+      if (size) {
+        out.push(`stateTag-${size}`);
+      }
+      return out;
+    });
+    return () => (
+      openBlock(), createElementBlock("span", {
+        class: normalizeClass(classes.value)
+      }, "Ok", 2)
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst level = \"info\";\nconst size = \"sm\";\n</script>\n\n<template>\n  <span :class=\"[ `stateTag-${level}`, ...(size ? [ `stateTag-${size}` ] : []) ]\">Ok</span>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn preserves_tuple_ref_assignment_in_script_handler() {
         let input = r#"
 import { defineComponent, openBlock, createElementBlock } from "vue";
