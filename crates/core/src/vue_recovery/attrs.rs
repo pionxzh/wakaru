@@ -17,13 +17,27 @@ use super::syntax::{prop_name, string_lit, wtf8_to_string};
 use super::VueRecoveryContext;
 use crate::vue_template::{VueAttr, VueDirective, VueDirectiveArg, VueExpr};
 
+#[derive(Clone, Copy)]
+enum AttrOwner {
+    Native,
+    Component,
+}
+
 pub(super) fn recover_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> {
+    recover_attrs_for_owner(expr, ctx, AttrOwner::Native)
+}
+
+fn recover_attrs_for_owner(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+    owner: AttrOwner,
+) -> Result<Vec<VueAttr>> {
     match expr {
         Expr::Lit(Lit::Null(_)) => Ok(Vec::new()),
-        Expr::Object(object) => recover_attrs_from_object(object, ctx),
+        Expr::Object(object) => recover_attrs_from_object(object, ctx, owner),
         Expr::Ident(ident) => {
             if let Some(object) = ctx.object_bindings.get(&ident.sym) {
-                recover_attrs_from_object(object, ctx)
+                recover_attrs_from_object(object, ctx, owner)
             } else {
                 Ok(vec![VueAttr::Spread(clean_vue_expr(
                     &print_expr(expr, ctx)?,
@@ -47,7 +61,7 @@ pub(super) fn recover_component_attrs(
         _ => HashMap::new(),
     };
     Ok(collapse_component_model_attrs(
-        recover_attrs(expr, ctx)?,
+        recover_attrs_for_owner(expr, ctx, AttrOwner::Component)?,
         &model_modifiers,
     ))
 }
@@ -135,7 +149,11 @@ fn collapse_component_model_attrs(
     collapsed
 }
 
-fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> {
+fn recover_attrs_from_object(
+    object: &ObjectLit,
+    ctx: &VueRecoveryContext,
+    owner: AttrOwner,
+) -> Result<Vec<VueAttr>> {
     let mut attrs = Vec::new();
     for prop in &object.props {
         match prop {
@@ -160,11 +178,16 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
                         )));
                         continue;
                     };
-                    attrs.extend(attrs_from_key_value(&name, key_value.value.as_ref(), ctx)?);
+                    attrs.extend(attrs_from_key_value(
+                        &name,
+                        key_value.value.as_ref(),
+                        ctx,
+                        owner,
+                    )?);
                 }
                 Prop::Shorthand(ident) => {
                     let name = ident.sym.to_string();
-                    attrs.push(shorthand_attr(&name));
+                    attrs.push(shorthand_attr(&name, owner));
                 }
                 _ => {}
             },
@@ -173,8 +196,8 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
     Ok(collapse_template_ref_attrs(attrs))
 }
 
-fn shorthand_attr(name: &str) -> VueAttr {
-    if let Some(event_name) = event_name_from_prop(name) {
+fn shorthand_attr(name: &str, owner: AttrOwner) -> VueAttr {
+    if let Some(event_name) = event_name_from_prop(name, owner) {
         return VueAttr::On {
             name: event_name,
             expr: VueExpr::new(name.to_string()),
@@ -226,8 +249,9 @@ fn attrs_from_key_value(
     name: &str,
     value: &Expr,
     ctx: &VueRecoveryContext,
+    owner: AttrOwner,
 ) -> Result<Vec<VueAttr>> {
-    if let Some(event_name) = event_name_from_prop(name) {
+    if let Some(event_name) = event_name_from_prop(name, owner) {
         let event = recover_event_expr(value, ctx)?;
         return Ok(vec![VueAttr::On {
             name: event_name,
@@ -283,10 +307,46 @@ fn html_directive_name(name: &str) -> Option<&'static str> {
     }
 }
 
-fn event_name_from_prop(name: &str) -> Option<String> {
-    name.strip_prefix("on")
+fn event_name_from_prop(name: &str, owner: AttrOwner) -> Option<String> {
+    let event_name = name
+        .strip_prefix("on")
         .filter(|s| !s.is_empty())
-        .map(lower_first)
+        .map(lower_first)?;
+    Some(match owner {
+        AttrOwner::Native => event_name,
+        AttrOwner::Component => normalize_component_event_name(&event_name),
+    })
+}
+
+fn normalize_component_event_name(event_name: &str) -> String {
+    if event_name.starts_with("update:") || is_on_prefixed_event_name(event_name) {
+        return event_name.to_string();
+    }
+    kebab_case(event_name)
+}
+
+fn is_on_prefixed_event_name(event_name: &str) -> bool {
+    let Some(rest) = event_name.strip_prefix("on") else {
+        return false;
+    };
+    rest.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
+fn kebab_case(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_uppercase() {
+            if !out.is_empty() {
+                out.push('-');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Option<Vec<VueAttr>>> {

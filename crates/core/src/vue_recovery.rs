@@ -5552,6 +5552,58 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_component_camel_event_names_as_kebab() {
+        let input = r#"
+import { openBlock, createVNode } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createVNode(ContestCard, {
+    contest: item,
+    onContestEnded
+  }, null, 8, ["contest", "onContestEnded"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ContestCard :contest=\"item\" @contest-ended=\"onContestEnded\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_on_prefixed_component_event_names() {
+        let input = r#"
+import { openBlock, createVNode } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createVNode(ContestPoolHeader, {
+    onOnBack
+  }, null, 8, ["onOnBack"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ContestPoolHeader @onBack=\"onOnBack\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_component_update_event_names() {
+        let input = r#"
+import { openBlock, createVNode } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createVNode(FormInput, {
+    "onUpdate:modelValue": onUpdate
+  }, null, 8, ["onUpdate:modelValue"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <FormInput @update:modelValue=\"onUpdate\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_template_ref_key_attrs() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
@@ -6868,7 +6920,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nconst send = defineEmits([\n    \"after-enter\"\n]);\n\nconst cleanup = ()=>send(\"after-enter\");\n</script>\n\n<template>\n  <Transition name=\"fade\" @afterEnter=\"cleanup\">\n    <template v-slot:default>\n      <slot />\n    </template>\n  </Transition>\n</template>\n"
+            "<script setup>\nconst send = defineEmits([\n    \"after-enter\"\n]);\n\nconst cleanup = ()=>send(\"after-enter\");\n</script>\n\n<template>\n  <Transition name=\"fade\" @after-enter=\"cleanup\">\n    <template v-slot:default>\n      <slot />\n    </template>\n  </Transition>\n</template>\n"
         );
     }
 
@@ -6907,7 +6959,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nconst props = defineProps({\n    x: {\n        type: Boolean\n    }\n});\nconst { x: x_1 } = props;\n\nconst emit = defineEmits([\n    \"done\"\n]);\n\nconst mode = x_1 ? \"wide\" : \"tall\";\nfunction finish() {\n    if (mode) {\n        emit(\"done\");\n    }\n}\n</script>\n\n<template>\n  <Transition :name=\"mode\" @afterLeave=\"finish\" @leaveCancelled=\"finish\" />\n</template>\n"
+            "<script setup>\nconst props = defineProps({\n    x: {\n        type: Boolean\n    }\n});\nconst { x: x_1 } = props;\n\nconst emit = defineEmits([\n    \"done\"\n]);\n\nconst mode = x_1 ? \"wide\" : \"tall\";\nfunction finish() {\n    if (mode) {\n        emit(\"done\");\n    }\n}\n</script>\n\n<template>\n  <Transition :name=\"mode\" @after-leave=\"finish\" @leave-cancelled=\"finish\" />\n</template>\n"
         );
     }
 
