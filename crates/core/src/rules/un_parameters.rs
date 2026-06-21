@@ -5,7 +5,7 @@ use swc_core::ecma::ast::{
     BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr,
     FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp,
     Number, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, SimpleAssignTarget, Stmt,
-    UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -67,6 +67,10 @@ fn process_function_params(
         fold_object_property_param_aliases(params, body, unresolved_mark);
         fold_array_index_param_aliases(params, body, unresolved_mark);
         fold_destructured_param_aliases(params, body, unresolved_mark);
+        if promote_destructured_binding_defaults(params, body, unresolved_mark) {
+            fold_object_property_param_aliases(params, body, unresolved_mark);
+            fold_array_index_param_aliases(params, body, unresolved_mark);
+        }
     }
 }
 
@@ -304,9 +308,9 @@ fn process_pattern_c_params(
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
-    let scan_limit = body.stmts.len().min(15);
+    let mut stmt_idx = 0;
 
-    for stmt_idx in 0..scan_limit {
+    while stmt_idx < body.stmts.len().min(15) {
         let Some((param_ident, default_val)) =
             extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
@@ -318,8 +322,153 @@ fn process_pattern_c_params(
         if !set_param_default(params, param_idx, default_val, body_bindings) {
             break;
         }
-        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
+        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident.clone());
+        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident) {
+            stmt_idx += 1;
+        }
     }
+}
+
+/// After Pattern C rewrites `let alias = param === void 0 ? {} : param` to
+/// `let alias = param`, try to inline the now-dead alias so that downstream
+/// property folding and reassignment-default promotion can reach through to
+/// the param. Only fires when a property of the alias has a reassignment
+/// default in the body (the Babel 7.8 nested destructuring pattern) — this
+/// avoids regressing cases where the fold's emitted-name safety check would
+/// bail out on the param name shadowed in a nested scope. Returns true if
+/// the alias declaration was removed.
+fn try_inline_dead_alias(stmts: &mut Vec<Stmt>, alias_idx: usize, param_ident: &Ident) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = &stmts[alias_idx] else {
+        return false;
+    };
+    if var.decls.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(alias_binding) = &var.decls[0].name else {
+        return false;
+    };
+    let alias = &alias_binding.id;
+    if same_ident(alias, param_ident) {
+        return false;
+    }
+    if !is_likely_generated_alias(&alias.sym) {
+        return false;
+    }
+
+    let rest = &stmts[alias_idx + 1..];
+
+    // Only inline when a property of the alias has a reassignment default
+    // (e.g. `_ref$outer = _ref$outer === void 0 ? {} : _ref$outer`). Without
+    // this, the inline just shifts naming work to SmartInline and can regress
+    // property-fold naming via the emitted-name safety check.
+    if !has_property_reassignment_default(rest, alias) {
+        return false;
+    }
+
+    if ident_is_assigned_in(rest, param_ident) {
+        return false;
+    }
+
+    let rename = [BindingRename {
+        old: (alias.sym.clone(), alias.ctxt),
+        new: param_ident.sym.clone(),
+    }];
+    for stmt in &mut stmts[alias_idx + 1..] {
+        rename_bindings(stmt, &rename);
+    }
+    stmts.remove(alias_idx);
+    true
+}
+
+/// True when `stmts` contains a property access on `alias` whose local binding
+/// is then reassigned with a void-0 default — the Babel 7.8 nested destructuring
+/// pattern: `let prop = alias.key; prop = prop === void 0 ? {} : prop;`
+fn has_property_reassignment_default(stmts: &[Stmt], alias: &Ident) -> bool {
+    for (i, stmt) in stmts.iter().enumerate() {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        if var.decls.len() != 1 {
+            continue;
+        }
+        let decl = &var.decls[0];
+        let Pat::Ident(local) = &decl.name else {
+            continue;
+        };
+        let Some(init) = &decl.init else {
+            continue;
+        };
+        let Expr::Member(member) = strip_parens(init.as_ref()) else {
+            continue;
+        };
+        let Expr::Ident(obj) = member.obj.as_ref() else {
+            continue;
+        };
+        if !same_ident(obj, alias) {
+            continue;
+        }
+        if let Some(next) = stmts.get(i + 1) {
+            if is_reassignment_default_for(next, &local.id) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_reassignment_default_for(stmt: &Stmt, binding: &Ident) -> bool {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return false;
+    };
+    same_ident(&target.id, binding)
+}
+
+fn ident_is_assigned_in(stmts: &[Stmt], ident: &Ident) -> bool {
+    let mut finder = AssignFinder {
+        target: ident,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+struct AssignFinder<'a> {
+    target: &'a Ident,
+    found: bool,
+}
+
+impl Visit for AssignFinder<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left {
+            if same_ident(&binding.id, self.target) {
+                self.found = true;
+                return;
+            }
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if let Expr::Ident(id) = update.arg.as_ref() {
+            if same_ident(id, self.target) {
+                self.found = true;
+                return;
+            }
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 fn process_pattern_c_arrow_params(
@@ -328,9 +477,9 @@ fn process_pattern_c_arrow_params(
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
-    let scan_limit = body.stmts.len().min(15);
+    let mut stmt_idx = 0;
 
-    for stmt_idx in 0..scan_limit {
+    while stmt_idx < body.stmts.len().min(15) {
         let Some((param_ident, default_val)) =
             extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
@@ -343,7 +492,10 @@ fn process_pattern_c_arrow_params(
         if !set_arrow_param_default(params, param_idx, default_val, body_bindings) {
             break;
         }
-        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
+        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident.clone());
+        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident) {
+            stmt_idx += 1;
+        }
     }
 }
 
@@ -666,6 +818,222 @@ fn fold_destructured_param_aliases(
             break;
         }
         body.stmts.remove(destructuring_idx);
+    }
+}
+
+// ============================================================
+// Promote reassignment defaults on destructured bindings
+// ============================================================
+//
+// Babel 7.8 emits nested destructuring defaults as a body reassignment:
+//   function f({ outer: binding } = {}) {
+//       binding = binding === void 0 ? {} : binding;
+//       let temp = binding.prop;
+//       let local = temp === void 0 ? val : temp;
+//   }
+// Newer Babel versions use a fresh temp in a VarDecl, which the existing
+// fold functions handle. This step covers the reassignment form, promoting
+// the default into the pattern and optionally folding property accesses
+// into a nested destructuring.
+
+fn promote_destructured_binding_defaults(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) -> bool {
+    let scan_limit = body.stmts.len().min(10);
+
+    for stmt_idx in 0..scan_limit {
+        if stmt_idx >= body.stmts.len() {
+            break;
+        }
+
+        let Some((binding, default_val)) =
+            extract_reassignment_default(&body.stmts[stmt_idx], unresolved_mark)
+        else {
+            continue;
+        };
+
+        if !any_param_contains_destructured_binding(params, &binding) {
+            continue;
+        }
+
+        body.stmts.remove(stmt_idx);
+
+        // Try to fold property accesses on the binding into a nested
+        // destructuring pattern. Only attempt this when the property accesses
+        // are at the front of the remaining body (the common case after
+        // earlier fold passes have run).
+        if stmt_idx == 0 {
+            if let Some((props, _, remove_count)) =
+                extract_object_property_alias_props(body, &binding, unresolved_mark)
+            {
+                if !stmts_reference_ident(&body.stmts[remove_count..], &binding) {
+                    let nested_pat = Pat::Object(ObjectPat {
+                        span: DUMMY_SP,
+                        props,
+                        optional: false,
+                        type_ann: None,
+                    });
+                    let with_default = Pat::Assign(AssignPat {
+                        span: DUMMY_SP,
+                        left: Box::new(nested_pat),
+                        right: default_val,
+                    });
+                    replace_destructured_binding_in_params(params, &binding, with_default);
+                    body.stmts.drain(0..remove_count);
+                    return true;
+                }
+            }
+        }
+
+        // No property folding possible — just promote the default.
+        let default_pat = Pat::Assign(AssignPat {
+            span: DUMMY_SP,
+            left: Box::new(Pat::Ident(BindingIdent {
+                id: binding.clone(),
+                type_ann: None,
+            })),
+            right: default_val,
+        });
+        replace_destructured_binding_in_params(params, &binding, default_pat);
+        return true;
+    }
+
+    false
+}
+
+fn extract_reassignment_default(stmt: &Stmt, unresolved_mark: Mark) -> Option<(Ident, Box<Expr>)> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+        return None;
+    };
+
+    let Expr::Cond(cond) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    let checked = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    if !same_ident(&checked, &binding.id) {
+        return None;
+    }
+    if !is_ident_expr(cond.alt.as_ref(), &binding.id) {
+        return None;
+    }
+
+    if !is_empty_object_literal(cond.cons.as_ref()) && !is_empty_array_literal(cond.cons.as_ref()) {
+        return None;
+    }
+
+    Some((binding.id.clone(), cond.cons.clone()))
+}
+
+fn any_param_contains_destructured_binding(params: &[Param], binding: &Ident) -> bool {
+    params
+        .iter()
+        .any(|param| pat_contains_destructured_binding(&param.pat, binding))
+}
+
+fn pat_contains_destructured_binding(pat: &Pat, binding: &Ident) -> bool {
+    match pat {
+        Pat::Object(obj) => obj.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => kv_value_is_or_contains_binding(&kv.value, binding),
+            _ => false,
+        }),
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| pat_is_or_contains_binding(elem, binding)),
+        Pat::Assign(assign) => pat_contains_destructured_binding(&assign.left, binding),
+        _ => false,
+    }
+}
+
+fn kv_value_is_or_contains_binding(pat: &Pat, binding: &Ident) -> bool {
+    match pat {
+        Pat::Ident(b) => same_ident(&b.id, binding),
+        Pat::Assign(assign) => kv_value_is_or_contains_binding(&assign.left, binding),
+        Pat::Object(_) | Pat::Array(_) => pat_contains_destructured_binding(pat, binding),
+        _ => false,
+    }
+}
+
+fn pat_is_or_contains_binding(pat: &Pat, binding: &Ident) -> bool {
+    match pat {
+        Pat::Ident(b) => same_ident(&b.id, binding),
+        _ => pat_contains_destructured_binding(pat, binding),
+    }
+}
+
+fn replace_destructured_binding_in_params(params: &mut [Param], binding: &Ident, replacement: Pat) {
+    for param in params.iter_mut() {
+        if replace_destructured_binding_in_pat(&mut param.pat, binding, &replacement) {
+            return;
+        }
+    }
+}
+
+fn replace_destructured_binding_in_pat(pat: &mut Pat, binding: &Ident, replacement: &Pat) -> bool {
+    match pat {
+        Pat::Object(obj) => {
+            for prop in &mut obj.props {
+                if let ObjectPatProp::KeyValue(kv) = prop {
+                    if replace_kv_value_binding(&mut kv.value, binding, replacement) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter_mut().flatten() {
+                if replace_pat_binding(elem, binding, replacement) {
+                    return true;
+                }
+            }
+            false
+        }
+        Pat::Assign(assign) => {
+            replace_destructured_binding_in_pat(&mut assign.left, binding, replacement)
+        }
+        _ => false,
+    }
+}
+
+fn replace_kv_value_binding(pat: &mut Pat, binding: &Ident, replacement: &Pat) -> bool {
+    match pat {
+        Pat::Ident(b) if same_ident(&b.id, binding) => {
+            *pat = replacement.clone();
+            true
+        }
+        Pat::Assign(assign) => {
+            if let Pat::Ident(b) = assign.left.as_ref() {
+                if same_ident(&b.id, binding) {
+                    *pat = replacement.clone();
+                    return true;
+                }
+            }
+            replace_destructured_binding_in_pat(pat, binding, replacement)
+        }
+        _ => replace_destructured_binding_in_pat(pat, binding, replacement),
+    }
+}
+
+fn replace_pat_binding(pat: &mut Pat, binding: &Ident, replacement: &Pat) -> bool {
+    match pat {
+        Pat::Ident(b) if same_ident(&b.id, binding) => {
+            *pat = replacement.clone();
+            true
+        }
+        _ => replace_destructured_binding_in_pat(pat, binding, replacement),
     }
 }
 

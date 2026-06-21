@@ -894,6 +894,129 @@ function nested({ outer: { value = fallbackValue } = {} } = {}) {
 }
 
 #[test]
+fn nested_object_reassignment_default_folds_into_param() {
+    // Babel 7.8 spec output: reassigns the destructured binding instead of
+    // using a fresh temp, so the default appears as a body ExprStmt rather
+    // than a VarDecl initializer.
+    let input = r#"
+function nested({ outer: _ref$outer } = {}) {
+  _ref$outer = _ref$outer === undefined ? {} : _ref$outer;
+  let _ref$outer$value = _ref$outer.value;
+  let value = _ref$outer$value === undefined ? fallbackValue : _ref$outer$value;
+  return use(value);
+}
+"#;
+    let expected = r#"
+function nested({ outer: { value = fallbackValue } = {} } = {}) {
+  return use(value);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_object_reassignment_default_no_inner_props() {
+    // Same reassignment pattern but without further property accesses —
+    // just promote the default.
+    let input = r#"
+function nested({ outer: _ref$outer } = {}) {
+  _ref$outer = _ref$outer === undefined ? {} : _ref$outer;
+  return use(_ref$outer);
+}
+"#;
+    let expected = r#"
+function nested({ outer: _ref$outer = {} } = {}) {
+  return use(_ref$outer);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_object_reassignment_default_skipped_when_binding_used_after() {
+    // The binding is used after the reassignment AND in property accesses,
+    // so removing the reassignment would change semantics.
+    let input = r#"
+function nested({ outer: _ref$outer } = {}) {
+  _ref$outer = _ref$outer === undefined ? {} : _ref$outer;
+  let val = _ref$outer.value;
+  log(_ref$outer);
+  return use(val);
+}
+"#;
+    let expected = r#"
+function nested({ outer: _ref$outer = {} } = {}) {
+  let val = _ref$outer.value;
+  log(_ref$outer);
+  return use(val);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pattern_c_dead_alias_inlined_enables_nested_folding() {
+    // Babel 7.8 loose: Pattern C promotes the default but leaves a dead
+    // alias `let _ref = _temp`. Inlining it lets property folding proceed.
+    let input = r#"
+function nested(_temp) {
+  let _ref = _temp === void 0 ? {} : _temp;
+  let _ref$outer = _ref.outer;
+  _ref$outer = _ref$outer === void 0 ? {} : _ref$outer;
+  let _ref$outer$value = _ref$outer.value;
+  let value = _ref$outer$value === void 0 ? fallbackValue : _ref$outer$value;
+  return use(value);
+}
+"#;
+    let expected = r#"
+function nested({ outer: { value = fallbackValue } = {} } = {}) {
+  return use(value);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pattern_c_dead_alias_not_inlined_when_param_reassigned() {
+    // _temp is reassigned after the alias — inlining would lose the capture.
+    let input = r#"
+function f(_temp) {
+  let _ref = _temp === void 0 ? {} : _temp;
+  _temp = other;
+  return use(_ref);
+}
+"#;
+    let expected = r#"
+function f(_temp = {}) {
+  let _ref = _temp;
+  _temp = other;
+  return use(_ref);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pattern_c_dead_alias_not_inlined_when_alias_reassigned() {
+    // _ref is reassigned — it's not a dead alias.
+    let input = r#"
+function f(_temp) {
+  let _ref = _temp === void 0 ? {} : _temp;
+  _ref = modified;
+  return use(_ref);
+}
+"#;
+    let expected = r#"
+function f(_temp = {}) {
+  let _ref = _temp;
+  _ref = modified;
+  return use(_ref);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn array_destructuring_alias_becomes_param_pattern() {
     let input = r#"
 function foo(_ref = []) {
