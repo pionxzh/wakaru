@@ -461,3 +461,101 @@ export { x as arguments };
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn renames_non_exported_binding_from_getter_namespace() {
+    let input = r#"
+function Ym() { return 1; }
+function n2z(q) { return q; }
+export const ns = {
+  get subprocessEnv() { return Ym; },
+  get registerFn() { return n2z; }
+};
+"#;
+    let expected = r#"
+function subprocessEnv() { return 1; }
+function registerFn(q) { return q; }
+export const ns = {
+  get subprocessEnv() { return subprocessEnv; },
+  get registerFn() { return registerFn; }
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn getter_namespace_multi_target_first_wins() {
+    let input = r#"
+function Ym() {}
+export const ns = {
+  get alpha() { return Ym; },
+  get beta() { return Ym; }
+};
+"#;
+    let expected = r#"
+function alpha() {}
+export const ns = {
+  get alpha() { return alpha; },
+  get beta() { return alpha; }
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn getter_namespace_renames_specifier_exported_single_target() {
+    let input = r#"
+const Mh = "user:inference";
+const rM = "oauth-2025-04-20";
+export { Mh, rM };
+export const ns = {
+  get INFERENCE_SCOPE() { return Mh; },
+  get OAUTH_HEADER() { return rM; }
+};
+"#;
+    let expected = r#"
+const INFERENCE_SCOPE = "user:inference";
+const OAUTH_HEADER = "oauth-2025-04-20";
+export { INFERENCE_SCOPE as Mh, OAUTH_HEADER as rM };
+export const ns = {
+  get INFERENCE_SCOPE() { return INFERENCE_SCOPE; },
+  get OAUTH_HEADER() { return OAUTH_HEADER; }
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn getter_namespace_skips_exported_bindings() {
+    let input = r#"
+export function Ym() { return 1; }
+export function n2z(q) { return q; }
+export const ns = {
+  get subprocessEnv() { return Ym; },
+  get registerFn() { return n2z; }
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn getter_namespace_skips_non_exported_object() {
+    let input = r#"
+function Ym() { return 1; }
+const ns = {
+  get subprocessEnv() { return Ym; }
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn getter_namespace_skips_single_getter() {
+    let input = r#"
+function Ym() { return 1; }
+export const ns = {
+  get subprocessEnv() { return Ym; }
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

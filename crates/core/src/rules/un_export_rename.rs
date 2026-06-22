@@ -4,7 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, NamedExport, Pat, Stmt, VarDecl,
+    ModuleExportName, ModuleItem, NamedExport, Pat, Prop, PropName, PropOrSpread, Stmt, VarDecl,
+    VarDeclKind,
 };
 use swc_core::ecma::visit::VisitMut;
 
@@ -25,6 +26,10 @@ struct ExportRenamePlan {
     /// If the export used aliases (var h = p), these are the alias names so we can
     /// match the export specifier's orig for cleanup.
     alias_names: Vec<Atom>,
+    /// True when the rename source is a getter namespace (Pattern C).
+    /// These bindings should not be promoted to export declarations because
+    /// they're already exported via `export { name }` specifiers.
+    from_getter_namespace: bool,
 }
 
 impl VisitMut for UnExportRename {
@@ -113,6 +118,7 @@ fn collect_export_rename_plans(
                                     old_name: info.id.0.clone(),
                                     new_name,
                                     alias_names: Vec::new(),
+                                    from_getter_namespace: false,
                                 });
                                 changed = true;
                             }
@@ -177,6 +183,49 @@ fn collect_export_rename_plans(
                         old_name,
                         new_name,
                         alias_names,
+                        from_getter_namespace: false,
+                    });
+                    changed = true;
+                }
+            }
+
+            // Pattern C: exported getter namespace object.
+            // `export const ns = { get subprocessEnv() { return Ym; }, ... }`
+            // Each getter whose body is `return <ident>` provides a rename hint:
+            // Ym → subprocessEnv. Only for non-exported bindings — exported ones
+            // require cross-module coordination that this rule can't do.
+            if let Some(getters) = extract_exported_getter_namespace(item) {
+                for (getter_name, local_id) in getters {
+                    let Some(info) = binding_infos.get(&local_id.0) else {
+                        continue;
+                    };
+                    if info.id != local_id || info.exported {
+                        continue;
+                    }
+                    if getter_name == info.id.0
+                        || getter_name.len() < info.id.0.len()
+                        || is_reserved_binding_name(&getter_name)
+                        || name_is_import_binding(&getter_name, module_names, binding_infos)
+                        || name_conflicts_with_unmoved_binding(
+                            binding_infos,
+                            &plans,
+                            &getter_name,
+                            &freed_names,
+                        )
+                        || target_name_already_planned(&plans, &getter_name, &info.id)
+                        || plans
+                            .iter()
+                            .any(|plan: &ExportRenamePlan| plan.old == info.id)
+                        || rename_causes_shadowing(module, &info.id, &getter_name)
+                    {
+                        continue;
+                    }
+                    plans.push(ExportRenamePlan {
+                        old: info.id.clone(),
+                        old_name: info.id.0.clone(),
+                        new_name: getter_name,
+                        alias_names: Vec::new(),
+                        from_getter_namespace: true,
                     });
                     changed = true;
                 }
@@ -351,6 +400,12 @@ fn promote_renamed_bindings(
             new_body.push(item);
             continue;
         };
+        // Pattern C renames: the binding is already exported via `export { name }`
+        // specifiers — rewrite_export_aliases adds the alias there, no promotion needed.
+        if plan.from_getter_namespace {
+            new_body.push(item);
+            continue;
+        }
         let Some(info) = infos_by_old.get(&plan.old).copied() else {
             new_body.push(item);
             continue;
@@ -620,4 +675,59 @@ fn resolve_to_real_binding<'a>(
         current_info = real_info;
         current_name = init_id.sym.clone();
     }
+}
+
+/// Detect `export const ns = { get name() { return binding; }, ... }` and
+/// return (getter_name, local_binding_id) pairs.
+fn extract_exported_getter_namespace(item: &ModuleItem) -> Option<Vec<(Atom, BindingId)>> {
+    let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+        decl: Decl::Var(var),
+        ..
+    })) = item
+    else {
+        return None;
+    };
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+        return None;
+    }
+    let init = var.decls[0].init.as_deref()?;
+    let Expr::Object(obj) = init else {
+        return None;
+    };
+    if obj.props.len() < 2 {
+        return None;
+    }
+    let all_getters = obj
+        .props
+        .iter()
+        .all(|p| matches!(p, PropOrSpread::Prop(prop) if matches!(prop.as_ref(), Prop::Getter(_))));
+    if !all_getters {
+        return None;
+    }
+
+    let mut pairs = Vec::new();
+    for prop in &obj.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::Getter(getter) = prop.as_ref() else {
+            return None;
+        };
+        let getter_name = match &getter.key {
+            PropName::Ident(id) => id.sym.clone(),
+            _ => return None,
+        };
+        let body = getter.body.as_ref()?;
+        if body.stmts.len() != 1 {
+            return None;
+        }
+        let Stmt::Return(ret) = &body.stmts[0] else {
+            return None;
+        };
+        let Expr::Ident(id) = ret.arg.as_deref()? else {
+            return None;
+        };
+        pairs.push((getter_name, (id.sym.clone(), id.ctxt)));
+    }
+    Some(pairs)
 }
