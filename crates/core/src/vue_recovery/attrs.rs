@@ -416,7 +416,7 @@ fn setup_value_class_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Expr>
     let Expr::Ident(object) = unwrap_paren_expr(member.obj.as_ref()) else {
         return None;
     };
-    let binding = ctx.setup_value_bindings.get(&object.sym)?;
+    let binding = ctx.bindings.values.get(&object.sym)?;
     let expr = binding.expr.clone()?;
     let (expr, changed) = simplify_class_expr(expr);
     changed.then_some(expr)

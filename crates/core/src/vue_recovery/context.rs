@@ -220,7 +220,7 @@ fn script_local_reserved_bindings(module: &Module, ctx: &VueRecoveryContext) -> 
             .iter()
             .map(|binding| binding.binding.clone()),
     );
-    reserved.extend(ctx.setup_value_bindings.keys().cloned());
+    reserved.extend(ctx.bindings.values.keys().cloned());
 
     for item in &module.body {
         match item {
@@ -1567,7 +1567,8 @@ pub(super) fn collect_setup_context(
                                     ctx.slot_bindings.insert(binding.id.sym.clone());
                                     true
                                 } else if let Some(alias) = ident_expr(unwrap_paren_expr(init)) {
-                                    ctx.setup_alias_bindings
+                                    ctx.bindings
+                                        .aliases
                                         .insert(binding.id.sym.clone(), alias.sym.clone());
                                     true
                                 } else {
@@ -1587,8 +1588,7 @@ pub(super) fn collect_setup_context(
                                     }
                                     let is_ref_object = is_ref_object_expr(init, ctx);
                                     if is_ref_object {
-                                        ctx.setup_ref_object_bindings
-                                            .insert(binding.id.sym.clone());
+                                        ctx.bindings.ref_objects.insert(binding.id.sym.clone());
                                     }
                                     let is_ref_object_alias_source = is_ref_object
                                         && setup_ref_object_alias_refs.contains(&binding.id.sym);
@@ -1599,13 +1599,14 @@ pub(super) fn collect_setup_context(
                                             &provider_ref_object_bindings,
                                         )
                                     {
-                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        ctx.bindings.refs.insert(binding.id.sym.clone());
                                         if is_composable_ref_member_extraction_expr(
                                             init,
                                             ctx,
                                             &composable_ref_object_bindings,
                                         ) {
-                                            ctx.setup_composable_ref_bindings
+                                            ctx.bindings
+                                                .composable_refs
                                                 .insert(binding.id.sym.clone());
                                         }
                                     }
@@ -1617,8 +1618,7 @@ pub(super) fn collect_setup_context(
                                                 ctx,
                                             );
                                         }
-                                        ctx.setup_value_bindings
-                                            .insert(binding.id.sym.clone(), value);
+                                        ctx.bindings.values.insert(binding.id.sym.clone(), value);
                                         let mut local_var = var.as_ref().clone();
                                         local_var.decls = vec![decl.clone()];
                                         local_candidates.push(SetupLocalCandidate {
@@ -1637,7 +1637,7 @@ pub(super) fn collect_setup_context(
                                             value,
                                             setup_order,
                                         });
-                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        ctx.bindings.refs.insert(binding.id.sym.clone());
                                         true
                                     } else if (!is_ref_object_alias_source
                                         || setup_template_ref_alias_sources
@@ -1664,7 +1664,7 @@ pub(super) fn collect_setup_context(
                                                 },
                                             );
                                         }
-                                        ctx.setup_ref_bindings.insert(binding.id.sym.clone());
+                                        ctx.bindings.refs.insert(binding.id.sym.clone());
                                         true
                                     } else {
                                         false
@@ -1684,7 +1684,7 @@ pub(super) fn collect_setup_context(
                                 if is_ref_object_expr(init, ctx)
                                     || is_ref_object_alias(init, ctx) =>
                             {
-                                collect_object_pat_bindings(object, &mut ctx.setup_ref_bindings);
+                                collect_object_pat_bindings(object, &mut ctx.bindings.refs);
                                 false
                             }
                             Pat::Object(object) => {
@@ -1694,7 +1694,7 @@ pub(super) fn collect_setup_context(
                                     collect_provider_object_pat_bindings(
                                         object,
                                         &ref_props,
-                                        &mut ctx.setup_ref_bindings,
+                                        &mut ctx.bindings.refs,
                                     );
                                 }
                                 if let Some(ref_props) = setup_composable_ref_props(
@@ -1705,7 +1705,7 @@ pub(super) fn collect_setup_context(
                                     collect_provider_object_pat_bindings(
                                         object,
                                         &ref_props,
-                                        &mut ctx.setup_composable_ref_bindings,
+                                        &mut ctx.bindings.composable_refs,
                                     );
                                 }
                                 false
@@ -1754,10 +1754,11 @@ pub(super) fn collect_setup_context(
                         continue;
                     }
                     if has_template_ref && matches!(decl.name, Pat::Object(_)) {
-                        ctx.setup_template_ref_bindings
+                        ctx.bindings
+                            .template_refs
                             .extend(decl_bindings.iter().cloned());
                     } else {
-                        ctx.setup_template_ref_bindings.extend(
+                        ctx.bindings.template_refs.extend(
                             decl_bindings
                                 .iter()
                                 .filter(|binding| setup_template_ref_refs.contains(*binding))
@@ -1793,7 +1794,7 @@ pub(super) fn collect_setup_context(
             .iter()
             .any(|binding| binding.binding == from)
         {
-            ctx.setup_alias_bindings.insert(from, to);
+            ctx.bindings.aliases.insert(from, to);
         }
     }
     refresh_setup_value_binding_sources(ctx)?;
@@ -2221,7 +2222,7 @@ fn collect_setup_value_template_tuple_refs(
     };
     for ref_name in value_member_refs_in_expr(expr) {
         if tuple_value_candidates.contains(&ref_name) {
-            ctx.setup_template_ref_bindings.insert(ref_name);
+            ctx.bindings.template_refs.insert(ref_name);
         }
     }
 }
@@ -2422,7 +2423,7 @@ fn assign_setup_prop_bindings(
     ctx: &mut VueRecoveryContext,
     local_candidates: &[SetupLocalCandidate],
 ) {
-    ctx.setup_prop_bindings.clear();
+    ctx.bindings.props.clear();
     let prop_names = ctx
         .setup_component_options
         .as_ref()
@@ -2439,7 +2440,7 @@ fn assign_setup_prop_bindings(
     }
 
     let mut reserved = HashSet::new();
-    reserved.extend(ctx.setup_alias_bindings.keys().cloned());
+    reserved.extend(ctx.bindings.aliases.keys().cloned());
     reserved.extend(
         local_candidates
             .iter()
@@ -2469,7 +2470,7 @@ fn assign_setup_prop_bindings(
             used.insert(prop.clone());
             prop.clone()
         };
-        ctx.setup_prop_bindings.insert(prop, binding);
+        ctx.bindings.props.insert(prop, binding);
     }
 }
 
@@ -2735,7 +2736,7 @@ pub(super) fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool
     let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
         return false;
     };
-    ctx.setup_ref_object_bindings.contains(&ident.sym)
+    ctx.bindings.ref_objects.contains(&ident.sym)
 }
 
 fn is_ref_member_extraction_expr(
@@ -3125,13 +3126,13 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
 }
 
 fn refresh_setup_value_binding_sources(ctx: &mut VueRecoveryContext) -> Result<()> {
-    let bindings = ctx.setup_value_bindings.clone();
+    let bindings = ctx.bindings.values.clone();
     for (binding, value) in bindings {
         let Some(expr) = value.expr else {
             continue;
         };
         let value = clean_expr(&print_expr(&expr, ctx)?, ctx);
-        if let Some(binding) = ctx.setup_value_bindings.get_mut(&binding) {
+        if let Some(binding) = ctx.bindings.values.get_mut(&binding) {
             binding.value = value;
         }
     }

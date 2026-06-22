@@ -117,30 +117,9 @@ struct SetupRefValueCleaner<'a> {
 
 impl<'a> SetupRefValueCleaner<'a> {
     fn new(ctx: &'a VueRecoveryContext, clean_assign_targets: bool) -> Self {
-        let mut bindings = ctx
-            .setup_ref_bindings
-            .iter()
-            .map(|binding| binding.as_ref())
-            .collect::<Vec<_>>();
-        let ref_bindings = ctx
-            .setup_ref_bindings
-            .iter()
-            .chain(ctx.setup_template_ref_bindings.iter())
-            .collect::<std::collections::HashSet<_>>();
-        if clean_assign_targets {
-            bindings.extend(
-                ctx.setup_template_ref_bindings
-                    .iter()
-                    .map(|binding| binding.as_ref()),
-            );
-            bindings.extend(
-                ctx.setup_alias_bindings
-                    .iter()
-                    .filter_map(|(from, to)| ref_bindings.contains(from).then_some(to.as_ref())),
-            );
-        }
-        bindings.sort_unstable();
-        bindings.dedup();
+        let bindings = ctx
+            .bindings
+            .ref_value_cleanup_bindings(clean_assign_targets);
         let shadow_depths = vec![0; bindings.len()];
         Self {
             bindings,
@@ -189,13 +168,7 @@ struct SetupAliasCleaner<'a> {
 
 impl<'a> SetupAliasCleaner<'a> {
     fn new(ctx: &'a VueRecoveryContext) -> Self {
-        let mut aliases = ctx
-            .setup_alias_bindings
-            .iter()
-            .map(|(from, to)| (from.as_ref(), to))
-            .collect::<Vec<_>>();
-        aliases.sort_by_key(|(from, _)| *from);
-        aliases.dedup_by(|(left, _), (right, _)| left == right);
+        let aliases = ctx.bindings.sorted_aliases();
         let shadow_depths = vec![0; aliases.len()];
         Self {
             aliases,
@@ -361,7 +334,7 @@ impl<'a> ContextMemberCleaner<'a> {
         let shadow_depths = vec![0; prefixes.len()];
         Self {
             prefixes,
-            prop_bindings: &ctx.setup_prop_bindings,
+            prop_bindings: &ctx.bindings.props,
             shadow_depths,
         }
     }
@@ -509,12 +482,12 @@ fn pat_binds_name(pat: &Pat, name: &str) -> bool {
 }
 
 fn inline_setup_value_bindings(input: &str, ctx: &VueRecoveryContext) -> String {
-    if ctx.setup_value_bindings.is_empty() {
+    if ctx.bindings.values.is_empty() {
         return input.to_string();
     }
 
     let mut output = input.to_string();
-    for _ in 0..ctx.setup_value_bindings.len() {
+    for _ in 0..ctx.bindings.values.len() {
         let (next, changed) = replace_setup_value_bindings_once(&output, ctx);
         output = next;
         if !changed {
@@ -586,13 +559,9 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
 
             let ident = &input[start..cursor];
             if input[cursor..].starts_with(".value") {
-                if let Some(value) = ctx
-                    .setup_value_bindings
-                    .iter()
-                    .find_map(|(binding, value)| {
-                        (binding.as_ref() == ident).then_some(&value.value)
-                    })
-                {
+                if let Some(value) = ctx.bindings.values.iter().find_map(|(binding, value)| {
+                    (binding.as_ref() == ident).then_some(&value.value)
+                }) {
                     output.push_str(&format!("({})", value.trim()));
                     cursor += ".value".len();
                     changed = true;
