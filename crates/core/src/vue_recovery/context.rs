@@ -104,6 +104,9 @@ pub(super) fn collect_context(
                             }
                         }
                         ImportSpecifier::Namespace(namespace) => {
+                            if source == "vue" || source.contains("vue") {
+                                ctx.vue_namespaces.insert(namespace.local.sym.clone());
+                            }
                             if source != "vue" {
                                 ctx.script_imports.insert(
                                     namespace.local.sym.clone(),

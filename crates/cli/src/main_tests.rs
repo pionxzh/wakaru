@@ -268,6 +268,33 @@ export { YP as B };
 }
 
 #[test]
+fn vue_sfc_unpack_recovers_webpack_namespace_component() {
+    let dir = temp_test_dir("vue-sfc-webpack");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
+        "<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
@@ -601,6 +628,64 @@ fn webpack5_runtime_entry_source() -> &'static str {
   require.u = function(id) { return id + ".bundle.js"; };
   require.t = function(value) { return value; };
   require.e(529).then(require.t.bind(require, 529, 19));
+})();
+"#
+}
+
+fn webpack5_vue_sfc_bundle_source() -> &'static str {
+    r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./node_modules/vue/index.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, {
+        createElementBlock: () => createElementBlock,
+        defineComponent: () => defineComponent,
+        openBlock: () => openBlock,
+        toDisplayString: () => toDisplayString
+      });
+      function createElementBlock() {}
+      function defineComponent(options) { return options; }
+      function openBlock() {}
+      function toDisplayString(value) { return String(value); }
+    }),
+    "./src/App.vue": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, { default: () => __WEBPACK_DEFAULT_EXPORT__ });
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      const _hoisted_1 = { class: "notice" };
+      function render(_ctx, _cache) {
+        return (0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("section", _hoisted_1, (0, vue__WEBPACK_IMPORTED_MODULE_0__.toDisplayString)(_ctx.message), 3);
+      }
+      const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        name: "WebpackPanel",
+        render
+      });
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = (exports, definition) => {
+    for (var key in definition) {
+      if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+        Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+      }
+    }
+  };
+  __webpack_require__.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+  __webpack_require__.r = (exports) => {
+    if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+      Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+    }
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__("./src/App.vue");
 })();
 "#
 }

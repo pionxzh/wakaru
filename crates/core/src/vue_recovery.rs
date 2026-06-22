@@ -35,13 +35,14 @@ use context::{
     setup_emit_param, setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
-use helpers::VueHelper;
+use helpers::{helper_name, VueHelper};
 use nodes::recover_render_root;
 use syntax::{module_export_name, prop_name};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, VueHelper>,
+    vue_namespaces: HashSet<Atom>,
     vue_helper_candidates: HashSet<Atom>,
     script_imports: HashMap<Atom, VueScriptImport>,
     setup_script_import_refs: HashSet<Atom>,
@@ -1010,34 +1011,27 @@ fn setup_slots_binding_ident(pat: &Pat) -> Option<&Ident> {
 }
 
 fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) -> bool {
-    if ctx.vue_helpers.is_empty() {
+    if ctx.vue_helpers.is_empty() && ctx.vue_namespaces.is_empty() {
         return false;
     }
 
     struct Finder<'a> {
-        helpers: &'a HashMap<Atom, VueHelper>,
+        ctx: &'a VueRecoveryContext,
         found: bool,
     }
 
     impl Visit for Finder<'_> {
         fn visit_call_expr(&mut self, call: &CallExpr) {
-            if let Callee::Expr(callee) = &call.callee {
-                if let Expr::Ident(ident) = callee.as_ref() {
-                    if self.helpers.contains_key(&ident.sym) {
-                        self.found = true;
-                        return;
-                    }
-                }
+            if helper_name(&call.callee, self.ctx).is_some() {
+                self.found = true;
+                return;
             }
 
             call.visit_children_with(self);
         }
     }
 
-    let mut finder = Finder {
-        helpers: &ctx.vue_helpers,
-        found: false,
-    };
+    let mut finder = Finder { ctx, found: false };
     match render {
         RenderSource::Function(render) => {
             let Some(body) = render.function.body.as_ref() else {
@@ -3147,6 +3141,22 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_webpack_namespace_vue_helpers() {
+        let input = r#"
+import * as Vue from "vue";
+const _hoisted_1 = { class: "notice" };
+export function render(_ctx, _cache) {
+  return (0, Vue.openBlock)(), (0, Vue.createElementBlock)("section", _hoisted_1, (0, Vue.toDisplayString)(_ctx.message), 3);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn decompiles_then_recovers_vue_sfc() {
         let input = r#"
 import { toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue";
@@ -3491,6 +3501,31 @@ export { _sfc_banner as T, _sfc_main as _ };
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <main>Main</main>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn prefers_webpack_default_component_when_module_has_multiple_setup_renders() {
+        let input = r#"
+import * as Vue from "vue";
+const SecondaryPanel = Vue.defineComponent({
+  name: "SecondaryPanel",
+  setup() {
+    return () => ((0, Vue.openBlock)(), (0, Vue.createElementBlock)("aside", null, "Secondary"));
+  }
+});
+const PrimaryPanel = Vue.defineComponent({
+  name: "PrimaryPanel",
+  setup() {
+    return () => ((0, Vue.openBlock)(), (0, Vue.createElementBlock)("main", null, "Primary"));
+  }
+});
+export { SecondaryPanel as Panel, PrimaryPanel as default };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <main>Primary</main>\n</template>\n"
         );
     }
 
