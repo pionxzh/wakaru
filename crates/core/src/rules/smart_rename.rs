@@ -6,11 +6,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
-    JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
-    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt,
-    VarDecl, VarDeclKind,
+    Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, GetterProp, Ident, ImportDecl,
+    ImportSpecifier, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr,
+    JSXExprContainer, JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop,
+    PropName, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1729,6 +1729,24 @@ impl Visit for ValuePositionClassifier {
             kv.value.visit_with(self);
             return;
         }
+        // Treat `get name() { return x; }` as a value-position hint:
+        // the getter name suggests what `x` should be called.
+        if let Prop::Getter(getter) = prop {
+            if let Some(id) = getter_single_return_ident(getter) {
+                let bid = (id.sym.clone(), id.ctxt);
+                if self.states.contains_key(&bid) {
+                    match key_as_ident_target(&getter.key) {
+                        Some(name) => self.record_value_use(&bid, name),
+                        None => self.record_other_use(&bid),
+                    }
+                    return;
+                }
+            }
+            if let Some(body) = &getter.body {
+                body.visit_with(self);
+            }
+            return;
+        }
         prop.visit_children_with(self);
     }
 
@@ -1838,6 +1856,20 @@ impl Visit for ValuePositionClassifier {
             c.expr.visit_with(self);
         }
     }
+}
+
+fn getter_single_return_ident(getter: &GetterProp) -> Option<&Ident> {
+    let body = getter.body.as_ref()?;
+    if body.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Return(ret) = &body.stmts[0] else {
+        return None;
+    };
+    let Expr::Ident(id) = ret.arg.as_deref()? else {
+        return None;
+    };
+    Some(id)
 }
 
 fn key_as_ident_target(key: &PropName) -> Option<String> {

@@ -1103,6 +1103,51 @@ function render(U) {
 }
 
 // ============================================================
+// Getter return value rename hints
+// ============================================================
+
+#[test]
+fn value_position_rename_from_getter_return() {
+    let input = r#"
+function hD() {}
+function Dq() {}
+const ns = {
+  get isKmsi() { return hD; },
+  get getPayload() { return Dq; }
+};
+"#;
+    let expected = r#"
+function isKmsi() {}
+function getPayload() {}
+const ns = {
+  get isKmsi() { return isKmsi; },
+  get getPayload() { return getPayload; }
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_getter_skips_multi_statement_body() {
+    let input = r#"
+const ns = {
+  get foo() { console.log(); return hD; }
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn value_position_getter_skips_non_ident_return() {
+    let input = r#"
+const ns = {
+  get foo() { return a + b; }
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+// ============================================================
 // Sentry data-sentry-component renames
 // ============================================================
 
