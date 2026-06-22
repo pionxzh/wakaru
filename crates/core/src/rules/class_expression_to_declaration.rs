@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ClassDecl, Decl, DefaultDecl, Expr, Ident, ImportSpecifier, ModuleDecl, ModuleItem, Pat, Stmt,
-    VarDecl, VarDeclKind,
+    ArrowExpr, CatchClause, ClassDecl, Decl, DefaultDecl, Expr, Function, Ident, ImportSpecifier,
+    Module, ModuleDecl, ModuleItem, ObjectPatProp, Pat, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -23,6 +23,17 @@ use super::rename_utils::{rename_bindings, rename_bindings_in_module, BindingRen
 pub struct ClassExpressionToDeclaration;
 
 impl VisitMut for ClassExpressionToDeclaration {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        module.visit_mut_children_with(&mut ClassExpressionToDeclarationVisitor::default());
+    }
+}
+
+#[derive(Default)]
+struct ClassExpressionToDeclarationVisitor {
+    extra_scope_names: Vec<HashSet<Atom>>,
+}
+
+impl VisitMut for ClassExpressionToDeclarationVisitor {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
         promote_in_module_items(items);
@@ -30,7 +41,37 @@ impl VisitMut for ClassExpressionToDeclaration {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        promote_in_stmts(stmts);
+        promote_in_stmts(stmts, &self.extra_scope_names);
+    }
+
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        let mut names = HashSet::new();
+        for param in &func.params {
+            collect_pat_binding_names(&param.pat, &mut names);
+        }
+        self.extra_scope_names.push(names);
+        func.visit_mut_children_with(self);
+        self.extra_scope_names.pop();
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let mut names = HashSet::new();
+        for param in &arrow.params {
+            collect_pat_binding_names(param, &mut names);
+        }
+        self.extra_scope_names.push(names);
+        arrow.visit_mut_children_with(self);
+        self.extra_scope_names.pop();
+    }
+
+    fn visit_mut_catch_clause(&mut self, clause: &mut CatchClause) {
+        let mut names = HashSet::new();
+        if let Some(param) = &clause.param {
+            collect_pat_binding_names(param, &mut names);
+        }
+        self.extra_scope_names.push(names);
+        clause.visit_mut_children_with(self);
+        self.extra_scope_names.pop();
     }
 }
 
@@ -85,8 +126,9 @@ fn promote_in_module_items(items: &mut Vec<ModuleItem>) {
     }
 }
 
-fn promote_in_stmts(stmts: &mut Vec<Stmt>) {
+fn promote_in_stmts(stmts: &mut Vec<Stmt>, extra_scope_names: &[HashSet<Atom>]) {
     let scope_names = collect_scope_names_from_stmts(stmts);
+    let scope_names = merge_extra_scope_names(scope_names, extra_scope_names);
     let mut renames: Vec<BindingRename> = Vec::new();
 
     for stmt in stmts.iter_mut() {
@@ -158,6 +200,16 @@ fn collect_scope_names_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
     names
 }
 
+fn merge_extra_scope_names(
+    mut names: HashSet<Atom>,
+    extra_scope_names: &[HashSet<Atom>],
+) -> HashSet<Atom> {
+    for extra in extra_scope_names {
+        names.extend(extra.iter().cloned());
+    }
+    names
+}
+
 fn collect_decl_binding_names(decl: &Decl, names: &mut HashSet<Atom>) {
     match decl {
         Decl::Var(var) => {
@@ -173,6 +225,33 @@ fn collect_decl_binding_names(decl: &Decl, names: &mut HashSet<Atom>) {
         Decl::Class(c) => {
             names.insert(c.ident.sym.clone());
         }
+        _ => {}
+    }
+}
+
+fn collect_pat_binding_names(pat: &Pat, names: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) => {
+            names.insert(binding.id.sym.clone());
+        }
+        Pat::Assign(assign) => collect_pat_binding_names(&assign.left, names),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_names(elem, names);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_binding_names(&kv.value, names),
+                    ObjectPatProp::Assign(assign) => {
+                        names.insert(assign.key.id.sym.clone());
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_binding_names(&rest.arg, names),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_names(&rest.arg, names),
         _ => {}
     }
 }

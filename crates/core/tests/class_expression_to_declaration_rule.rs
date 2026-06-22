@@ -161,3 +161,27 @@ class d {}
 console.log(Logger);"#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_function_param() {
+    let input = "function f(Logger) { const d = class Logger {}; return new d(); }";
+    let expected = "function f(Logger) {\n    class d {}\n    return new d();\n}";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_arrow_param() {
+    let input = "const f = (Logger) => { const d = class Logger {}; return new d(); };";
+    let expected = "const f = (Logger)=>{
+    class d {}
+    return new d();
+};";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_catch_param() {
+    let input = "try { work(); } catch (Logger) { const d = class Logger {}; recover(d); }";
+    let expected = "try {\n    work();\n} catch (Logger) {\n    class d {}\n    recover(d);\n}";
+    assert_eq_normalized(&apply(input), expected);
+}
