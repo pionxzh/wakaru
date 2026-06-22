@@ -142,7 +142,8 @@ echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
 Warnings and errors are included in the JSON object. Useful for CI pipelines
 and tooling integration. In unpack mode, each module includes an artifact
 `kind` such as `javascript` or `vue_sfc` and a `status` such as `decompiled`,
-`recovered_vue_sfc`, or `vue_sfc_fallback_js`.
+`recovered_vue_sfc`, or `vue_sfc_fallback_js` for likely-Vue modules that
+could not be recovered as SFC output.
 
 ### Diagnostics and profiling
 

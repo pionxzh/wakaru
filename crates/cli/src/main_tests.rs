@@ -624,6 +624,22 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
 }
 
 #[test]
+fn vue_sfc_js_artifact_status_marks_only_likely_vue_fallbacks() {
+    assert_eq!(
+        vue_sfc_js_artifact_status(false, false),
+        JsonModuleStatus::Decompiled
+    );
+    assert_eq!(
+        vue_sfc_js_artifact_status(false, true),
+        JsonModuleStatus::VueSfcFallbackJs
+    );
+    assert_eq!(
+        vue_sfc_js_artifact_status(true, true),
+        JsonModuleStatus::VueSfcSourceJs
+    );
+}
+
+#[test]
 fn format_elapsed_uses_seconds_for_long_durations() {
     let d = Duration::from_millis(1234);
     assert_eq!(format_elapsed(d), "1.23s");
