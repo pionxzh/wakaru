@@ -48,6 +48,7 @@ export function App() {
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [mappingEnabled, setMappingEnabled] = useState(false);
+  const formatterEnabled = formatter && !mappingEnabled;
   const [sourceMapJson, setSourceMapJson] = useState<string | undefined>();
   const [hoveredOutputLine, setHoveredOutputLine] = useState<number | null>(null);
   const [hoveredInputLine, setHoveredInputLine] = useState<number | null>(null);
@@ -59,7 +60,7 @@ export function App() {
   const activeRunRef = useRef(false);
   const autoRunDelayRef = useRef(INITIAL_AUTO_RUN_DELAY_MS);
   const inputVersionRef = useRef(0);
-  const latestInputRef = useRef({ source, level, formatter });
+  const latestInputRef = useRef({ source, level, formatter: formatterEnabled });
   const shareStatusTimeoutRef = useRef<number | null>(null);
 
   const runDecompile = useCallback(async () => {
@@ -122,9 +123,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    latestInputRef.current = { source, level, formatter };
+    latestInputRef.current = { source, level, formatter: formatterEnabled };
     inputVersionRef.current += 1;
-  }, [source, level, formatter]);
+  }, [source, level, formatterEnabled]);
 
   useEffect(() => {
     if (!wasmReady) return;
@@ -133,7 +134,7 @@ export function App() {
       void runDecompile();
     }, autoRunDelayRef.current);
     return () => window.clearTimeout(timeoutId);
-  }, [source, level, formatter, wasmReady, runDecompile]);
+  }, [source, level, formatterEnabled, wasmReady, runDecompile]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -164,7 +165,7 @@ export function App() {
       shareUrl = createShareUrl({
         source,
         level,
-        formatter,
+        formatter: formatterEnabled,
         version: VERSION_LABEL,
       });
     } catch (e) {
@@ -183,7 +184,7 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [formatter, level, showShareStatus, source]);
+  }, [formatterEnabled, level, showShareStatus, source]);
 
   useEffect(() => {
     return () => {
@@ -367,7 +368,8 @@ export function App() {
       />
       <Controls
         level={level}
-        formatter={formatter}
+        formatter={formatterEnabled}
+        formatterDisabled={mappingEnabled}
         mapping={mappingEnabled}
         onLevelChange={setLevel}
         onFormatterChange={setFormatter}

@@ -15,6 +15,7 @@ function ShareIcon() {
 interface ControlsProps {
   level: Level;
   formatter: boolean;
+  formatterDisabled: boolean;
   mapping: boolean;
   onLevelChange: (level: Level) => void;
   onFormatterChange: (formatter: boolean) => void;
@@ -30,6 +31,7 @@ interface ControlsProps {
 export function Controls({
   level,
   formatter,
+  formatterDisabled,
   mapping,
   onLevelChange,
   onFormatterChange,
@@ -65,6 +67,7 @@ export function Controls({
             type="button"
             role="switch"
             aria-checked={formatter}
+            disabled={formatterDisabled}
             onClick={() => onFormatterChange(!formatter)}
           >
             <span className="controls-switch-thumb" />
