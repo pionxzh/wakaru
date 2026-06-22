@@ -738,9 +738,12 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
     if !(specifier.starts_with("./") || specifier.starts_with("../")) {
         return None;
     }
+    let specifier = strip_import_query_and_hash(specifier);
     let base = Path::new(base_filename);
     let parent = base.parent()?;
-    fs::read_to_string(parent.join(specifier)).ok()
+    relative_import_path_candidates(parent.join(specifier))
+        .into_iter()
+        .find_map(|path| fs::read_to_string(path).ok())
 }
 
 struct CliOutputArtifact {
@@ -758,13 +761,87 @@ fn resolve_unpack_import_source(
         return None;
     }
 
-    let root_relative = normalize_relative_module_specifier(specifier)?;
-    if let Some(source) = module_sources.get(&root_relative) {
-        return Some(source.clone());
+    let specifiers = import_lookup_specifiers(specifier);
+
+    for specifier in &specifiers {
+        if let Some(root_relative) = normalize_relative_module_specifier(specifier) {
+            if let Some(source) = find_resolved_module_source(module_sources, &root_relative) {
+                return Some(source);
+            }
+        }
     }
 
-    let base_relative = normalize_relative_module_specifier_from_base(base_filename, specifier)?;
-    module_sources.get(&base_relative).cloned()
+    for specifier in &specifiers {
+        if let Some(base_relative) =
+            normalize_relative_module_specifier_from_base(base_filename, specifier)
+        {
+            if let Some(source) = find_resolved_module_source(module_sources, &base_relative) {
+                return Some(source);
+            }
+        }
+    }
+
+    None
+}
+
+const VUE_IMPORT_RESOLVE_EXTENSIONS: &[&str] = &["vue", "js", "mjs", "cjs"];
+
+fn strip_import_query_and_hash(specifier: &str) -> &str {
+    specifier
+        .find(['?', '#'])
+        .map_or(specifier, |idx| &specifier[..idx])
+}
+
+fn import_lookup_specifiers(specifier: &str) -> Vec<&str> {
+    let stripped = strip_import_query_and_hash(specifier);
+    if stripped == specifier {
+        vec![specifier]
+    } else {
+        vec![specifier, stripped]
+    }
+}
+
+fn relative_import_path_candidates(path: PathBuf) -> Vec<PathBuf> {
+    let mut candidates = vec![path.clone()];
+    if path.extension().is_none() {
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| path.with_extension(ext)),
+        );
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| path.join(format!("index.{ext}"))),
+        );
+    }
+    candidates
+}
+
+fn find_resolved_module_source(
+    module_sources: &HashMap<String, String>,
+    normalized: &str,
+) -> Option<String> {
+    module_lookup_candidates(normalized)
+        .into_iter()
+        .find_map(|candidate| module_sources.get(&candidate).cloned())
+}
+
+fn module_lookup_candidates(normalized: &str) -> Vec<String> {
+    let mut candidates = vec![normalized.to_string()];
+    if Path::new(normalized).extension().is_none() {
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| format!("{normalized}.{ext}")),
+        );
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| format!("{normalized}/index.{ext}")),
+        );
+    }
+    candidates
 }
 
 fn normalize_relative_module_specifier(specifier: &str) -> Option<String> {
