@@ -488,6 +488,9 @@ fn run_default(cli: Cli) -> Result<()> {
                 let names: Vec<&str> = output.detected_formats.iter().map(|f| f.as_str()).collect();
                 eprintln!("detected: {}", names.join(", "));
             }
+            if let Some(summary) = vue_sfc_artifact_summary(&artifacts) {
+                eprintln!("{}", format_vue_sfc_artifact_summary(summary));
+            }
             let fail_info = if error_modules.is_empty() {
                 String::new()
             } else {
@@ -824,6 +827,35 @@ fn vue_sfc_js_artifact_status(recovered_vue_sfc: bool, likely_vue_sfc: bool) -> 
     } else {
         JsonModuleStatus::Decompiled
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VueSfcArtifactSummary {
+    recovered: usize,
+    fallback: usize,
+}
+
+fn vue_sfc_artifact_summary(artifacts: &[CliOutputArtifact]) -> Option<VueSfcArtifactSummary> {
+    let summary =
+        artifacts
+            .iter()
+            .fold(VueSfcArtifactSummary::default(), |mut summary, artifact| {
+                match artifact.status {
+                    JsonModuleStatus::RecoveredVueSfc => summary.recovered += 1,
+                    JsonModuleStatus::VueSfcFallbackJs => summary.fallback += 1,
+                    _ => {}
+                }
+                summary
+            });
+
+    (summary.recovered > 0 || summary.fallback > 0).then_some(summary)
+}
+
+fn format_vue_sfc_artifact_summary(summary: VueSfcArtifactSummary) -> String {
+    format!(
+        "vue-sfc: {} recovered, {} fallback",
+        summary.recovered, summary.fallback
+    )
 }
 
 fn resolve_unpack_import_source(

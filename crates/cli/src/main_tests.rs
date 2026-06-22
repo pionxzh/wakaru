@@ -640,6 +640,36 @@ fn vue_sfc_js_artifact_status_marks_only_likely_vue_fallbacks() {
 }
 
 #[test]
+fn vue_sfc_artifact_summary_counts_recovered_and_fallback_modules() {
+    let artifacts = vec![
+        test_cli_artifact(JsonModuleStatus::VueSfcSourceJs),
+        test_cli_artifact(JsonModuleStatus::RecoveredVueSfc),
+        test_cli_artifact(JsonModuleStatus::VueSfcFallbackJs),
+        test_cli_artifact(JsonModuleStatus::Decompiled),
+    ];
+
+    let summary = vue_sfc_artifact_summary(&artifacts);
+    assert_eq!(
+        summary,
+        Some(VueSfcArtifactSummary {
+            recovered: 1,
+            fallback: 1
+        })
+    );
+    assert_eq!(
+        format_vue_sfc_artifact_summary(summary.expect("summary")),
+        "vue-sfc: 1 recovered, 1 fallback"
+    );
+}
+
+#[test]
+fn vue_sfc_artifact_summary_ignores_plain_js_modules() {
+    let artifacts = vec![test_cli_artifact(JsonModuleStatus::Decompiled)];
+
+    assert_eq!(vue_sfc_artifact_summary(&artifacts), None);
+}
+
+#[test]
 fn format_elapsed_uses_seconds_for_long_durations() {
     let d = Duration::from_millis(1234);
     assert_eq!(format_elapsed(d), "1.23s");
@@ -918,6 +948,17 @@ fn temp_test_dir(name: &str) -> PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
+}
+
+fn test_cli_artifact(status: JsonModuleStatus) -> CliOutputArtifact {
+    CliOutputArtifact {
+        filename: "module.js".to_string(),
+        code: "export {};".to_string(),
+        kind: JsonModuleKind::JavaScript,
+        status,
+        source_filename: None,
+        source_map_filename: None,
+    }
 }
 
 fn vue_render_module_source() -> &'static str {
