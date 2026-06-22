@@ -1,3 +1,11 @@
+use swc_core::common::{sync::Lrc, FileName, SourceMap, Span};
+use swc_core::ecma::ast::{
+    ArrowExpr, CatchClause, ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, Function, Ident,
+    ModuleItem, ObjectPatProp, Pat, Prop, Stmt, VarDeclarator,
+};
+use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::visit::{Visit, VisitWith};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueSfc {
     pub script: Option<String>,
@@ -255,8 +263,280 @@ fn rename_expr_prefix(expr: &str, from: &str, to: &str) -> String {
         return expr.to_string();
     }
 
+    if let Some(renamed) = rename_expr_prefix_with_ast(expr, from, to) {
+        return renamed;
+    }
+
     let chars = expr.chars().collect::<Vec<_>>();
     rename_code_segment(&chars, 0, from, to, false).0
+}
+
+fn rename_expr_prefix_with_ast(expr: &str, from: &str, to: &str) -> Option<String> {
+    let prefix = "const __wakaru_expr = ";
+    let source = format!("{prefix}{expr};");
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom("vue-template-expr.js".into()).into(),
+        source,
+    );
+    let lexer = Lexer::new(
+        Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
+        Default::default(),
+        StringInput::from(&*fm),
+        None,
+    );
+    let mut parser = Parser::new_from(lexer);
+    let module = parser.parse_module().ok()?;
+    let expr_ast = parsed_initializer(&module.body)?;
+
+    let mut collector = ExprPrefixRenameCollector::new(from, to);
+    expr_ast.visit_with(&mut collector);
+    apply_expr_replacements(expr, prefix.len(), fm.start_pos.0, collector.replacements)
+}
+
+fn parsed_initializer(items: &[ModuleItem]) -> Option<&Expr> {
+    let ModuleItem::Stmt(Stmt::Decl(decl)) = items.first()? else {
+        return None;
+    };
+    let swc_core::ecma::ast::Decl::Var(var) = decl else {
+        return None;
+    };
+    var.decls.first()?.init.as_deref()
+}
+
+fn apply_expr_replacements(
+    expr: &str,
+    prefix_len: usize,
+    start_pos: u32,
+    replacements: Vec<ExprReplacement>,
+) -> Option<String> {
+    if replacements.is_empty() {
+        return Some(expr.to_string());
+    }
+
+    let mut ranges = replacements
+        .into_iter()
+        .map(|replacement| {
+            let start = replacement
+                .span
+                .lo
+                .0
+                .checked_sub(start_pos)?
+                .try_into()
+                .ok()?;
+            let end = replacement
+                .span
+                .hi
+                .0
+                .checked_sub(start_pos)?
+                .try_into()
+                .ok()?;
+            let start = usize::checked_sub(start, prefix_len)?;
+            let end = usize::checked_sub(end, prefix_len)?;
+            (start <= end && end <= expr.len()).then_some((start, end, replacement.with))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    ranges.sort_by_key(|(start, _, _)| *start);
+    if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return None;
+    }
+
+    let mut output = expr.to_string();
+    for (start, end, replacement) in ranges.into_iter().rev() {
+        output.replace_range(start..end, &replacement);
+    }
+    Some(output)
+}
+
+struct ExprReplacement {
+    span: Span,
+    with: String,
+}
+
+struct ExprPrefixRenameCollector<'a> {
+    from: &'a str,
+    to: &'a str,
+    shadow_depth: usize,
+    replacements: Vec<ExprReplacement>,
+}
+
+impl<'a> ExprPrefixRenameCollector<'a> {
+    fn new(from: &'a str, to: &'a str) -> Self {
+        Self {
+            from,
+            to,
+            shadow_depth: 0,
+            replacements: Vec::new(),
+        }
+    }
+
+    fn active(&self) -> bool {
+        self.shadow_depth == 0
+    }
+
+    fn replace_ident(&mut self, ident: &Ident) {
+        if self.active() && ident.sym.as_ref() == self.from {
+            self.replacements.push(ExprReplacement {
+                span: ident.span,
+                with: self.to.to_string(),
+            });
+        }
+    }
+
+    fn replace_shorthand(&mut self, ident: &Ident) {
+        if self.active() && ident.sym.as_ref() == self.from {
+            self.replacements.push(ExprReplacement {
+                span: ident.span,
+                with: format!("{}: {}", ident.sym, self.to),
+            });
+        }
+    }
+
+    fn with_shadowed_scope(&mut self, shadowed: bool, visit: impl FnOnce(&mut Self)) {
+        if shadowed {
+            self.shadow_depth += 1;
+        }
+        visit(self);
+        if shadowed {
+            self.shadow_depth -= 1;
+        }
+    }
+}
+
+impl Visit for ExprPrefixRenameCollector<'_> {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Expr::Ident(ident) = expr {
+            self.replace_ident(ident);
+            return;
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_prop(&mut self, prop: &Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            self.replace_shorthand(ident);
+            return;
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let shadowed = arrow_scope_binds_name(arrow, self.from);
+        self.with_shadowed_scope(shadowed, |collector| {
+            arrow.visit_children_with(collector);
+        });
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        let shadowed = function_scope_binds_name(function, self.from);
+        self.with_shadowed_scope(shadowed, |collector| {
+            function.visit_children_with(collector);
+        });
+    }
+
+    fn visit_fn_expr(&mut self, function: &FnExpr) {
+        let shadows_name = function
+            .ident
+            .as_ref()
+            .is_some_and(|ident| ident.sym.as_ref() == self.from);
+        self.with_shadowed_scope(shadows_name, |collector| {
+            function.visit_children_with(collector);
+        });
+    }
+}
+
+fn arrow_scope_binds_name(arrow: &ArrowExpr, name: &str) -> bool {
+    let mut collector = ExprScopeBindingCollector::new(name);
+    arrow.visit_children_with(&mut collector);
+    collector.found()
+}
+
+fn function_scope_binds_name(function: &Function, name: &str) -> bool {
+    let mut collector = ExprScopeBindingCollector::new(name);
+    function.visit_children_with(&mut collector);
+    collector.found()
+}
+
+struct ExprScopeBindingCollector<'a> {
+    name: &'a str,
+    found: bool,
+}
+
+impl<'a> ExprScopeBindingCollector<'a> {
+    fn new(name: &'a str) -> Self {
+        Self { name, found: false }
+    }
+
+    fn found(&self) -> bool {
+        self.found
+    }
+
+    fn collect_pat(&mut self, pat: &Pat) {
+        self.found |= pat_binds_name(pat, self.name);
+    }
+
+    fn collect_ident(&mut self, ident: &Ident) {
+        self.found |= ident.sym.as_ref() == self.name;
+    }
+}
+
+impl Visit for ExprScopeBindingCollector<'_> {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.collect_pat(&declarator.name);
+    }
+
+    fn visit_param(&mut self, param: &swc_core::ecma::ast::Param) {
+        self.collect_pat(&param.pat);
+    }
+
+    fn visit_pat(&mut self, pat: &Pat) {
+        self.collect_pat(pat);
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.collect_ident(&function.ident);
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.collect_ident(&class.ident);
+    }
+
+    fn visit_catch_clause(&mut self, catch: &CatchClause) {
+        if let Some(param) = &catch.param {
+            self.collect_pat(param);
+        }
+        catch.body.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_fn_expr(&mut self, _: &FnExpr) {}
+
+    fn visit_class_expr(&mut self, _: &ClassExpr) {}
+}
+
+fn pat_binds_name(pat: &Pat, name: &str) -> bool {
+    match pat {
+        Pat::Ident(binding) => binding.id.sym.as_ref() == name,
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| pat_binds_name(elem, name)),
+        Pat::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(key_value) => pat_binds_name(key_value.value.as_ref(), name),
+            ObjectPatProp::Assign(assign) => assign.key.sym.as_ref() == name,
+            ObjectPatProp::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
+        }),
+        Pat::Assign(assign) => pat_binds_name(assign.left.as_ref(), name),
+        Pat::Expr(_) | Pat::Invalid(_) => false,
+    }
 }
 
 fn rename_code_segment(
@@ -502,6 +782,43 @@ mod tests {
         assert_eq!(
             expr.as_str(),
             "isMyBets ? index % 2 === 0 ? \"P.\" : `${index.id}.${index}` : row.P"
+        );
+    }
+
+    #[test]
+    fn renames_identifiers_without_rewriting_object_keys() {
+        let mut expr = VueExpr::new("{ P, kept: P, nested: { P }, [P]: P, ...P }");
+
+        expr.replace_prefix("P", "index");
+
+        assert_eq!(
+            expr.as_str(),
+            "{ P: index, kept: index, nested: { P: index }, [index]: index, ...index }"
+        );
+    }
+
+    #[test]
+    fn renames_identifiers_without_touching_nested_bindings() {
+        let mut expr = VueExpr::new("items.map(P => P.id).filter(item => P.includes(item))");
+
+        expr.replace_prefix("P", "index");
+
+        assert_eq!(
+            expr.as_str(),
+            "items.map(P => P.id).filter(item => index.includes(item))"
+        );
+    }
+
+    #[test]
+    fn renames_identifiers_without_touching_nested_local_decls() {
+        let mut expr =
+            VueExpr::new("items.map(() => { const P = get(); return P; }).filter(() => P)");
+
+        expr.replace_prefix("P", "index");
+
+        assert_eq!(
+            expr.as_str(),
+            "items.map(() => { const P = get(); return P; }).filter(() => index)"
         );
     }
 
