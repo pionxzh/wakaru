@@ -308,7 +308,7 @@ fn recover_vue_sfc_from_js_inner(
 
     let script_setup = setup_script(&ctx, &mut root, render)?;
 
-    let script = if script_setup.is_none() {
+    let script = if script_setup.is_none() && matches!(render, RenderSource::Function(_)) {
         ctx.component_options
             .as_ref()
             .and_then(|options| component_script(options, &ctx).transpose())
@@ -1045,11 +1045,29 @@ fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) ->
 }
 
 fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    let mut options = options.clone();
+    options
+        .props
+        .retain(|prop| component_script_prop_name(prop).as_deref() != Some("render"));
     if options.props.is_empty() {
         return Ok(None);
     }
-    let printed = print_expr(&Expr::Object(options.clone()), ctx)?;
+    let printed = print_expr(&Expr::Object(options), ctx)?;
     Ok(Some(format!("export default {printed}")))
+}
+
+fn component_script_prop_name(prop: &PropOrSpread) -> Option<String> {
+    let PropOrSpread::Prop(prop) = prop else {
+        return None;
+    };
+    match prop.as_ref() {
+        Prop::Shorthand(ident) => Some(ident.sym.to_string()),
+        Prop::KeyValue(key_value) => prop_name(&key_value.key),
+        Prop::Assign(assign) => Some(assign.key.sym.to_string()),
+        Prop::Getter(getter) => prop_name(&getter.key),
+        Prop::Setter(setter) => prop_name(&setter.key),
+        Prop::Method(method) => prop_name(&method.key),
+    }
 }
 
 fn setup_script(
@@ -3273,6 +3291,25 @@ export function render(_ctx, _cache) {
 }
 __sfc__.render = render;
 export default __sfc__;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_default_exported_component_options() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+const _sfc_main = defineComponent({ props: { msg: String } });
+export function render(_ctx, _cache) {
+  openBlock();
+  return createElementBlock("div", null, toDisplayString(_ctx.msg), 1);
+}
+_sfc_main.render = render;
+export default _sfc_main;
 "#;
 
         assert_eq!(

@@ -288,7 +288,7 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
 
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
-        "<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
+        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -659,6 +659,7 @@ fn webpack5_vue_sfc_bundle_source() -> &'static str {
       }
       const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
         name: "WebpackPanel",
+        props: { message: String },
         render
       });
     })

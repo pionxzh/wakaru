@@ -5,11 +5,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, Expr, ExprOrSpread, FnDecl,
-    Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName,
-    PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
-    VarDeclarator,
+    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
+    ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
+    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -41,6 +41,7 @@ pub(super) fn collect_context(
     component_bindings: HashMap<Atom, String>,
     imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
 ) -> VueRecoveryContext {
+    let default_exported_bindings = default_exported_bindings(module);
     let mut ctx = VueRecoveryContext {
         cm,
         component_bindings,
@@ -124,17 +125,52 @@ pub(super) fn collect_context(
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                collect_var_decl_context(var, &mut ctx);
+                collect_var_decl_context(var, &mut ctx, &default_exported_bindings);
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
                 if let Decl::Var(var) = &export.decl {
-                    collect_var_decl_context(var, &mut ctx);
+                    collect_var_decl_context(var, &mut ctx, &default_exported_bindings);
                 }
             }
             _ => {}
         }
     }
     ctx
+}
+
+fn default_exported_bindings(module: &Module) -> HashSet<Atom> {
+    let mut bindings = HashSet::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDefaultExpr(export) => {
+                if let Expr::Ident(ident) = export.expr.as_ref() {
+                    bindings.insert(ident.sym.clone());
+                }
+            }
+            ModuleDecl::ExportNamed(export) if export.src.is_none() => {
+                for specifier in &export.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let exported = named
+                        .exported
+                        .as_ref()
+                        .map(module_export_name)
+                        .unwrap_or_else(|| module_export_name(&named.orig));
+                    if exported == "default" {
+                        bindings.insert(Atom::from(module_export_name(&named.orig)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    bindings
 }
 
 pub(super) fn collect_script_local_context(
@@ -761,7 +797,11 @@ impl VisitMut for ImportAliasRenamer<'_> {
     }
 }
 
-fn collect_var_decl_context(var: &VarDecl, ctx: &mut VueRecoveryContext) {
+fn collect_var_decl_context(
+    var: &VarDecl,
+    ctx: &mut VueRecoveryContext,
+    default_exported_bindings: &HashSet<Atom>,
+) {
     if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
         return;
     }
@@ -784,11 +824,28 @@ fn collect_var_decl_context(var: &VarDecl, ctx: &mut VueRecoveryContext) {
             ctx.component_bindings
                 .insert(binding.id.sym.clone(), component);
         }
-        if binding.id.sym.as_ref() == "__sfc__" {
-            if let Expr::Object(object) = init {
+        if binding.id.sym.as_ref() == "__sfc__"
+            || default_exported_bindings.contains(&binding.id.sym)
+        {
+            if let Some(object) = component_options_from_init(init) {
                 ctx.component_options = Some(object.clone());
             }
         }
+    }
+}
+
+fn component_options_from_init(expr: &Expr) -> Option<&ObjectLit> {
+    match unwrap_paren_expr(expr) {
+        Expr::Object(object) => Some(object),
+        Expr::Call(call) => {
+            call.args
+                .first()
+                .and_then(|arg| match unwrap_paren_expr(arg.expr.as_ref()) {
+                    Expr::Object(object) => Some(object),
+                    _ => None,
+                })
+        }
+        _ => None,
     }
 }
 
