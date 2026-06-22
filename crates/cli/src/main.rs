@@ -259,7 +259,7 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
-    let formatter = selected_formatter(cli.formatter && !cli.vue_sfc);
+    let js_formatter = selected_formatter(cli.formatter);
     let styled = if cli.json {
         Styled::off()
     } else {
@@ -328,17 +328,26 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_iter()
             .collect();
 
-<<<<<<< HEAD
         let provenance = output.provenance;
-=======
         let module_sources = cli
             .vue_sfc
             .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
->>>>>>> d2498e17 (fix(core): resolve webpack Vue component imports)
-        let pairs = output.modules;
-        let pairs: Vec<(String, String)> = pairs
+        let modules = output.modules;
+        let artifacts: Vec<CliOutputArtifact> = modules
             .into_par_iter()
-            .map(|(filename, code)| {
+            .flat_map(|(filename, code)| {
+                let mut artifacts = Vec::new();
+                let formatted = format_cli_output(code.clone(), &filename, js_formatter);
+                artifacts.push(CliOutputArtifact {
+                    filename: if cli.vue_sfc {
+                        vue_js_output_filename(&filename)
+                    } else {
+                        filename.clone()
+                    },
+                    code: formatted,
+                    source_map_filename: Some(filename.clone()),
+                });
+
                 if cli.vue_sfc {
                     let module_sources = module_sources
                         .as_ref()
@@ -348,11 +357,14 @@ fn run_default(cli: Cli) -> Result<()> {
                             resolve_unpack_import_source(module_sources, &filename, specifier)
                         });
                     if let Ok(Some(sfc)) = sfc {
-                        return (vue_output_filename(&filename), sfc);
+                        artifacts.push(CliOutputArtifact {
+                            filename: vue_output_filename(&filename),
+                            code: sfc,
+                            source_map_filename: None,
+                        });
                     }
                 }
-                let formatted = format_cli_output(code, &filename, formatter);
-                (filename, formatted)
+                artifacts
             })
             .collect();
 
@@ -360,11 +372,12 @@ fn run_default(cli: Cli) -> Result<()> {
             let span = tracing::info_span!("cli_resolve_output_paths");
             let _enter = span.enter();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-            pairs
+            artifacts
                 .iter()
-                .map(|(filename, code)| {
-                    let out_path = resolve_unpack_output_path(&out_dir, filename, &mut seen)?;
-                    Ok((out_path, code.as_str()))
+                .map(|artifact| {
+                    let out_path =
+                        resolve_unpack_output_path(&out_dir, &artifact.filename, &mut seen)?;
+                    Ok((out_path, artifact.code.as_str()))
                 })
                 .collect::<Result<_>>()?
         };
@@ -389,8 +402,12 @@ fn run_default(cli: Cli) -> Result<()> {
                 .iter()
                 .map(|(f, m)| (f.as_str(), m.as_str()))
                 .collect();
-            for ((orig_filename, _), (out_path, _)) in pairs.iter().zip(resolved.iter()) {
-                if let Some(map_json) = srcmap_map.get(orig_filename.as_str()) {
+            for (artifact, (out_path, _)) in artifacts.iter().zip(resolved.iter()) {
+                if let Some(map_json) = artifact
+                    .source_map_filename
+                    .as_deref()
+                    .and_then(|filename| srcmap_map.get(filename))
+                {
                     let map_path = append_map_extension(out_path);
                     write_file(&map_path, map_json)?;
                 }
@@ -430,10 +447,10 @@ fn run_default(cli: Cli) -> Result<()> {
                     .iter()
                     .map(|f| f.as_str().to_string())
                     .collect(),
-                modules: pairs
+                modules: artifacts
                     .iter()
-                    .map(|(filename, _)| JsonModule {
-                        filename: filename.clone(),
+                    .map(|artifact| JsonModule {
+                        filename: artifact.filename.clone(),
                     })
                     .collect(),
                 warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
@@ -515,6 +532,17 @@ fn run_default(cli: Cli) -> Result<()> {
             print_warnings(&output.warnings, &styled);
         }
         let has_errors = output.has_errors();
+        let recovered_vue_sfc = cli.vue_sfc && is_recovered_vue_sfc_output(&output.code);
+        if recovered_vue_sfc {
+            if let Some(path) = cli.output.as_ref() {
+                if is_js_output_path(path) {
+                    bail!(
+                        "--vue-sfc recovered a Vue SFC but output path ends with .js; use .vue or omit -o for stdout"
+                    );
+                }
+            }
+        }
+        let formatter = selected_formatter(cli.formatter && !recovered_vue_sfc);
         let code = format_cli_output(output.code, &output_filename, formatter);
 
         if cli.json {
@@ -752,6 +780,12 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
     fs::read_to_string(parent.join(specifier)).ok()
 }
 
+struct CliOutputArtifact {
+    filename: String,
+    code: String,
+    source_map_filename: Option<String>,
+}
+
 fn resolve_unpack_import_source(
     module_sources: &HashMap<String, String>,
     base_filename: &str,
@@ -867,6 +901,25 @@ fn vue_output_filename(filename: &str) -> String {
         return path.with_extension("vue").to_string_lossy().to_string();
     }
     format!("{filename}.vue")
+}
+
+fn vue_js_output_filename(filename: &str) -> String {
+    let path = Path::new(filename);
+    if path.extension().is_some_and(|ext| ext == "vue") {
+        return format!("{filename}.js");
+    }
+    filename.to_string()
+}
+
+fn is_recovered_vue_sfc_output(code: &str) -> bool {
+    let code = code.trim_start();
+    code.starts_with("<template") || code.starts_with("<script")
+}
+
+fn is_js_output_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {

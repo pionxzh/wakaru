@@ -210,6 +210,7 @@ where
     .map(|sfc| sfc.print())
     {
         output.code = sfc;
+        output.source_map = None;
         return Ok(output);
     }
 
@@ -249,6 +250,7 @@ where
         return Ok(None);
     };
     output.code = sfc;
+    output.source_map = None;
     Ok(Some(output))
 }
 
@@ -3191,6 +3193,38 @@ export default __sfc__;
                 .unwrap()
                 .code,
             "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn decompiled_vue_sfc_clears_stale_js_source_map() {
+        let input = r#"
+import { toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue";
+const __sfc__ = { props: { msg: String } };
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock("div", null, _toDisplayString(_ctx.msg), 1));
+}
+__sfc__.render = render;
+export default __sfc__;
+"#;
+
+        let output = decompile_vue_sfc(
+            input,
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(
+            output.source_map.is_none(),
+            "recovered SFC output must not keep the JS source map"
+        );
+        assert!(
+            output.code.starts_with("<script>"),
+            "expected recovered SFC output, got:\n{}",
+            output.code
         );
     }
 
