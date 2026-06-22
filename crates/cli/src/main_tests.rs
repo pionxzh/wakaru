@@ -557,6 +557,73 @@ fn parses_json_with_unpack() {
 }
 
 #[test]
+fn json_modules_describe_vue_sfc_artifact_roles() {
+    let modules = vec![
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/plain.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::Decompiled,
+            source_filename: None,
+            source_map_filename: Some("src/plain.js".to_string()),
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/App.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcSourceJs,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: Some("src/App.vue".to_string()),
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/App.vue".to_string(),
+            code: "<template />".to_string(),
+            kind: JsonModuleKind::VueSfc,
+            status: JsonModuleStatus::RecoveredVueSfc,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: None,
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/Broken.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcFallbackJs,
+            source_filename: Some("src/Broken.vue".to_string()),
+            source_map_filename: Some("src/Broken.vue".to_string()),
+        }),
+    ];
+
+    assert_eq!(
+        serde_json::to_value(modules).expect("serialize modules"),
+        serde_json::json!([
+            {
+                "filename": "src/plain.js",
+                "kind": "javascript",
+                "status": "decompiled"
+            },
+            {
+                "filename": "src/App.vue.js",
+                "kind": "javascript",
+                "status": "vue_sfc_source_js",
+                "source_filename": "src/App.vue"
+            },
+            {
+                "filename": "src/App.vue",
+                "kind": "vue_sfc",
+                "status": "recovered_vue_sfc",
+                "source_filename": "src/App.vue"
+            },
+            {
+                "filename": "src/Broken.vue.js",
+                "kind": "javascript",
+                "status": "vue_sfc_fallback_js",
+                "source_filename": "src/Broken.vue"
+            }
+        ])
+    );
+}
+
+#[test]
 fn format_elapsed_uses_seconds_for_long_durations() {
     let d = Duration::from_millis(1234);
     assert_eq!(format_elapsed(d), "1.23s");

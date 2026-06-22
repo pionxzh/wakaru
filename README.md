@@ -140,7 +140,9 @@ echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
 
 `--json` writes structured JSON to stdout instead of human-readable summaries.
 Warnings and errors are included in the JSON object. Useful for CI pipelines
-and tooling integration.
+and tooling integration. In unpack mode, each module includes an artifact
+`kind` such as `javascript` or `vue_sfc` and a `status` such as `decompiled`,
+`recovered_vue_sfc`, or `vue_sfc_fallback_js`.
 
 ### Diagnostics and profiling
 

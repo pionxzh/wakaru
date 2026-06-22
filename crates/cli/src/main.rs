@@ -25,7 +25,10 @@ mod output;
 use color::Styled;
 use discovery::{scan_directory_for_unpack_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
-use json_output::{JsonDecompileOutput, JsonModule, JsonUnpackOutput, JsonWarning};
+use json_output::{
+    JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonUnpackOutput,
+    JsonWarning,
+};
 use output::{canonicalize_output_dir, resolve_unpack_output_path, write_file, write_if_changed};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -337,6 +340,18 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_par_iter()
             .flat_map(|(filename, code)| {
                 let mut artifacts = Vec::new();
+                let recovered_vue_sfc = if cli.vue_sfc {
+                    let module_sources = module_sources
+                        .as_ref()
+                        .expect("vue sfc module source map is initialized");
+                    recover_vue_sfc_source_from_js_with_import_resolver(&code, |specifier| {
+                        resolve_unpack_import_source(module_sources, &filename, specifier)
+                    })
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                };
                 let formatted = format_cli_output(code.clone(), &filename, js_formatter);
                 artifacts.push(CliOutputArtifact {
                     filename: if cli.vue_sfc {
@@ -345,24 +360,29 @@ fn run_default(cli: Cli) -> Result<()> {
                         filename.clone()
                     },
                     code: formatted,
+                    kind: JsonModuleKind::JavaScript,
+                    status: if cli.vue_sfc {
+                        if recovered_vue_sfc.is_some() {
+                            JsonModuleStatus::VueSfcSourceJs
+                        } else {
+                            JsonModuleStatus::VueSfcFallbackJs
+                        }
+                    } else {
+                        JsonModuleStatus::Decompiled
+                    },
+                    source_filename: cli.vue_sfc.then(|| filename.clone()),
                     source_map_filename: Some(filename.clone()),
                 });
 
-                if cli.vue_sfc {
-                    let module_sources = module_sources
-                        .as_ref()
-                        .expect("vue sfc module source map is initialized");
-                    let sfc =
-                        recover_vue_sfc_source_from_js_with_import_resolver(&code, |specifier| {
-                            resolve_unpack_import_source(module_sources, &filename, specifier)
-                        });
-                    if let Ok(Some(sfc)) = sfc {
-                        artifacts.push(CliOutputArtifact {
-                            filename: vue_output_filename(&filename),
-                            code: sfc,
-                            source_map_filename: None,
-                        });
-                    }
+                if let Some(sfc) = recovered_vue_sfc {
+                    artifacts.push(CliOutputArtifact {
+                        filename: vue_output_filename(&filename),
+                        code: sfc,
+                        kind: JsonModuleKind::VueSfc,
+                        status: JsonModuleStatus::RecoveredVueSfc,
+                        source_filename: Some(filename.clone()),
+                        source_map_filename: None,
+                    });
                 }
                 artifacts
             })
@@ -447,12 +467,7 @@ fn run_default(cli: Cli) -> Result<()> {
                     .iter()
                     .map(|f| f.as_str().to_string())
                     .collect(),
-                modules: artifacts
-                    .iter()
-                    .map(|artifact| JsonModule {
-                        filename: artifact.filename.clone(),
-                    })
-                    .collect(),
+                modules: artifacts.iter().map(json_module_for_artifact).collect(),
                 warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
                 total: resolved.len(),
                 failed: error_modules.len(),
@@ -786,7 +801,19 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
 struct CliOutputArtifact {
     filename: String,
     code: String,
+    kind: JsonModuleKind,
+    status: JsonModuleStatus,
+    source_filename: Option<String>,
     source_map_filename: Option<String>,
+}
+
+fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
+    JsonModule {
+        filename: artifact.filename.clone(),
+        kind: artifact.kind,
+        status: artifact.status,
+        source_filename: artifact.source_filename.clone(),
+    }
 }
 
 fn resolve_unpack_import_source(
