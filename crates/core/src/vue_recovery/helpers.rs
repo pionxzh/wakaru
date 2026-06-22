@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{Callee, Expr};
+use swc_core::ecma::ast::{Callee, Expr, Lit, MemberExpr, MemberProp};
 
 use super::VueRecoveryContext;
 
@@ -76,13 +76,14 @@ pub(super) fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<V
     let Callee::Expr(expr) = callee else {
         return None;
     };
-    match expr.as_ref() {
-        Expr::Ident(ident) => ctx.vue_helpers.get(&ident.sym).cloned(),
-        _ => None,
-    }
+    helper_name_from_expr(expr.as_ref(), ctx)
 }
 
 pub(super) fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    if helper_name_from_expr(expr, ctx) == Some(VueHelper::Fragment) {
+        return true;
+    }
+
     match expr {
         Expr::Ident(ident) => ctx
             .vue_helpers
@@ -91,4 +92,36 @@ pub(super) fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
             .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
         _ => false,
     }
+}
+
+fn helper_name_from_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueHelper> {
+    match expr {
+        Expr::Ident(ident) => ctx.vue_helpers.get(&ident.sym).cloned(),
+        Expr::Member(member) => namespace_helper_name(member, ctx),
+        Expr::Paren(paren) => helper_name_from_expr(paren.expr.as_ref(), ctx),
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .and_then(|expr| helper_name_from_expr(expr.as_ref(), ctx)),
+        _ => None,
+    }
+}
+
+fn namespace_helper_name(member: &MemberExpr, ctx: &VueRecoveryContext) -> Option<VueHelper> {
+    let Expr::Ident(object) = member.obj.as_ref() else {
+        return None;
+    };
+    if !ctx.vue_namespaces.contains(&object.sym) {
+        return None;
+    }
+
+    let name = match &member.prop {
+        MemberProp::Ident(ident) => ident.sym.to_string(),
+        MemberProp::Computed(computed) => match computed.expr.as_ref() {
+            Expr::Lit(Lit::Str(str)) => str.value.to_string_lossy().to_string(),
+            _ => return None,
+        },
+        MemberProp::PrivateName(_) => return None,
+    };
+    Some(VueHelper::from_imported_name(name))
 }
