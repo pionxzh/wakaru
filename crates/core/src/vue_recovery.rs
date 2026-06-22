@@ -3146,7 +3146,7 @@ export function render(_ctx, _cache) {
 import * as Vue from "vue";
 const _hoisted_1 = { class: "notice" };
 export function render(_ctx, _cache) {
-  return (0, Vue.openBlock)(), (0, Vue.createElementBlock)("section", _hoisted_1, (0, Vue.toDisplayString)(_ctx.message), 3);
+  return Vue.openBlock(), Vue.createElementBlock("section", _hoisted_1, Vue.toDisplayString(_ctx.message), 3);
 }
 "#;
 
@@ -3511,13 +3511,13 @@ import * as Vue from "vue";
 const SecondaryPanel = Vue.defineComponent({
   name: "SecondaryPanel",
   setup() {
-    return () => ((0, Vue.openBlock)(), (0, Vue.createElementBlock)("aside", null, "Secondary"));
+    return () => (Vue.openBlock(), Vue.createElementBlock("aside", null, "Secondary"));
   }
 });
 const PrimaryPanel = Vue.defineComponent({
   name: "PrimaryPanel",
   setup() {
-    return () => ((0, Vue.openBlock)(), (0, Vue.createElementBlock)("main", null, "Primary"));
+    return () => (Vue.openBlock(), Vue.createElementBlock("main", null, "Primary"));
   }
 });
 export { SecondaryPanel as Panel, PrimaryPanel as default };
