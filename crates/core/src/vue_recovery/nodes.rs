@@ -1,8 +1,8 @@
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, ObjectPatProp, Pat,
-    ReturnStmt, Stmt, Tpl, UnaryOp,
+    AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp,
+    ObjectPatProp, Pat, ReturnStmt, Stmt, Tpl, UnaryOp,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
@@ -998,13 +998,12 @@ fn recover_component_tag(
     expr: &Expr,
     ctx: &VueRecoveryContext,
 ) -> Result<Option<RecoveredComponentTag>> {
+    if let Some(component) = recover_static_component_tag(expr, ctx) {
+        return Ok(Some(component));
+    }
+
     match expr {
-        Expr::Ident(_) => {
-            if let Some(component) = recover_static_component_tag(expr, ctx) {
-                return Ok(Some(component));
-            }
-            recover_dynamic_component_tag(expr, ctx)
-        }
+        Expr::Ident(_) => recover_dynamic_component_tag(expr, ctx),
         Expr::Call(call)
             if helper_name(&call.callee, ctx) == Some(VueHelper::ResolveDynamicComponent) =>
         {
@@ -1040,8 +1039,15 @@ fn recover_static_component_tag(
     expr: &Expr,
     ctx: &VueRecoveryContext,
 ) -> Option<RecoveredComponentTag> {
-    let Expr::Ident(ident) = expr else {
-        return None;
+    let ident = match expr {
+        Expr::Ident(ident) => ident,
+        Expr::Member(member) if is_default_member_prop(&member.prop) => {
+            let Expr::Ident(ident) = member.obj.as_ref() else {
+                return None;
+            };
+            ident
+        }
+        _ => return None,
     };
 
     let import_ref = ctx
@@ -1078,6 +1084,16 @@ fn recover_static_component_tag(
                 attrs: Vec::new(),
             })
         })
+}
+
+fn is_default_member_prop(prop: &MemberProp) -> bool {
+    match prop {
+        MemberProp::Ident(ident) => ident.sym.as_ref() == "default",
+        MemberProp::Computed(computed) => {
+            string_lit(computed.expr.as_ref()).as_deref() == Some("default")
+        }
+        MemberProp::PrivateName(_) => false,
+    }
 }
 
 fn recover_dynamic_component_tag(

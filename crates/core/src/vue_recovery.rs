@@ -308,7 +308,7 @@ fn recover_vue_sfc_from_js_inner(
 
     let script_setup = setup_script(&ctx, &mut root, render)?;
 
-    let script = if script_setup.is_none() && matches!(render, RenderSource::Function(_)) {
+    let script = if matches!(render, RenderSource::Function(_)) {
         ctx.component_options
             .as_ref()
             .and_then(|options| component_script(options, &ctx).transpose())
@@ -3771,6 +3771,34 @@ export { YP as B };
             .unwrap()
             .unwrap(),
             "<script setup>\nimport { B as VTooltip } from \"./main.js\";\n</script>\n\n<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cross_module_default_member_component_export_alias() {
+        let input = r#"
+import { q as ob, aa as cb } from "./vendor-vue.js";
+import Child from "./Child.vue";
+export function render(_ctx, _cache) {
+  return ob(), cb(Child["default"], { text: "Details" }, null, 8, ["text"]);
+}
+"#;
+        let child = r#"
+import { defineComponent } from "vue";
+const ChildPanel = defineComponent({
+  name: "ChildPanel",
+  props: { text: String }
+});
+export default ChildPanel;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./Child.vue").then(|| child.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport ChildPanel from \"./Child.vue\";\n</script>\n\n<template>\n  <ChildPanel text=\"Details\" />\n</template>\n"
         );
     }
 

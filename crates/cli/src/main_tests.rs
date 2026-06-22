@@ -167,6 +167,40 @@ fn vue_sfc_relative_import_resolver_ignores_stdin_base() {
 }
 
 #[test]
+fn vue_sfc_unpack_import_resolver_reads_root_relative_module_source() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./src/components/ChildPanel.vue"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_module_relative_source() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
 fn vue_sfc_recovers_single_system_register_module() {
     let dir = temp_test_dir("vue-sfc-system-register");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -288,7 +322,7 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
 
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
-        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
+        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./src/components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -640,22 +674,37 @@ fn webpack5_vue_sfc_bundle_source() -> &'static str {
       __webpack_require__.r(__webpack_exports__);
       __webpack_require__.d(__webpack_exports__, {
         createElementBlock: () => createElementBlock,
+        createVNode: () => createVNode,
         defineComponent: () => defineComponent,
         openBlock: () => openBlock,
         toDisplayString: () => toDisplayString
       });
       function createElementBlock() {}
+      function createVNode() {}
       function defineComponent(options) { return options; }
       function openBlock() {}
       function toDisplayString(value) { return String(value); }
+    }),
+    "./src/components/ChildPanel.vue": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, { default: () => __WEBPACK_DEFAULT_EXPORT__ });
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        name: "ChildPanel",
+        props: { label: String }
+      });
     }),
     "./src/App.vue": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
       __webpack_require__.r(__webpack_exports__);
       __webpack_require__.d(__webpack_exports__, { default: () => __WEBPACK_DEFAULT_EXPORT__ });
       var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      var _components_ChildPanel_vue__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__("./src/components/ChildPanel.vue");
       const _hoisted_1 = { class: "notice" };
       function render(_ctx, _cache) {
-        return (0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("section", _hoisted_1, (0, vue__WEBPACK_IMPORTED_MODULE_0__.toDisplayString)(_ctx.message), 3);
+        return (0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("section", _hoisted_1, [
+          (0, vue__WEBPACK_IMPORTED_MODULE_0__.createVNode)(_components_ChildPanel_vue__WEBPACK_IMPORTED_MODULE_1__["default"], { label: _ctx.message }, null, 8, ["label"]),
+          (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("span", null, (0, vue__WEBPACK_IMPORTED_MODULE_0__.toDisplayString)(_ctx.message), 1)
+        ]);
       }
       const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
         name: "WebpackPanel",
