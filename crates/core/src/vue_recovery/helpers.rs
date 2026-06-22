@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{Callee, Expr, Lit, MemberExpr, MemberProp};
+use swc_core::ecma::ast::{Callee, Expr, MemberExpr, MemberProp};
 
 use super::VueRecoveryContext;
 
@@ -98,11 +98,6 @@ fn helper_name_from_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueHel
     match expr {
         Expr::Ident(ident) => ctx.vue_helpers.get(&ident.sym).cloned(),
         Expr::Member(member) => namespace_helper_name(member, ctx),
-        Expr::Paren(paren) => helper_name_from_expr(paren.expr.as_ref(), ctx),
-        Expr::Seq(seq) => seq
-            .exprs
-            .last()
-            .and_then(|expr| helper_name_from_expr(expr.as_ref(), ctx)),
         _ => None,
     }
 }
@@ -117,11 +112,7 @@ fn namespace_helper_name(member: &MemberExpr, ctx: &VueRecoveryContext) -> Optio
 
     let name = match &member.prop {
         MemberProp::Ident(ident) => ident.sym.to_string(),
-        MemberProp::Computed(computed) => match computed.expr.as_ref() {
-            Expr::Lit(Lit::Str(str)) => str.value.to_string_lossy().to_string(),
-            _ => return None,
-        },
-        MemberProp::PrivateName(_) => return None,
+        MemberProp::Computed(_) | MemberProp::PrivateName(_) => return None,
     };
     Some(VueHelper::from_imported_name(name))
 }
