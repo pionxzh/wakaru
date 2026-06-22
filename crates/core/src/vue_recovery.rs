@@ -1875,80 +1875,128 @@ fn setup_local_declarations<'a>(
         .iter()
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
-    let setup_scope_bindings = setup_scope_bindings(ctx, &candidates);
-    let event_refs = template_event_expr_refs(root);
-    let expr_refs = template_expr_refs(root);
-    let expr_read_refs = template_expr_read_refs(root);
-    let mut setup_wanted_refs = event_refs;
-    let mut module_wanted_refs = HashSet::new();
-    setup_wanted_refs.extend(
-        expr_refs
-            .iter()
-            .filter(|binding| ctx.bindings.composable_refs.contains(*binding))
-            .cloned(),
-    );
-    for declaration in &candidates {
-        if selects_safe_template_expr_local(ctx, declaration, &expr_refs, &expr_read_refs) {
-            setup_wanted_refs.extend(
-                declaration
-                    .bindings
-                    .iter()
-                    .chain(declaration.emitted_bindings.iter())
-                    .filter(|binding| expr_refs.contains(*binding))
-                    .cloned(),
-            );
-        }
-    }
-    setup_wanted_refs.extend(setup_value_dependency_refs(ctx, root));
-    setup_wanted_refs.extend(setup_script_binding_refs(ctx));
-    let mut selected = HashSet::new();
-
-    loop {
-        let mut changed = false;
-        module_wanted_refs.extend(
-            setup_wanted_refs
-                .iter()
-                .filter(|binding| !setup_scope_bindings.contains(*binding))
-                .cloned(),
-        );
-        for (index, declaration) in candidates.iter().enumerate() {
-            if selected.contains(&index) {
-                continue;
-            }
-            let wanted_refs = if declaration.module_scope {
-                &module_wanted_refs
-            } else {
-                &setup_wanted_refs
-            };
-            let binds_wanted_ref = declaration
-                .bindings
-                .iter()
-                .chain(declaration.emitted_bindings.iter())
-                .any(|binding| {
-                    is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
-                });
-            if !binds_wanted_ref {
-                continue;
-            }
-
-            selected.insert(index);
-            if declaration.module_scope {
-                module_wanted_refs.extend(declaration.refs.iter().cloned());
-            } else {
-                setup_wanted_refs.extend(declaration.refs.iter().cloned());
-            }
-            changed = true;
-        }
-
-        if !changed {
-            break;
-        }
-    }
+    let selected = VueSelectionPlan::new(ctx, root, &candidates).select(&candidates);
 
     candidates
         .into_iter()
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
+        .collect()
+}
+
+struct VueSelectionPlan {
+    setup_scope_bindings: HashSet<Atom>,
+    setup_wanted_refs: HashSet<Atom>,
+    module_wanted_refs: HashSet<Atom>,
+}
+
+impl VueSelectionPlan {
+    fn new(ctx: &VueRecoveryContext, root: &VueNode, candidates: &[&VueSetupLocalBinding]) -> Self {
+        let setup_scope_bindings = setup_scope_bindings(ctx, candidates);
+        let mut setup_wanted_refs = template_event_expr_refs(root);
+        let expr_refs = template_expr_refs(root);
+        let expr_read_refs = template_expr_read_refs(root);
+        setup_wanted_refs.extend(template_composable_refs(ctx, &expr_refs));
+        setup_wanted_refs.extend(template_safe_local_refs(
+            ctx,
+            candidates,
+            &expr_refs,
+            &expr_read_refs,
+        ));
+        setup_wanted_refs.extend(setup_value_dependency_refs(ctx, root));
+        setup_wanted_refs.extend(setup_script_binding_refs(ctx));
+
+        Self {
+            setup_scope_bindings,
+            setup_wanted_refs,
+            module_wanted_refs: HashSet::new(),
+        }
+    }
+
+    fn select(mut self, candidates: &[&VueSetupLocalBinding]) -> HashSet<usize> {
+        let mut selected = HashSet::new();
+        loop {
+            let mut changed = false;
+            self.route_setup_refs_to_module_scope();
+            for (index, declaration) in candidates.iter().enumerate() {
+                if selected.contains(&index) || !self.wants_declaration(declaration) {
+                    continue;
+                }
+
+                selected.insert(index);
+                self.add_dependencies(declaration);
+                changed = true;
+            }
+
+            if !changed {
+                break;
+            }
+        }
+        selected
+    }
+
+    fn route_setup_refs_to_module_scope(&mut self) {
+        self.module_wanted_refs.extend(
+            self.setup_wanted_refs
+                .iter()
+                .filter(|binding| !self.setup_scope_bindings.contains(*binding))
+                .cloned(),
+        );
+    }
+
+    fn wants_declaration(&self, declaration: &VueSetupLocalBinding) -> bool {
+        let wanted_refs = if declaration.module_scope {
+            &self.module_wanted_refs
+        } else {
+            &self.setup_wanted_refs
+        };
+        declaration
+            .bindings
+            .iter()
+            .chain(declaration.emitted_bindings.iter())
+            .any(|binding| {
+                is_valid_identifier_name(binding.as_ref()) && wanted_refs.contains(binding)
+            })
+    }
+
+    fn add_dependencies(&mut self, declaration: &VueSetupLocalBinding) {
+        if declaration.module_scope {
+            self.module_wanted_refs
+                .extend(declaration.refs.iter().cloned());
+        } else {
+            self.setup_wanted_refs
+                .extend(declaration.refs.iter().cloned());
+        }
+    }
+}
+
+fn template_composable_refs(ctx: &VueRecoveryContext, expr_refs: &HashSet<Atom>) -> HashSet<Atom> {
+    expr_refs
+        .iter()
+        .filter(|binding| ctx.bindings.composable_refs.contains(*binding))
+        .cloned()
+        .collect()
+}
+
+fn template_safe_local_refs(
+    ctx: &VueRecoveryContext,
+    candidates: &[&VueSetupLocalBinding],
+    expr_refs: &HashSet<Atom>,
+    expr_read_refs: &HashSet<Atom>,
+) -> HashSet<Atom> {
+    candidates
+        .iter()
+        .filter(|declaration| {
+            selects_safe_template_expr_local(ctx, declaration, expr_refs, expr_read_refs)
+        })
+        .flat_map(|declaration| {
+            declaration
+                .bindings
+                .iter()
+                .chain(declaration.emitted_bindings.iter())
+                .filter(|binding| expr_refs.contains(*binding))
+                .cloned()
+        })
         .collect()
 }
 
@@ -4543,6 +4591,50 @@ export default _sfc_main;
         assert_eq!(
             selected,
             vec!["const t = toRefs(props);", "const value = t.event;"]
+        );
+    }
+
+    #[test]
+    fn selection_plan_expands_setup_refs_to_module_dependencies() {
+        let ctx = VueRecoveryContext {
+            script_local_bindings: vec![
+                test_local_binding_with_scope(
+                    "const options = getOptions();",
+                    &["options"],
+                    &["options"],
+                    &["getOptions"],
+                    true,
+                ),
+                test_local_binding_with_scope(
+                    "const format = makeFormatter(options);",
+                    &["format"],
+                    &["format"],
+                    &["makeFormatter", "options"],
+                    true,
+                ),
+            ],
+            setup_local_bindings: vec![test_local_binding(
+                "const message = format(value);",
+                &["message"],
+                &["message"],
+                &["format", "value"],
+            )],
+            ..Default::default()
+        };
+        let root = VueNode::Interpolation(VueExpr::new("message"));
+
+        let selected = setup_local_declarations(&ctx, &root)
+            .into_iter()
+            .map(|declaration| declaration.source.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            selected,
+            vec![
+                "const options = getOptions();",
+                "const format = makeFormatter(options);",
+                "const message = format(value);"
+            ]
         );
     }
 
