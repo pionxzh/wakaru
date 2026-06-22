@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
-    ForInStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, Module, ModuleDecl, ModuleItem,
-    ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, SpreadElement,
-    Stmt,
+    ForInStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    SpreadElement, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1143,15 +1143,22 @@ fn function_matches_arguments_object_spread(function: &Function) -> bool {
     let Pat::Ident(target) = &param.pat else {
         return false;
     };
-    if !matches!(
-        body.stmts.last(),
-        Some(Stmt::Return(ret)) if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, &target.id))
-    ) {
+    let [copy_stmt, Stmt::Return(ret)] = body.stmts.as_slice() else {
+        return false;
+    };
+    if !ret
+        .arg
+        .as_deref()
+        .is_some_and(|arg| is_binding_ref(arg, &target.id))
+    {
+        return false;
+    }
+    if !matches!(copy_stmt, Stmt::For(_)) {
         return false;
     }
 
     let mut marker = ArgumentsSpreadMarker::new(&target.id);
-    body.stmts.visit_with(&mut marker);
+    copy_stmt.visit_with(&mut marker);
     marker.is_match()
 }
 
@@ -1159,6 +1166,7 @@ struct ArgumentsSpreadMarker<'a> {
     target: &'a Ident,
     saw_arguments_ref: bool,
     saw_target_write: bool,
+    saw_unsafe_target_write: bool,
     saw_object_define_property: bool,
     saw_object_get_own_property_descriptor: bool,
 }
@@ -1169,6 +1177,7 @@ impl<'a> ArgumentsSpreadMarker<'a> {
             target,
             saw_arguments_ref: false,
             saw_target_write: false,
+            saw_unsafe_target_write: false,
             saw_object_define_property: false,
             saw_object_get_own_property_descriptor: false,
         }
@@ -1177,6 +1186,7 @@ impl<'a> ArgumentsSpreadMarker<'a> {
     fn is_match(&self) -> bool {
         self.saw_arguments_ref
             && self.saw_target_write
+            && !self.saw_unsafe_target_write
             && self.saw_object_define_property
             && self.saw_object_get_own_property_descriptor
     }
@@ -1187,7 +1197,11 @@ impl Visit for ArgumentsSpreadMarker<'_> {
         if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
             if matches!(member.obj.as_ref(), Expr::Ident(ident) if ident_matches(ident, self.target))
             {
-                self.saw_target_write = true;
+                if matches!(member.prop, MemberProp::Computed(_)) {
+                    self.saw_target_write = true;
+                } else {
+                    self.saw_unsafe_target_write = true;
+                }
             }
         }
         assign.visit_children_with(self);
@@ -1201,6 +1215,13 @@ impl Visit for ArgumentsSpreadMarker<'_> {
                         match static_member_prop_name(&member.prop) {
                             Some("defineProperty" | "defineProperties") => {
                                 self.saw_object_define_property = true;
+                                if call
+                                    .args
+                                    .first()
+                                    .is_some_and(|arg| is_binding_ref(&arg.expr, self.target))
+                                {
+                                    self.saw_target_write = true;
+                                }
                             }
                             Some("getOwnPropertyDescriptor" | "getOwnPropertyDescriptors") => {
                                 self.saw_object_get_own_property_descriptor = true;
