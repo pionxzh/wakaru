@@ -132,6 +132,12 @@ struct VueScriptSetupDeclaration {
 }
 
 #[derive(Clone)]
+struct VueComponentScriptImport {
+    import_ref: Atom,
+    local: Atom,
+}
+
+#[derive(Clone)]
 struct VueRenderChildListBinding {
     source: VueRenderChildListSource,
 }
@@ -295,11 +301,11 @@ fn recover_vue_sfc_from_js_inner(
     if !render_uses_vue_helper(render, &ctx) {
         return Ok(None);
     }
-    let Some(root) = recover_render_root(render, &ctx)? else {
+    let Some(mut root) = recover_render_root(render, &ctx)? else {
         return Ok(None);
     };
 
-    let script_setup = setup_script(&ctx, &root, render)?;
+    let script_setup = setup_script(&ctx, &mut root, render)?;
 
     let script = if script_setup.is_none() {
         ctx.component_options
@@ -1054,7 +1060,7 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
 
 fn setup_script(
     ctx: &VueRecoveryContext,
-    root: &VueNode,
+    root: &mut VueNode,
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
     let ref_declarations = setup_ref_declarations(ctx, root, render);
@@ -1084,6 +1090,15 @@ fn setup_script(
         })
         .transpose()?
         .flatten();
+    let component_imports = component_script_imports(
+        ctx,
+        root,
+        &prop_bindings,
+        props_declaration.as_ref(),
+        emit_declaration.as_ref(),
+        &ref_declarations,
+        &selected_local_declarations,
+    );
     let local_declarations = render_setup_local_declarations(
         ctx,
         selected_local_declarations,
@@ -1091,6 +1106,7 @@ fn setup_script(
         props_declaration.as_ref(),
         emit_declaration.as_ref(),
         &ref_declarations,
+        &component_imports,
     )?;
     let scheduled_declarations = script_setup_declarations(ctx, &local_declarations);
     let declared_bindings = script_setup_declared_bindings(
@@ -1101,8 +1117,13 @@ fn setup_script(
         &ref_declarations,
         &local_declarations,
     );
-    let script_imports =
-        referenced_script_imports(ctx, root, &declared_bindings, &local_declarations);
+    let script_imports = referenced_script_imports(
+        ctx,
+        root,
+        &declared_bindings,
+        &local_declarations,
+        &component_imports,
+    );
     if scheduled_declarations.is_empty()
         && ref_declarations.is_empty()
         && props_declaration.is_none()
@@ -1177,6 +1198,7 @@ fn render_setup_local_declarations(
     props_declaration: Option<&(String, String)>,
     emit_declaration: Option<&(String, String)>,
     ref_declarations: &[(String, String, String)],
+    component_imports: &[VueComponentScriptImport],
 ) -> Result<Vec<VueSetupLocalBinding>> {
     let aliases = script_local_binding_aliases(
         ctx,
@@ -1185,6 +1207,7 @@ fn render_setup_local_declarations(
         props_declaration,
         emit_declaration,
         ref_declarations,
+        component_imports,
     );
     let mut rendered = Vec::new();
     let mut rendered_module_bindings = HashSet::new();
@@ -1212,6 +1235,167 @@ fn render_setup_local_declarations(
         }
     }
     Ok(rendered)
+}
+
+fn component_script_imports(
+    ctx: &VueRecoveryContext,
+    root: &mut VueNode,
+    prop_bindings: &[(String, String)],
+    props_declaration: Option<&(String, String)>,
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+    selected_local_declarations: &[&VueSetupLocalBinding],
+) -> Vec<VueComponentScriptImport> {
+    let mut refs = Vec::new();
+    collect_component_script_import_refs(root, &mut refs);
+    if refs.is_empty() {
+        return Vec::new();
+    }
+
+    let import_refs = refs
+        .iter()
+        .map(|(import_ref, _)| import_ref.clone())
+        .collect::<HashSet<_>>();
+    let mut used = component_import_reserved_bindings(
+        ctx,
+        prop_bindings,
+        props_declaration,
+        emit_declaration,
+        ref_declarations,
+        selected_local_declarations,
+    );
+    used.extend(
+        ctx.script_imports
+            .keys()
+            .filter(|local| !import_refs.contains(*local))
+            .cloned(),
+    );
+
+    let mut aliases = HashMap::new();
+    let mut imports = Vec::new();
+    for (import_ref, tag) in refs {
+        if aliases.contains_key(&import_ref) || !ctx.script_imports.contains_key(&import_ref) {
+            continue;
+        }
+        let mut local = if is_valid_identifier_name(tag.as_ref()) {
+            tag
+        } else {
+            import_ref.clone()
+        };
+        if used.contains(&local) {
+            local = unique_script_local_binding(&local, &mut used);
+        } else {
+            used.insert(local.clone());
+        }
+        aliases.insert(import_ref.clone(), local.clone());
+        imports.push(VueComponentScriptImport { import_ref, local });
+    }
+
+    rename_component_import_tags(root, &aliases);
+    imports
+}
+
+fn component_import_reserved_bindings(
+    ctx: &VueRecoveryContext,
+    prop_bindings: &[(String, String)],
+    props_declaration: Option<&(String, String)>,
+    emit_declaration: Option<&(String, String)>,
+    ref_declarations: &[(String, String, String)],
+    selected_local_declarations: &[&VueSetupLocalBinding],
+) -> HashSet<Atom> {
+    let mut reserved = HashSet::new();
+    if let Some((binding, _)) = props_declaration {
+        reserved.insert(Atom::from(binding.clone()));
+    }
+    reserved.extend(
+        prop_bindings
+            .iter()
+            .map(|(_, binding)| Atom::from(binding.clone())),
+    );
+    if let Some((binding, _)) = emit_declaration {
+        reserved.insert(Atom::from(binding.clone()));
+    }
+    reserved.extend(
+        ref_declarations
+            .iter()
+            .map(|(binding, _, _)| Atom::from(binding.clone())),
+    );
+    reserved.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
+    reserved.extend(
+        selected_local_declarations
+            .iter()
+            .flat_map(|declaration| declaration.emitted_bindings.iter().cloned()),
+    );
+    reserved
+}
+
+fn collect_component_script_import_refs(node: &VueNode, refs: &mut Vec<(Atom, Atom)>) {
+    match node {
+        VueNode::Element(element) => {
+            if let Some(import_ref) = &element.component_import_ref {
+                refs.push((
+                    Atom::from(import_ref.clone()),
+                    Atom::from(element.tag.clone()),
+                ));
+            }
+            for child in &element.children {
+                collect_component_script_import_refs(child, refs);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                collect_component_script_import_refs(child, refs);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                collect_component_script_import_refs(&branch.node, refs);
+            }
+        }
+        VueNode::For(for_node) => collect_component_script_import_refs(&for_node.node, refs),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
+    }
+}
+
+fn rename_component_import_tags(node: &mut VueNode, aliases: &HashMap<Atom, Atom>) {
+    match node {
+        VueNode::Element(element) => {
+            if let Some(import_ref) = &element.component_import_ref {
+                if let Some(alias) = aliases.get(&Atom::from(import_ref.clone())) {
+                    element.tag = alias.to_string();
+                }
+            }
+            for child in &mut element.children {
+                rename_component_import_tags(child, aliases);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                rename_component_import_tags(child, aliases);
+            }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                rename_component_import_tags(&mut branch.node, aliases);
+            }
+        }
+        VueNode::For(for_node) => rename_component_import_tags(&mut for_node.node, aliases),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => {}
+    }
 }
 
 fn script_setup_declarations(
@@ -1343,9 +1527,11 @@ fn script_local_binding_aliases(
     props_declaration: Option<&(String, String)>,
     emit_declaration: Option<&(String, String)>,
     ref_declarations: &[(String, String, String)],
+    component_imports: &[VueComponentScriptImport],
 ) -> HashMap<Atom, Atom> {
     let mut used = HashSet::new();
     used.extend(ctx.script_imports.keys().cloned());
+    used.extend(component_imports.iter().map(|import| import.local.clone()));
     used.extend(
         ctx.setup_script_bindings
             .iter()
@@ -2587,6 +2773,7 @@ fn referenced_script_imports(
     root: &VueNode,
     declared_bindings: &HashSet<Atom>,
     local_declarations: &[VueSetupLocalBinding],
+    component_imports: &[VueComponentScriptImport],
 ) -> Vec<String> {
     let mut refs = ctx.setup_script_import_refs.clone();
     refs.extend(setup_script_binding_refs(ctx));
@@ -2599,13 +2786,21 @@ fn referenced_script_imports(
             .filter(|local| !declared_bindings.contains(local)),
     );
 
-    let mut imports = refs
+    let mut imports = component_imports
         .iter()
-        .filter(|local| local.as_ref() != "$")
-        .filter(|local| !declared_bindings.contains(*local))
-        .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
-        .map(|(local, import)| script_import_line(local.as_ref(), import))
+        .filter_map(|component_import| {
+            ctx.script_imports
+                .get(&component_import.import_ref)
+                .map(|import| script_import_line(component_import.local.as_ref(), import))
+        })
         .collect::<Vec<_>>();
+    imports.extend(
+        refs.iter()
+            .filter(|local| local.as_ref() != "$")
+            .filter(|local| !declared_bindings.contains(*local))
+            .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
+            .map(|(local, import)| script_import_line(local.as_ref(), import)),
+    );
     imports.sort();
     imports.dedup();
     imports
@@ -3368,7 +3563,34 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <Notification :key=\"0\" />\n</template>\n"
+            "<script setup>\nimport { _ as Notification } from \"./Notification.vue_vue_type_script_setup_true_lang-D4OJlsAz.js\";\n</script>\n\n<template>\n  <Notification :key=\"0\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn aliases_imported_component_when_tag_collides_with_setup_binding() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createVNode } from "vue";
+import { P } from "./Panel.vue";
+export default defineComponent({
+  __name: "PanelWrapper",
+  setup() {
+    const Panel = computed(() => createPanelState({
+      title: "Ready",
+      enabled: true,
+      rank: 1,
+      group: "main"
+    }));
+    return () => (
+      openBlock(), createVNode(P, { state: Panel.value }, null, 8, ["state"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\nimport { P as Panel_1 } from \"./Panel.vue\";\n\nconst Panel = computed(()=>createPanelState({\n        title: \"Ready\",\n        enabled: true,\n        rank: 1,\n        group: \"main\"\n    }));\n</script>\n\n<template>\n  <Panel_1 :state=\"Panel\" />\n</template>\n"
         );
     }
 
@@ -3476,7 +3698,7 @@ export { YP as B };
             })
             .unwrap()
             .unwrap(),
-            "<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+            "<script setup>\nimport { B as VTooltip } from \"./main.js\";\n</script>\n\n<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
         );
     }
 
@@ -3518,7 +3740,7 @@ System.register(["./vendor-vue.js"], function (_export) {
             })
             .unwrap()
             .unwrap(),
-            "<template>\n  <VButton flat />\n</template>\n"
+            "<script setup>\nimport { V as VButton } from \"./main-legacy.js\";\n</script>\n\n<template>\n  <VButton flat />\n</template>\n"
         );
     }
 
@@ -3587,7 +3809,7 @@ System.register(["./main-legacy.js", "./vendor-vue.js"], function (_export) {
             })
             .unwrap()
             .code,
-            "<template>\n  <VButton flat />\n</template>\n"
+            "<script setup>\nimport { V as VButton } from \"./main-legacy.js\";\n</script>\n\n<template>\n  <VButton flat />\n</template>\n"
         );
     }
 
@@ -3626,7 +3848,7 @@ System.register(["./Badge.vue", "./vendor-vue.js"], function (_export) {
             decompile_vue_sfc(input, DecompileOptions::default())
                 .unwrap()
                 .code,
-            "<template>\n  <Badge :text=\"team.name\" />\n</template>\n"
+            "<script setup>\nimport { B as Badge } from \"./Badge.vue\";\n</script>\n\n<template>\n  <Badge :text=\"team.name\" />\n</template>\n"
         );
     }
 
@@ -3665,7 +3887,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SvgIcon name=\"icon-system-play-video-cycle\" />\n</template>\n"
+            "<script setup>\nimport { S as SvgIcon } from \"./SvgIcon-Dg6MjH_p.js\";\n</script>\n\n<template>\n  <SvgIcon name=\"icon-system-play-video-cycle\" />\n</template>\n"
         );
     }
 
@@ -3718,7 +3940,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <Panel :disabled=\"!open\" :items=\"items\" @close=\"closePanel\" />\n</template>\n"
+            "<script setup>\nimport { P as Panel } from \"./Panel.vue\";\n</script>\n\n<template>\n  <Panel :disabled=\"!open\" :items=\"items\" @close=\"closePanel\" />\n</template>\n"
         );
     }
 
@@ -3835,7 +4057,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { ref } from \"vue\";\n\nconst sortedItems = ref([]);\n</script>\n\n<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\nimport { I as ItemPicker } from \"./ItemPicker.vue\";\n\nconst sortedItems = ref([]);\n</script>\n\n<template>\n  <ItemPicker :itemFilters=\"uniqueBy(sortedItems.map((item)=>item.id), (id)=>id)\" />\n</template>\n"
         );
     }
 
@@ -3861,7 +4083,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst items = ref([]);\n\nconst groups = computed(()=>items.map((item)=>{\n        const label = format(item.name);\n        return {\n            label,\n            item\n        };\n    }));\n</script>\n\n<template>\n  <ListView :groups=\"groups\" />\n</template>\n"
+            "<script setup>\nimport { computed, ref } from \"vue\";\nimport { L as ListView } from \"./ListView.vue\";\n\nconst items = ref([]);\n\nconst groups = computed(()=>items.map((item)=>{\n        const label = format(item.name);\n        return {\n            label,\n            item\n        };\n    }));\n</script>\n\n<template>\n  <ListView :groups=\"groups\" />\n</template>\n"
         );
     }
 
@@ -3889,7 +4111,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst visible = ref(true);\n\nconst config = computed(()=>({\n        title: visible ? \"Open\" : \"Closed\",\n        onClose: ()=>{\n            closePanel();\n        }\n    }));\n</script>\n\n<template>\n  <Panel :config=\"config\" />\n</template>\n"
+            "<script setup>\nimport { computed, ref } from \"vue\";\nimport { P as Panel } from \"./Panel.vue\";\n\nconst visible = ref(true);\n\nconst config = computed(()=>({\n        title: visible ? \"Open\" : \"Closed\",\n        onClose: ()=>{\n            closePanel();\n        }\n    }));\n</script>\n\n<template>\n  <Panel :config=\"config\" />\n</template>\n"
         );
     }
 
@@ -3916,7 +4138,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst items = ref([]);\n\nfunction createPanel(filters) {\n    return {\n        filters\n    };\n}\n\nconst filters = computed(()=>uniqueBy(items.map((item)=>({\n            id: item.id,\n            name: item.name,\n            enabled: item.enabled,\n            rank: item.rank\n        })), (item)=>item.id));\n\nconst panel = createPanel(filters);\n</script>\n\n<template>\n  <ItemPicker :filters=\"filters\" :panel=\"panel\" />\n</template>\n"
+            "<script setup>\nimport { computed, ref } from \"vue\";\nimport { I as ItemPicker } from \"./ItemPicker.vue\";\n\nconst items = ref([]);\n\nfunction createPanel(filters) {\n    return {\n        filters\n    };\n}\n\nconst filters = computed(()=>uniqueBy(items.map((item)=>({\n            id: item.id,\n            name: item.name,\n            enabled: item.enabled,\n            rank: item.rank\n        })), (item)=>item.id));\n\nconst panel = createPanel(filters);\n</script>\n\n<template>\n  <ItemPicker :filters=\"filters\" :panel=\"panel\" />\n</template>\n"
         );
     }
 
@@ -4141,7 +4363,7 @@ export default defineComponent({
     }
 
     #[test]
-    fn imports_template_helpers_without_importing_component_tags() {
+    fn imports_template_helpers_and_component_tags() {
         let input = r#"
 import { S as StatusTag } from "./StatusTag.vue";
 import { statusLevel } from "./status.js";
@@ -4160,7 +4382,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { statusLevel } from \"./status.js\";\n\nconst props = defineProps({\n    status: String\n});\nconst { status } = props;\n</script>\n\n<template>\n  <StatusTag :level=\"statusLevel(status)\" />\n</template>\n"
+            "<script setup>\nimport { S as StatusTag } from \"./StatusTag.vue\";\nimport { statusLevel } from \"./status.js\";\n\nconst props = defineProps({\n    status: String\n});\nconst { status } = props;\n</script>\n\n<template>\n  <StatusTag :level=\"statusLevel(status)\" />\n</template>\n"
         );
     }
 
@@ -5119,7 +5341,7 @@ export const u = () => {
             })
             .unwrap()
             .unwrap(),
-            "<script setup>\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
         );
     }
 
@@ -5156,7 +5378,7 @@ export const u = () => {
             })
             .unwrap()
             .unwrap(),
-            "<script setup>\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\nimport { u as useListState } from \"./state.js\";\n\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
         );
     }
 
@@ -5228,7 +5450,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nfunction useListState() {\n    const itemList = createList([]);\n    itemList.value.push(\"ready\");\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n}\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\n\nfunction useListState() {\n    const itemList = createList([]);\n    itemList.value.push(\"ready\");\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n}\nconst { items, raw } = useListState();\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
         );
     }
 
@@ -5258,7 +5480,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nconst state = ((enabled)=>{\n    const itemList = createList([]);\n    subscribe(()=>{\n        itemList.value.push(\"ready\");\n    });\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n})(true);\nconst { items, raw } = state;\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\n\nconst state = ((enabled)=>{\n    const itemList = createList([]);\n    subscribe(()=>{\n        itemList.value.push(\"ready\");\n    });\n    const raw = {\n        value: {\n            name: \"plain\"\n        }\n    };\n    return {\n        items: itemList,\n        raw\n    };\n})(true);\nconst { items, raw } = state;\n</script>\n\n<template>\n  <ListView :items=\"items\" :title=\"raw.value.name\" />\n</template>\n"
         );
     }
 
@@ -5287,7 +5509,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\n</script>\n\n<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
         );
     }
 
@@ -5323,7 +5545,7 @@ export const u = () => {
             })
             .unwrap()
             .unwrap(),
-            "<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
+            "<script setup>\nimport { L as ListView } from \"./ListView.vue\";\n</script>\n\n<template>\n  <ListView :items=\"items.value.name\" />\n</template>\n"
         );
     }
 
@@ -5513,7 +5735,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" :loaded=\"loaded\" />\n</template>\n"
+            "<script setup>\nimport { S as SummaryPanel } from \"./SummaryPanel.vue\";\n</script>\n\n<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" :loaded=\"loaded\" />\n</template>\n"
         );
     }
 
@@ -5554,7 +5776,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { computed, ref } from \"vue\";\n\nconst state = createProvider(\"State\", ()=>{\n    const items = computed(()=>source.value);\n    const loaded = computed(()=>ready.value);\n    return {\n        items,\n        loaded\n    };\n});\nfunction prepare(filters) {\n    return {\n        isOpen: ref(false),\n        setIsOpen (value) {}\n    };\n}\nconst { items, loaded } = state.provide();\n\nconst itemFilters = computed(()=>{\n    const mapped = items.map((item)=>({\n            id: item.id,\n            name: item.name,\n            size: item.size\n        }));\n    return uniqueBy(mapped, (item)=>item.id);\n});\n\nconst { isOpen, setIsOpen } = prepare(itemFilters);\nconst isSticky = true;\n</script>\n\n<template>\n  <ListPanel v-if=\"(items.filter((item)=>item.enabled)).length > 0\" active :isSticky=\"isSticky\" />\n  <ItemPicker :itemFilters=\"itemFilters\" :loaded=\"loaded\" @close=\"setIsOpen(false)\" />\n</template>\n"
+            "<script setup>\nimport { computed, ref } from \"vue\";\nimport { I as ItemPicker } from \"./ItemPicker.vue\";\nimport { P as ListPanel } from \"./ListPanel.vue\";\n\nconst state = createProvider(\"State\", ()=>{\n    const items = computed(()=>source.value);\n    const loaded = computed(()=>ready.value);\n    return {\n        items,\n        loaded\n    };\n});\nfunction prepare(filters) {\n    return {\n        isOpen: ref(false),\n        setIsOpen (value) {}\n    };\n}\nconst { items, loaded } = state.provide();\n\nconst itemFilters = computed(()=>{\n    const mapped = items.map((item)=>({\n            id: item.id,\n            name: item.name,\n            size: item.size\n        }));\n    return uniqueBy(mapped, (item)=>item.id);\n});\n\nconst { isOpen, setIsOpen } = prepare(itemFilters);\nconst isSticky = true;\n</script>\n\n<template>\n  <ListPanel v-if=\"(items.filter((item)=>item.enabled)).length > 0\" active :isSticky=\"isSticky\" />\n  <ItemPicker :itemFilters=\"itemFilters\" :loaded=\"loaded\" @close=\"setIsOpen(false)\" />\n</template>\n"
         );
     }
 
@@ -5580,7 +5802,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SummaryPanel :loaded=\"isLoaded\" />\n</template>\n"
+            "<script setup>\nimport { S as SummaryPanel } from \"./SummaryPanel.vue\";\n</script>\n\n<template>\n  <SummaryPanel :loaded=\"isLoaded\" />\n</template>\n"
         );
     }
 
@@ -5605,7 +5827,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
+            "<script setup>\nimport { S as SummaryPanel } from \"./SummaryPanel.vue\";\n</script>\n\n<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
         );
     }
 
@@ -5632,7 +5854,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
+            "<script setup>\nimport { S as SummaryPanel } from \"./SummaryPanel.vue\";\n</script>\n\n<template>\n  <SummaryPanel :hasItems=\"visibleItems.length > 0\" />\n</template>\n"
         );
     }
 
@@ -5658,7 +5880,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <SummaryPanel :count=\"items.length\" />\n</template>\n"
+            "<script setup>\nimport { S as SummaryPanel } from \"./SummaryPanel.vue\";\n</script>\n\n<template>\n  <SummaryPanel :count=\"items.length\" />\n</template>\n"
         );
     }
 
@@ -5711,7 +5933,7 @@ export const _ = dc({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <StatusTag :level='status === 1 ? \"danger\" : status === 2 ? \"warning\" : \"info\"' />\n</template>\n"
+            "<script setup>\nimport { S as StatusTag } from \"./StatusTag.vue\";\n</script>\n\n<template>\n  <StatusTag :level='status === 1 ? \"danger\" : status === 2 ? \"warning\" : \"info\"' />\n</template>\n"
         );
     }
 
@@ -5847,7 +6069,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <Badge @click=\"onClick\" />\n</template>\n"
+            "<script setup>\nimport { B as Badge } from \"./Badge.vue\";\n</script>\n\n<template>\n  <Badge @click=\"onClick\" />\n</template>\n"
         );
     }
 
