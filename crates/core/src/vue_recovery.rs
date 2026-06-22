@@ -1137,9 +1137,11 @@ fn setup_script(
     root: &mut VueNode,
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
-    let ref_declarations = setup_ref_declarations(ctx, root, render);
-    let selected_local_declarations = setup_local_declarations(ctx, root);
-    let emit_declaration = setup_emit_declaration(ctx, root, &selected_local_declarations)?;
+    let template_usage = VueTemplateUsage::new(root);
+    let ref_declarations = setup_ref_declarations(ctx, &template_usage, render);
+    let selected_local_declarations = setup_local_declarations(ctx, &template_usage);
+    let emit_declaration =
+        setup_emit_declaration(ctx, &template_usage, &selected_local_declarations)?;
     let prop_names = ctx
         .setup_component_options
         .as_ref()
@@ -1193,7 +1195,7 @@ fn setup_script(
     );
     let script_imports = referenced_script_imports(
         ctx,
-        root,
+        &template_usage,
         &declared_bindings,
         &local_declarations,
         &component_imports,
@@ -1727,10 +1729,10 @@ fn component_emits_source(ctx: &VueRecoveryContext) -> Result<Option<String>> {
 
 fn setup_emit_declaration(
     ctx: &VueRecoveryContext,
-    root: &VueNode,
+    template_usage: &VueTemplateUsage,
     local_declarations: &[&VueSetupLocalBinding],
 ) -> Result<Option<(String, String)>> {
-    let Some(binding) = setup_emit_script_binding(ctx, root, local_declarations) else {
+    let Some(binding) = setup_emit_script_binding(ctx, template_usage, local_declarations) else {
         return Ok(None);
     };
     let Some(emits_source) = component_emits_source(ctx)? else {
@@ -1820,12 +1822,12 @@ fn vue_helper_import_name(helper: &VueHelper) -> &str {
 
 fn setup_ref_declarations(
     ctx: &VueRecoveryContext,
-    root: &VueNode,
+    template_usage: &VueTemplateUsage,
     render: RenderSource<'_>,
 ) -> Vec<(String, String, String)> {
-    let mut expr_refs = template_expr_refs(root);
+    let mut expr_refs = template_usage.expr_refs.clone();
     expr_refs.extend(setup_script_binding_refs(ctx));
-    let template_refs = template_static_ref_names(root);
+    let template_refs = &template_usage.static_ref_names;
     let render_value_refs = render_value_member_refs(render, ctx);
     let mut declared = HashSet::new();
     let mut declarations = Vec::new();
@@ -1855,7 +1857,7 @@ fn setup_ref_declarations(
 
     for name in template_refs {
         if declared.insert(name.clone()) {
-            declarations.push((name, "ref(null)".to_string(), "ref".to_string()));
+            declarations.push((name.clone(), "ref(null)".to_string(), "ref".to_string()));
         }
     }
 
@@ -1864,7 +1866,7 @@ fn setup_ref_declarations(
 
 fn setup_local_declarations<'a>(
     ctx: &'a VueRecoveryContext,
-    root: &VueNode,
+    template_usage: &VueTemplateUsage,
 ) -> Vec<&'a VueSetupLocalBinding> {
     if ctx.script_local_bindings.is_empty() && ctx.setup_local_bindings.is_empty() {
         return Vec::new();
@@ -1875,7 +1877,7 @@ fn setup_local_declarations<'a>(
         .iter()
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
-    let selected = VueSelectionPlan::new(ctx, root, &candidates).select(&candidates);
+    let selected = VueSelectionPlan::new(ctx, template_usage, &candidates).select(&candidates);
 
     candidates
         .into_iter()
@@ -1891,19 +1893,21 @@ struct VueSelectionPlan {
 }
 
 impl VueSelectionPlan {
-    fn new(ctx: &VueRecoveryContext, root: &VueNode, candidates: &[&VueSetupLocalBinding]) -> Self {
+    fn new(
+        ctx: &VueRecoveryContext,
+        template_usage: &VueTemplateUsage,
+        candidates: &[&VueSetupLocalBinding],
+    ) -> Self {
         let setup_scope_bindings = setup_scope_bindings(ctx, candidates);
-        let mut setup_wanted_refs = template_event_expr_refs(root);
-        let expr_refs = template_expr_refs(root);
-        let expr_read_refs = template_expr_read_refs(root);
-        setup_wanted_refs.extend(template_composable_refs(ctx, &expr_refs));
+        let mut setup_wanted_refs = template_usage.event_refs.clone();
+        setup_wanted_refs.extend(template_composable_refs(ctx, &template_usage.expr_refs));
         setup_wanted_refs.extend(template_safe_local_refs(
             ctx,
             candidates,
-            &expr_refs,
-            &expr_read_refs,
+            &template_usage.expr_refs,
+            &template_usage.read_refs,
         ));
-        setup_wanted_refs.extend(setup_value_dependency_refs(ctx, root));
+        setup_wanted_refs.extend(setup_value_dependency_refs(ctx, template_usage));
         setup_wanted_refs.extend(setup_script_binding_refs(ctx));
 
         Self {
@@ -2162,17 +2166,42 @@ pub(super) fn template_scope_from_pat(pat: &Pat) -> VueTemplateScope {
     VueTemplateScope::from_locals(bindings.into_iter().map(|binding| binding.to_string()))
 }
 
-fn setup_value_dependency_refs(ctx: &VueRecoveryContext, root: &VueNode) -> HashSet<Atom> {
+struct VueTemplateUsage {
+    expr_refs: HashSet<Atom>,
+    read_refs: HashSet<Atom>,
+    event_refs: HashSet<Atom>,
+    for_source_refs: HashSet<Atom>,
+    static_ref_names: Vec<String>,
+}
+
+impl VueTemplateUsage {
+    fn new(root: &VueNode) -> Self {
+        Self {
+            expr_refs: template_expr_refs(root),
+            read_refs: template_expr_read_refs(root),
+            event_refs: template_event_expr_refs(root),
+            for_source_refs: template_for_source_refs(root),
+            static_ref_names: template_static_ref_names(root),
+        }
+    }
+}
+
+fn setup_value_dependency_refs(
+    ctx: &VueRecoveryContext,
+    template_usage: &VueTemplateUsage,
+) -> HashSet<Atom> {
     if ctx.bindings.values.is_empty() {
         return HashSet::new();
     }
 
-    let template_refs = template_for_source_refs(root);
     let mut refs = HashSet::new();
     for value in ctx.bindings.values.values() {
         let mut value_refs = HashSet::new();
         collect_js_unshadowed_ident_refs(&value.value, &mut value_refs);
-        if value_refs.iter().any(|local| template_refs.contains(local)) {
+        if value_refs
+            .iter()
+            .any(|local| template_usage.for_source_refs.contains(local))
+        {
             refs.extend(value_refs);
         }
     }
@@ -2892,7 +2921,7 @@ fn declaration_keyword_len(chars: &[char], index: usize) -> Option<usize> {
 
 fn referenced_script_imports(
     ctx: &VueRecoveryContext,
-    root: &VueNode,
+    template_usage: &VueTemplateUsage,
     declared_bindings: &HashSet<Atom>,
     local_declarations: &[VueSetupLocalBinding],
     component_imports: &[VueComponentScriptImport],
@@ -2903,9 +2932,11 @@ fn referenced_script_imports(
         refs.extend(declaration.import_refs.iter().cloned());
     }
     refs.extend(
-        template_expr_read_refs(root)
-            .into_iter()
-            .filter(|local| !declared_bindings.contains(local)),
+        template_usage
+            .read_refs
+            .iter()
+            .filter(|&local| !declared_bindings.contains(local))
+            .cloned(),
     );
 
     let mut imports = component_imports
@@ -3082,10 +3113,10 @@ fn props_binding_reserved_names(
 
 fn setup_emit_script_binding(
     ctx: &VueRecoveryContext,
-    root: &VueNode,
+    template_usage: &VueTemplateUsage,
     local_declarations: &[&VueSetupLocalBinding],
 ) -> Option<String> {
-    let mut expr_refs = template_expr_refs(root);
+    let mut expr_refs = template_usage.expr_refs.clone();
     for declaration in local_declarations {
         expr_refs.extend(declaration.refs.iter().cloned());
     }
@@ -4582,8 +4613,9 @@ export default _sfc_main;
             ..Default::default()
         };
         let root = VueNode::Interpolation(VueExpr::new("value.name"));
+        let template_usage = VueTemplateUsage::new(&root);
 
-        let selected = setup_local_declarations(&ctx, &root)
+        let selected = setup_local_declarations(&ctx, &template_usage)
             .into_iter()
             .map(|declaration| declaration.source.as_str())
             .collect::<Vec<_>>();
@@ -4622,8 +4654,9 @@ export default _sfc_main;
             ..Default::default()
         };
         let root = VueNode::Interpolation(VueExpr::new("message"));
+        let template_usage = VueTemplateUsage::new(&root);
 
-        let selected = setup_local_declarations(&ctx, &root)
+        let selected = setup_local_declarations(&ctx, &template_usage)
             .into_iter()
             .map(|declaration| declaration.source.as_str())
             .collect::<Vec<_>>();
@@ -4636,6 +4669,53 @@ export default _sfc_main;
                 "const message = format(value);"
             ]
         );
+    }
+
+    #[test]
+    fn template_usage_ignores_scoped_for_locals() {
+        use crate::vue_template::{VueElement, VueFor};
+
+        let root = VueNode::For(VueFor {
+            value: "item".to_string(),
+            source: VueExpr::new("items"),
+            node: Box::new(VueNode::Element(
+                VueElement::new("button")
+                    .with_attrs(vec![
+                        VueAttr::Static {
+                            name: "ref".to_string(),
+                            value: Some("buttonRef".to_string()),
+                        },
+                        VueAttr::On {
+                            name: "click".to_string(),
+                            expr: VueExpr::new("select(item, selected)"),
+                            modifiers: Vec::new(),
+                        },
+                        VueAttr::Bind {
+                            name: "title".to_string(),
+                            expr: VueExpr::new("item.label || fallback"),
+                        },
+                    ])
+                    .with_children(vec![VueNode::Interpolation(VueExpr::new(
+                        "item.name + suffix",
+                    ))]),
+            )),
+            scope: VueTemplateScope::from_local("item"),
+        });
+
+        let usage = VueTemplateUsage::new(&root);
+
+        assert_eq!(usage.static_ref_names, vec!["buttonRef"]);
+        assert_eq!(usage.for_source_refs, test_atom_set(&["items"]));
+        assert!(usage.expr_refs.contains(&Atom::from("items")));
+        assert!(usage.expr_refs.contains(&Atom::from("select")));
+        assert!(usage.expr_refs.contains(&Atom::from("selected")));
+        assert!(usage.expr_refs.contains(&Atom::from("fallback")));
+        assert!(usage.expr_refs.contains(&Atom::from("suffix")));
+        assert!(!usage.expr_refs.contains(&Atom::from("item")));
+        assert!(usage.event_refs.contains(&Atom::from("select")));
+        assert!(usage.event_refs.contains(&Atom::from("selected")));
+        assert!(!usage.event_refs.contains(&Atom::from("item")));
+        assert!(!usage.read_refs.contains(&Atom::from("item")));
     }
 
     #[test]
