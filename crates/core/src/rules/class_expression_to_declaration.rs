@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ClassDecl, Decl, Expr, Ident, ModuleDecl, ModuleItem, Pat, Stmt, VarDecl, VarDeclKind,
+    ClassDecl, Decl, DefaultDecl, Expr, Ident, ImportSpecifier, ModuleDecl, ModuleItem, Pat, Stmt,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -115,6 +116,31 @@ fn collect_scope_names_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
                 collect_decl_binding_names(&export_decl.decl, &mut names);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import_decl)) => {
+                for spec in &import_decl.specifiers {
+                    let local = match spec {
+                        ImportSpecifier::Named(n) => &n.local,
+                        ImportSpecifier::Default(d) => &d.local,
+                        ImportSpecifier::Namespace(ns) => &ns.local,
+                    };
+                    names.insert(local.sym.clone());
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(default_decl)) => {
+                match &default_decl.decl {
+                    DefaultDecl::Fn(f) => {
+                        if let Some(ident) = &f.ident {
+                            names.insert(ident.sym.clone());
+                        }
+                    }
+                    DefaultDecl::Class(c) => {
+                        if let Some(ident) = &c.ident {
+                            names.insert(ident.sym.clone());
+                        }
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }

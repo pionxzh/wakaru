@@ -105,6 +105,7 @@ fn maybe_rewrite_webpack_namespace(
     let mut require_r_indices = Vec::new();
     let mut odp_getters = Vec::new();
     let mut odp_indices = Vec::new();
+    let mut seen_non_marker = false;
     let mut index = decl_index + 1;
 
     while index < items.len() {
@@ -126,12 +127,13 @@ fn maybe_rewrite_webpack_namespace(
             return Some((replacement, require_r_indices));
         }
 
-        // Collect consecutive Object.defineProperty(target, name, { get: ... }) calls.
-        if let Some(getter) = extract_single_define_property_getter(&items[index], target) {
-            odp_getters.push(getter);
-            odp_indices.push(index);
-            index += 1;
-            continue;
+        if !seen_non_marker {
+            if let Some(getter) = extract_single_define_property_getter(&items[index], target) {
+                odp_getters.push(getter);
+                odp_indices.push(index);
+                index += 1;
+                continue;
+            }
         }
 
         if !odp_getters.is_empty() {
@@ -141,6 +143,7 @@ fn maybe_rewrite_webpack_namespace(
         if module_item_references_binding(&items[index], target) {
             break;
         }
+        seen_non_marker = true;
         index += 1;
     }
 

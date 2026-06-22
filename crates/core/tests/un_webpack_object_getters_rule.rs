@@ -292,6 +292,23 @@ Object.defineProperty(ns, "bar", {
 }
 
 #[test]
+fn preserves_odp_calls_after_intervening_side_effect() {
+    let input = r#"
+export const ns = {};
+sideEffect();
+Object.defineProperty(ns, "foo", {
+  enumerable: true,
+  get: ()=>fooValue
+});
+Object.defineProperty(ns, "bar", {
+  enumerable: true,
+  get: ()=>barValue
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn stops_odp_collection_on_intervening_statement() {
     let input = r#"
 export const ns = {};

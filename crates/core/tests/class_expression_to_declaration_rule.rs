@@ -142,3 +142,22 @@ fn does_not_choose_class_name_that_conflicts_with_function() {
     let expected = "function Logger() {}\nclass d {}";
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_import() {
+    let input = r#"import Logger from "./module"; const d = class Logger {}; console.log(Logger);"#;
+    let expected = r#"import Logger from "./module";
+class d {}
+console.log(Logger);"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_named_import() {
+    let input =
+        r#"import { Logger } from "./module"; const d = class Logger {}; console.log(Logger);"#;
+    let expected = r#"import { Logger } from "./module";
+class d {}
+console.log(Logger);"#;
+    assert_eq_normalized(&apply(input), expected);
+}
