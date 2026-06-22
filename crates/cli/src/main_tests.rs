@@ -136,6 +136,13 @@ fn vue_output_filename_replaces_known_extension() {
 }
 
 #[test]
+fn vue_js_output_filename_avoids_vue_artifact_collision() {
+    assert_eq!(vue_js_output_filename("src/App.vue"), "src/App.vue.js");
+    assert_eq!(vue_js_output_filename("src/App.js"), "src/App.js");
+    assert_eq!(vue_js_output_filename("module-plain"), "module-plain");
+}
+
+#[test]
 fn vue_sfc_writes_recovered_single_file_component() {
     let dir = temp_test_dir("vue-sfc-output");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -156,6 +163,60 @@ fn vue_sfc_writes_recovered_single_file_component() {
     assert_eq!(
         fs::read_to_string(&output_path).expect("read vue sfc output"),
         "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_rejects_js_output_path_when_recovered() {
+    let dir = temp_test_dir("vue-sfc-js-output");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let output_path = dir.join("App.js");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    let err = run_default(cli).expect_err("recovered vue sfc should reject .js output");
+    assert!(
+        err.to_string()
+            .contains("--vue-sfc recovered a Vue SFC but output path ends with .js"),
+        "unexpected error: {err}"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_does_not_write_source_map_for_recovered_sfc() {
+    let dir = temp_test_dir("vue-sfc-output-map");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let output_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert!(output_path.exists(), "recovered vue sfc should be written");
+    assert!(
+        !append_map_extension(&output_path).exists(),
+        "recovered vue sfc must not get a stale JS source map"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -320,9 +381,53 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
     .expect("vue sfc unpack cli should parse");
     run_default(cli).expect("vue sfc webpack unpack should succeed");
 
+    assert!(
+        out_dir.join("src/App.vue.js").exists(),
+        "decompiled JS should remain next to the recovered SFC"
+    );
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
         "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./src/components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_writes_source_maps_only_for_js_artifacts() {
+    let dir = temp_test_dir("vue-sfc-webpack-map");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert!(
+        out_dir.join("src/App.vue").exists(),
+        "recovered vue sfc should be written"
+    );
+    assert!(
+        out_dir.join("src/App.vue.js").exists(),
+        "decompiled JS should be written"
+    );
+    assert!(
+        out_dir.join("src/App.vue.js.map").exists(),
+        "decompiled JS should keep its source map"
+    );
+    assert!(
+        !out_dir.join("src/App.vue.map").exists(),
+        "recovered vue sfc must not get a stale JS source map"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
