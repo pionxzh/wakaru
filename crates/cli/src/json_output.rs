@@ -23,6 +23,30 @@ pub struct JsonDecompileOutput {
 #[derive(Serialize)]
 pub struct JsonModule {
     pub filename: String,
+    pub kind: JsonModuleKind,
+    pub status: JsonModuleStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_filename: Option<String>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+pub enum JsonModuleKind {
+    #[serde(rename = "javascript")]
+    JavaScript,
+    #[serde(rename = "vue_sfc")]
+    VueSfc,
+}
+
+#[derive(Clone, Copy, Serialize)]
+pub enum JsonModuleStatus {
+    #[serde(rename = "decompiled")]
+    Decompiled,
+    #[serde(rename = "vue_sfc_source_js")]
+    VueSfcSourceJs,
+    #[serde(rename = "recovered_vue_sfc")]
+    RecoveredVueSfc,
+    #[serde(rename = "vue_sfc_fallback_js")]
+    VueSfcFallbackJs,
 }
 
 #[derive(Serialize)]
