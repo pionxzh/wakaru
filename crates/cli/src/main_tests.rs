@@ -228,6 +228,54 @@ fn vue_sfc_relative_import_resolver_ignores_stdin_base() {
 }
 
 #[test]
+fn vue_sfc_relative_import_resolver_reads_extensionless_and_query_paths() {
+    let dir = temp_test_dir("vue-sfc-relative-import-resolver");
+    let components_dir = dir.join("components");
+    fs::create_dir_all(&components_dir).expect("create temp dir");
+    let input_path = dir.join("App.js");
+    fs::write(&input_path, "export default {};").expect("write input");
+    fs::write(components_dir.join("Child.vue"), "export default {};").expect("write component");
+    fs::write(components_dir.join("Panel.js"), "export default {};").expect("write js module");
+    fs::create_dir_all(components_dir.join("Dialog")).expect("create index dir");
+    fs::write(
+        components_dir.join("Dialog").join("index.vue"),
+        "export default {};",
+    )
+    .expect("write index component");
+
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Child.vue?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Child?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Panel"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Dialog"
+        ),
+        Some("export default {};".to_string())
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn vue_sfc_unpack_import_resolver_reads_root_relative_module_source() {
     let module_sources = HashMap::from([(
         "src/components/ChildPanel.vue".to_string(),
@@ -256,6 +304,66 @@ fn vue_sfc_unpack_import_resolver_reads_module_relative_source() {
             &module_sources,
             "src/App.vue",
             "./components/ChildPanel.vue"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_extensionless_query_and_index_sources() {
+    let module_sources = HashMap::from([
+        (
+            "src/components/ChildPanel.vue".to_string(),
+            "export default {};".to_string(),
+        ),
+        (
+            "src/components/Panel.js".to_string(),
+            "export const panel = true;".to_string(),
+        ),
+        (
+            "src/components/Dialog/index.vue".to_string(),
+            "export const dialog = true;".to_string(),
+        ),
+    ]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(&module_sources, "src/App.vue", "./components/Panel"),
+        Some("export const panel = true;".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(&module_sources, "src/App.vue", "./components/Dialog"),
+        Some("export const dialog = true;".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_parent_relative_sources() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/views/App.vue",
+            "../components/ChildPanel"
         ),
         Some("export default {};".to_string())
     );
