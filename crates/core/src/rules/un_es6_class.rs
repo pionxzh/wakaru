@@ -2438,8 +2438,13 @@ fn build_constructor(
         strip_return_super(&mut body);
     }
 
+    let ctor_span = if function.span.lo.0 != 0 {
+        function.span
+    } else {
+        DUMMY_SP
+    };
     Some(Constructor {
-        span: DUMMY_SP,
+        span: ctor_span,
         ctxt: Default::default(),
         key: PropName::Ident(IdentName::new("constructor".into(), DUMMY_SP)),
         params,
@@ -3302,8 +3307,13 @@ fn build_class_method(
     is_static: bool,
     kind: MethodKind,
 ) -> ClassMethod {
+    let method_span = if fn_expr.function.span.lo.0 != 0 {
+        fn_expr.function.span
+    } else {
+        DUMMY_SP
+    };
     ClassMethod {
-        span: DUMMY_SP,
+        span: method_span,
         key,
         function: fn_expr.function.clone(),
         kind,

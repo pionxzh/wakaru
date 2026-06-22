@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::common::util::take::Take;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmt, BreakStmt, CatchClause, CondExpr,
     ContinueStmt, Expr, ExprOrSpread, ExprStmt, ForStmt, Function, Ident, IfStmt, Lit, Pat,
@@ -655,8 +655,16 @@ pub(crate) fn reconstruct_with_regions(
                     .flatten()
                     .cloned()
                     .collect();
+                let catch_span = catch_stmts.first().map_or(DUMMY_SP, |s| {
+                    let sp = s.span();
+                    if sp.lo.0 != 0 {
+                        sp
+                    } else {
+                        DUMMY_SP
+                    }
+                });
                 Some(CatchClause {
-                    span: DUMMY_SP,
+                    span: catch_span,
                     param: Some(Pat::Ident(swc_core::ecma::ast::BindingIdent {
                         id: Ident::new_no_ctxt("error".into(), DUMMY_SP),
                         type_ann: None,
@@ -688,8 +696,16 @@ pub(crate) fn reconstruct_with_regions(
                 None
             };
 
+            let try_span = try_stmts.first().map_or(DUMMY_SP, |s| {
+                let sp = s.span();
+                if sp.lo.0 != 0 {
+                    sp
+                } else {
+                    DUMMY_SP
+                }
+            });
             result.push(Stmt::Try(Box::new(TryStmt {
-                span: DUMMY_SP,
+                span: try_span,
                 block: BlockStmt {
                     span: DUMMY_SP,
                     ctxt: Default::default(),
