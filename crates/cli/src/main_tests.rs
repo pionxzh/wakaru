@@ -261,7 +261,7 @@ export { YP as B };
 
     assert_eq!(
         fs::read_to_string(&output_path).expect("read vue sfc output"),
-        "<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+        "<script setup>\nimport { B as VTooltip } from \"./main.js\";\n</script>\n\n<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
