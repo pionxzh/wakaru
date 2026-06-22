@@ -292,6 +292,42 @@ Object.defineProperty(ns, "bar", {
 }
 
 #[test]
+fn stops_odp_collection_on_intervening_statement() {
+    let input = r#"
+export const ns = {};
+Object.defineProperty(ns, "foo", {
+  enumerable: true,
+  get: ()=>fooValue
+});
+Object.defineProperty(ns, "bar", {
+  enumerable: true,
+  get: ()=>barValue
+});
+sideEffect();
+Object.defineProperty(ns, "baz", {
+  enumerable: true,
+  get: ()=>bazValue
+});
+"#;
+    let expected = r#"
+export const ns = {
+  get foo() {
+    return fooValue;
+  },
+  get bar() {
+    return barValue;
+  }
+};
+sideEffect();
+Object.defineProperty(ns, "baz", {
+  enumerable: true,
+  get: ()=>bazValue
+});
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn folds_define_property_in_block_scope() {
     let input = r#"
 function init() {

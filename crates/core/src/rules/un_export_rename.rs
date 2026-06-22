@@ -42,7 +42,12 @@ impl VisitMut for UnExportRename {
             return;
         }
 
-        promote_renamed_bindings(module, &plans, &binding_infos);
+        let promotion_plans: Vec<_> = plans
+            .iter()
+            .filter(|p| !p.from_getter_namespace)
+            .cloned()
+            .collect();
+        promote_renamed_bindings(module, &promotion_plans, &binding_infos);
         rewrite_export_aliases(module, &plans);
 
         let mut renames: Vec<BindingRename> = plans
@@ -400,12 +405,6 @@ fn promote_renamed_bindings(
             new_body.push(item);
             continue;
         };
-        // Pattern C renames: the binding is already exported via `export { name }`
-        // specifiers — rewrite_export_aliases adds the alias there, no promotion needed.
-        if plan.from_getter_namespace {
-            new_body.push(item);
-            continue;
-        }
         let Some(info) = infos_by_old.get(&plan.old).copied() else {
             new_body.push(item);
             continue;

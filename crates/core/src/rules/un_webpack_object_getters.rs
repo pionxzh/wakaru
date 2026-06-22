@@ -134,6 +134,10 @@ fn maybe_rewrite_webpack_namespace(
             continue;
         }
 
+        if !odp_getters.is_empty() {
+            break;
+        }
+
         if module_item_references_binding(&items[index], target) {
             break;
         }

@@ -113,3 +113,32 @@ fn renames_self_reference_in_static_method() {
     let expected = "class Foo {\n    static create() {\n        return new Foo();\n    }\n}";
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn exported_class_keeps_binding_name_over_class_name() {
+    let input = "export const d = class Logger { child() { return new Logger(); } }; new d();";
+    let expected = "export class d {\n    child() {\n        return new d();\n    }\n}\nnew d();";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn block_scope_rename_applies_to_all_statements() {
+    let input = "function f() { const d = class Logger {}; return new d(); }";
+    let expected = "function f() {\n    class Logger {}\n    return new Logger();\n}";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_outer_binding() {
+    let input = "const Logger = 1; const d = class Logger { method() { return new Logger(); } };";
+    let expected =
+        "const Logger = 1;\nclass d {\n    method() {\n        return new d();\n    }\n}";
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_choose_class_name_that_conflicts_with_function() {
+    let input = "function Logger() {} const d = class Logger {};";
+    let expected = "function Logger() {}\nclass d {}";
+    assert_eq_normalized(&apply(input), expected);
+}
