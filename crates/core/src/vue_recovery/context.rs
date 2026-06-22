@@ -58,7 +58,8 @@ pub(super) fn collect_context(
                         ImportSpecifier::Named(named) => {
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
-                                    .insert(named.local.sym.clone(), component.clone());
+                                    .entry(named.local.sym.clone())
+                                    .or_insert_with(|| component.clone());
                             }
                             let imported = named
                                 .imported
@@ -101,7 +102,8 @@ pub(super) fn collect_context(
                             }
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
-                                    .insert(default.local.sym.clone(), component.clone());
+                                    .entry(default.local.sym.clone())
+                                    .or_insert_with(|| component.clone());
                             }
                         }
                         ImportSpecifier::Namespace(namespace) => {
@@ -118,7 +120,8 @@ pub(super) fn collect_context(
                             }
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
-                                    .insert(namespace.local.sym.clone(), component.clone());
+                                    .entry(namespace.local.sym.clone())
+                                    .or_insert_with(|| component.clone());
                             }
                         }
                     }

@@ -11,9 +11,9 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
-    normalize, parse_sourcemap, recover_vue_sfc_source_from_js, trace_rules, unpack, unpack_files,
-    unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
-    RewriteLevel, RuleTraceOptions, UnpackInput,
+    normalize, parse_sourcemap, recover_vue_sfc_source_from_js_with_import_resolver, trace_rules,
+    unpack, unpack_files, unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions,
+    NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
 mod color;
@@ -328,13 +328,26 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_iter()
             .collect();
 
+<<<<<<< HEAD
         let provenance = output.provenance;
+=======
+        let module_sources = cli
+            .vue_sfc
+            .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
+>>>>>>> d2498e17 (fix(core): resolve webpack Vue component imports)
         let pairs = output.modules;
         let pairs: Vec<(String, String)> = pairs
             .into_par_iter()
             .map(|(filename, code)| {
                 if cli.vue_sfc {
-                    if let Ok(Some(sfc)) = recover_vue_sfc_source_from_js(&code) {
+                    let module_sources = module_sources
+                        .as_ref()
+                        .expect("vue sfc module source map is initialized");
+                    let sfc =
+                        recover_vue_sfc_source_from_js_with_import_resolver(&code, |specifier| {
+                            resolve_unpack_import_source(module_sources, &filename, specifier)
+                        });
+                    if let Ok(Some(sfc)) = sfc {
                         return (vue_output_filename(&filename), sfc);
                     }
                 }
@@ -737,6 +750,58 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
     let base = Path::new(base_filename);
     let parent = base.parent()?;
     fs::read_to_string(parent.join(specifier)).ok()
+}
+
+fn resolve_unpack_import_source(
+    module_sources: &HashMap<String, String>,
+    base_filename: &str,
+    specifier: &str,
+) -> Option<String> {
+    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+        return None;
+    }
+
+    let root_relative = normalize_relative_module_specifier(specifier)?;
+    if let Some(source) = module_sources.get(&root_relative) {
+        return Some(source.clone());
+    }
+
+    let base_relative = normalize_relative_module_specifier_from_base(base_filename, specifier)?;
+    module_sources.get(&base_relative).cloned()
+}
+
+fn normalize_relative_module_specifier(specifier: &str) -> Option<String> {
+    normalize_relative_module_path(Vec::new(), specifier)
+}
+
+fn normalize_relative_module_specifier_from_base(
+    base_filename: &str,
+    specifier: &str,
+) -> Option<String> {
+    let mut parts = normalized_path_parts(base_filename);
+    parts.pop()?;
+    normalize_relative_module_path(parts, specifier)
+}
+
+fn normalize_relative_module_path(mut parts: Vec<String>, path: &str) -> Option<String> {
+    for part in path.replace('\\', "/").split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part.to_string()),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn normalized_path_parts(path: &str) -> Vec<String> {
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
