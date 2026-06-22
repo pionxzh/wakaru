@@ -523,10 +523,12 @@ pub(super) fn list_item_context(
         .setup_props_aliases
         .retain(|alias| !params.shadows(alias));
     item_ctx
-        .setup_ref_bindings
+        .bindings
+        .refs
         .retain(|binding| !params.shadows(binding));
     item_ctx
-        .setup_template_ref_bindings
+        .bindings
+        .template_refs
         .retain(|binding| !params.shadows(binding));
     item_ctx
 }

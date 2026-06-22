@@ -47,17 +47,11 @@ struct VueRecoveryContext {
     script_imports: HashMap<Atom, VueScriptImport>,
     setup_script_import_refs: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
-    setup_value_bindings: HashMap<Atom, VueSetupValueBinding>,
-    setup_prop_bindings: HashMap<Atom, Atom>,
-    setup_alias_bindings: HashMap<Atom, Atom>,
+    bindings: VueBindingTable,
     setup_script_bindings: Vec<VueSetupScriptBinding>,
     script_local_bindings: Vec<VueSetupLocalBinding>,
     setup_local_bindings: Vec<VueSetupLocalBinding>,
     setup_ref_script_bindings: Vec<VueSetupRefBinding>,
-    setup_ref_bindings: HashSet<Atom>,
-    setup_composable_ref_bindings: HashSet<Atom>,
-    setup_template_ref_bindings: HashSet<Atom>,
-    setup_ref_object_bindings: HashSet<Atom>,
     provider_ref_bindings: HashMap<Atom, HashSet<Atom>>,
     imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
     component_bindings: HashMap<Atom, String>,
@@ -73,6 +67,54 @@ struct VueRecoveryContext {
     slot_bindings: HashSet<Atom>,
     render_child_list_bindings: HashMap<Atom, VueRenderChildListBinding>,
     cm: Lrc<SourceMap>,
+}
+
+#[derive(Default, Clone)]
+struct VueBindingTable {
+    values: HashMap<Atom, VueSetupValueBinding>,
+    props: HashMap<Atom, Atom>,
+    aliases: HashMap<Atom, Atom>,
+    refs: HashSet<Atom>,
+    composable_refs: HashSet<Atom>,
+    template_refs: HashSet<Atom>,
+    ref_objects: HashSet<Atom>,
+}
+
+impl VueBindingTable {
+    fn sorted_aliases(&self) -> Vec<(&str, &Atom)> {
+        let mut aliases = self
+            .aliases
+            .iter()
+            .map(|(from, to)| (from.as_ref(), to))
+            .collect::<Vec<_>>();
+        aliases.sort_by_key(|(from, _)| *from);
+        aliases.dedup_by(|(left, _), (right, _)| left == right);
+        aliases
+    }
+
+    fn ref_value_cleanup_bindings(&self, clean_assign_targets: bool) -> Vec<&str> {
+        let mut bindings = self
+            .refs
+            .iter()
+            .map(|binding| binding.as_ref())
+            .collect::<Vec<_>>();
+        let ref_bindings = self
+            .refs
+            .iter()
+            .chain(self.template_refs.iter())
+            .collect::<HashSet<_>>();
+        if clean_assign_targets {
+            bindings.extend(self.template_refs.iter().map(|binding| binding.as_ref()));
+            bindings.extend(
+                self.aliases
+                    .iter()
+                    .filter_map(|(from, to)| ref_bindings.contains(from).then_some(to.as_ref())),
+            );
+        }
+        bindings.sort_unstable();
+        bindings.dedup();
+        bindings
+    }
 }
 
 #[derive(Clone)]
@@ -1574,8 +1616,8 @@ fn script_local_binding_aliases(
             .iter()
             .map(|binding| binding.binding.clone()),
     );
-    used.extend(ctx.setup_value_bindings.keys().cloned());
-    used.extend(ctx.setup_alias_bindings.keys().cloned());
+    used.extend(ctx.bindings.values.keys().cloned());
+    used.extend(ctx.bindings.aliases.keys().cloned());
     used.extend(ctx.setup_emit_aliases.iter().cloned());
     used.extend(
         prop_bindings
@@ -1842,7 +1884,7 @@ fn setup_local_declarations<'a>(
     setup_wanted_refs.extend(
         expr_refs
             .iter()
-            .filter(|binding| ctx.setup_composable_ref_bindings.contains(*binding))
+            .filter(|binding| ctx.bindings.composable_refs.contains(*binding))
             .cloned(),
     );
     for declaration in &candidates {
@@ -2073,13 +2115,13 @@ pub(super) fn template_scope_from_pat(pat: &Pat) -> VueTemplateScope {
 }
 
 fn setup_value_dependency_refs(ctx: &VueRecoveryContext, root: &VueNode) -> HashSet<Atom> {
-    if ctx.setup_value_bindings.is_empty() {
+    if ctx.bindings.values.is_empty() {
         return HashSet::new();
     }
 
     let template_refs = template_for_source_refs(root);
     let mut refs = HashSet::new();
-    for value in ctx.setup_value_bindings.values() {
+    for value in ctx.bindings.values.values() {
         let mut value_refs = HashSet::new();
         collect_js_unshadowed_ident_refs(&value.value, &mut value_refs);
         if value_refs.iter().any(|local| template_refs.contains(local)) {
@@ -2884,7 +2926,8 @@ fn setup_prop_bindings(
         .iter()
         .map(|prop| {
             let binding = ctx
-                .setup_prop_bindings
+                .bindings
+                .props
                 .get(&Atom::from(prop.clone()))
                 .map(ToString::to_string)
                 .unwrap_or_else(|| prop.clone());
@@ -2984,7 +3027,7 @@ fn props_binding_reserved_names(
             .iter()
             .flat_map(|declaration| declaration.emitted_bindings.iter().cloned()),
     );
-    reserved.extend(ctx.setup_alias_bindings.keys().cloned());
+    reserved.extend(ctx.bindings.aliases.keys().cloned());
     reserved.extend(ctx.script_imports.keys().cloned());
     reserved
 }
@@ -3137,6 +3180,28 @@ mod tests {
             template_selectable: true,
             setup_order: 0,
         }
+    }
+
+    #[test]
+    fn binding_table_lists_ref_cleanup_bindings_by_context() {
+        let mut table = VueBindingTable::default();
+        table.refs.insert(Atom::from("count"));
+        table.template_refs.insert(Atom::from("el"));
+        table
+            .aliases
+            .insert(Atom::from("count"), Atom::from("countAlias"));
+        table
+            .aliases
+            .insert(Atom::from("el"), Atom::from("elAlias"));
+        table
+            .aliases
+            .insert(Atom::from("plainAlias"), Atom::from("plain"));
+
+        assert_eq!(table.ref_value_cleanup_bindings(false), vec!["count"]);
+        assert_eq!(
+            table.ref_value_cleanup_bindings(true),
+            vec!["count", "countAlias", "el", "elAlias"]
+        );
     }
 
     #[test]
