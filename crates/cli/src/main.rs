@@ -11,9 +11,10 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
-    normalize, parse_sourcemap, recover_vue_sfc_source_from_js_with_import_resolver, trace_rules,
-    unpack, unpack_files, unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions,
-    NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
+    is_likely_vue_sfc_source, normalize, parse_sourcemap,
+    recover_vue_sfc_source_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
+    unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
+    RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
 mod color;
@@ -352,6 +353,9 @@ fn run_default(cli: Cli) -> Result<()> {
                 } else {
                     None
                 };
+                let likely_vue_sfc = cli.vue_sfc
+                    && (recovered_vue_sfc.is_some()
+                        || is_likely_vue_sfc_source(&code).unwrap_or(false));
                 let formatted = format_cli_output(code.clone(), &filename, js_formatter);
                 artifacts.push(CliOutputArtifact {
                     filename: if cli.vue_sfc {
@@ -362,15 +366,11 @@ fn run_default(cli: Cli) -> Result<()> {
                     code: formatted,
                     kind: JsonModuleKind::JavaScript,
                     status: if cli.vue_sfc {
-                        if recovered_vue_sfc.is_some() {
-                            JsonModuleStatus::VueSfcSourceJs
-                        } else {
-                            JsonModuleStatus::VueSfcFallbackJs
-                        }
+                        vue_sfc_js_artifact_status(recovered_vue_sfc.is_some(), likely_vue_sfc)
                     } else {
                         JsonModuleStatus::Decompiled
                     },
-                    source_filename: cli.vue_sfc.then(|| filename.clone()),
+                    source_filename: (cli.vue_sfc && likely_vue_sfc).then(|| filename.clone()),
                     source_map_filename: Some(filename.clone()),
                 });
 
@@ -813,6 +813,16 @@ fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
         kind: artifact.kind,
         status: artifact.status,
         source_filename: artifact.source_filename.clone(),
+    }
+}
+
+fn vue_sfc_js_artifact_status(recovered_vue_sfc: bool, likely_vue_sfc: bool) -> JsonModuleStatus {
+    if recovered_vue_sfc {
+        JsonModuleStatus::VueSfcSourceJs
+    } else if likely_vue_sfc {
+        JsonModuleStatus::VueSfcFallbackJs
+    } else {
+        JsonModuleStatus::Decompiled
     }
 }
 

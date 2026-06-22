@@ -268,6 +268,24 @@ where
     recover_vue_sfc_from_js_inner(source, Some(&mut resolve_import), None)
 }
 
+pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let module = parse_module(source, cm.clone())?;
+    let mut ctx = collect_context(&module, cm, HashMap::new(), HashMap::new());
+    let Some(render) = find_render_source(&module, None) else {
+        return Ok(false);
+    };
+    ctx.render_context = render_context_param(render);
+    ctx.setup_props_context = setup_props_param(render);
+    ctx.setup_context = setup_context_param(render);
+    ctx.setup_emit_context = setup_emit_param(render);
+    infer_render_helpers(render, &mut ctx);
+    collect_setup_context(render, &mut ctx)?;
+    collect_render_context(render, &mut ctx);
+
+    Ok(render_uses_vue_helper(render, &ctx))
+}
+
 fn recover_vue_sfc_from_js_inner(
     source: &str,
     import_resolver: Option<&mut dyn FnMut(&str) -> Option<String>>,
@@ -3143,6 +3161,31 @@ export function render() {
 "#;
 
         assert!(recover_vue_sfc_source_from_js(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn detects_likely_vue_sfc_render_sources() {
+        let plain_render = r#"
+export function render() {
+  return "not a Vue render";
+}
+"#;
+        let vue_import_without_helper = r#"
+import { ref } from "vue";
+export function render() {
+  return "not a Vue render";
+}
+"#;
+        let vue_render = r#"
+import { openBlock as o, createElementBlock as h } from "vue";
+export function render(_ctx, _cache) {
+  return o(), h("main", null, "Aliased");
+}
+"#;
+
+        assert!(!is_likely_vue_sfc_source(plain_render).unwrap());
+        assert!(!is_likely_vue_sfc_source(vue_import_without_helper).unwrap());
+        assert!(is_likely_vue_sfc_source(vue_render).unwrap());
     }
 
     #[test]

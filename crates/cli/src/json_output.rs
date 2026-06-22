@@ -29,7 +29,7 @@ pub struct JsonModule {
     pub source_filename: Option<String>,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum JsonModuleKind {
     #[serde(rename = "javascript")]
     JavaScript,
@@ -37,7 +37,7 @@ pub enum JsonModuleKind {
     VueSfc,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum JsonModuleStatus {
     #[serde(rename = "decompiled")]
     Decompiled,
