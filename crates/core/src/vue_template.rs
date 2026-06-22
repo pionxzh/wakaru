@@ -44,6 +44,7 @@ pub struct VueFor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueElement {
     pub tag: String,
+    pub component_import_ref: Option<String>,
     pub attrs: Vec<VueAttr>,
     pub children: Vec<VueNode>,
 }
@@ -186,9 +187,15 @@ impl VueElement {
     pub fn new(tag: impl Into<String>) -> Self {
         Self {
             tag: tag.into(),
+            component_import_ref: None,
             attrs: Vec::new(),
             children: Vec::new(),
         }
+    }
+
+    pub fn with_component_import_ref(mut self, import_ref: impl Into<String>) -> Self {
+        self.component_import_ref = Some(import_ref.into());
+        self
     }
 
     pub fn with_attrs(mut self, attrs: Vec<VueAttr>) -> Self {

@@ -579,11 +579,11 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
         .transpose()?
         .unwrap_or_default();
 
-    Ok(VueNode::Element(
-        VueElement::new(component.tag)
-            .with_attrs(attrs)
-            .with_children(children),
-    ))
+    let mut element = VueElement::new(component.tag).with_attrs(attrs);
+    if let Some(import_ref) = component.import_ref {
+        element = element.with_component_import_ref(import_ref.to_string());
+    }
+    Ok(VueNode::Element(element.with_children(children)))
 }
 
 fn recover_component_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
@@ -990,6 +990,7 @@ fn push_child(children: &mut Vec<VueNode>, child: VueNode) {
 
 struct RecoveredComponentTag {
     tag: String,
+    import_ref: Option<Atom>,
     attrs: Vec<VueAttr>,
 }
 
@@ -1015,6 +1016,7 @@ fn recover_component_tag(
             }
             Ok(Some(RecoveredComponentTag {
                 tag: "component".to_string(),
+                import_ref: None,
                 attrs: vec![VueAttr::Bind {
                     name: "is".to_string(),
                     expr: printed_vue_expr(target.expr.as_ref(), ctx)?,
@@ -1042,21 +1044,39 @@ fn recover_static_component_tag(
         return None;
     };
 
+    let import_ref = ctx
+        .script_imports
+        .contains_key(&ident.sym)
+        .then(|| ident.sym.clone());
+
     ctx.component_bindings
         .get(&ident.sym)
         .cloned()
+        .map(|tag| RecoveredComponentTag {
+            tag,
+            import_ref: import_ref.clone(),
+            attrs: Vec::new(),
+        })
         .or_else(|| {
             ctx.vue_helpers
                 .get(&ident.sym)
                 .and_then(|helper| match helper {
-                    VueHelper::Other(name) if is_builtin_component(name) => Some(name.clone()),
+                    VueHelper::Other(name) if is_builtin_component(name) => {
+                        Some(RecoveredComponentTag {
+                            tag: name.clone(),
+                            import_ref: None,
+                            attrs: Vec::new(),
+                        })
+                    }
                     _ => None,
                 })
         })
-        .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string()))
-        .map(|tag| RecoveredComponentTag {
-            tag,
-            attrs: Vec::new(),
+        .or_else(|| {
+            is_pascal_case(&ident.sym).then(|| RecoveredComponentTag {
+                tag: ident.sym.to_string(),
+                import_ref,
+                attrs: Vec::new(),
+            })
         })
 }
 
@@ -1069,6 +1089,7 @@ fn recover_dynamic_component_tag(
     }
     Ok(Some(RecoveredComponentTag {
         tag: "component".to_string(),
+        import_ref: None,
         attrs: vec![VueAttr::Bind {
             name: "is".to_string(),
             expr: printed_vue_expr(expr, ctx)?,
