@@ -1877,13 +1877,44 @@ fn setup_local_declarations<'a>(
         .iter()
         .chain(ctx.setup_local_bindings.iter())
         .collect::<Vec<_>>();
-    let selected = VueSelectionPlan::new(ctx, template_usage, &candidates).select(&candidates);
+    let selection_context = VueSetupSelectionContext::new(ctx, template_usage, &candidates);
+    let selected = VueSelectionPlan::new(selection_context).select(&candidates);
 
     candidates
         .into_iter()
         .enumerate()
         .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
         .collect()
+}
+
+struct VueSetupSelectionContext {
+    setup_scope_bindings: HashSet<Atom>,
+    initial_setup_refs: HashSet<Atom>,
+}
+
+impl VueSetupSelectionContext {
+    fn new(
+        ctx: &VueRecoveryContext,
+        template_usage: &VueTemplateUsage,
+        candidates: &[&VueSetupLocalBinding],
+    ) -> Self {
+        let setup_scope_bindings = setup_scope_bindings(ctx, candidates);
+        let mut initial_setup_refs = template_usage.event_refs.clone();
+        initial_setup_refs.extend(template_composable_refs(ctx, &template_usage.expr_refs));
+        initial_setup_refs.extend(template_safe_local_refs(
+            ctx,
+            candidates,
+            &template_usage.expr_refs,
+            &template_usage.read_refs,
+        ));
+        initial_setup_refs.extend(setup_value_dependency_refs(ctx, template_usage));
+        initial_setup_refs.extend(setup_script_binding_refs(ctx));
+
+        Self {
+            setup_scope_bindings,
+            initial_setup_refs,
+        }
+    }
 }
 
 struct VueSelectionPlan {
@@ -1893,26 +1924,10 @@ struct VueSelectionPlan {
 }
 
 impl VueSelectionPlan {
-    fn new(
-        ctx: &VueRecoveryContext,
-        template_usage: &VueTemplateUsage,
-        candidates: &[&VueSetupLocalBinding],
-    ) -> Self {
-        let setup_scope_bindings = setup_scope_bindings(ctx, candidates);
-        let mut setup_wanted_refs = template_usage.event_refs.clone();
-        setup_wanted_refs.extend(template_composable_refs(ctx, &template_usage.expr_refs));
-        setup_wanted_refs.extend(template_safe_local_refs(
-            ctx,
-            candidates,
-            &template_usage.expr_refs,
-            &template_usage.read_refs,
-        ));
-        setup_wanted_refs.extend(setup_value_dependency_refs(ctx, template_usage));
-        setup_wanted_refs.extend(setup_script_binding_refs(ctx));
-
+    fn new(context: VueSetupSelectionContext) -> Self {
         Self {
-            setup_scope_bindings,
-            setup_wanted_refs,
+            setup_scope_bindings: context.setup_scope_bindings,
+            setup_wanted_refs: context.initial_setup_refs,
             module_wanted_refs: HashSet::new(),
         }
     }
@@ -4442,6 +4457,91 @@ export default _sfc_main;
                 "const message = format(value);"
             ]
         );
+    }
+
+    #[test]
+    fn setup_selection_context_collects_initial_setup_refs() {
+        use crate::vue_template::VueElement;
+
+        let ctx = VueRecoveryContext {
+            bindings: VueBindingTable {
+                composable_refs: test_atom_set(&["store"]),
+                ..Default::default()
+            },
+            setup_script_bindings: vec![VueSetupScriptBinding {
+                binding: Atom::from("model"),
+                value: "makeModel(dep)".to_string(),
+                setup_order: 0,
+            }],
+            setup_emit_context: Some(Atom::from("emit")),
+            slot_bindings: test_atom_set(&["slotProps"]),
+            ..Default::default()
+        };
+        let candidates = [
+            test_local_binding(
+                "const label = format(value);",
+                &["label"],
+                &["label"],
+                &["format", "value"],
+            ),
+            test_local_binding(
+                "const handler = () => emit(\"save\");",
+                &["handler"],
+                &["handler"],
+                &["emit"],
+            ),
+            test_local_binding_with_scope(
+                "const moduleOnly = readModule();",
+                &["moduleOnly"],
+                &["moduleOnly"],
+                &["readModule"],
+                true,
+            ),
+        ];
+        let candidate_refs = candidates.iter().collect::<Vec<_>>();
+        let root = VueNode::Element(
+            VueElement::new("button")
+                .with_attrs(vec![VueAttr::On {
+                    name: "click".to_string(),
+                    expr: VueExpr::new("handler()"),
+                    modifiers: Vec::new(),
+                }])
+                .with_children(vec![VueNode::Interpolation(VueExpr::new(
+                    "label + store.name",
+                ))]),
+        );
+        let template_usage = VueTemplateUsage::new(&root);
+
+        let selection_context =
+            VueSetupSelectionContext::new(&ctx, &template_usage, &candidate_refs);
+
+        assert!(selection_context
+            .setup_scope_bindings
+            .contains(&Atom::from("label")));
+        assert!(selection_context
+            .setup_scope_bindings
+            .contains(&Atom::from("handler")));
+        assert!(selection_context
+            .setup_scope_bindings
+            .contains(&Atom::from("emit")));
+        assert!(selection_context
+            .setup_scope_bindings
+            .contains(&Atom::from("slotProps")));
+        assert!(!selection_context
+            .setup_scope_bindings
+            .contains(&Atom::from("moduleOnly")));
+        assert!(selection_context
+            .initial_setup_refs
+            .contains(&Atom::from("label")));
+        assert!(selection_context
+            .initial_setup_refs
+            .contains(&Atom::from("handler")));
+        assert!(selection_context
+            .initial_setup_refs
+            .contains(&Atom::from("store")));
+        assert!(selection_context
+            .initial_setup_refs
+            .contains(&Atom::from("dep")));
     }
 
     #[test]
