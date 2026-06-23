@@ -1137,89 +1137,22 @@ fn setup_script(
     root: &mut VueNode,
     render: RenderSource<'_>,
 ) -> Result<Option<String>> {
-    let template_usage = VueTemplateUsage::new(root);
-    let ref_declarations = setup_ref_declarations(ctx, &template_usage, render);
-    let selected_local_declarations = setup_local_declarations(ctx, &template_usage);
-    let emit_declaration =
-        setup_emit_declaration(ctx, &template_usage, &selected_local_declarations)?;
-    let prop_names = ctx
-        .setup_component_options
-        .as_ref()
-        .or(ctx.component_options.as_ref())
-        .map(component_prop_names)
-        .unwrap_or_default();
-    let valid_prop_names = prop_names
-        .iter()
-        .filter(|name| is_valid_identifier_name(name))
-        .cloned()
-        .collect::<Vec<_>>();
-    let prop_bindings = setup_prop_bindings(&valid_prop_names, ctx);
-    let props_binding_reserved = props_binding_reserved_names(
-        ctx,
-        &valid_prop_names,
-        emit_declaration.as_ref(),
-        &ref_declarations,
-    );
-    let props_declaration = setup_props_script_binding(ctx, &props_binding_reserved)
-        .map(|binding| {
-            component_props_source(ctx).map(|source| source.map(|source| (binding, source)))
-        })
-        .transpose()?
-        .flatten();
-    let component_imports = component_script_imports(
-        ctx,
-        root,
-        &prop_bindings,
-        props_declaration.as_ref(),
-        emit_declaration.as_ref(),
-        &ref_declarations,
-        &selected_local_declarations,
-    );
-    let local_declarations = render_setup_local_declarations(
-        ctx,
-        selected_local_declarations,
-        &prop_bindings,
-        props_declaration.as_ref(),
-        emit_declaration.as_ref(),
-        &ref_declarations,
-        &component_imports,
-    )?;
-    let scheduled_declarations = script_setup_declarations(ctx, &local_declarations);
-    let declared_bindings = script_setup_declared_bindings(
-        ctx,
-        &prop_bindings,
-        props_declaration.as_ref(),
-        emit_declaration.as_ref(),
-        &ref_declarations,
-        &local_declarations,
-    );
-    let script_imports = referenced_script_imports(
-        ctx,
-        &template_usage,
-        &declared_bindings,
-        &local_declarations,
-        &component_imports,
-    );
-    if scheduled_declarations.is_empty()
-        && ref_declarations.is_empty()
-        && props_declaration.is_none()
-        && emit_declaration.is_none()
-        && script_imports.is_empty()
-    {
+    let plan = VueSetupScriptPlan::build(ctx, root, render)?;
+    if plan.is_empty() {
         return Ok(None);
     }
 
     let mut body = String::new();
 
-    if let Some((binding, props_source)) = &props_declaration {
+    if let Some((binding, props_source)) = &plan.props_declaration {
         body.push_str("const ");
         body.push_str(binding);
         body.push_str(" = defineProps(");
         body.push_str(props_source);
         body.push_str(");\n");
-        if !valid_prop_names.is_empty() {
+        if !plan.valid_prop_names.is_empty() {
             body.push_str("const { ");
-            body.push_str(&format_prop_destructure_bindings(&prop_bindings));
+            body.push_str(&format_prop_destructure_bindings(&plan.prop_bindings));
             body.push_str(" } = ");
             body.push_str(binding);
             body.push_str(";\n");
@@ -1227,36 +1160,38 @@ fn setup_script(
         body.push('\n');
     }
 
-    if let Some((binding, emits_source)) = &emit_declaration {
+    if let Some((binding, emits_source)) = &plan.emit_declaration {
         body.push_str("const ");
         body.push_str(binding);
         body.push_str(" = defineEmits(");
         body.push_str(emits_source);
         body.push_str(");\n");
-        if !ref_declarations.is_empty() || !scheduled_declarations.is_empty() {
+        if !plan.ref_declarations.is_empty() || !plan.scheduled_declarations.is_empty() {
             body.push('\n');
         }
     }
 
-    for (binding, expr, _) in &ref_declarations {
+    for (binding, expr, _) in &plan.ref_declarations {
         body.push_str("const ");
         body.push_str(binding);
         body.push_str(" = ");
         body.push_str(expr.trim());
         body.push_str(";\n");
     }
-    if !ref_declarations.is_empty() && !scheduled_declarations.is_empty() {
+    if !plan.ref_declarations.is_empty() && !plan.scheduled_declarations.is_empty() {
         body.push('\n');
     }
 
-    push_script_setup_declarations(&mut body, &scheduled_declarations);
+    push_script_setup_declarations(&mut body, &plan.scheduled_declarations);
 
     let mut out = String::new();
-    if let Some(vue_import) = vue_script_import_line(ctx, &ref_declarations, &local_declarations) {
+    if let Some(vue_import) =
+        vue_script_import_line(ctx, &plan.ref_declarations, &plan.local_declarations)
+    {
         out.push_str(&vue_import);
         out.push('\n');
     }
-    for import in script_imports {
+    for import in plan.script_imports {
         out.push_str(&import);
         out.push('\n');
     }
@@ -1265,6 +1200,108 @@ fn setup_script(
     }
     out.push_str(&body);
     Ok(Some(out))
+}
+
+struct VueSetupScriptPlan {
+    valid_prop_names: Vec<String>,
+    prop_bindings: Vec<(String, String)>,
+    props_declaration: Option<(String, String)>,
+    emit_declaration: Option<(String, String)>,
+    ref_declarations: Vec<(String, String, String)>,
+    local_declarations: Vec<VueSetupLocalBinding>,
+    scheduled_declarations: Vec<VueScriptSetupDeclaration>,
+    script_imports: Vec<String>,
+}
+
+impl VueSetupScriptPlan {
+    fn build(
+        ctx: &VueRecoveryContext,
+        root: &mut VueNode,
+        render: RenderSource<'_>,
+    ) -> Result<Self> {
+        let template_usage = VueTemplateUsage::new(root);
+        let ref_declarations = setup_ref_declarations(ctx, &template_usage, render);
+        let selected_local_declarations = setup_local_declarations(ctx, &template_usage);
+        let emit_declaration =
+            setup_emit_declaration(ctx, &template_usage, &selected_local_declarations)?;
+        let prop_names = ctx
+            .setup_component_options
+            .as_ref()
+            .or(ctx.component_options.as_ref())
+            .map(component_prop_names)
+            .unwrap_or_default();
+        let valid_prop_names = prop_names
+            .iter()
+            .filter(|name| is_valid_identifier_name(name))
+            .cloned()
+            .collect::<Vec<_>>();
+        let prop_bindings = setup_prop_bindings(&valid_prop_names, ctx);
+        let props_binding_reserved = props_binding_reserved_names(
+            ctx,
+            &valid_prop_names,
+            emit_declaration.as_ref(),
+            &ref_declarations,
+        );
+        let props_declaration = setup_props_script_binding(ctx, &props_binding_reserved)
+            .map(|binding| {
+                component_props_source(ctx).map(|source| source.map(|source| (binding, source)))
+            })
+            .transpose()?
+            .flatten();
+        let component_imports = component_script_imports(
+            ctx,
+            root,
+            &prop_bindings,
+            props_declaration.as_ref(),
+            emit_declaration.as_ref(),
+            &ref_declarations,
+            &selected_local_declarations,
+        );
+        let local_declarations = render_setup_local_declarations(
+            ctx,
+            selected_local_declarations,
+            &prop_bindings,
+            props_declaration.as_ref(),
+            emit_declaration.as_ref(),
+            &ref_declarations,
+            &component_imports,
+        )?;
+        let scheduled_declarations = script_setup_declarations(ctx, &local_declarations);
+        let declared_bindings = script_setup_declared_bindings(
+            ctx,
+            &prop_bindings,
+            props_declaration.as_ref(),
+            emit_declaration.as_ref(),
+            &ref_declarations,
+            &local_declarations,
+        );
+        let script_imports = referenced_script_imports(
+            ctx,
+            &template_usage,
+            &declared_bindings,
+            &local_declarations,
+            &component_imports,
+        );
+
+        Ok(Self {
+            valid_prop_names,
+            prop_bindings,
+            props_declaration,
+            emit_declaration,
+            ref_declarations,
+            local_declarations,
+            scheduled_declarations,
+            script_imports,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.scheduled_declarations.is_empty()
+            && self.ref_declarations.is_empty()
+            && self.props_declaration.is_none()
+            && self.emit_declaration.is_none()
+            && self.script_imports.is_empty()
+    }
 }
 
 fn render_setup_local_declarations(
@@ -4542,6 +4579,38 @@ export default _sfc_main;
         assert!(selection_context
             .initial_setup_refs
             .contains(&Atom::from("dep")));
+    }
+
+    #[test]
+    fn setup_script_plan_collects_rendered_setup_declarations() {
+        let cm = Lrc::new(SourceMap::default());
+        let module = parse_module("function render() { return null; }", cm.clone()).unwrap();
+        let render = match &module.body[0] {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => RenderSource::Function(function),
+            _ => panic!("expected render function"),
+        };
+        let ctx = VueRecoveryContext {
+            setup_local_bindings: vec![test_local_binding(
+                "const message = value;",
+                &["message"],
+                &["message"],
+                &["value"],
+            )],
+            cm,
+            ..Default::default()
+        };
+        let mut root = VueNode::Interpolation(VueExpr::new("message"));
+
+        let plan = VueSetupScriptPlan::build(&ctx, &mut root, render).unwrap();
+
+        assert!(!plan.is_empty());
+        assert_eq!(plan.local_declarations.len(), 1);
+        assert_eq!(plan.local_declarations[0].source, "const message = value;");
+        assert_eq!(plan.scheduled_declarations.len(), 1);
+        assert_eq!(
+            plan.scheduled_declarations[0].bindings,
+            test_atoms(&["message"])
+        );
     }
 
     #[test]
