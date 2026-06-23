@@ -2166,6 +2166,7 @@ pub(super) fn template_scope_from_pat(pat: &Pat) -> VueTemplateScope {
     VueTemplateScope::from_locals(bindings.into_iter().map(|binding| binding.to_string()))
 }
 
+#[derive(Default)]
 struct VueTemplateUsage {
     expr_refs: HashSet<Atom>,
     read_refs: HashSet<Atom>,
@@ -2176,12 +2177,116 @@ struct VueTemplateUsage {
 
 impl VueTemplateUsage {
     fn new(root: &VueNode) -> Self {
-        Self {
-            expr_refs: template_expr_refs(root),
-            read_refs: template_expr_read_refs(root),
-            event_refs: template_event_expr_refs(root),
-            for_source_refs: template_for_source_refs(root),
-            static_ref_names: template_static_ref_names(root),
+        let mut usage = Self::default();
+        let mut scopes = TemplateLocalScopes::default();
+        usage.collect_node(root, &mut scopes);
+        usage
+            .static_ref_names
+            .retain(|name| is_valid_identifier_name(name));
+        usage.static_ref_names.sort();
+        usage.static_ref_names.dedup();
+        usage
+    }
+
+    fn collect_node(&mut self, node: &VueNode, scopes: &mut TemplateLocalScopes) {
+        match node {
+            VueNode::Element(element) => {
+                for attr in &element.attrs {
+                    self.collect_attr(attr, scopes);
+                }
+                let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
+                let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
+                for child in &element.children {
+                    self.collect_node(child, scopes);
+                }
+                if pushed {
+                    scopes.pop();
+                }
+            }
+            VueNode::Fragment(children) => {
+                for child in children {
+                    self.collect_node(child, scopes);
+                }
+            }
+            VueNode::If(branches) => {
+                for branch in branches {
+                    if let Some(condition) = &branch.condition {
+                        scopes.collect_ident_refs(condition.as_str(), &mut self.expr_refs);
+                        scopes.collect_read_refs(condition.as_str(), &mut self.read_refs);
+                    }
+                    self.collect_node(&branch.node, scopes);
+                }
+            }
+            VueNode::For(for_node) => {
+                scopes.collect_ident_refs(for_node.source.as_str(), &mut self.expr_refs);
+                scopes.collect_read_refs(for_node.source.as_str(), &mut self.read_refs);
+                scopes.collect_ident_refs(for_node.source.as_str(), &mut self.for_source_refs);
+                let pushed = scopes.push(&for_node.scope);
+                self.collect_node(&for_node.node, scopes);
+                if pushed {
+                    scopes.pop();
+                }
+            }
+            VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
+                scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
+                scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
+            }
+            VueNode::Unsupported(unsupported) => {
+                let pushed = scopes.push(&unsupported.scope);
+                scopes.collect_ident_refs(unsupported.expr.as_str(), &mut self.expr_refs);
+                scopes.collect_read_refs(unsupported.expr.as_str(), &mut self.read_refs);
+                if pushed {
+                    scopes.pop();
+                }
+            }
+            VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
+        }
+    }
+
+    fn collect_attr(&mut self, attr: &VueAttr, scopes: &TemplateLocalScopes) {
+        match attr {
+            VueAttr::Static {
+                name,
+                value: Some(value),
+            } if name == "ref" => {
+                self.static_ref_names.push(value.clone());
+            }
+            VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
+                scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
+                scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
+            }
+            VueAttr::Directive(directive) if directive.name == "slot" => {
+                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
+                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
+                }
+            }
+            VueAttr::Directive(directive) => {
+                if let Some(expr) = &directive.expr {
+                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
+                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
+                }
+                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
+                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
+                }
+            }
+            VueAttr::Static { .. } => {}
+        }
+
+        match attr {
+            VueAttr::On { expr, .. } => {
+                scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
+            }
+            VueAttr::Directive(directive) if directive.name == "on" => {
+                if let Some(expr) = &directive.expr {
+                    scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
+                }
+                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
+                    scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -2213,13 +2318,6 @@ fn setup_script_binding_refs(ctx: &VueRecoveryContext) -> HashSet<Atom> {
     for binding in &ctx.setup_script_bindings {
         collect_js_unshadowed_ident_refs(&binding.value, &mut refs);
     }
-    refs
-}
-
-fn template_for_source_refs(root: &VueNode) -> HashSet<Atom> {
-    let mut refs = HashSet::new();
-    let mut scopes = TemplateLocalScopes::default();
-    collect_template_for_source_refs(root, &mut refs, &mut scopes);
     refs
 }
 
@@ -2271,76 +2369,6 @@ impl Visit for ValueMemberRefCollector<'_> {
     }
 }
 
-fn template_static_ref_names(root: &VueNode) -> Vec<String> {
-    let mut refs = HashSet::new();
-    collect_template_static_ref_names(root, &mut refs);
-    let mut refs = refs
-        .into_iter()
-        .filter(|name| is_valid_identifier_name(name))
-        .collect::<Vec<_>>();
-    refs.sort();
-    refs
-}
-
-fn collect_template_static_ref_names(node: &VueNode, refs: &mut HashSet<String>) {
-    match node {
-        VueNode::Element(element) => {
-            for attr in &element.attrs {
-                if let VueAttr::Static {
-                    name,
-                    value: Some(value),
-                } = attr
-                {
-                    if name == "ref" {
-                        refs.insert(value.clone());
-                    }
-                }
-            }
-            for child in &element.children {
-                collect_template_static_ref_names(child, refs);
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_static_ref_names(child, refs);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                collect_template_static_ref_names(&branch.node, refs);
-            }
-        }
-        VueNode::For(for_node) => collect_template_static_ref_names(&for_node.node, refs),
-        VueNode::Text(_)
-        | VueNode::Interpolation(_)
-        | VueNode::Comment(_)
-        | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_)
-        | VueNode::Unsupported(_) => {}
-    }
-}
-
-fn template_expr_refs(root: &VueNode) -> HashSet<Atom> {
-    let mut refs = HashSet::new();
-    let mut scopes = TemplateLocalScopes::default();
-    collect_template_expr_refs(root, &mut refs, &mut scopes);
-    refs
-}
-
-fn template_expr_read_refs(root: &VueNode) -> HashSet<Atom> {
-    let mut refs = HashSet::new();
-    let mut scopes = TemplateLocalScopes::default();
-    collect_template_expr_read_refs(root, &mut refs, &mut scopes);
-    refs
-}
-
-fn template_event_expr_refs(root: &VueNode) -> HashSet<Atom> {
-    let mut refs = HashSet::new();
-    let mut scopes = TemplateLocalScopes::default();
-    collect_template_event_expr_refs(root, &mut refs, &mut scopes);
-    refs
-}
-
 #[derive(Default)]
 struct TemplateLocalScopes {
     stack: Vec<HashSet<Atom>>,
@@ -2382,265 +2410,10 @@ impl TemplateLocalScopes {
     }
 }
 
-fn collect_template_expr_refs(
-    node: &VueNode,
-    refs: &mut HashSet<Atom>,
-    scopes: &mut TemplateLocalScopes,
-) {
-    match node {
-        VueNode::Element(element) => {
-            for attr in &element.attrs {
-                collect_attr_expr_refs(attr, refs, scopes);
-            }
-            let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
-            let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
-            for child in &element.children {
-                collect_template_expr_refs(child, refs, scopes);
-            }
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_expr_refs(child, refs, scopes);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                if let Some(condition) = &branch.condition {
-                    scopes.collect_ident_refs(condition.as_str(), refs);
-                }
-                collect_template_expr_refs(&branch.node, refs, scopes);
-            }
-        }
-        VueNode::For(for_node) => {
-            scopes.collect_ident_refs(for_node.source.as_str(), refs);
-            let pushed = scopes.push(&for_node.scope);
-            collect_template_expr_refs(&for_node.node, refs, scopes);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
-            scopes.collect_ident_refs(expr.as_str(), refs);
-        }
-        VueNode::Unsupported(unsupported) => {
-            let pushed = scopes.push(&unsupported.scope);
-            scopes.collect_ident_refs(unsupported.expr.as_str(), refs);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
-    }
-}
-
-fn collect_template_expr_read_refs(
-    node: &VueNode,
-    refs: &mut HashSet<Atom>,
-    scopes: &mut TemplateLocalScopes,
-) {
-    match node {
-        VueNode::Element(element) => {
-            for attr in &element.attrs {
-                collect_attr_expr_read_refs(attr, refs, scopes);
-            }
-            let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
-            let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
-            for child in &element.children {
-                collect_template_expr_read_refs(child, refs, scopes);
-            }
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_expr_read_refs(child, refs, scopes);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                if let Some(condition) = &branch.condition {
-                    scopes.collect_read_refs(condition.as_str(), refs);
-                }
-                collect_template_expr_read_refs(&branch.node, refs, scopes);
-            }
-        }
-        VueNode::For(for_node) => {
-            scopes.collect_read_refs(for_node.source.as_str(), refs);
-            let pushed = scopes.push(&for_node.scope);
-            collect_template_expr_read_refs(&for_node.node, refs, scopes);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
-            scopes.collect_read_refs(expr.as_str(), refs);
-        }
-        VueNode::Unsupported(unsupported) => {
-            let pushed = scopes.push(&unsupported.scope);
-            scopes.collect_read_refs(unsupported.expr.as_str(), refs);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
-    }
-}
-
-fn collect_template_event_expr_refs(
-    node: &VueNode,
-    refs: &mut HashSet<Atom>,
-    scopes: &mut TemplateLocalScopes,
-) {
-    match node {
-        VueNode::Element(element) => {
-            for attr in &element.attrs {
-                match attr {
-                    VueAttr::On { expr, .. } => scopes.collect_ident_refs(expr.as_str(), refs),
-                    VueAttr::Directive(directive) if directive.name == "on" => {
-                        if let Some(expr) = &directive.expr {
-                            scopes.collect_ident_refs(expr.as_str(), refs);
-                        }
-                        if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                            scopes.collect_ident_refs(expr.as_str(), refs);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
-            let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
-            for child in &element.children {
-                collect_template_event_expr_refs(child, refs, scopes);
-            }
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_event_expr_refs(child, refs, scopes);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                collect_template_event_expr_refs(&branch.node, refs, scopes);
-            }
-        }
-        VueNode::For(for_node) => {
-            let pushed = scopes.push(&for_node.scope);
-            collect_template_event_expr_refs(&for_node.node, refs, scopes);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Text(_)
-        | VueNode::Interpolation(_)
-        | VueNode::Comment(_)
-        | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_)
-        | VueNode::Unsupported(_) => {}
-    }
-}
-
-fn collect_template_for_source_refs(
-    node: &VueNode,
-    refs: &mut HashSet<Atom>,
-    scopes: &mut TemplateLocalScopes,
-) {
-    match node {
-        VueNode::Element(element) => {
-            let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
-            let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
-            for child in &element.children {
-                collect_template_for_source_refs(child, refs, scopes);
-            }
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Fragment(children) => {
-            for child in children {
-                collect_template_for_source_refs(child, refs, scopes);
-            }
-        }
-        VueNode::If(branches) => {
-            for branch in branches {
-                collect_template_for_source_refs(&branch.node, refs, scopes);
-            }
-        }
-        VueNode::For(for_node) => {
-            scopes.collect_ident_refs(for_node.source.as_str(), refs);
-            let pushed = scopes.push(&for_node.scope);
-            collect_template_for_source_refs(&for_node.node, refs, scopes);
-            if pushed {
-                scopes.pop();
-            }
-        }
-        VueNode::Text(_)
-        | VueNode::Interpolation(_)
-        | VueNode::Comment(_)
-        | VueNode::RawHtml(_)
-        | VueNode::RawExpr(_)
-        | VueNode::Unsupported(_) => {}
-    }
-}
-
 fn attr_template_scope(attr: &VueAttr) -> Option<&VueTemplateScope> {
     match attr {
         VueAttr::Directive(directive) if directive.name == "slot" => Some(&directive.scope),
         _ => None,
-    }
-}
-
-fn collect_attr_expr_refs(attr: &VueAttr, refs: &mut HashSet<Atom>, scopes: &TemplateLocalScopes) {
-    match attr {
-        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
-            scopes.collect_ident_refs(expr.as_str(), refs);
-        }
-        VueAttr::Directive(directive) if directive.name == "slot" => {
-            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                scopes.collect_ident_refs(expr.as_str(), refs);
-            }
-        }
-        VueAttr::Directive(directive) => {
-            if let Some(expr) = &directive.expr {
-                scopes.collect_ident_refs(expr.as_str(), refs);
-            }
-            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                scopes.collect_ident_refs(expr.as_str(), refs);
-            }
-        }
-        VueAttr::Static { .. } => {}
-    }
-}
-
-fn collect_attr_expr_read_refs(
-    attr: &VueAttr,
-    refs: &mut HashSet<Atom>,
-    scopes: &TemplateLocalScopes,
-) {
-    match attr {
-        VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
-            scopes.collect_read_refs(expr.as_str(), refs);
-        }
-        VueAttr::Directive(directive) if directive.name == "slot" => {
-            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                scopes.collect_read_refs(expr.as_str(), refs);
-            }
-        }
-        VueAttr::Directive(directive) => {
-            if let Some(expr) = &directive.expr {
-                scopes.collect_read_refs(expr.as_str(), refs);
-            }
-            if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                scopes.collect_read_refs(expr.as_str(), refs);
-            }
-        }
-        VueAttr::Static { .. } => {}
     }
 }
 
@@ -4716,6 +4489,39 @@ export default _sfc_main;
         assert!(usage.event_refs.contains(&Atom::from("selected")));
         assert!(!usage.event_refs.contains(&Atom::from("item")));
         assert!(!usage.read_refs.contains(&Atom::from("item")));
+    }
+
+    #[test]
+    fn template_usage_applies_slot_scope_to_children() {
+        use crate::vue_template::{VueDirective, VueElement};
+
+        let root = VueNode::Element(
+            VueElement::new("template")
+                .with_attrs(vec![VueAttr::Directive(
+                    VueDirective::new("slot")
+                        .with_dynamic_arg("slotName")
+                        .with_scope(VueTemplateScope::from_local("slotProps")),
+                )])
+                .with_children(vec![
+                    VueNode::Interpolation(VueExpr::new("slotProps.title + outer")),
+                    VueNode::Element(VueElement::new("button").with_attrs(vec![VueAttr::On {
+                        name: "click".to_string(),
+                        expr: VueExpr::new("select(slotProps, outer)"),
+                        modifiers: Vec::new(),
+                    }])),
+                ]),
+        );
+
+        let usage = VueTemplateUsage::new(&root);
+
+        assert!(usage.expr_refs.contains(&Atom::from("slotName")));
+        assert!(usage.expr_refs.contains(&Atom::from("outer")));
+        assert!(usage.expr_refs.contains(&Atom::from("select")));
+        assert!(!usage.expr_refs.contains(&Atom::from("slotProps")));
+        assert!(usage.event_refs.contains(&Atom::from("select")));
+        assert!(usage.event_refs.contains(&Atom::from("outer")));
+        assert!(!usage.event_refs.contains(&Atom::from("slotProps")));
+        assert!(!usage.read_refs.contains(&Atom::from("slotProps")));
     }
 
     #[test]
