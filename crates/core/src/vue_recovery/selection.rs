@@ -6,10 +6,34 @@ use swc_core::ecma::ast::{Callee, Decl, Expr, Pat, Stmt};
 use crate::js_names::is_valid_identifier_name;
 
 use super::context::{is_ref_object_alias, is_ref_object_expr};
-use super::{
+use super::locals::{
     collect_local_pat_bindings, setup_script_binding_refs, setup_value_dependency_refs,
-    VueRecoveryContext, VueSetupLocalBinding, VueTemplateUsage,
+    VueSetupLocalBinding,
 };
+use super::{VueRecoveryContext, VueTemplateUsage};
+
+pub(super) fn setup_local_declarations<'a>(
+    ctx: &'a VueRecoveryContext,
+    template_usage: &VueTemplateUsage,
+) -> Vec<&'a VueSetupLocalBinding> {
+    if ctx.script_local_bindings.is_empty() && ctx.setup_local_bindings.is_empty() {
+        return Vec::new();
+    }
+
+    let candidates = ctx
+        .script_local_bindings
+        .iter()
+        .chain(ctx.setup_local_bindings.iter())
+        .collect::<Vec<_>>();
+    let selection_context = VueSetupSelectionContext::new(ctx, template_usage, &candidates);
+    let selected = VueSelectionPlan::new(selection_context).select(&candidates);
+
+    candidates
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, declaration)| selected.contains(&index).then_some(declaration))
+        .collect()
+}
 
 pub(super) struct VueSetupSelectionContext {
     pub(super) setup_scope_bindings: HashSet<Atom>,

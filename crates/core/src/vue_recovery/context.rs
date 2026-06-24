@@ -16,13 +16,15 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
 use super::helpers::{helper_name, VueHelper};
 use super::imports;
+use super::locals::{
+    VueSetupLocalBinding, VueSetupRefBinding, VueSetupScriptBinding, VueSetupValueBinding,
+};
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
     component_prop_names, RenderSource, VueRecoveryContext, VueRenderChildListBinding,
-    VueRenderChildListSource, VueScriptImport, VueSetupLocalBinding, VueSetupRefBinding,
-    VueSetupScriptBinding, VueSetupValueBinding,
+    VueRenderChildListSource, VueScriptImport,
 };
 use crate::js_names::is_valid_identifier_name;
 
