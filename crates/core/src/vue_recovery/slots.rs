@@ -7,12 +7,13 @@ use swc_core::ecma::ast::{
 use super::attrs::recover_attrs;
 use super::expressions::{clean_attr_expr, print_expr, printed_vue_expr};
 use super::helpers::{helper_name, VueHelper};
+use super::locals::template_scope_from_pat;
 use super::nodes::{
     apply_for_param_renames, arrow_return_expr, clean_condition_expr, is_undefined_expr,
     list_item_context, recover_children, recover_for_params,
 };
 use super::syntax::{prop_name, string_lit};
-use super::{template_scope_from_pat, VueRecoveryContext};
+use super::VueRecoveryContext;
 use crate::vue_template::{
     VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode, VueTemplateScope,
 };
