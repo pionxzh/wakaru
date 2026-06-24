@@ -2,14 +2,15 @@ use anyhow::Result;
 
 use crate::js_names::is_valid_identifier_name;
 
+use super::components::component_script_imports;
 use super::locals::VueSetupLocalBinding;
 use super::selection::setup_local_declarations;
 use super::{
-    component_prop_names, component_props_source, component_script_imports,
-    props_binding_reserved_names, referenced_script_imports, render_setup_local_declarations,
-    script_setup_declarations, script_setup_declared_bindings, setup_emit_declaration,
-    setup_prop_bindings, setup_props_script_binding, setup_ref_declarations, RenderSource, VueNode,
-    VueRecoveryContext, VueScriptImport, VueScriptSetupDeclaration, VueTemplateUsage,
+    component_prop_names, component_props_source, props_binding_reserved_names,
+    referenced_script_imports, render_setup_local_declarations, script_setup_declarations,
+    script_setup_declared_bindings, setup_emit_declaration, setup_prop_bindings,
+    setup_props_script_binding, setup_ref_declarations, RenderSource, VueNode, VueRecoveryContext,
+    VueScriptImport, VueScriptSetupDeclaration, VueTemplateUsage,
 };
 
 pub(super) struct VueSetupScriptPlan {

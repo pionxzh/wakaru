@@ -107,3 +107,14 @@ pub(super) fn setup_script_binding_refs(ctx: &VueRecoveryContext) -> HashSet<Ato
     }
     refs
 }
+
+pub(super) fn unique_script_local_binding(binding: &Atom, used: &mut HashSet<Atom>) -> Atom {
+    let mut index = 1;
+    loop {
+        let candidate = Atom::from(format!("{}_{index}", binding.as_ref()));
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
