@@ -14,9 +14,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::js_names::is_valid_identifier_name;
-use crate::vue_template::{
-    VueAttr, VueDirectiveArg, VueNode, VueSfc, VueTemplate, VueTemplateScope,
-};
+use crate::vue_template::{VueNode, VueSfc, VueTemplate, VueTemplateScope};
 
 mod attrs;
 mod context;
@@ -28,6 +26,7 @@ mod nodes;
 mod script;
 mod slots;
 mod syntax;
+mod usage;
 
 use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
@@ -40,6 +39,7 @@ use helpers::{helper_name, VueHelper};
 use nodes::recover_render_root;
 use script::{script_import_line, VueSetupScriptPlan};
 use syntax::{module_export_name, prop_name};
+use usage::VueTemplateUsage;
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -2003,131 +2003,6 @@ pub(super) fn template_scope_from_pat(pat: &Pat) -> VueTemplateScope {
     VueTemplateScope::from_locals(bindings.into_iter().map(|binding| binding.to_string()))
 }
 
-#[derive(Default)]
-struct VueTemplateUsage {
-    expr_refs: HashSet<Atom>,
-    read_refs: HashSet<Atom>,
-    event_refs: HashSet<Atom>,
-    for_source_refs: HashSet<Atom>,
-    static_ref_names: Vec<String>,
-}
-
-impl VueTemplateUsage {
-    fn new(root: &VueNode) -> Self {
-        let mut usage = Self::default();
-        let mut scopes = TemplateLocalScopes::default();
-        usage.collect_node(root, &mut scopes);
-        usage
-            .static_ref_names
-            .retain(|name| is_valid_identifier_name(name));
-        usage.static_ref_names.sort();
-        usage.static_ref_names.dedup();
-        usage
-    }
-
-    fn collect_node(&mut self, node: &VueNode, scopes: &mut TemplateLocalScopes) {
-        match node {
-            VueNode::Element(element) => {
-                for attr in &element.attrs {
-                    self.collect_attr(attr, scopes);
-                }
-                let scoped_attr = element.attrs.iter().find_map(attr_template_scope);
-                let pushed = scoped_attr.is_some_and(|scope| scopes.push(scope));
-                for child in &element.children {
-                    self.collect_node(child, scopes);
-                }
-                if pushed {
-                    scopes.pop();
-                }
-            }
-            VueNode::Fragment(children) => {
-                for child in children {
-                    self.collect_node(child, scopes);
-                }
-            }
-            VueNode::If(branches) => {
-                for branch in branches {
-                    if let Some(condition) = &branch.condition {
-                        scopes.collect_ident_refs(condition.as_str(), &mut self.expr_refs);
-                        scopes.collect_read_refs(condition.as_str(), &mut self.read_refs);
-                    }
-                    self.collect_node(&branch.node, scopes);
-                }
-            }
-            VueNode::For(for_node) => {
-                scopes.collect_ident_refs(for_node.source.as_str(), &mut self.expr_refs);
-                scopes.collect_read_refs(for_node.source.as_str(), &mut self.read_refs);
-                scopes.collect_ident_refs(for_node.source.as_str(), &mut self.for_source_refs);
-                let pushed = scopes.push(&for_node.scope);
-                self.collect_node(&for_node.node, scopes);
-                if pushed {
-                    scopes.pop();
-                }
-            }
-            VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
-                scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
-                scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
-            }
-            VueNode::Unsupported(unsupported) => {
-                let pushed = scopes.push(&unsupported.scope);
-                scopes.collect_ident_refs(unsupported.expr.as_str(), &mut self.expr_refs);
-                scopes.collect_read_refs(unsupported.expr.as_str(), &mut self.read_refs);
-                if pushed {
-                    scopes.pop();
-                }
-            }
-            VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
-        }
-    }
-
-    fn collect_attr(&mut self, attr: &VueAttr, scopes: &TemplateLocalScopes) {
-        match attr {
-            VueAttr::Static {
-                name,
-                value: Some(value),
-            } if name == "ref" => {
-                self.static_ref_names.push(value.clone());
-            }
-            VueAttr::Bind { expr, .. } | VueAttr::On { expr, .. } | VueAttr::Spread(expr) => {
-                scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
-                scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
-            }
-            VueAttr::Directive(directive) if directive.name == "slot" => {
-                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
-                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
-                }
-            }
-            VueAttr::Directive(directive) => {
-                if let Some(expr) = &directive.expr {
-                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
-                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
-                }
-                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                    scopes.collect_ident_refs(expr.as_str(), &mut self.expr_refs);
-                    scopes.collect_read_refs(expr.as_str(), &mut self.read_refs);
-                }
-            }
-            VueAttr::Static { .. } => {}
-        }
-
-        match attr {
-            VueAttr::On { expr, .. } => {
-                scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
-            }
-            VueAttr::Directive(directive) if directive.name == "on" => {
-                if let Some(expr) = &directive.expr {
-                    scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
-                }
-                if let Some(VueDirectiveArg::Dynamic(expr)) = &directive.arg {
-                    scopes.collect_ident_refs(expr.as_str(), &mut self.event_refs);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 fn setup_value_dependency_refs(
     ctx: &VueRecoveryContext,
     template_usage: &VueTemplateUsage,
@@ -2206,61 +2081,13 @@ impl Visit for ValueMemberRefCollector<'_> {
     }
 }
 
-#[derive(Default)]
-struct TemplateLocalScopes {
-    stack: Vec<HashSet<Atom>>,
-}
-
-impl TemplateLocalScopes {
-    fn push(&mut self, scope: &VueTemplateScope) -> bool {
-        if scope.locals.is_empty() {
-            return false;
-        }
-        self.stack.push(
-            scope
-                .locals
-                .iter()
-                .map(|local| Atom::from(local.clone()))
-                .collect(),
-        );
-        true
-    }
-
-    fn pop(&mut self) {
-        self.stack.pop();
-    }
-
-    fn is_local(&self, name: &Atom) -> bool {
-        self.stack.iter().rev().any(|scope| scope.contains(name))
-    }
-
-    fn collect_ident_refs(&self, source: &str, refs: &mut HashSet<Atom>) {
-        let mut scoped_refs = HashSet::new();
-        collect_js_unshadowed_ident_refs(source, &mut scoped_refs);
-        refs.extend(scoped_refs.into_iter().filter(|name| !self.is_local(name)));
-    }
-
-    fn collect_read_refs(&self, source: &str, refs: &mut HashSet<Atom>) {
-        let mut scoped_refs = HashSet::new();
-        collect_js_unshadowed_read_refs(source, &mut scoped_refs);
-        refs.extend(scoped_refs.into_iter().filter(|name| !self.is_local(name)));
-    }
-}
-
-fn attr_template_scope(attr: &VueAttr) -> Option<&VueTemplateScope> {
-    match attr {
-        VueAttr::Directive(directive) if directive.name == "slot" => Some(&directive.scope),
-        _ => None,
-    }
-}
-
-fn collect_js_unshadowed_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
+pub(super) fn collect_js_unshadowed_ident_refs(source: &str, refs: &mut HashSet<Atom>) {
     let mut scoped_refs = HashSet::new();
     collect_js_ident_refs(source, &mut scoped_refs);
     extend_unshadowed_expr_refs(source, scoped_refs, refs);
 }
 
-fn collect_js_unshadowed_read_refs(source: &str, refs: &mut HashSet<Atom>) {
+pub(super) fn collect_js_unshadowed_read_refs(source: &str, refs: &mut HashSet<Atom>) {
     let mut scoped_refs = HashSet::new();
     collect_js_read_refs(source, &mut scoped_refs);
     extend_unshadowed_expr_refs(source, scoped_refs, refs);
@@ -2785,7 +2612,7 @@ fn is_ident_continue(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vue_template::VueExpr;
+    use crate::vue_template::{VueAttr, VueExpr};
 
     fn test_stmt(source: &str) -> Stmt {
         let cm = Lrc::new(SourceMap::default());
