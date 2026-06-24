@@ -1142,64 +1142,7 @@ fn setup_script(
         return Ok(None);
     }
 
-    let mut body = String::new();
-
-    if let Some((binding, props_source)) = &plan.props_declaration {
-        body.push_str("const ");
-        body.push_str(binding);
-        body.push_str(" = defineProps(");
-        body.push_str(props_source);
-        body.push_str(");\n");
-        if !plan.valid_prop_names.is_empty() {
-            body.push_str("const { ");
-            body.push_str(&format_prop_destructure_bindings(&plan.prop_bindings));
-            body.push_str(" } = ");
-            body.push_str(binding);
-            body.push_str(";\n");
-        }
-        body.push('\n');
-    }
-
-    if let Some((binding, emits_source)) = &plan.emit_declaration {
-        body.push_str("const ");
-        body.push_str(binding);
-        body.push_str(" = defineEmits(");
-        body.push_str(emits_source);
-        body.push_str(");\n");
-        if !plan.ref_declarations.is_empty() || !plan.scheduled_declarations.is_empty() {
-            body.push('\n');
-        }
-    }
-
-    for (binding, expr, _) in &plan.ref_declarations {
-        body.push_str("const ");
-        body.push_str(binding);
-        body.push_str(" = ");
-        body.push_str(expr.trim());
-        body.push_str(";\n");
-    }
-    if !plan.ref_declarations.is_empty() && !plan.scheduled_declarations.is_empty() {
-        body.push('\n');
-    }
-
-    push_script_setup_declarations(&mut body, &plan.scheduled_declarations);
-
-    let mut out = String::new();
-    if let Some(vue_import) =
-        vue_script_import_line(ctx, &plan.ref_declarations, &plan.local_declarations)
-    {
-        out.push_str(&vue_import);
-        out.push('\n');
-    }
-    for import in plan.script_imports {
-        out.push_str(&import);
-        out.push('\n');
-    }
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out.push_str(&body);
-    Ok(Some(out))
+    Ok(Some(plan.render(ctx)))
 }
 
 struct VueSetupScriptPlan {
@@ -1301,6 +1244,67 @@ impl VueSetupScriptPlan {
             && self.props_declaration.is_none()
             && self.emit_declaration.is_none()
             && self.script_imports.is_empty()
+    }
+
+    fn render(&self, ctx: &VueRecoveryContext) -> String {
+        let mut body = String::new();
+
+        if let Some((binding, props_source)) = &self.props_declaration {
+            body.push_str("const ");
+            body.push_str(binding);
+            body.push_str(" = defineProps(");
+            body.push_str(props_source);
+            body.push_str(");\n");
+            if !self.valid_prop_names.is_empty() {
+                body.push_str("const { ");
+                body.push_str(&format_prop_destructure_bindings(&self.prop_bindings));
+                body.push_str(" } = ");
+                body.push_str(binding);
+                body.push_str(";\n");
+            }
+            body.push('\n');
+        }
+
+        if let Some((binding, emits_source)) = &self.emit_declaration {
+            body.push_str("const ");
+            body.push_str(binding);
+            body.push_str(" = defineEmits(");
+            body.push_str(emits_source);
+            body.push_str(");\n");
+            if !self.ref_declarations.is_empty() || !self.scheduled_declarations.is_empty() {
+                body.push('\n');
+            }
+        }
+
+        for (binding, expr, _) in &self.ref_declarations {
+            body.push_str("const ");
+            body.push_str(binding);
+            body.push_str(" = ");
+            body.push_str(expr.trim());
+            body.push_str(";\n");
+        }
+        if !self.ref_declarations.is_empty() && !self.scheduled_declarations.is_empty() {
+            body.push('\n');
+        }
+
+        push_script_setup_declarations(&mut body, &self.scheduled_declarations);
+
+        let mut out = String::new();
+        if let Some(vue_import) =
+            vue_script_import_line(ctx, &self.ref_declarations, &self.local_declarations)
+        {
+            out.push_str(&vue_import);
+            out.push('\n');
+        }
+        for import in &self.script_imports {
+            out.push_str(import);
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&body);
+        out
     }
 }
 
@@ -4611,6 +4615,7 @@ export default _sfc_main;
             plan.scheduled_declarations[0].bindings,
             test_atoms(&["message"])
         );
+        assert_eq!(plan.render(&ctx), "const message = value;\n");
     }
 
     #[test]
