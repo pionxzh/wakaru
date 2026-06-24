@@ -3,14 +3,17 @@ use anyhow::Result;
 use crate::js_names::is_valid_identifier_name;
 
 use super::components::component_script_imports;
+use super::declarations::{
+    push_script_setup_declarations, script_setup_declarations, script_setup_declared_bindings,
+    VueScriptSetupDeclaration,
+};
 use super::locals::VueSetupLocalBinding;
 use super::selection::setup_local_declarations;
 use super::{
     component_prop_names, component_props_source, props_binding_reserved_names,
-    referenced_script_imports, render_setup_local_declarations, script_setup_declarations,
-    script_setup_declared_bindings, setup_emit_declaration, setup_prop_bindings,
-    setup_props_script_binding, setup_ref_declarations, RenderSource, VueNode, VueRecoveryContext,
-    VueScriptImport, VueScriptSetupDeclaration, VueTemplateUsage,
+    referenced_script_imports, render_setup_local_declarations, setup_emit_declaration,
+    setup_prop_bindings, setup_props_script_binding, setup_ref_declarations, RenderSource, VueNode,
+    VueRecoveryContext, VueScriptImport, VueTemplateUsage,
 };
 
 pub(super) struct VueSetupScriptPlan {
@@ -173,16 +176,6 @@ impl VueSetupScriptPlan {
         }
         out.push_str(&body);
         out
-    }
-}
-
-fn push_script_setup_declarations(body: &mut String, declarations: &[VueScriptSetupDeclaration]) {
-    for (index, declaration) in declarations.iter().enumerate() {
-        if index > 0 && declarations[index - 1].kind != declaration.kind {
-            body.push('\n');
-        }
-        body.push_str(declaration.source.trim());
-        body.push('\n');
     }
 }
 
