@@ -14,8 +14,15 @@ cargo run -p wakaru-cli -- --unpack bundle.js --vue-sfc -o unpacked/
 
 In single-file mode, `--vue-sfc` prints a `.vue`-like artifact when the render
 module matches supported Vue helper shapes, and falls back to normal JavaScript
-otherwise. In unpack mode, recoverable modules are written with a `.vue`
-extension; modules that do not match stay as JavaScript.
+otherwise. If a recovered SFC is written to a file, the output path must use a
+`.vue` extension so the synthetic Vue artifact is not mistaken for JavaScript.
+
+In unpack mode, `--vue-sfc` is additive: every module still gets a JavaScript
+artifact, and recoverable Vue render modules also get a sibling `.vue`
+artifact. The JavaScript artifact for a recoverable Vue module is named with a
+`.vue.js` suffix so the recovered SFC can use the original `.vue` filename.
+Modules that look like Vue render modules but cannot be recovered stay as
+JavaScript fallback artifacts.
 
 `--vue-sfc` intentionally does not work with `--raw`, because raw unpack output
 skips the normal decompile pipeline that normalizes imports, aliases, and
@@ -51,8 +58,9 @@ Supported shapes:
 
 Known gaps:
 
-- Import reconstruction for recovered component dependencies in the `<script>`
-  block.
+- Import reconstruction for recovered component dependencies is heuristic. It
+  handles common relative component imports, but unresolved or heavily rewritten
+  dependencies are left as local bindings instead of fabricated imports.
 - Dynamic component model arguments.
 - Multiple roots and advanced slot scopes beyond the covered fallback case.
 - Strong source-name recovery after aggressive minification/mangling when the
