@@ -8,6 +8,7 @@ use super::declarations::{
     VueScriptSetupDeclaration,
 };
 use super::locals::VueSetupLocalBinding;
+use super::script_imports::referenced_script_imports;
 use super::selection::setup_local_declarations;
 use super::setup_bindings::{
     component_prop_names, component_props_source, props_binding_reserved_names,
@@ -15,8 +16,7 @@ use super::setup_bindings::{
     setup_ref_declarations,
 };
 use super::{
-    referenced_script_imports, render_setup_local_declarations, RenderSource, VueNode,
-    VueRecoveryContext, VueScriptImport, VueTemplateUsage,
+    render_setup_local_declarations, RenderSource, VueNode, VueRecoveryContext, VueTemplateUsage,
 };
 
 pub(super) struct VueSetupScriptPlan {
@@ -242,28 +242,4 @@ fn format_prop_destructure_bindings(prop_bindings: &[(String, String)]) -> Strin
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-pub(super) fn script_import_line(local: &str, import: &VueScriptImport) -> String {
-    match import {
-        VueScriptImport::Named { source, imported } if imported == local => {
-            format!("import {{ {imported} }} from {};", quote_js_string(source))
-        }
-        VueScriptImport::Named { source, imported } => {
-            format!(
-                "import {{ {imported} as {local} }} from {};",
-                quote_js_string(source)
-            )
-        }
-        VueScriptImport::Default { source } => {
-            format!("import {local} from {};", quote_js_string(source))
-        }
-        VueScriptImport::Namespace { source } => {
-            format!("import * as {local} from {};", quote_js_string(source))
-        }
-    }
-}
-
-fn quote_js_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }

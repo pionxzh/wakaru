@@ -29,6 +29,7 @@ mod imports;
 mod locals;
 mod nodes;
 mod script;
+mod script_imports;
 mod selection;
 mod setup_bindings;
 mod slots;
@@ -45,11 +46,12 @@ use context::{
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
 use locals::{
-    setup_script_binding_refs, unique_script_local_binding, VueSetupLocalBinding,
-    VueSetupRefBinding, VueSetupScriptBinding, VueSetupValueBinding,
+    unique_script_local_binding, VueSetupLocalBinding, VueSetupRefBinding, VueSetupScriptBinding,
+    VueSetupValueBinding,
 };
 use nodes::recover_render_root;
-use script::{script_import_line, VueSetupScriptPlan};
+use script::VueSetupScriptPlan;
+use script_imports::VueScriptImport;
 #[cfg(test)]
 use selection::{setup_local_declarations, VueSetupSelectionContext};
 use syntax::{module_export_name, prop_name};
@@ -131,13 +133,6 @@ impl VueBindingTable {
         bindings.dedup();
         bindings
     }
-}
-
-#[derive(Clone)]
-enum VueScriptImport {
-    Named { source: String, imported: String },
-    Default { source: String },
-    Namespace { source: String },
 }
 
 #[derive(Clone)]
@@ -1548,46 +1543,6 @@ fn declaration_keyword_len(chars: &[char], index: usize) -> Option<usize> {
         let after_ok = end == chars.len() || !is_ident_continue(chars[end]);
         (before_ok && after_ok).then_some(keyword.len())
     })
-}
-
-fn referenced_script_imports(
-    ctx: &VueRecoveryContext,
-    template_usage: &VueTemplateUsage,
-    declared_bindings: &HashSet<Atom>,
-    local_declarations: &[VueSetupLocalBinding],
-    component_imports: &[VueComponentScriptImport],
-) -> Vec<String> {
-    let mut refs = ctx.setup_script_import_refs.clone();
-    refs.extend(setup_script_binding_refs(ctx));
-    for declaration in local_declarations {
-        refs.extend(declaration.import_refs.iter().cloned());
-    }
-    refs.extend(
-        template_usage
-            .read_refs
-            .iter()
-            .filter(|&local| !declared_bindings.contains(local))
-            .cloned(),
-    );
-
-    let mut imports = component_imports
-        .iter()
-        .filter_map(|component_import| {
-            ctx.script_imports
-                .get(&component_import.import_ref)
-                .map(|import| script_import_line(component_import.local.as_ref(), import))
-        })
-        .collect::<Vec<_>>();
-    imports.extend(
-        refs.iter()
-            .filter(|local| local.as_ref() != "$")
-            .filter(|local| !declared_bindings.contains(*local))
-            .filter_map(|local| ctx.script_imports.get(local).map(|import| (local, import)))
-            .map(|(local, import)| script_import_line(local.as_ref(), import)),
-    );
-    imports.sort();
-    imports.dedup();
-    imports
 }
 
 fn is_ident_start(ch: char) -> bool {
