@@ -169,6 +169,33 @@ fn vue_sfc_writes_recovered_single_file_component() {
 }
 
 #[test]
+fn vue_sfc_writes_recovered_vite_setup_component() {
+    let dir = temp_test_dir("vue-sfc-vite-setup");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("PanelWrapper.js");
+    let output_path = dir.join("PanelWrapper.vue");
+    fs::write(&input_path, vite_setup_component_module_source())
+        .expect("write vite setup component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<script setup>\nimport { computed } from \"vue\";\nimport { P as Panel_1 } from \"./Panel.vue\";\n\nconst Panel = computed(()=>createPanelState({\n        title: \"Ready\",\n        enabled: true,\n        rank: 1,\n        group: \"main\"\n    }));\n</script>\n\n<template>\n  <Panel_1 :state=\"Panel\" />\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn vue_sfc_single_file_rejects_js_output_path_when_recovered() {
     let dir = temp_test_dir("vue-sfc-js-output");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -970,6 +997,27 @@ export function render(_ctx, _cache) {
 }
 __sfc__.render = render;
 export default __sfc__;
+"#
+}
+
+fn vite_setup_component_module_source() -> &'static str {
+    r#"
+import { defineComponent, computed, openBlock, createVNode } from "vue";
+import { P } from "./Panel.vue";
+export default defineComponent({
+  __name: "PanelWrapper",
+  setup() {
+    const Panel = computed(() => createPanelState({
+      title: "Ready",
+      enabled: true,
+      rank: 1,
+      group: "main"
+    }));
+    return () => (
+      openBlock(), createVNode(P, { state: Panel.value }, null, 8, ["state"])
+    );
+  }
+});
 "#
 }
 
