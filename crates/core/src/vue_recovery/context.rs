@@ -19,12 +19,13 @@ use super::imports;
 use super::locals::{
     VueSetupLocalBinding, VueSetupRefBinding, VueSetupScriptBinding, VueSetupValueBinding,
 };
+use super::setup_bindings::component_prop_names;
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
-    component_prop_names, RenderSource, VueRecoveryContext, VueRenderChildListBinding,
-    VueRenderChildListSource, VueScriptImport,
+    RenderSource, VueRecoveryContext, VueRenderChildListBinding, VueRenderChildListSource,
+    VueScriptImport,
 };
 use crate::js_names::is_valid_identifier_name;
 

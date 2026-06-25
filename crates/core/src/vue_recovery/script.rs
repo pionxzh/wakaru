@@ -9,10 +9,13 @@ use super::declarations::{
 };
 use super::locals::VueSetupLocalBinding;
 use super::selection::setup_local_declarations;
-use super::{
+use super::setup_bindings::{
     component_prop_names, component_props_source, props_binding_reserved_names,
-    referenced_script_imports, render_setup_local_declarations, setup_emit_declaration,
-    setup_prop_bindings, setup_props_script_binding, setup_ref_declarations, RenderSource, VueNode,
+    setup_emit_declaration, setup_prop_bindings, setup_props_script_binding,
+    setup_ref_declarations,
+};
+use super::{
+    referenced_script_imports, render_setup_local_declarations, RenderSource, VueNode,
     VueRecoveryContext, VueScriptImport, VueTemplateUsage,
 };
 
