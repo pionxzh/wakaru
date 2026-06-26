@@ -67,4 +67,6 @@ Known gaps:
   original public names are not present in the generated render code.
 
 Use `scripts/repro/vue-render-matrix/` to reproduce Vue compiler output and
-track which generated shapes the current recovery supports.
+track which generated shapes the current recovery supports. Use
+`scripts/repro/vue-public-corpus/` for manual runs against pinned public Vue
+builds before distilling misses into neutral regression tests.
