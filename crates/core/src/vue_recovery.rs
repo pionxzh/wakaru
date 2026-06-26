@@ -380,7 +380,7 @@ fn recover_vue_sfc_from_render(
 
     let script = if matches!(render, RenderSource::Function { .. }) {
         render_component_options(render)
-            .or_else(|| ctx.component_options.as_ref())
+            .or(ctx.component_options.as_ref())
             .and_then(|options| component_script(options, &ctx).transpose())
             .transpose()?
     } else {
@@ -2518,6 +2518,96 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <h1>{{ title }}</h1>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_static_template_literal_helper_args() {
+        let input = r#"
+import { f as dc, y as ob, c as eb, a as ev, rt as td } from "./vendor-vue.js";
+const hoisted = { class: `notice` };
+const _sfc_main = dc({
+  __name: `Greeting`,
+  setup() {
+    return (_ctx, _cache) => (
+      ob(), eb(`section`, hoisted, [
+        ev(`h1`, null, `Hello`, -1),
+        ev(`p`, null, td(_ctx.title), 1)
+      ])
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section class=\"notice\">\n    <h1>Hello</h1>\n    <p>{{ title }}</p>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_static_template_literal_component_helpers() {
+        let input = r#"
+import { C as rc, E as wc, d as cv, f as dc, u as tv, y as ob } from "./vendor-vue.js";
+const _sfc_main = dc({
+  __name: `UsesLink`,
+  setup() {
+    return () => {
+      const Link = rc(`AppLink`);
+      return ob(), cv(Link, { name: `home` }, {
+        default: wc(() => [
+          tv(` Home `)
+        ]),
+        _: 1
+      });
+    };
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <AppLink name=\"home\">\n    <template v-slot:default> Home </template>\n  </AppLink>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_logical_assign_cached_static_vnode() {
+        let input = r#"
+import { openBlock, createElementBlock, createElementVNode } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", null, [
+    _cache[0] ||= createElementVNode("h1", null, "Ready", -1)
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <h1>Ready</h1>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_runtime_core_cached_slot_text_array() {
+        let input = r#"
+import { C as rc, E as wc, c as eb, d as cv, u as tv, y as ob } from "./runtime-core.esm-bundler-DvtSYmKL.js";
+export function render(_ctx, _cache) {
+  const AppLink = rc(`AppLink`);
+  return ob(), eb(`div`, null, [
+    cv(AppLink, null, {
+      default: wc(() => [..._cache[0] ||= [tv(` Go to Home `, -1)]]),
+      _: 1
+    })
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div>\n    <AppLink>\n      <template v-slot:default> Go to Home </template>\n    </AppLink>\n  </div>\n</template>\n"
         );
     }
 
@@ -5924,6 +6014,43 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <input @input=\"onChange($event.target.checked)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_logical_assign_cached_event_direct_call() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("input", {
+    onInput: _cache[0] ||= (event) => _ctx.onChange(event.target.checked)
+  }, null, 40);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input @input=\"onChange($event.target.checked)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cached_block_event_statements() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", {
+    onClick: _cache[0] || (_cache[0] = (event) => {
+      _ctx.addTodo(_ctx.todo);
+      _ctx.todo = "";
+    })
+  }, "Add", 40);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button @click='addTodo(todo); _ctx.todo = \"\"'>Add</button>\n</template>\n"
         );
     }
 

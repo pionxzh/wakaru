@@ -138,8 +138,8 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
             recover_logical_and_node(bin.left.as_ref(), bin.right.as_ref(), ctx)
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
-            recover_node(assign.right.as_ref(), ctx)
+        Expr::Assign(assign) if matches!(assign.op, AssignOp::Assign | AssignOp::OrAssign) => {
+            recover_cached_node(assign.right.as_ref(), ctx)
         }
         Expr::Cond(cond) => recover_conditional_chain(
             cond.test.as_ref(),
@@ -196,7 +196,9 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             }
             Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))))
         }
-        Expr::Lit(Lit::Str(str)) => Ok(Some(VueNode::Text(wtf8_to_string(&str.value)))),
+        expr if string_lit(expr).is_some() => Ok(Some(VueNode::Text(
+            string_lit(expr).expect("checked string literal"),
+        ))),
         _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
     }
 }
@@ -207,6 +209,13 @@ fn recover_unsupported_vnode_children(expr: &Expr, ctx: &VueRecoveryContext) -> 
     }
     let printed = clean_expr(&print_expr(expr, ctx)?, ctx);
     Ok(unsupported_vnode_children_expr(printed))
+}
+
+fn recover_cached_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    match expr {
+        Expr::Array(_) => Ok(Some(nodes_to_node(recover_children(expr, ctx)?))),
+        _ => recover_node(expr, ctx),
+    }
 }
 
 fn render_child_list_source_expr<'a>(
@@ -961,7 +970,9 @@ fn can_prefix_not(condition: &str) -> bool {
 pub(super) fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
     match expr {
         Expr::Lit(Lit::Null(_)) => Ok(Vec::new()),
-        Expr::Lit(Lit::Str(str)) => Ok(vec![VueNode::Text(wtf8_to_string(&str.value))]),
+        expr if string_lit(expr).is_some() => Ok(vec![VueNode::Text(
+            string_lit(expr).expect("checked string literal"),
+        )]),
         Expr::Array(array) => {
             let mut children = Vec::new();
             for elem in array.elems.iter().flatten() {

@@ -84,7 +84,7 @@ pub(super) fn collect_context(
                                 continue;
                             }
                             if source != "vue" {
-                                if source.contains("vue") {
+                                if is_vue_helper_candidate_source(&source) {
                                     ctx.vue_helper_candidates.insert(named.local.sym.clone());
                                 }
                                 continue;
@@ -110,7 +110,7 @@ pub(super) fn collect_context(
                             }
                         }
                         ImportSpecifier::Namespace(namespace) => {
-                            if source == "vue" || source.contains("vue") {
+                            if source == "vue" || is_vue_helper_candidate_source(&source) {
                                 ctx.vue_namespaces.insert(namespace.local.sym.clone());
                             }
                             if source != "vue" {
@@ -650,6 +650,10 @@ fn is_transpiler_runtime_helper_source(source: &str) -> bool {
     source.contains("suspendedStart")
         && source.contains("_invoke")
         && (source.contains("@@iterator") || source.contains("__await"))
+}
+
+fn is_vue_helper_candidate_source(source: &str) -> bool {
+    source.contains("vue") || source.contains("runtime-core") || source.contains("runtime-dom")
 }
 
 fn colliding_import_aliases(
@@ -1454,42 +1458,54 @@ fn is_with_ctx_call(args: &[ExprOrSpread]) -> bool {
 }
 
 fn is_create_static_vnode_call(args: &[ExprOrSpread]) -> bool {
-    matches!(
-        args.first().map(|arg| arg.expr.as_ref()),
-        Some(Expr::Lit(Lit::Str(str))) if wtf8_to_string(&str.value).contains('<')
-    )
+    args.first()
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
+        .is_some_and(|value| value.contains('<'))
 }
 
 fn is_create_comment_vnode_call(args: &[ExprOrSpread]) -> bool {
-    matches!(
-        (
-            args.first().map(|arg| arg.expr.as_ref()),
-            args.get(1).map(|arg| arg.expr.as_ref())
-        ),
-        (Some(Expr::Lit(Lit::Str(_))), Some(Expr::Lit(Lit::Bool(_))))
-    )
-}
-
-fn is_create_text_vnode_call(args: &[ExprOrSpread]) -> bool {
-    matches!(
-        args.get(1).map(|arg| arg.expr.as_ref()),
-        Some(Expr::Lit(Lit::Num(_)))
-    )
-}
-
-fn is_static_text_vnode_call(args: &[ExprOrSpread]) -> bool {
-    args.len() == 1
+    args.first()
+        .is_some_and(|arg| string_lit(arg.expr.as_ref()).is_some())
         && matches!(
-            args.first().map(|arg| arg.expr.as_ref()),
-            Some(Expr::Lit(Lit::Str(_)))
+            args.get(1).map(|arg| arg.expr.as_ref()),
+            Some(Expr::Lit(Lit::Bool(_)))
         )
 }
 
+fn is_create_text_vnode_call(args: &[ExprOrSpread]) -> bool {
+    args.get(1)
+        .is_some_and(|arg| is_numeric_expr(arg.expr.as_ref()))
+}
+
+fn is_static_text_vnode_call(args: &[ExprOrSpread]) -> bool {
+    matches!(args.len(), 1 | 2)
+        && args
+            .first()
+            .is_some_and(|arg| string_lit(arg.expr.as_ref()).is_some())
+        && args
+            .get(1)
+            .is_none_or(|arg| is_numeric_expr(arg.expr.as_ref()))
+}
+
+fn is_numeric_expr(expr: &Expr) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Lit(Lit::Num(_)) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Minus => {
+            matches!(
+                unwrap_paren_expr(unary.arg.as_ref()),
+                Expr::Lit(Lit::Num(_))
+            )
+        }
+        _ => false,
+    }
+}
+
 fn is_element_vnode_call(args: &[ExprOrSpread]) -> bool {
-    matches!(
-        args.first().map(|arg| arg.expr.as_ref()),
-        Some(Expr::Lit(Lit::Str(str))) if !wtf8_to_string(&str.value).contains('<')
-    ) && args.len() >= 2
+    args.len() >= 2
+        && args
+            .first()
+            .and_then(|arg| string_lit(arg.expr.as_ref()))
+            .is_some_and(|value| !value.contains('<'))
 }
 
 fn is_component_vnode_call(args: &[ExprOrSpread]) -> bool {
@@ -1502,18 +1518,16 @@ fn is_component_vnode_call(args: &[ExprOrSpread]) -> bool {
 
 fn is_resolve_component_call(args: &[ExprOrSpread]) -> bool {
     args.len() == 1
-        && matches!(
-            args.first().map(|arg| arg.expr.as_ref()),
-            Some(Expr::Lit(Lit::Str(_)))
-        )
+        && args
+            .first()
+            .is_some_and(|arg| string_lit(arg.expr.as_ref()).is_some())
 }
 
 fn is_display_string_call(args: &[ExprOrSpread]) -> bool {
     args.len() == 1
-        && !matches!(
-            args.first().map(|arg| arg.expr.as_ref()),
-            Some(Expr::Lit(Lit::Str(_)))
-        )
+        && args
+            .first()
+            .is_none_or(|arg| string_lit(arg.expr.as_ref()).is_none())
 }
 
 fn is_open_block_call(args: &[ExprOrSpread]) -> bool {

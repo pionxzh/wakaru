@@ -286,11 +286,14 @@ fn attrs_from_key_value(
         }]);
     }
 
-    match value {
-        Expr::Lit(Lit::Str(str)) => Ok(vec![VueAttr::Static {
+    if let Some(value) = string_lit(value) {
+        return Ok(vec![VueAttr::Static {
             name: name.to_string(),
-            value: Some(wtf8_to_string(&str.value)),
-        }]),
+            value: Some(value),
+        }]);
+    }
+
+    match value {
         Expr::Lit(Lit::Bool(bool)) if bool.value => Ok(vec![VueAttr::Static {
             name: name.to_string(),
             value: None,
@@ -387,8 +390,8 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     let mut dynamic_classes = Vec::new();
     for elem in array.elems.iter().flatten() {
         if elem.spread.is_none() {
-            if let Expr::Lit(Lit::Str(str)) = elem.expr.as_ref() {
-                static_classes.push(wtf8_to_string(&str.value));
+            if let Some(value) = string_lit(elem.expr.as_ref()) {
+                static_classes.push(value);
                 continue;
             }
         }
@@ -469,7 +472,7 @@ fn simplify_class_cond(mut cond: CondExpr) -> (Expr, bool) {
 }
 
 fn is_empty_string_expr(expr: &Expr) -> bool {
-    matches!(unwrap_paren_expr(expr), Expr::Lit(Lit::Str(str)) if wtf8_to_string(&str.value).is_empty())
+    string_lit(unwrap_paren_expr(expr)).is_some_and(|value| value.is_empty())
 }
 
 fn is_optional_class_value(expr: &Expr) -> bool {
@@ -747,7 +750,9 @@ fn cached_event_assignment_rhs(value: &Expr) -> Option<&Expr> {
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
             cached_event_assignment_rhs(bin.right.as_ref())
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => Some(assign.right.as_ref()),
+        Expr::Assign(assign) if matches!(assign.op, AssignOp::Assign | AssignOp::OrAssign) => {
+            Some(assign.right.as_ref())
+        }
         _ => None,
     }
 }
@@ -758,7 +763,7 @@ fn is_noop_event_handler(value: &Expr) -> bool {
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
             is_noop_event_handler(bin.right.as_ref())
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+        Expr::Assign(assign) if matches!(assign.op, AssignOp::Assign | AssignOp::OrAssign) => {
             is_noop_event_handler(assign.right.as_ref())
         }
         Expr::Arrow(arrow) => {
@@ -791,7 +796,7 @@ fn cached_event_handler_name(value: &Expr, ctx: &VueRecoveryContext) -> Result<O
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
             cached_event_handler_name(bin.right.as_ref(), ctx)
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+        Expr::Assign(assign) if matches!(assign.op, AssignOp::Assign | AssignOp::OrAssign) => {
             cached_handler_name(assign.right.as_ref(), ctx)
         }
         Expr::Arrow(arrow) => arrow_handler_expr(arrow, ctx),
@@ -809,10 +814,11 @@ fn cached_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<S
 }
 
 fn arrow_handler_expr(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
-    let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() else {
-        return Ok(None);
-    };
-    handler_expr_name(expr.as_ref(), ctx, arrow_event_param(arrow))
+    let event_param = arrow_event_param(arrow);
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::Expr(expr) => handler_expr_name(expr.as_ref(), ctx, event_param),
+        BlockStmtOrExpr::BlockStmt(block) => block_handler_expr(&block.stmts, ctx, event_param),
+    }
 }
 
 fn function_handler_expr(function: &Function, ctx: &VueRecoveryContext) -> Result<Option<String>> {
@@ -845,6 +851,29 @@ fn handler_expr_name(
         Expr::Call(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         _ => Ok(None),
     }
+}
+
+fn block_handler_expr(
+    stmts: &[Stmt],
+    ctx: &VueRecoveryContext,
+    event_param: Option<&str>,
+) -> Result<Option<String>> {
+    if stmts.is_empty() {
+        return Ok(Some(String::new()));
+    }
+
+    let mut parts = Vec::new();
+    for stmt in stmts {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            return Ok(None);
+        };
+        parts.push(clean_event_handler_expr(
+            expr_stmt.expr.as_ref(),
+            ctx,
+            event_param,
+        )?);
+    }
+    Ok(Some(parts.join("; ")))
 }
 
 fn clean_event_handler_expr(
