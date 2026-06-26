@@ -42,6 +42,30 @@
     "notes": "Official Vite Vue TypeScript starter pinned to Vite 6."
   },
   {
+    "name": "beary-vite-example",
+    "enabled": false,
+    "tier": "small",
+    "bundler": "vite",
+    "repo": "https://github.com/beary/vite-example.git",
+    "ref": "965d9452a56bb2013e911a44f52436862fbb9284",
+    "install": ["npx", "--yes", "pnpm@9.12.3", "install", "--frozen-lockfile", "--ignore-scripts"],
+    "build": ["npx", "--yes", "pnpm@9.12.3", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Public Vue 3 + Vite todo app with router and multiple SFCs."
+  },
+  {
+    "name": "vue3-realworld-example-app",
+    "enabled": false,
+    "tier": "medium",
+    "bundler": "vite",
+    "repo": "https://github.com/mutoe/vue3-realworld-example-app.git",
+    "ref": "a3b07312d4c416c3976a3012e64cf39053060708",
+    "install": ["npx", "--yes", "pnpm@10.33.0", "install", "--frozen-lockfile", "--ignore-scripts"],
+    "build": ["npx", "--yes", "pnpm@10.33.0", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Public Vue 3 RealWorld app with routing, Pinia, auth flows, and CRUD screens."
+  },
+  {
     "name": "vitepress-docs",
     "enabled": false,
     "tier": "large",
