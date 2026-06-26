@@ -5,9 +5,9 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier, Expr,
-    FnDecl, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
+    Expr, FnDecl, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -39,9 +39,9 @@ mod usage;
 use components::VueComponentScriptImport;
 use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
-    component_name_from_init, component_name_from_options, infer_render_helpers,
-    render_context_param, render_local_declaration_with_aliases, setup_context_param,
-    setup_emit_param, setup_props_param, stmt_ident_refs,
+    component_name_from_init, component_name_from_options, component_options_from_init,
+    infer_render_helpers, render_context_param, render_local_declaration_with_aliases,
+    setup_context_param, setup_emit_param, setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -54,7 +54,7 @@ use script::VueSetupScriptPlan;
 use script_imports::VueScriptImport;
 #[cfg(test)]
 use selection::{setup_local_declarations, VueSetupSelectionContext};
-use syntax::{module_export_name, prop_name, wtf8_to_string};
+use syntax::{module_export_name, prop_name, string_lit, wtf8_to_string};
 use usage::VueTemplateUsage;
 
 #[derive(Default, Clone)]
@@ -147,7 +147,10 @@ enum VueRenderChildListSource {
 
 #[derive(Clone, Copy)]
 pub(super) enum RenderSource<'a> {
-    Function(&'a FnDecl),
+    Function {
+        render: &'a FnDecl,
+        component_options: Option<&'a ObjectLit>,
+    },
     SetupArrow {
         render: &'a ArrowExpr,
         setup_stmts: &'a [Stmt],
@@ -375,9 +378,9 @@ fn recover_vue_sfc_from_render(
 
     let script_setup = setup_script(&ctx, &mut root, render)?;
 
-    let script = if matches!(render, RenderSource::Function(_)) {
-        ctx.component_options
-            .as_ref()
+    let script = if matches!(render, RenderSource::Function { .. }) {
+        render_component_options(render)
+            .or_else(|| ctx.component_options.as_ref())
             .and_then(|options| component_script(options, &ctx).transpose())
             .transpose()?
     } else {
@@ -834,14 +837,27 @@ fn find_render_sources<'a>(
         {
             return vec![render];
         }
+        let scoped_renders = component_scope_render_sources(module);
+        if !scoped_renders.is_empty() {
+            return scoped_renders;
+        }
         return find_render_fn(module)
-            .map(RenderSource::Function)
+            .map(|render| RenderSource::Function {
+                render,
+                component_options: None,
+            })
             .into_iter()
             .collect();
     }
 
     let mut sources = Vec::new();
-    if let Some(render) = find_render_fn(module).map(RenderSource::Function) {
+    for render in component_scope_render_sources(module) {
+        push_render_source(&mut sources, render);
+    }
+    if let Some(render) = find_render_fn(module).map(|render| RenderSource::Function {
+        render,
+        component_options: None,
+    }) {
         push_render_source(&mut sources, render);
     }
     for render in setup_render_sources(module) {
@@ -863,17 +879,19 @@ fn push_render_source<'a>(sources: &mut Vec<RenderSource<'a>>, render: RenderSou
 
 fn render_source_key(render: RenderSource<'_>) -> usize {
     match render {
-        RenderSource::Function(function) => function as *const FnDecl as usize,
+        RenderSource::Function { render, .. } => render as *const FnDecl as usize,
         RenderSource::SetupArrow { render, .. } => render as *const ArrowExpr as usize,
     }
 }
 
 fn render_component_options(render: RenderSource<'_>) -> Option<&ObjectLit> {
     match render {
+        RenderSource::Function {
+            component_options, ..
+        } => component_options,
         RenderSource::SetupArrow {
             component_options, ..
         } => component_options,
-        RenderSource::Function(_) => None,
     }
 }
 
@@ -1001,6 +1019,195 @@ fn setup_render_sources(module: &Module) -> Vec<RenderSource<'_>> {
         }
     }
     sources
+}
+
+fn component_scope_render_sources<'a>(module: &'a Module) -> Vec<RenderSource<'a>> {
+    let functions = local_function_decls(module);
+    if functions.is_empty() {
+        return Vec::new();
+    }
+    let component_options = local_component_options(module);
+    let mut sources = Vec::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if let Some(render) = component_scope_render_source_from_expr(
+                    export.expr.as_ref(),
+                    &functions,
+                    &component_options,
+                ) {
+                    push_render_source(&mut sources, render);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                let Decl::Var(var) = &export.decl else {
+                    continue;
+                };
+                for decl in &var.decls {
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some(render) = component_scope_render_source_from_expr(
+                        init,
+                        &functions,
+                        &component_options,
+                    ) {
+                        push_render_source(&mut sources, render);
+                    }
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some(render) = component_scope_render_source_from_expr(
+                        init,
+                        &functions,
+                        &component_options,
+                    ) {
+                        push_render_source(&mut sources, render);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    sources
+}
+
+fn local_function_decls(module: &Module) -> HashMap<Atom, &FnDecl> {
+    let mut functions = HashMap::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Fn(function),
+                ..
+            })) => {
+                functions.insert(function.ident.sym.clone(), function);
+            }
+            _ => {}
+        }
+    }
+    functions
+}
+
+fn local_component_options(module: &Module) -> HashMap<Atom, &ObjectLit> {
+    let mut options = HashMap::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            })) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some(object) = component_options_from_init(init) {
+                        options.insert(binding.id.sym.clone(), object);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    options
+}
+
+fn component_scope_render_source_from_expr<'a>(
+    expr: &'a Expr,
+    functions: &HashMap<Atom, &'a FnDecl>,
+    component_options: &HashMap<Atom, &'a ObjectLit>,
+) -> Option<RenderSource<'a>> {
+    match expr {
+        Expr::Paren(paren) => component_scope_render_source_from_expr(
+            paren.expr.as_ref(),
+            functions,
+            component_options,
+        ),
+        Expr::Call(call) => {
+            if let Some(render_name) = component_scope_render_function_name(call) {
+                let render = *functions.get(render_name)?;
+                let options = call.args.first().and_then(|arg| {
+                    component_options_from_component_expr(arg.expr.as_ref(), component_options)
+                });
+                return Some(RenderSource::Function {
+                    render,
+                    component_options: options,
+                });
+            }
+
+            call.args.first().and_then(|arg| {
+                component_scope_render_source_from_expr(
+                    arg.expr.as_ref(),
+                    functions,
+                    component_options,
+                )
+            })
+        }
+        _ => None,
+    }
+}
+
+fn component_options_from_component_expr<'a>(
+    expr: &'a Expr,
+    local_options: &HashMap<Atom, &'a ObjectLit>,
+) -> Option<&'a ObjectLit> {
+    match expr {
+        Expr::Paren(paren) => {
+            component_options_from_component_expr(paren.expr.as_ref(), local_options)
+        }
+        Expr::Ident(ident) => local_options.get(&ident.sym).copied(),
+        expr => component_options_from_init(expr),
+    }
+}
+
+fn component_scope_render_function_name(call: &CallExpr) -> Option<&Atom> {
+    let attrs = call.args.get(1)?;
+    render_function_name_from_scope_attrs(attrs.expr.as_ref())
+}
+
+fn render_function_name_from_scope_attrs(expr: &Expr) -> Option<&Atom> {
+    let Expr::Array(attrs) = unwrap_paren_array_expr(expr) else {
+        return None;
+    };
+    attrs.elems.iter().flatten().find_map(|elem| {
+        let Expr::Array(tuple) = unwrap_paren_array_expr(elem.expr.as_ref()) else {
+            return None;
+        };
+        render_function_name_from_scope_tuple(tuple)
+    })
+}
+
+fn render_function_name_from_scope_tuple(tuple: &ArrayLit) -> Option<&Atom> {
+    let key = tuple.elems.first()?.as_ref()?;
+    if string_lit(key.expr.as_ref()).as_deref() != Some("render") {
+        return None;
+    }
+    let value = tuple.elems.get(1)?.as_ref()?;
+    match value.expr.as_ref() {
+        Expr::Ident(ident) => Some(&ident.sym),
+        Expr::Paren(paren) => match paren.expr.as_ref() {
+            Expr::Ident(ident) => Some(&ident.sym),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn unwrap_paren_array_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => unwrap_paren_array_expr(paren.expr.as_ref()),
+        _ => expr,
+    }
 }
 
 fn direct_exported_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
@@ -1222,7 +1429,13 @@ fn with_component_options<'a>(
             setup_slots,
             component_options: Some(component_options),
         },
-        RenderSource::Function(function) => RenderSource::Function(function),
+        RenderSource::Function {
+            render,
+            component_options,
+        } => RenderSource::Function {
+            render,
+            component_options,
+        },
     }
 }
 
@@ -1305,7 +1518,7 @@ fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) ->
 
     let mut finder = Finder { ctx, found: false };
     match render {
-        RenderSource::Function(render) => {
+        RenderSource::Function { render, .. } => {
             let Some(body) = render.function.body.as_ref() else {
                 return false;
             };
@@ -2394,6 +2607,58 @@ export const gs = (value) => value == null ? "" : String(value);
     }
 
     #[test]
+    fn recovers_vite_scoped_render_helper_with_local_options() {
+        let input = r#"
+import { openBlock, createElementBlock, toDisplayString } from "vue";
+const base = {
+  props: {
+    name: {
+      type: String,
+      default: ""
+    }
+  },
+  emits: ["confirm"]
+};
+const hoisted = { class: "todo-item" };
+function render(ctx, cache) {
+  return openBlock(), createElementBlock("span", hoisted, toDisplayString(ctx.name), 1);
+}
+const scoped = scope(base, [
+  ["render", render],
+  ["__scopeId", "data-v-test"]
+]);
+export { scoped as T };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script>\nexport default {\n    props: {\n        name: {\n            type: String,\n            default: \"\"\n        }\n    },\n    emits: [\n        \"confirm\"\n    ]\n}\n</script>\n\n<template>\n  <span class=\"todo-item\">{{ name }}</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_scoped_render_helper_with_imported_options() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+import { base } from "./chunk-options.js";
+const hoisted = { class: "app-shell" };
+function render(ctx, cache) {
+  return openBlock(), createElementBlock("main", hoisted, "Ready");
+}
+const scoped = scope(base, [
+  ["__scopeId", "data-v-test"],
+  ["render", render]
+]);
+export default scoped;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <main class=\"app-shell\">Ready</main>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_multiple_setup_components_from_one_scope_hoisted_module() {
         let input = r#"
 import { openBlock, createElementBlock, createVNode } from "vue";
@@ -3456,7 +3721,10 @@ export default _sfc_main;
         let cm = Lrc::new(SourceMap::default());
         let module = parse_module("function render() { return null; }", cm.clone()).unwrap();
         let render = match &module.body[0] {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => RenderSource::Function(function),
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => RenderSource::Function {
+                render: function,
+                component_options: None,
+            },
             _ => panic!("expected render function"),
         };
         let ctx = VueRecoveryContext {

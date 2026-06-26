@@ -873,7 +873,7 @@ fn is_vue_fragment_symbol_init(expr: &Expr) -> bool {
         == Some("v-fgt")
 }
 
-fn component_options_from_init(expr: &Expr) -> Option<&ObjectLit> {
+pub(super) fn component_options_from_init(expr: &Expr) -> Option<&ObjectLit> {
     match unwrap_paren_expr(expr) {
         Expr::Object(object) => Some(object),
         Expr::Call(call) => {
@@ -964,7 +964,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
         vnode_child_depth: 0,
     };
     match render {
-        RenderSource::Function(render) => {
+        RenderSource::Function { render, .. } => {
             if let Some(body) = render.function.body.as_ref() {
                 body.visit_with(&mut inference);
             }
@@ -3154,7 +3154,7 @@ fn collect_pat_bindings(pat: &Pat, bindings: &mut HashSet<Atom>) {
 
 pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
     match render {
-        RenderSource::Function(render) => render
+        RenderSource::Function { render, .. } => render
             .function
             .params
             .first()
@@ -3201,7 +3201,7 @@ pub(super) fn setup_emit_param(render: RenderSource<'_>) -> Option<Atom> {
 
 fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
     match render {
-        RenderSource::Function(render) => render
+        RenderSource::Function { render, .. } => render
             .function
             .body
             .as_ref()

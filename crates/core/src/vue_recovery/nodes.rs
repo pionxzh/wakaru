@@ -83,7 +83,7 @@ fn recover_render_if_chain(stmts: &[Stmt], ctx: &VueRecoveryContext) -> Result<O
 
 fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
     match render {
-        RenderSource::Function(render) => render
+        RenderSource::Function { render, .. } => render
             .function
             .body
             .as_ref()
@@ -112,7 +112,7 @@ fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
 
 fn find_render_return(render: RenderSource<'_>) -> Option<&Expr> {
     match render {
-        RenderSource::Function(render) => {
+        RenderSource::Function { render, .. } => {
             let body = render.function.body.as_ref()?;
             body.stmts.iter().rev().find_map(|stmt| match stmt {
                 Stmt::Return(ReturnStmt {
