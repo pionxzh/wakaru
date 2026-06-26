@@ -26,6 +26,14 @@ pub(super) fn prop_name(name: &PropName) -> Option<String> {
 pub(super) fn string_lit(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Lit(Lit::Str(str)) => Some(wtf8_to_string(&str.value)),
+        Expr::Tpl(tpl) if tpl.exprs.is_empty() && tpl.quasis.len() == 1 => {
+            let quasi = tpl.quasis.first()?;
+            quasi
+                .cooked
+                .as_ref()
+                .map(wtf8_to_string)
+                .or_else(|| Some(quasi.raw.to_string()))
+        }
         _ => None,
     }
 }
