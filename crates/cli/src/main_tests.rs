@@ -143,6 +143,26 @@ fn vue_js_output_filename_avoids_vue_artifact_collision() {
 }
 
 #[test]
+fn vue_output_filename_for_component_disambiguates_multi_sfc_modules() {
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("HelloWorld"), true),
+        "entry.HelloWorld.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("src/entry.js", Some("App"), true),
+        "src/entry.App.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("../App"), true),
+        "entry.___App.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("App"), false),
+        "entry.vue"
+    );
+}
+
+#[test]
 fn vue_sfc_writes_recovered_single_file_component() {
     let dir = temp_test_dir("vue-sfc-output");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -523,6 +543,42 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
         "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./src/components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_writes_multiple_recovered_components_from_one_module() {
+    let dir = temp_test_dir("vue-sfc-webpack-multi");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_multi_vue_sfc_bundle_source())
+        .expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert!(
+        out_dir.join("src/entry.js").exists(),
+        "decompiled JS should remain next to recovered SFCs"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/entry.Child.vue")).expect("read child sfc"),
+        "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <span>{{ msg }}</span>\n</template>\n"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/entry.App.vue")).expect("read app sfc"),
+        "<template>\n  <main>\n    <Child msg=\"Hi\" />\n  </main>\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -1121,6 +1177,72 @@ fn webpack5_vue_sfc_bundle_source() -> &'static str {
     Object.defineProperty(exports, "__esModule", { value: true });
   };
   __webpack_require__("./src/App.vue");
+})();
+"#
+}
+
+fn webpack5_multi_vue_sfc_bundle_source() -> &'static str {
+    r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./node_modules/vue/index.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, {
+        createElementBlock: () => createElementBlock,
+        createVNode: () => createVNode,
+        defineComponent: () => defineComponent,
+        openBlock: () => openBlock,
+        toDisplayString: () => toDisplayString
+      });
+      function createElementBlock() {}
+      function createVNode() {}
+      function defineComponent(options) { return options; }
+      function openBlock() {}
+      function toDisplayString(value) { return String(value); }
+    }),
+    "./src/entry.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      const Child = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        __name: "Child",
+        props: { msg: String },
+        setup(props) {
+          return (_ctx, _cache) => ((0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("span", null, props.msg, 1));
+        }
+      });
+      const App = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        __name: "App",
+        setup() {
+          return (_ctx, _cache) => ((0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("main", null, [
+            (0, vue__WEBPACK_IMPORTED_MODULE_0__.createVNode)(Child, { msg: "Hi" })
+          ]));
+        }
+      });
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = (exports, definition) => {
+    for (var key in definition) {
+      if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+        Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+      }
+    }
+  };
+  __webpack_require__.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+  __webpack_require__.r = (exports) => {
+    if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+      Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+    }
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__("./src/entry.js");
 })();
 "#
 }

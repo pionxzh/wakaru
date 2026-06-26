@@ -42,6 +42,7 @@ pub use vue_recovery::{
     decompile_vue_sfc, decompile_vue_sfc_with_import_resolver, is_likely_vue_sfc_source,
     recover_vue_sfc_from_js, recover_vue_sfc_from_js_with_import_resolver,
     recover_vue_sfc_source_from_js, recover_vue_sfc_source_from_js_with_import_resolver,
+    recover_vue_sfcs_from_js, recover_vue_sfcs_from_js_with_import_resolver, RecoveredVueSfc,
 };
 
 /// Unpack a webpack4 bundle and return the raw (pre-decompile-rules) module code.
