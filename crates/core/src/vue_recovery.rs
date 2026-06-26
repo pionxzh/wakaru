@@ -6,8 +6,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier, Expr,
-    FnDecl, Ident, ImportSpecifier, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat,
-    Prop, PropOrSpread, ReturnStmt, Stmt,
+    FnDecl, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -54,7 +54,7 @@ use script::VueSetupScriptPlan;
 use script_imports::VueScriptImport;
 #[cfg(test)]
 use selection::{setup_local_declarations, VueSetupSelectionContext};
-use syntax::{module_export_name, prop_name};
+use syntax::{module_export_name, prop_name, wtf8_to_string};
 use usage::VueTemplateUsage;
 
 #[derive(Default, Clone)]
@@ -302,6 +302,8 @@ fn recover_vue_sfc_from_js_inner(
         imported_metadata.component_bindings,
         composable_ref_props,
     );
+    ctx.vue_helper_candidates
+        .extend(imported_metadata.vue_helper_candidates);
     let Some(render) = find_render_source(&module, preferred_component_name) else {
         return Ok(None);
     };
@@ -347,11 +349,13 @@ fn recover_vue_sfc_from_js_inner(
 struct ImportedVueMetadata {
     component_bindings: HashMap<Atom, String>,
     composable_ref_props: HashMap<Atom, HashSet<Atom>>,
+    vue_helper_candidates: HashSet<Atom>,
 }
 
 struct ResolvedImportMetadata {
     component_exports: HashMap<String, String>,
     composable_ref_props: HashMap<String, HashSet<Atom>>,
+    vue_helper_exports: HashSet<String>,
 }
 
 fn collect_imported_vue_metadata(
@@ -380,6 +384,7 @@ fn collect_imported_vue_metadata(
             let source_metadata = ResolvedImportMetadata {
                 component_exports: component_exports_from_source(&resolved).unwrap_or_default(),
                 composable_ref_props: imports::composable_ref_props_from_source(&resolved),
+                vue_helper_exports: vue_helper_exports_from_source(&resolved),
             };
             export_cache.insert(source.clone(), source_metadata);
             export_cache
@@ -388,6 +393,7 @@ fn collect_imported_vue_metadata(
         };
         if source_metadata.component_exports.is_empty()
             && source_metadata.composable_ref_props.is_empty()
+            && source_metadata.vue_helper_exports.is_empty()
         {
             continue;
         }
@@ -410,6 +416,11 @@ fn collect_imported_vue_metadata(
                             .composable_ref_props
                             .insert(named.local.sym.clone(), ref_props.clone());
                     }
+                    if source_metadata.vue_helper_exports.contains(&imported) {
+                        metadata
+                            .vue_helper_candidates
+                            .insert(named.local.sym.clone());
+                    }
                 }
                 ImportSpecifier::Default(default) => {
                     if let Some(component) = source_metadata.component_exports.get("default") {
@@ -422,6 +433,11 @@ fn collect_imported_vue_metadata(
                             .composable_ref_props
                             .insert(default.local.sym.clone(), ref_props.clone());
                     }
+                    if source_metadata.vue_helper_exports.contains("default") {
+                        metadata
+                            .vue_helper_candidates
+                            .insert(default.local.sym.clone());
+                    }
                 }
                 ImportSpecifier::Namespace(_) => {}
             }
@@ -429,6 +445,156 @@ fn collect_imported_vue_metadata(
     }
 
     Ok(metadata)
+}
+
+fn vue_helper_exports_from_source(source: &str) -> HashSet<String> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let Ok(module) = parse_module(source, cm) else {
+        return HashSet::new();
+    };
+    if !is_likely_vue_runtime_module(&module) {
+        return HashSet::new();
+    }
+    exported_binding_names(&module)
+}
+
+fn is_likely_vue_runtime_module(module: &Module) -> bool {
+    let mut detector = VueRuntimeMarkerDetector { found: false };
+    module.visit_with(&mut detector);
+    detector.found
+}
+
+struct VueRuntimeMarkerDetector {
+    found: bool,
+}
+
+impl Visit for VueRuntimeMarkerDetector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if is_vue_runtime_marker_name(ident.sym.as_ref()) {
+            self.found = true;
+        }
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        match &member.prop {
+            MemberProp::Ident(ident) if is_vue_runtime_marker_name(ident.sym.as_ref()) => {
+                self.found = true;
+            }
+            MemberProp::Computed(computed)
+                if string_lit_expr_is_vue_runtime_marker(computed.expr.as_ref()) =>
+            {
+                self.found = true;
+            }
+            _ => {}
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_lit(&mut self, lit: &Lit) {
+        if lit_is_vue_runtime_marker(lit) {
+            self.found = true;
+        }
+    }
+}
+
+fn lit_is_vue_runtime_marker(lit: &Lit) -> bool {
+    let Lit::Str(str) = lit else {
+        return false;
+    };
+    is_vue_runtime_marker_name(&wtf8_to_string(&str.value))
+}
+
+fn string_lit_expr_is_vue_runtime_marker(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(lit) if lit_is_vue_runtime_marker(lit))
+}
+
+fn is_vue_runtime_marker_name(name: &str) -> bool {
+    matches!(
+        name,
+        "__v_isVNode"
+            | "__v_isRef"
+            | "__vccOpts"
+            | "shapeFlag"
+            | "patchFlag"
+            | "dynamicChildren"
+            | "slotScopeIds"
+            | "v-fgt"
+            | "_vte"
+    )
+}
+
+fn exported_binding_names(module: &Module) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Fn(function) => {
+                    names.insert(function.ident.sym.to_string());
+                }
+                Decl::Class(class) => {
+                    names.insert(class.ident.sym.to_string());
+                }
+                Decl::Var(var) => {
+                    for decl in &var.decls {
+                        collect_exported_pat_names(&decl.name, &mut names);
+                    }
+                }
+                _ => {}
+            },
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_)) => {
+                names.insert("default".to_string());
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(_)) => {
+                names.insert("default".to_string());
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
+                for specifier in &export.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let exported = named
+                        .exported
+                        .as_ref()
+                        .map(module_export_name)
+                        .unwrap_or_else(|| module_export_name(&named.orig));
+                    names.insert(exported);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_exported_pat_names(pat: &Pat, names: &mut HashSet<String>) {
+    match pat {
+        Pat::Ident(binding) => {
+            names.insert(binding.id.sym.to_string());
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_exported_pat_names(elem, names);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_exported_pat_names(key_value.value.as_ref(), names);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        names.insert(assign.key.sym.to_string());
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        collect_exported_pat_names(rest.arg.as_ref(), names);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_exported_pat_names(rest.arg.as_ref(), names),
+        Pat::Assign(assign) => collect_exported_pat_names(assign.left.as_ref(), names),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
 }
 
 fn component_exports_from_source(source: &str) -> Result<HashMap<String, String>> {
@@ -2077,6 +2243,64 @@ export default _sfc_main;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Panel :title=\"title\">\n    <template v-slot:default>\n      <span>{{ message }}</span>\n    </template>\n  </Panel>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_split_runtime_chunk_helper_aliases() {
+        let input = r#"
+import { ob, eb } from "./chunk-block.js";
+import { Q, Je, gs } from "./chunk-vnode.js";
+const SYMBOL_V_FGT = Symbol.for("v-fgt");
+const _sfc_main = {
+  __name: "GreetingCard",
+  props: { msg: String },
+  setup(props) {
+    return (_ctx, _cache) => {
+      ob();
+      return eb(SYMBOL_V_FGT, null, [
+        Q("h1", null, gs(props.msg), 1),
+        _cache[0] || (_cache[0] = Je("Ready"))
+      ], 64);
+    };
+  }
+};
+"#;
+        let block_chunk = r#"
+import { Q } from "./chunk-vnode.js";
+let currentBlock = null;
+const blockStack = [];
+export function ob(e = false) {
+  blockStack.push(currentBlock = e ? null : []);
+}
+function closeBlock(vnode) {
+  vnode.dynamicChildren = currentBlock;
+  return vnode;
+}
+export function eb(e, t, s, n, r, i) {
+  return closeBlock(Q(e, t, s, n, r, i, true));
+}
+"#;
+        let vnode_chunk = r#"
+const Text = Symbol("_text");
+export function Q(type, props = null, children = null, patchFlag = 0) {
+  return { __v_isVNode: true, type, props, children, patchFlag };
+}
+export function Je(text = " ", flag = 0) {
+  return Q(Text, null, text, flag);
+}
+export const gs = (value) => value == null ? "" : String(value);
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| match source {
+                "./chunk-block.js" => Some(block_chunk.to_string()),
+                "./chunk-vnode.js" => Some(vnode_chunk.to_string()),
+                _ => None,
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <h1>{{ msg }}</h1>\n  Ready\n</template>\n"
         );
     }
 
