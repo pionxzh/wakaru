@@ -1,0 +1,56 @@
+[
+  {
+    "name": "vite5-template-vue",
+    "enabled": true,
+    "tier": "smoke",
+    "bundler": "vite",
+    "repo": "https://github.com/vitejs/vite.git",
+    "ref": "v5.4.0",
+    "subdir": "packages/create-vite/template-vue",
+    "sparse": ["packages/create-vite/template-vue"],
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npm", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Official Vite Vue starter pinned to Vite 5."
+  },
+  {
+    "name": "vite6-template-vue",
+    "enabled": true,
+    "tier": "smoke",
+    "bundler": "vite",
+    "repo": "https://github.com/vitejs/vite.git",
+    "ref": "v6.3.5",
+    "subdir": "packages/create-vite/template-vue",
+    "sparse": ["packages/create-vite/template-vue"],
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npm", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Official Vite Vue starter pinned to Vite 6."
+  },
+  {
+    "name": "vite6-template-vue-ts",
+    "enabled": true,
+    "tier": "smoke",
+    "bundler": "vite",
+    "repo": "https://github.com/vitejs/vite.git",
+    "ref": "v6.3.5",
+    "subdir": "packages/create-vite/template-vue-ts",
+    "sparse": ["packages/create-vite/template-vue-ts"],
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npm", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Official Vite Vue TypeScript starter pinned to Vite 6."
+  },
+  {
+    "name": "vitepress-docs",
+    "enabled": false,
+    "tier": "large",
+    "bundler": "vitepress",
+    "repo": "https://github.com/vuejs/vitepress.git",
+    "ref": "v1.6.4",
+    "install": ["corepack", "pnpm", "install", "--frozen-lockfile"],
+    "build": ["corepack", "pnpm", "run", "docs:build"],
+    "inputs": ["docs/.vitepress/dist"],
+    "notes": "Large public docs site. Run explicitly with --case vitepress-docs."
+  }
+]
