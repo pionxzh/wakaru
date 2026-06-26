@@ -39,9 +39,9 @@ mod usage;
 use components::VueComponentScriptImport;
 use context::{
     collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
-    component_name_from_init, infer_render_helpers, render_context_param,
-    render_local_declaration_with_aliases, setup_context_param, setup_emit_param,
-    setup_props_param, stmt_ident_refs,
+    component_name_from_init, component_name_from_options, infer_render_helpers,
+    render_context_param, render_local_declaration_with_aliases, setup_context_param,
+    setup_emit_param, setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -159,6 +159,11 @@ pub(super) enum RenderSource<'a> {
     },
 }
 
+pub struct RecoveredVueSfc {
+    pub name: Option<String>,
+    pub sfc: VueSfc,
+}
+
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
     Ok(recover_vue_sfc_from_js(source)?.map(|sfc| sfc.print()))
 }
@@ -255,6 +260,10 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
     recover_vue_sfc_from_js_inner(source, None, None)
 }
 
+pub fn recover_vue_sfcs_from_js(source: &str) -> Result<Vec<RecoveredVueSfc>> {
+    recover_vue_sfcs_from_js_inner(source, None, None)
+}
+
 pub fn recover_vue_sfc_from_js_with_import_resolver<F>(
     source: &str,
     mut resolve_import: F,
@@ -263,6 +272,16 @@ where
     F: FnMut(&str) -> Option<String>,
 {
     recover_vue_sfc_from_js_inner(source, Some(&mut resolve_import), None)
+}
+
+pub fn recover_vue_sfcs_from_js_with_import_resolver<F>(
+    source: &str,
+    mut resolve_import: F,
+) -> Result<Vec<RecoveredVueSfc>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    recover_vue_sfcs_from_js_inner(source, Some(&mut resolve_import), None)
 }
 
 pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
@@ -288,6 +307,19 @@ fn recover_vue_sfc_from_js_inner(
     import_resolver: Option<&mut dyn FnMut(&str) -> Option<String>>,
     preferred_component_name: Option<&str>,
 ) -> Result<Option<VueSfc>> {
+    Ok(
+        recover_vue_sfcs_from_js_inner(source, import_resolver, preferred_component_name)?
+            .into_iter()
+            .next()
+            .map(|recovered| recovered.sfc),
+    )
+}
+
+fn recover_vue_sfcs_from_js_inner(
+    source: &str,
+    import_resolver: Option<&mut dyn FnMut(&str) -> Option<String>>,
+    preferred_component_name: Option<&str>,
+) -> Result<Vec<RecoveredVueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
     let imported_metadata = import_resolver
@@ -304,9 +336,25 @@ fn recover_vue_sfc_from_js_inner(
     );
     ctx.vue_helper_candidates
         .extend(imported_metadata.vue_helper_candidates);
-    let Some(render) = find_render_source(&module, preferred_component_name) else {
-        return Ok(None);
-    };
+    let renders = find_render_sources(&module, preferred_component_name);
+    let mut recovered = Vec::new();
+    for render in renders {
+        if let Some(sfc) = recover_vue_sfc_from_render(&module, &ctx, render)? {
+            recovered.push(RecoveredVueSfc {
+                name: component_name_from_render(render),
+                sfc,
+            });
+        }
+    }
+    Ok(recovered)
+}
+
+fn recover_vue_sfc_from_render(
+    module: &Module,
+    base_ctx: &VueRecoveryContext,
+    render: RenderSource<'_>,
+) -> Result<Option<VueSfc>> {
+    let mut ctx = base_ctx.clone();
     if let Some(options) = render_component_options(render) {
         ctx.setup_component_options = Some(options.clone());
     }
@@ -317,7 +365,7 @@ fn recover_vue_sfc_from_js_inner(
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
-    collect_script_local_context(&module, &mut ctx)?;
+    collect_script_local_context(module, &mut ctx)?;
     if !render_uses_vue_helper(render, &ctx) {
         return Ok(None);
     }
@@ -771,17 +819,53 @@ fn find_render_source<'a>(
     module: &'a Module,
     preferred_component_name: Option<&str>,
 ) -> Option<RenderSource<'a>> {
+    find_render_sources(module, preferred_component_name)
+        .into_iter()
+        .next()
+}
+
+fn find_render_sources<'a>(
+    module: &'a Module,
+    preferred_component_name: Option<&str>,
+) -> Vec<RenderSource<'a>> {
     if let Some(preferred_component_name) = preferred_component_name {
         if let Some(render) =
             setup_render_source_for_component_name(module, preferred_component_name)
         {
-            return Some(render);
+            return vec![render];
         }
+        return find_render_fn(module)
+            .map(RenderSource::Function)
+            .into_iter()
+            .collect();
     }
 
-    find_render_fn(module)
-        .map(RenderSource::Function)
-        .or_else(|| find_setup_render_source(module))
+    let mut sources = Vec::new();
+    if let Some(render) = find_render_fn(module).map(RenderSource::Function) {
+        push_render_source(&mut sources, render);
+    }
+    for render in setup_render_sources(module) {
+        push_render_source(&mut sources, render);
+    }
+    sources
+}
+
+fn push_render_source<'a>(sources: &mut Vec<RenderSource<'a>>, render: RenderSource<'a>) {
+    let key = render_source_key(render);
+    if sources
+        .iter()
+        .any(|existing| render_source_key(*existing) == key)
+    {
+        return;
+    }
+    sources.push(render);
+}
+
+fn render_source_key(render: RenderSource<'_>) -> usize {
+    match render {
+        RenderSource::Function(function) => function as *const FnDecl as usize,
+        RenderSource::SetupArrow { render, .. } => render as *const ArrowExpr as usize,
+    }
 }
 
 fn render_component_options(render: RenderSource<'_>) -> Option<&ObjectLit> {
@@ -791,6 +875,10 @@ fn render_component_options(render: RenderSource<'_>) -> Option<&ObjectLit> {
         } => component_options,
         RenderSource::Function(_) => None,
     }
+}
+
+fn component_name_from_render(render: RenderSource<'_>) -> Option<String> {
+    render_component_options(render).and_then(component_name_from_options)
 }
 
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
@@ -868,14 +956,15 @@ fn setup_render_source_from_component_expr<'a>(
     setup_render_source_from_expr(expr)
 }
 
-fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
+fn setup_render_sources(module: &Module) -> Vec<RenderSource<'_>> {
+    let mut sources = Vec::new();
     if let Some(render) = direct_exported_setup_render_source(module) {
-        return Some(render);
+        push_render_source(&mut sources, render);
     }
 
     for local in preferred_setup_export_names(module) {
         if let Some(render) = setup_render_source_from_binding(module, &local) {
-            return Some(render);
+            push_render_source(&mut sources, render);
         }
     }
 
@@ -883,7 +972,7 @@ fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
                 if let Some(render) = setup_render_source_from_expr(export.expr.as_ref()) {
-                    return Some(render);
+                    push_render_source(&mut sources, render);
                 }
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
@@ -893,7 +982,7 @@ fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
                             continue;
                         };
                         if let Some(render) = setup_render_source_from_expr(init) {
-                            return Some(render);
+                            push_render_source(&mut sources, render);
                         }
                     }
                 }
@@ -904,14 +993,14 @@ fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
                         continue;
                     };
                     if let Some(render) = setup_render_source_from_expr(init) {
-                        return Some(render);
+                        push_render_source(&mut sources, render);
                     }
                 }
             }
             _ => {}
         }
     }
-    None
+    sources
 }
 
 fn direct_exported_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
@@ -2301,6 +2390,45 @@ export const gs = (value) => value == null ? "" : String(value);
             .unwrap()
             .unwrap(),
             "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <h1>{{ msg }}</h1>\n  Ready\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_multiple_setup_components_from_one_scope_hoisted_module() {
+        let input = r#"
+import { openBlock, createElementBlock, createVNode } from "vue";
+const Child = {
+  __name: "Child",
+  props: { msg: String },
+  setup(props) {
+    return (_ctx, _cache) => (openBlock(), createElementBlock("span", null, props.msg, 1));
+  }
+};
+const App = {
+  __name: "App",
+  setup() {
+    return (_ctx, _cache) => (openBlock(), createElementBlock("main", null, [
+      createVNode(Child, { msg: "Hi" })
+    ]));
+  }
+};
+"#;
+
+        let recovered = recover_vue_sfcs_from_js(input).unwrap();
+        assert_eq!(
+            recovered
+                .iter()
+                .map(|sfc| sfc.name.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("Child"), Some("App")]
+        );
+        assert_eq!(
+            recovered[0].sfc.print(),
+            "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <span>{{ msg }}</span>\n</template>\n"
+        );
+        assert_eq!(
+            recovered[1].sfc.print(),
+            "<template>\n  <main>\n    <Child msg=\"Hi\" />\n  </main>\n</template>\n"
         );
     }
 
@@ -5550,6 +5678,52 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script setup>\nimport { ref } from \"vue\";\n\nconst ready = ref(false);\n</script>\n\n<template>\n  <button @click=\"ready = true\">Go</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_cached_event_update_without_importing_cache_param() {
+        let input = r#"
+import { n } from "./cache.js";
+import { defineComponent, ref, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup() {
+    const count = ref(0);
+    return (_ctx, n) => (
+      openBlock(), createElementBlock("button", {
+        onClick: n[0] || (n[0] = (event) => count.value++)
+      }, toDisplayString(count.value), 40, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst count = ref(0);\n</script>\n\n<template>\n  <button @click=\"count++\">{{ count }}</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn setup_ref_prevents_same_name_module_local_selection() {
+        let input = r#"
+import { defineComponent, ref, toDisplayString, openBlock, createElementBlock } from "vue";
+export const count = document.createElement("link").relList;
+export default defineComponent({
+  setup() {
+    const count = ref(0);
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("button", {
+        onClick: _cache[0] || (_cache[0] = (event) => count.value++)
+      }, toDisplayString(count.value), 40, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { ref } from \"vue\";\n\nconst count = ref(0);\n</script>\n\n<template>\n  <button @click=\"count++\">{{ count }}</button>\n</template>\n"
         );
     }
 

@@ -194,6 +194,16 @@ fn setup_scope_bindings(
     }
     bindings.extend(ctx.setup_emit_aliases.iter().cloned());
     bindings.extend(ctx.slot_bindings.iter().cloned());
+    bindings.extend(
+        ctx.setup_ref_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
+    bindings.extend(
+        ctx.setup_script_bindings
+            .iter()
+            .map(|binding| binding.binding.clone()),
+    );
     bindings
 }
 

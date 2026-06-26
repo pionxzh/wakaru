@@ -841,6 +841,7 @@ fn handler_expr_name(
         Expr::Assign(assign) if assign.op == AssignOp::Assign => {
             clean_event_handler_expr(expr, ctx, event_param).map(Some)
         }
+        Expr::Update(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         Expr::Call(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         _ => Ok(None),
     }

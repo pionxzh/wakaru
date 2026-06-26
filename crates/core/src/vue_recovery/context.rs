@@ -906,7 +906,7 @@ pub(super) fn component_name_from_init(
     }
 }
 
-fn component_name_from_options(object: &ObjectLit) -> Option<String> {
+pub(super) fn component_name_from_options(object: &ObjectLit) -> Option<String> {
     object.props.iter().find_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
             return None;

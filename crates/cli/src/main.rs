@@ -12,7 +12,7 @@ use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
     is_likely_vue_sfc_source, normalize, parse_sourcemap,
-    recover_vue_sfc_source_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
+    recover_vue_sfcs_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
     unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
     RewriteLevel, RuleTraceOptions, UnpackInput,
 };
@@ -341,21 +341,21 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_par_iter()
             .flat_map(|(filename, code)| {
                 let mut artifacts = Vec::new();
-                let recovered_vue_sfc = if cli.vue_sfc {
+                let recovered_vue_sfcs = if cli.vue_sfc {
                     let module_sources = module_sources
                         .as_ref()
                         .expect("vue sfc module source map is initialized");
-                    recover_vue_sfc_source_from_js_with_import_resolver(&code, |specifier| {
+                    recover_vue_sfcs_from_js_with_import_resolver(&code, |specifier| {
                         resolve_unpack_import_source(module_sources, &filename, specifier)
                     })
                     .ok()
-                    .flatten()
+                    .unwrap_or_default()
                 } else {
-                    None
+                    Vec::new()
                 };
+                let recovered_vue_sfc = !recovered_vue_sfcs.is_empty();
                 let likely_vue_sfc = cli.vue_sfc
-                    && (recovered_vue_sfc.is_some()
-                        || is_likely_vue_sfc_source(&code).unwrap_or(false));
+                    && (recovered_vue_sfc || is_likely_vue_sfc_source(&code).unwrap_or(false));
                 let formatted = format_cli_output(code.clone(), &filename, js_formatter);
                 artifacts.push(CliOutputArtifact {
                     filename: if cli.vue_sfc {
@@ -366,7 +366,7 @@ fn run_default(cli: Cli) -> Result<()> {
                     code: formatted,
                     kind: JsonModuleKind::JavaScript,
                     status: if cli.vue_sfc {
-                        vue_sfc_js_artifact_status(recovered_vue_sfc.is_some(), likely_vue_sfc)
+                        vue_sfc_js_artifact_status(recovered_vue_sfc, likely_vue_sfc)
                     } else {
                         JsonModuleStatus::Decompiled
                     },
@@ -374,10 +374,15 @@ fn run_default(cli: Cli) -> Result<()> {
                     source_map_filename: Some(filename.clone()),
                 });
 
-                if let Some(sfc) = recovered_vue_sfc {
+                let multiple_vue_sfcs = recovered_vue_sfcs.len() > 1;
+                for recovered in recovered_vue_sfcs {
                     artifacts.push(CliOutputArtifact {
-                        filename: vue_output_filename(&filename),
-                        code: sfc,
+                        filename: vue_output_filename_for_component(
+                            &filename,
+                            recovered.name.as_deref(),
+                            multiple_vue_sfcs,
+                        ),
+                        code: recovered.sfc.print(),
                         kind: JsonModuleKind::VueSfc,
                         status: JsonModuleStatus::RecoveredVueSfc,
                         source_filename: Some(filename.clone()),
@@ -1047,6 +1052,41 @@ fn vue_output_filename(filename: &str) -> String {
         return path.with_extension("vue").to_string_lossy().to_string();
     }
     format!("{filename}.vue")
+}
+
+fn vue_output_filename_for_component(
+    filename: &str,
+    component_name: Option<&str>,
+    disambiguate: bool,
+) -> String {
+    let vue_filename = vue_output_filename(filename);
+    if !disambiguate {
+        return vue_filename;
+    }
+    let Some(component_name) = component_name.and_then(safe_vue_component_filename_part) else {
+        return vue_filename;
+    };
+    let (dir, file) = vue_filename
+        .rfind(['/', '\\'])
+        .map(|index| vue_filename.split_at(index + 1))
+        .unwrap_or(("", vue_filename.as_str()));
+    let stem = file.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file);
+    let stem = if stem.is_empty() { "component" } else { stem };
+    format!("{dir}{stem}.{component_name}.vue")
+}
+
+fn safe_vue_component_filename_part(name: &str) -> Option<String> {
+    let safe = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    (!safe.is_empty() && safe.chars().any(|ch| ch != '_')).then_some(safe)
 }
 
 fn vue_js_output_filename(filename: &str) -> String {
