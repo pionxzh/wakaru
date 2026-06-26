@@ -112,7 +112,7 @@ fn render_value_member_refs(render: RenderSource<'_>, ctx: &VueRecoveryContext) 
         refs: HashSet::new(),
     };
     match render {
-        RenderSource::Function(function) => function.function.visit_with(&mut collector),
+        RenderSource::Function { render, .. } => render.function.visit_with(&mut collector),
         RenderSource::SetupArrow {
             render,
             setup_stmts,
