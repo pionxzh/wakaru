@@ -822,6 +822,10 @@ fn collect_var_decl_context(
             ctx.object_bindings
                 .insert(binding.id.sym.clone(), object.clone());
         }
+        if is_vue_fragment_symbol_init(init) {
+            ctx.vue_helpers
+                .insert(binding.id.sym.clone(), VueHelper::Fragment);
+        }
         if let Some(ref_props) = provider_ref_props_from_init(init, ctx) {
             ctx.provider_ref_bindings
                 .insert(binding.id.sym.clone(), ref_props);
@@ -838,6 +842,35 @@ fn collect_var_decl_context(
             }
         }
     }
+}
+
+fn is_vue_fragment_symbol_init(expr: &Expr) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(object) = member.obj.as_ref() else {
+        return false;
+    };
+    if object.sym.as_ref() != "Symbol" {
+        return false;
+    }
+    let MemberProp::Ident(prop) = &member.prop else {
+        return false;
+    };
+    if prop.sym.as_ref() != "for" {
+        return false;
+    }
+    call.args
+        .first()
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
+        .as_deref()
+        == Some("v-fgt")
 }
 
 fn component_options_from_init(expr: &Expr) -> Option<&ObjectLit> {
@@ -925,8 +958,10 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
 
     let mut inference = HelperInference {
         candidates: &ctx.vue_helper_candidates,
+        known_helpers: &ctx.vue_helpers,
         inferred: HashMap::new(),
         prop_value_depth: 0,
+        vnode_child_depth: 0,
     };
     match render {
         RenderSource::Function(render) => {
@@ -944,8 +979,10 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
 
 struct HelperInference<'a> {
     candidates: &'a std::collections::HashSet<Atom>,
+    known_helpers: &'a HashMap<Atom, VueHelper>,
     inferred: HashMap<Atom, VueHelper>,
     prop_value_depth: usize,
+    vnode_child_depth: usize,
 }
 
 impl Visit for HelperInference<'_> {
@@ -968,6 +1005,9 @@ impl Visit for HelperInference<'_> {
         if self.prop_value_depth > 0 {
             self.infer_render_prop_unref_call(call);
         }
+        if self.vnode_child_depth > 0 {
+            self.infer_vnode_child_helper_call(call);
+        }
 
         if let Callee::Expr(callee) = &call.callee {
             self.infer_unref_expr(callee.as_ref());
@@ -989,7 +1029,7 @@ impl Visit for HelperInference<'_> {
         }
 
         if let Some(VueHelper::CreateElementBlock | VueHelper::CreateElementVNode) =
-            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym))
+            self.call_helper(call)
         {
             if let Some(fragment) = call
                 .args
@@ -1004,23 +1044,20 @@ impl Visit for HelperInference<'_> {
         }
 
         if matches!(
-            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
+            self.call_helper(call),
             Some(VueHelper::CreateBlock | VueHelper::CreateVNode)
         ) {
             self.infer_builtin_component_arg(call);
         }
 
-        if matches!(
-            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
-            Some(VueHelper::RenderList)
-        ) {
+        if matches!(self.call_helper(call), Some(VueHelper::RenderList)) {
             if let Some(source) = call.args.first() {
                 self.infer_render_list_source_unref(source.expr.as_ref());
             }
         }
 
         if matches!(
-            call_callee_ident(call).and_then(|callee| self.inferred.get(&callee.sym)),
+            self.call_helper(call),
             Some(
                 VueHelper::CreateBlock
                     | VueHelper::CreateElementBlock
@@ -1029,6 +1066,7 @@ impl Visit for HelperInference<'_> {
             )
         ) {
             self.infer_render_prop_unrefs(call);
+            self.infer_render_child_helpers(call);
         }
 
         call.visit_children_with(self);
@@ -1036,6 +1074,15 @@ impl Visit for HelperInference<'_> {
 }
 
 impl HelperInference<'_> {
+    fn call_helper(&self, call: &CallExpr) -> Option<VueHelper> {
+        call_callee_ident(call).and_then(|callee| {
+            self.inferred
+                .get(&callee.sym)
+                .or_else(|| self.known_helpers.get(&callee.sym))
+                .cloned()
+        })
+    }
+
     fn fragment_block_call<'a>(
         &self,
         call: &'a CallExpr,
@@ -1054,10 +1101,16 @@ impl HelperInference<'_> {
             .args
             .first()
             .and_then(|arg| ident_expr(arg.expr.as_ref()))?;
-        if !self.candidates.contains(&fragment.sym) {
+        if !self.candidates.contains(&fragment.sym) && !self.is_known_fragment(&fragment.sym) {
             return None;
         }
         Some((callee, fragment))
+    }
+
+    fn is_known_fragment(&self, binding: &Atom) -> bool {
+        self.known_helpers
+            .get(binding)
+            .is_some_and(|helper| helper == &VueHelper::Fragment)
     }
 
     fn infer_unref_expr(&mut self, expr: &Expr) {
@@ -1138,6 +1191,30 @@ impl HelperInference<'_> {
             return;
         }
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
+    }
+
+    fn infer_render_child_helpers(&mut self, call: &CallExpr) {
+        let Some(children) = call.args.get(2) else {
+            return;
+        };
+        self.vnode_child_depth += 1;
+        children.expr.visit_with(self);
+        self.vnode_child_depth -= 1;
+    }
+
+    fn infer_vnode_child_helper_call(&mut self, call: &CallExpr) {
+        if !is_static_text_vnode_call(&call.args) {
+            return;
+        }
+        let Some(callee) = call_callee_ident(call) else {
+            return;
+        };
+        if !self.candidates.contains(&callee.sym) {
+            return;
+        }
+        self.inferred
+            .entry(callee.sym.clone())
+            .or_insert(VueHelper::CreateTextVNode);
     }
 
     fn infer_render_list_source_unref(&mut self, expr: &Expr) {
@@ -1398,6 +1475,14 @@ fn is_create_text_vnode_call(args: &[ExprOrSpread]) -> bool {
         args.get(1).map(|arg| arg.expr.as_ref()),
         Some(Expr::Lit(Lit::Num(_)))
     )
+}
+
+fn is_static_text_vnode_call(args: &[ExprOrSpread]) -> bool {
+    args.len() == 1
+        && matches!(
+            args.first().map(|arg| arg.expr.as_ref()),
+            Some(Expr::Lit(Lit::Str(_)))
+        )
 }
 
 fn is_element_vnode_call(args: &[ExprOrSpread]) -> bool {
