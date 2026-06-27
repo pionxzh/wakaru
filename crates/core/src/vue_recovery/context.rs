@@ -934,6 +934,9 @@ fn collect_var_decl_context(
             ctx.vue_helpers
                 .insert(binding.id.sym.clone(), VueHelper::Fragment);
         }
+        if is_likely_vue_runtime_require_namespace(&binding.id.sym, init) {
+            ctx.vue_namespaces.insert(binding.id.sym.clone());
+        }
         if let Some(ref_props) = provider_ref_props_from_init(init, ctx) {
             ctx.provider_ref_bindings
                 .insert(binding.id.sym.clone(), ref_props);
@@ -979,6 +982,32 @@ fn is_vue_fragment_symbol_init(expr: &Expr) -> bool {
         .and_then(|arg| string_lit(arg.expr.as_ref()))
         .as_deref()
         == Some("v-fgt")
+}
+
+fn is_likely_vue_runtime_require_namespace(binding: &Atom, expr: &Expr) -> bool {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    if !call_callee_ident(call)
+        .is_some_and(|callee| matches!(callee.sym.as_ref(), "require" | "__webpack_require__"))
+    {
+        return false;
+    }
+
+    if let Some(source) = call
+        .args
+        .first()
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
+    {
+        return source == "vue"
+            || source.contains("@vue/runtime")
+            || source.contains("vue/dist")
+            || source.contains("vue.runtime");
+    }
+
+    let binding = binding.to_string().to_ascii_lowercase();
+    (binding.contains("vue") && binding.contains("runtime"))
+        || binding.contains("vue__webpack_imported_module")
 }
 
 pub(super) fn component_options_from_init(expr: &Expr) -> Option<&ObjectLit> {
