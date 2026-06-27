@@ -5915,6 +5915,25 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_vnode_lifecycle_event_names() {
+        let input = r#"
+import { resolveDynamicComponent, openBlock, createBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createBlock(resolveDynamicComponent(_ctx.component), {
+    onVnodeMounted: track,
+    onVnodeUpdated: track,
+    onVnodeUnmounted: track
+  }, null, 40, ["onVnodeMounted", "onVnodeUpdated", "onVnodeUnmounted"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <component :is=\"component\" @vue:mounted=\"track\" @vue:updated=\"track\" @vue:unmounted=\"track\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_template_ref_key_attrs() {
         let input = r#"
 import { openBlock, createElementBlock } from "vue";
