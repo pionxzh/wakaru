@@ -410,6 +410,12 @@ fn collect_array_pat_react_renames(
             let setter_name = format!("set{}", pascal_case_first(&optimistic_name));
             rename_array_elem_if_short(array_pat, 1, &setter_name, renames, used_names);
         }
+        "useActionState" => {
+            // `const [state, formAction, isPending] = useActionState(action, initialState)`
+            rename_array_elem_if_short(array_pat, 0, "state", renames, used_names);
+            rename_array_elem_if_short(array_pat, 1, "formAction", renames, used_names);
+            rename_array_elem_if_short(array_pat, 2, "isPending", renames, used_names);
+        }
         _ => {}
     }
 }
@@ -475,6 +481,10 @@ fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
         "useReducer" => !args.is_empty() && args.len() <= 3,
         "useTransition" => args.is_empty(),
         "useOptimistic" => !args.is_empty() && args.len() <= 2,
+        // useActionState(action, initialState, permalink?) - initialState is
+        // required, so demand at least two args to avoid matching unrelated
+        // one-argument calls that happen to share the name.
+        "useActionState" => args.len() >= 2 && args.len() <= 3,
         "forwardRef" => args.len() == 1,
         _ => false,
     };

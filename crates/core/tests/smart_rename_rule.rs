@@ -361,6 +361,24 @@ const [optimisticCount, setOptimisticCount] = useOptimistic(count);
 }
 
 #[test]
+fn react_rename_useactionstate() {
+    let input = r#"
+const [e, f, g] = useActionState(submitForm, null);
+const [h, i, j] = o.useActionState(action, initialState);
+const [optimisticCount, k, l] = useActionState(reducer, count);
+const [m, n, p] = useActionState(action);
+"#;
+    let expected = r#"
+const [state, formAction, isPending] = useActionState(submitForm, null);
+const [state_1, formAction_1, isPending_1] = o.useActionState(action, initialState);
+const [optimisticCount, formAction_2, isPending_2] = useActionState(reducer, count);
+const [m, n, p] = useActionState(action);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn react_rename_useref() {
     let input = r#"
 const d = useRef();
