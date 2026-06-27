@@ -138,6 +138,12 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
             recover_logical_and_node(bin.left.as_ref(), bin.right.as_ref(), ctx)
         }
+        Expr::Bin(bin) if bin.op == BinaryOp::Add => {
+            if let Some(node) = recover_text_concat(expr, ctx)? {
+                return Ok(Some(node));
+            }
+            Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))))
+        }
         Expr::Assign(assign) if matches!(assign.op, AssignOp::Assign | AssignOp::OrAssign) => {
             recover_cached_node(assign.right.as_ref(), ctx)
         }
