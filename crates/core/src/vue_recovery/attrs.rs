@@ -318,10 +318,21 @@ fn event_name_from_prop(name: &str, owner: AttrOwner) -> Option<String> {
         .strip_prefix("on")
         .filter(|s| !s.is_empty())
         .map(lower_first)?;
+    if let Some(event_name) = vnode_lifecycle_event_name(&event_name) {
+        return Some(event_name);
+    }
     Some(match owner {
         AttrOwner::Native => event_name,
         AttrOwner::Component => normalize_component_event_name(&event_name),
     })
+}
+
+fn vnode_lifecycle_event_name(event_name: &str) -> Option<String> {
+    let hook_name = event_name.strip_prefix("vnode")?;
+    if hook_name.is_empty() {
+        return None;
+    }
+    Some(format!("vue:{}", kebab_case(&lower_first(hook_name))))
 }
 
 fn normalize_component_event_name(event_name: &str) -> String {
