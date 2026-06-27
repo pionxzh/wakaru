@@ -85,6 +85,8 @@ struct VueRecoveryContext {
     setup_emit_aliases: HashSet<Atom>,
     slot_bindings: HashSet<Atom>,
     render_child_list_bindings: HashMap<Atom, VueRenderChildListBinding>,
+    render_slot_bindings: HashMap<Atom, VueRenderSlotBinding>,
+    slot_result_normalizers: HashSet<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -144,6 +146,12 @@ struct VueRenderChildListBinding {
 #[derive(Clone, Copy)]
 enum VueRenderChildListSource {
     SlotPartitionChildren,
+}
+
+#[derive(Clone)]
+struct VueRenderSlotBinding {
+    slot_name: String,
+    props: Option<Box<Expr>>,
 }
 
 #[derive(Clone, Copy)]
@@ -7095,6 +7103,99 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <div>\n    <slot />\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_direct_slot_call_with_props() {
+        let input = r#"
+import { openBlock } from "vue";
+export function render(_ctx, _cache) {
+  openBlock();
+  return _ctx.$slots.default({
+    item: _ctx.item
+  });
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <slot :item=\"item\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_render_local_slot_call_alias() {
+        let input = r#"
+import { openBlock, createElementBlock, normalizeSlotValue } from "vue";
+export function render(_ctx, _cache) {
+  openBlock();
+  const slot = _ctx.$slots.default && normalizeSlotValue(_ctx.$slots.default({
+    item: _ctx.item
+  }));
+  if (_ctx.custom) {
+    return slot;
+  }
+  return createElementBlock("span", null, "Fallback");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <slot v-if=\"custom\" :item=\"item\" />\n  <span v-else>Fallback</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_render_local_normalized_slot_call_alias() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+function normalizeSlotValue(value) {
+  if (value.length === 1) {
+    return value[0];
+  }
+  return value;
+}
+export function render(_ctx, _cache) {
+  openBlock();
+  const slot = _ctx.$slots.default && normalizeSlotValue(_ctx.$slots.default({
+    item: _ctx.item
+  }));
+  if (_ctx.custom) {
+    return slot;
+  }
+  return createElementBlock("span", null, "Fallback");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <slot v-if=\"custom\" :item=\"item\" />\n  <span v-else>Fallback</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_user_wrapped_slot_call_alias_as_unsupported() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+function transformSlot(value) {
+  return value;
+}
+export function render(_ctx, _cache) {
+  openBlock();
+  const slot = _ctx.$slots.default && transformSlot(_ctx.$slots.default({
+    item: _ctx.item
+  }));
+  if (_ctx.custom) {
+    return slot;
+  }
+  return createElementBlock("span", null, "Fallback");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <template v-if=\"custom\">\n    <!-- wakaru: slot -->\n  </template>\n  <span v-else>Fallback</span>\n</template>\n"
         );
     }
 

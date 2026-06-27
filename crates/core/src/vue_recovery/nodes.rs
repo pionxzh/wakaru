@@ -13,8 +13,8 @@ use super::expressions::{
 };
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
 use super::slots::{
-    recover_component_children as recover_slot_component_children, recover_direct_slot,
-    recover_slot, slot_pat,
+    recover_called_slot, recover_component_children as recover_slot_component_children,
+    recover_direct_slot, recover_slot, recover_slot_binding, slot_pat,
 };
 use super::syntax::{string_lit, wtf8_to_string};
 use super::{RenderSource, VueRecoveryContext, VueRenderChildListSource};
@@ -156,6 +156,9 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         .map(Some),
         Expr::Tpl(tpl) => recover_template_literal(tpl, ctx).map(Some),
         Expr::Call(call) => {
+            if let Some(slot) = recover_called_slot(call, ctx)? {
+                return Ok(Some(slot));
+            }
             let Some(helper) = helper_name(&call.callee, ctx) else {
                 return recover_unsupported_vnode_children(expr, ctx).map(Some);
             };
@@ -195,6 +198,13 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         }
         Expr::Ident(ident) if ctx.render_child_list_bindings.contains_key(&ident.sym) => {
             recover_unsupported_vnode_children(expr, ctx).map(Some)
+        }
+        Expr::Ident(ident) if ctx.render_slot_bindings.contains_key(&ident.sym) => {
+            let binding = ctx
+                .render_slot_bindings
+                .get(&ident.sym)
+                .expect("checked render slot binding");
+            recover_slot_binding(binding, ctx).map(Some)
         }
         Expr::Member(member) => {
             if let Some(slot) = recover_direct_slot(member, ctx)? {
