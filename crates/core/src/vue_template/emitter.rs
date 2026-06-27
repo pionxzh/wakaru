@@ -172,8 +172,22 @@ impl TemplateEmitter {
         }
 
         self.out.push_str(">\n");
-        for child in &element.children {
-            self.emit_node(child, depth + 1);
+        let mut index = 0;
+        while index < element.children.len() {
+            if is_inline_text_child(&element.children[index]) {
+                let start = index;
+                while index < element.children.len()
+                    && is_inline_text_child(&element.children[index])
+                {
+                    index += 1;
+                }
+                self.indent(depth + 1);
+                self.emit_inline_children(&element.children[start..index]);
+                self.out.push('\n');
+                continue;
+            }
+            self.emit_node(&element.children[index], depth + 1);
+            index += 1;
         }
         self.indent(depth);
         self.out.push_str("</");
@@ -492,6 +506,10 @@ fn is_inline_children(children: &[VueNode]) -> bool {
                 VueNode::Text(_) | VueNode::Interpolation(_) | VueNode::RawExpr(_)
             )
         })
+}
+
+fn is_inline_text_child(child: &VueNode) -> bool {
+    matches!(child, VueNode::Text(_) | VueNode::Interpolation(_))
 }
 
 fn escape_text(value: &str) -> String {

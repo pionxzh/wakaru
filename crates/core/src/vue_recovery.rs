@@ -6762,6 +6762,24 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_text_vnode_string_concat_children() {
+        let input = r#"
+import { openBlock, createElementBlock, createElementVNode, createTextVNode, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", null, [
+    createElementVNode("i", { class: "ion-plus-round" }, null, -1),
+    createTextVNode(" " + toDisplayString(_ctx.following ? "Unfollow" : "Follow") + " " + toDisplayString(_ctx.username), 1)
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button>\n    <i class=\"ion-plus-round\" />\n     {{ following ? \"Unfollow\" : \"Follow\" }} {{ username }}\n  </button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_render_list_destructured_param() {
         let input = r#"
 import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
