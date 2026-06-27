@@ -1,7 +1,7 @@
 use anyhow::Result;
 use swc_core::ecma::ast::{
-    ArrowExpr, Expr, ExprOrSpread, MemberExpr, MemberProp, ObjectLit, ObjectPatProp, Pat, Prop,
-    PropOrSpread,
+    ArrowExpr, CallExpr, Callee, Expr, ExprOrSpread, MemberExpr, MemberProp, ObjectLit,
+    ObjectPatProp, Pat, Prop, PropOrSpread,
 };
 
 use super::attrs::recover_attrs;
@@ -13,7 +13,7 @@ use super::nodes::{
     list_item_context, recover_children, recover_for_params,
 };
 use super::syntax::{prop_name, string_lit};
-use super::VueRecoveryContext;
+use super::{VueRecoveryContext, VueRenderSlotBinding};
 use crate::vue_template::{
     VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode, VueTemplateScope,
 };
@@ -38,6 +38,55 @@ pub(super) fn recover_direct_slot(
     Ok(Some(VueNode::Element(
         VueElement::new("slot").with_attrs(attrs),
     )))
+}
+
+pub(super) fn recover_called_slot(
+    call: &CallExpr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueNode>> {
+    slot_call_binding(call, ctx)
+        .map(|binding| recover_slot_binding(&binding, ctx))
+        .transpose()
+}
+
+pub(super) fn recover_slot_binding(
+    binding: &VueRenderSlotBinding,
+    ctx: &VueRecoveryContext,
+) -> Result<VueNode> {
+    let mut attrs = Vec::new();
+    if binding.slot_name != "default" {
+        attrs.push(VueAttr::Static {
+            name: "name".to_string(),
+            value: Some(binding.slot_name.clone()),
+        });
+    }
+    if let Some(props) = &binding.props {
+        attrs.extend(recover_attrs(props.as_ref(), ctx)?);
+    }
+
+    Ok(VueNode::Element(VueElement::new("slot").with_attrs(attrs)))
+}
+
+pub(super) fn slot_call_binding(
+    call: &CallExpr,
+    ctx: &VueRecoveryContext,
+) -> Option<VueRenderSlotBinding> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_slot_object_expr(member.obj.as_ref(), ctx) {
+        return None;
+    }
+    let slot_name = slot_member_name(&member.prop)?;
+    let props = call
+        .args
+        .first()
+        .filter(|arg| arg.spread.is_none())
+        .map(|arg| arg.expr.clone());
+    Some(VueRenderSlotBinding { slot_name, props })
 }
 
 fn is_slot_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {

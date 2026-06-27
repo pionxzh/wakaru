@@ -21,11 +21,13 @@ use super::locals::{
 };
 use super::script_imports::VueScriptImport;
 use super::setup_bindings::component_prop_names;
+use super::slots::slot_call_binding;
 use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
     RenderSource, VueRecoveryContext, VueRenderChildListBinding, VueRenderChildListSource,
+    VueRenderSlotBinding,
 };
 use crate::js_names::is_valid_identifier_name;
 
@@ -133,15 +135,117 @@ pub(super) fn collect_context(
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 collect_var_decl_context(var, &mut ctx, &default_exported_bindings);
             }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
-                if let Decl::Var(var) = &export.decl {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
+                collect_fn_decl_context(function, &mut ctx);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Var(var) => {
                     collect_var_decl_context(var, &mut ctx, &default_exported_bindings);
                 }
-            }
+                Decl::Fn(function) => collect_fn_decl_context(function, &mut ctx),
+                _ => {}
+            },
             _ => {}
         }
     }
     ctx
+}
+
+fn collect_fn_decl_context(function: &FnDecl, ctx: &mut VueRecoveryContext) {
+    if is_slot_result_normalizer_function(&function.function) {
+        ctx.slot_result_normalizers
+            .insert(function.ident.sym.clone());
+    }
+}
+
+fn is_slot_result_normalizer_function(function: &Function) -> bool {
+    let Some(param) = function.params.first() else {
+        return false;
+    };
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(param) = &param.pat else {
+        return false;
+    };
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let [Stmt::If(if_stmt), Stmt::Return(final_return)] = body.stmts.as_slice() else {
+        return false;
+    };
+    if !is_length_one_test(if_stmt.test.as_ref(), &param.id.sym) {
+        return false;
+    }
+    if !if_stmt
+        .cons
+        .as_ref()
+        .is_return_with(|expr| is_member_index_expr(expr, &param.id.sym, 0.0))
+    {
+        return false;
+    }
+    final_return
+        .arg
+        .as_deref()
+        .is_some_and(|expr| is_ident_expr(expr, &param.id.sym))
+}
+
+trait ReturnStmtExt {
+    fn is_return_with(&self, predicate: impl FnOnce(&Expr) -> bool) -> bool;
+}
+
+impl ReturnStmtExt for Stmt {
+    fn is_return_with(&self, predicate: impl FnOnce(&Expr) -> bool) -> bool {
+        match self {
+            Stmt::Return(return_stmt) => return_stmt.arg.as_deref().is_some_and(predicate),
+            Stmt::Block(block) => match block.stmts.as_slice() {
+                [Stmt::Return(return_stmt)] => return_stmt.arg.as_deref().is_some_and(predicate),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+fn is_length_one_test(expr: &Expr, param: &Atom) -> bool {
+    let Expr::Bin(bin) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    if !matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+        return false;
+    }
+    (is_member_prop_expr(bin.left.as_ref(), param, "length")
+        && is_number_lit(bin.right.as_ref(), 1.0))
+        || (is_member_prop_expr(bin.right.as_ref(), param, "length")
+            && is_number_lit(bin.left.as_ref(), 1.0))
+}
+
+fn is_member_prop_expr(expr: &Expr, object: &Atom, prop: &str) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    is_ident_expr(member.obj.as_ref(), object) && member_prop_is_named(&member.prop, prop)
+}
+
+fn is_member_index_expr(expr: &Expr, object: &Atom, index: f64) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    if !is_ident_expr(member.obj.as_ref(), object) {
+        return false;
+    }
+    let MemberProp::Computed(computed) = &member.prop else {
+        return false;
+    };
+    is_number_lit(computed.expr.as_ref(), index)
+}
+
+fn is_ident_expr(expr: &Expr, sym: &Atom) -> bool {
+    matches!(unwrap_paren_expr(expr), Expr::Ident(ident) if &ident.sym == sym)
+}
+
+fn is_number_lit(expr: &Expr, value: f64) -> bool {
+    matches!(unwrap_paren_expr(expr), Expr::Lit(Lit::Num(number)) if number.value == value)
 }
 
 fn default_exported_bindings(module: &Module) -> HashSet<Atom> {
@@ -1586,6 +1690,10 @@ pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueReco
                     {
                         insert_render_child_list_binding(ctx, binding.id.sym.clone(), source);
                     }
+                    if let Some(slot) = render_slot_binding_expr(init, ctx) {
+                        ctx.render_slot_bindings
+                            .insert(binding.id.sym.clone(), slot);
+                    }
                 }
                 Pat::Object(object)
                     if is_slot_partition_expr(init, ctx)
@@ -2685,6 +2793,46 @@ fn slot_partition_child_list_alias_source(
     .then_some(VueRenderChildListSource::SlotPartitionChildren)
 }
 
+fn render_slot_binding_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueRenderSlotBinding> {
+    match unwrap_paren_expr(expr) {
+        Expr::Call(call) => {
+            if let Some(binding) = slot_call_binding(call, ctx) {
+                return Some(binding);
+            }
+            if is_slot_call_wrapper(call, ctx) {
+                return render_slot_binding_expr(call.args[0].expr.as_ref(), ctx);
+            }
+            None
+        }
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd && is_slot_member_expr(&bin.left, ctx) => {
+            render_slot_binding_expr(bin.right.as_ref(), ctx)
+        }
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .and_then(|expr| render_slot_binding_expr(expr.as_ref(), ctx)),
+        Expr::Assign(assign) => render_slot_binding_expr(assign.right.as_ref(), ctx),
+        _ => None,
+    }
+}
+
+fn is_slot_call_wrapper(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
+    call.args.len() == 1
+        && call.args[0].spread.is_none()
+        && (helper_name(&call.callee, ctx).is_some()
+            || call_callee_ident(call).is_some_and(|callee| {
+                ctx.vue_helper_candidates.contains(&callee.sym)
+                    || ctx.slot_result_normalizers.contains(&callee.sym)
+            }))
+}
+
+fn is_slot_member_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    member_prop_name(&member.prop).is_some() && is_slot_source_expr(member.obj.as_ref(), ctx)
+}
+
 fn is_slot_partition_alias(expr: &Expr, slot_partition_bindings: &HashSet<Atom>) -> bool {
     let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
         return false;
@@ -2735,13 +2883,9 @@ fn insert_render_child_list_binding(
 }
 
 fn member_prop_is_named(prop: &MemberProp, name: &str) -> bool {
-    match prop {
-        MemberProp::Ident(ident) => ident.sym.as_ref() == name,
-        MemberProp::Computed(computed) => {
-            string_lit(computed.expr.as_ref()).as_deref() == Some(name)
-        }
-        MemberProp::PrivateName(_) => false,
-    }
+    member_prop_name(prop)
+        .as_ref()
+        .is_some_and(|prop| prop.as_ref() == name)
 }
 
 fn member_prop_name(prop: &MemberProp) -> Option<Atom> {
