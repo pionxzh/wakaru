@@ -730,6 +730,28 @@ mod tests {
     }
 
     #[test]
+    fn prints_text_runs_between_element_children() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("button").with_children(
+                vec![
+                    VueNode::Element(VueElement::new("i")),
+                    VueNode::Text(" ".into()),
+                    VueNode::Interpolation("label".into()),
+                    VueNode::Text(" ".into()),
+                    VueNode::Interpolation("name".into()),
+                    VueNode::Element(VueElement::new("span")),
+                    VueNode::Text(" tail".into()),
+                ],
+            ))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <button>\n    <i />\n     {{ label }} {{ name }}\n    <span />\n     tail\n  </button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn prints_empty_event_attrs_without_value() {
         let template = VueTemplate {
             children: vec![VueNode::Element(VueElement::new("button").with_attrs(

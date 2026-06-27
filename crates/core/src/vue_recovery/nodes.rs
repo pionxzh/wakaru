@@ -622,6 +622,9 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
     if let Expr::Tpl(tpl) = text_arg.expr.as_ref() {
         return recover_template_literal(tpl, ctx);
     }
+    if let Some(node) = recover_text_concat(text_arg.expr.as_ref(), ctx)? {
+        return Ok(node);
+    }
     if let Expr::Call(call) = text_arg.expr.as_ref() {
         if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) {
             let Some(arg) = call.args.first() else {
@@ -637,6 +640,49 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
         &print_expr(text_arg.expr.as_ref(), ctx)?,
         ctx,
     )))
+}
+
+fn recover_text_concat(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    let Some(nodes) = collect_text_concat_nodes(expr, ctx)? else {
+        return Ok(None);
+    };
+    if nodes.len() <= 1 {
+        return Ok(None);
+    }
+    Ok(Some(nodes_to_node(nodes)))
+}
+
+fn collect_text_concat_nodes(
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<Vec<VueNode>>> {
+    match expr {
+        Expr::Paren(paren) => collect_text_concat_nodes(paren.expr.as_ref(), ctx),
+        Expr::Bin(bin) if bin.op == BinaryOp::Add => {
+            let Some(mut nodes) = collect_text_concat_nodes(bin.left.as_ref(), ctx)? else {
+                return Ok(None);
+            };
+            let Some(mut right) = collect_text_concat_nodes(bin.right.as_ref(), ctx)? else {
+                return Ok(None);
+            };
+            nodes.append(&mut right);
+            Ok(Some(nodes))
+        }
+        expr if string_lit(expr).is_some() => Ok(Some(vec![VueNode::Text(
+            string_lit(expr).expect("checked string literal"),
+        )])),
+        Expr::Call(call) if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) => {
+            let Some(arg) = call.args.first() else {
+                return Ok(Some(vec![VueNode::Interpolation(VueExpr::new(
+                    String::new(),
+                ))]));
+            };
+            Ok(Some(vec![VueNode::Interpolation(VueExpr::new(
+                clean_expr(&print_expr(arg.expr.as_ref(), ctx)?, ctx),
+            ))]))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn recover_template_literal(tpl: &Tpl, ctx: &VueRecoveryContext) -> Result<VueNode> {
