@@ -3,10 +3,10 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap};
+use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
-    Expr, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    Expr, ExprStmt, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -1676,8 +1676,42 @@ fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Opt
     if options.props.is_empty() {
         return Ok(None);
     }
+    let namespace_imports = component_script_vue_namespace_imports(&options, ctx);
     let printed = print_expr(&Expr::Object(options), ctx)?;
-    Ok(Some(format!("export default {printed}")))
+    if namespace_imports.is_empty() {
+        Ok(Some(format!("export default {printed}")))
+    } else {
+        Ok(Some(format!(
+            "{}\n\nexport default {printed}",
+            namespace_imports.join("\n")
+        )))
+    }
+}
+
+fn component_script_vue_namespace_imports(
+    options: &ObjectLit,
+    ctx: &VueRecoveryContext,
+) -> Vec<String> {
+    if ctx.vue_namespaces.is_empty() {
+        return Vec::new();
+    }
+
+    let refs = stmt_ident_refs(&Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Object(options.clone())),
+    }));
+    let mut namespaces = refs
+        .into_iter()
+        .filter(|reference| ctx.vue_namespaces.contains(reference))
+        .filter(|reference| is_valid_identifier_name(reference.as_ref()))
+        .map(|reference| reference.to_string())
+        .collect::<Vec<_>>();
+    namespaces.sort();
+    namespaces.dedup();
+    namespaces
+        .into_iter()
+        .map(|namespace| format!("import * as {namespace} from \"vue\";"))
+        .collect()
 }
 
 fn component_script_prop_name(prop: &PropOrSpread) -> Option<String> {
@@ -2323,6 +2357,60 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <section class=\"notice\">{{ message }}</section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_webpack_require_vue_runtime_namespace() {
+        let input = r#"
+import { A } from "./module-262.js";
+const vue_runtime_esm_bundler_js_ = require(536);
+const _hoisted_1 = { style: { color: "red" } };
+function render(_ctx, _cache, $props, $setup, $data, $options) {
+  vue_runtime_esm_bundler_js_.openBlock();
+  return vue_runtime_esm_bundler_js_.createElementBlock("div", _hoisted_1, vue_runtime_esm_bundler_js_.toDisplayString($data.title), 1);
+}
+const Contentvue_type_script_lang_js = {
+  data() {
+    return { title: "Remote Component in Action.." };
+  }
+};
+const __exports__ = A(Contentvue_type_script_lang_js, [["render", render]]);
+const Content = __exports__;
+export { Content as default };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script>\nexport default {\n    data () {\n        return {\n            title: \"Remote Component in Action..\"\n        };\n    }\n}\n</script>\n\n<template>\n  <div :style='{ color: \"red\" }'>{{ $data.title }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn imports_webpack_vue_namespace_used_by_options_script() {
+        let input = r#"
+import { A } from "./module-262.js";
+const vue_runtime_esm_bundler_js_ = require(536);
+function render(_ctx, _cache) {
+  vue_runtime_esm_bundler_js_.openBlock();
+  return vue_runtime_esm_bundler_js_.createElementBlock("button", { onClick: _ctx.inc }, vue_runtime_esm_bundler_js_.toDisplayString(_ctx.count), 9, ["onClick"]);
+}
+const Appvue_type_script_lang_js = {
+  setup() {
+    const count = vue_runtime_esm_bundler_js_.ref(0);
+    const inc = () => {
+      count.value++;
+    };
+    return { count, inc };
+  }
+};
+const __exports__ = A(Appvue_type_script_lang_js, [["render", render]]);
+export { __exports__ as default };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script>\nimport * as vue_runtime_esm_bundler_js_ from \"vue\";\n\nexport default {\n    setup () {\n        const count = vue_runtime_esm_bundler_js_.ref(0);\n        const inc = ()=>{\n            count.value++;\n        };\n        return {\n            count,\n            inc\n        };\n    }\n}\n</script>\n\n<template>\n  <button @click=\"inc\">{{ count }}</button>\n</template>\n"
         );
     }
 
