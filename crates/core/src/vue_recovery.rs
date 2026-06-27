@@ -6,8 +6,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
-    Expr, FnDecl, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    Expr, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -38,10 +38,11 @@ mod usage;
 
 use components::VueComponentScriptImport;
 use context::{
-    collect_context, collect_render_context, collect_script_local_context, collect_setup_context,
-    component_name_from_init, component_name_from_options, component_options_from_init,
-    infer_render_helpers, render_context_param, render_local_declaration_with_aliases,
-    setup_context_param, setup_emit_param, setup_props_param, stmt_ident_refs,
+    call_callee_ident, collect_context, collect_render_context, collect_script_local_context,
+    collect_setup_context, component_name_from_init, component_name_from_options,
+    component_options_from_init, infer_render_helpers, render_context_param,
+    render_local_declaration_with_aliases, setup_context_param, setup_emit_param,
+    setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -503,10 +504,123 @@ fn vue_helper_exports_from_source(source: &str) -> HashSet<String> {
     let Ok(module) = parse_module(source, cm) else {
         return HashSet::new();
     };
+    let wrapper_exports = exported_vue_helper_wrapper_names(&module);
+    if !wrapper_exports.is_empty() {
+        return wrapper_exports;
+    }
     if !is_likely_vue_runtime_module(&module) {
         return HashSet::new();
     }
     exported_binding_names(&module)
+}
+
+fn exported_vue_helper_wrapper_names(module: &Module) -> HashSet<String> {
+    let imported = imported_binding_names(module);
+    if imported.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut local_wrappers = HashSet::new();
+    let mut exported = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function)))
+                if is_vue_helper_wrapper_function(&function.function, &imported) =>
+            {
+                local_wrappers.insert(function.ident.sym.to_string());
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Fn(function),
+                ..
+            })) if is_vue_helper_wrapper_function(&function.function, &imported) => {
+                exported.insert(function.ident.sym.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) = item else {
+            continue;
+        };
+        if export.src.is_some() {
+            continue;
+        }
+        for specifier in &export.specifiers {
+            let ExportSpecifier::Named(named) = specifier else {
+                continue;
+            };
+            let local = module_export_name(&named.orig);
+            if local_wrappers.contains(&local) {
+                let exported_name = named
+                    .exported
+                    .as_ref()
+                    .map(module_export_name)
+                    .unwrap_or(local);
+                exported.insert(exported_name);
+            }
+        }
+    }
+
+    exported
+}
+
+fn imported_binding_names(module: &Module) -> HashSet<Atom> {
+    let mut imported = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Named(named) => {
+                    imported.insert(named.local.sym.clone());
+                }
+                ImportSpecifier::Default(default) => {
+                    imported.insert(default.local.sym.clone());
+                }
+                ImportSpecifier::Namespace(namespace) => {
+                    imported.insert(namespace.local.sym.clone());
+                }
+            }
+        }
+    }
+    imported
+}
+
+fn is_vue_helper_wrapper_function(function: &Function, imported: &HashSet<Atom>) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    body.stmts.iter().any(|stmt| {
+        let Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) = stmt
+        else {
+            return false;
+        };
+        contains_imported_block_helper_call(expr.as_ref(), imported)
+    })
+}
+
+fn contains_imported_block_helper_call(expr: &Expr, imported: &HashSet<Atom>) -> bool {
+    match context::unwrap_paren_expr(expr) {
+        Expr::Call(call) => {
+            is_imported_block_helper_call(call, imported)
+                || call
+                    .args
+                    .iter()
+                    .any(|arg| contains_imported_block_helper_call(arg.expr.as_ref(), imported))
+        }
+        _ => false,
+    }
+}
+
+fn is_imported_block_helper_call(call: &CallExpr, imported: &HashSet<Atom>) -> bool {
+    call_callee_ident(call).is_some_and(|callee| imported.contains(&callee.sym))
+        && call.args.last().is_some_and(
+            |arg| matches!(arg.expr.as_ref(), Expr::Lit(Lit::Bool(bool)) if bool.value),
+        )
 }
 
 fn is_likely_vue_runtime_module(module: &Module) -> bool {
@@ -2693,6 +2807,63 @@ export const gs = (value) => value == null ? "" : String(value);
             .unwrap()
             .unwrap(),
             "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <h1>{{ msg }}</h1>\n  Ready\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_split_runtime_block_wrapper_helper_alias() {
+        let input = r#"
+import { ob } from "./chunk-block.js";
+import { eb } from "./chunk-block-wrapper.js";
+import { Q, gs } from "./chunk-vnode.js";
+const _sfc_main = {
+  __name: "GreetingCard",
+  props: { msg: String },
+  setup(props) {
+    return (_ctx, _cache) => {
+      ob();
+      return eb("section", null, [
+        Q("h1", null, gs(props.msg), 1)
+      ]);
+    };
+  }
+};
+"#;
+        let block_chunk = r#"
+let currentBlock = null;
+const blockStack = [];
+export function ob(e = false) {
+  blockStack.push(currentBlock = e ? null : []);
+}
+export function closeBlock(vnode) {
+  vnode.dynamicChildren = currentBlock;
+  return vnode;
+}
+"#;
+        let block_wrapper_chunk = r#"
+import { closeBlock } from "./chunk-block.js";
+import { Q } from "./chunk-vnode.js";
+export function eb(e, t, s, n, r, i) {
+  return closeBlock(Q(e, t, s, n, r, i, true));
+}
+"#;
+        let vnode_chunk = r#"
+export function Q(type, props = null, children = null, patchFlag = 0) {
+  return { __v_isVNode: true, type, props, children, patchFlag };
+}
+export const gs = (value) => value == null ? "" : String(value);
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| match source {
+                "./chunk-block.js" => Some(block_chunk.to_string()),
+                "./chunk-block-wrapper.js" => Some(block_wrapper_chunk.to_string()),
+                "./chunk-vnode.js" => Some(vnode_chunk.to_string()),
+                _ => None,
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <section>\n    <h1>{{ msg }}</h1>\n  </section>\n</template>\n"
         );
     }
 
