@@ -376,6 +376,9 @@ fn recover_vue_sfc_from_render(
     let Some(mut root) = recover_render_root(render, &ctx)? else {
         return Ok(None);
     };
+    if !has_recovered_template_structure(&root) {
+        return Ok(None);
+    }
 
     let script_setup = setup_script(&ctx, &mut root, render)?;
 
@@ -395,6 +398,20 @@ fn recover_vue_sfc_from_render(
             children: vec![root],
         },
     }))
+}
+
+fn has_recovered_template_structure(node: &VueNode) -> bool {
+    match node {
+        VueNode::Fragment(children) => children.iter().any(has_recovered_template_structure),
+        VueNode::RawExpr(_) | VueNode::Unsupported(_) => false,
+        VueNode::Element(_)
+        | VueNode::If(_)
+        | VueNode::For(_)
+        | VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_) => true,
+    }
 }
 
 #[derive(Default)]
@@ -2213,6 +2230,19 @@ mod tests {
         let input = r#"
 export function render() {
   return "not a Vue render";
+}
+"#;
+
+        assert!(recover_vue_sfc_source_from_js(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn ignores_marker_only_recovered_template() {
+        let input = r#"
+import { openBlock } from "vue";
+export function render(_ctx, _cache) {
+  openBlock();
+  return _ctx.node;
 }
 "#;
 
