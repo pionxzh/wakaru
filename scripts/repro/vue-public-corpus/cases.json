@@ -72,8 +72,8 @@
     "bundler": "vitepress",
     "repo": "https://github.com/vuejs/vitepress.git",
     "ref": "v1.6.4",
-    "install": ["corepack", "pnpm", "install", "--frozen-lockfile"],
-    "build": ["corepack", "pnpm", "run", "docs:build"],
+    "install": ["npx", "--yes", "pnpm@9.15.4", "install", "--frozen-lockfile"],
+    "build": ["npx", "--yes", "pnpm@9.15.4", "run", "docs:build"],
     "inputs": ["docs/.vitepress/dist"],
     "notes": "Large public docs site. Run explicitly with --case vitepress-docs."
   }
