@@ -66,6 +66,46 @@
     "notes": "Public Vue 3 RealWorld app with routing, Pinia, auth flows, and CRUD screens."
   },
   {
+    "name": "vue-cart-pinia",
+    "enabled": false,
+    "tier": "medium",
+    "bundler": "vite",
+    "repo": "https://github.com/wobsoriano/vue-cart.git",
+    "ref": "0545629288a1fb3a9f641274d2c983c05dc24577",
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npx", "vite", "build"],
+    "inputs": ["dist"],
+    "notes": "Public Vue 3 + Pinia shopping-cart app with router, Tailwind/daisyUI classes, and multiple app SFCs. Uses vite build directly because its pinned vue-tsc is not compatible with current TypeScript on modern Node."
+  },
+  {
+    "name": "module-federation-vue3-home-webpack5",
+    "enabled": false,
+    "tier": "small",
+    "bundler": "webpack5",
+    "repo": "https://github.com/module-federation/module-federation-examples.git",
+    "ref": "583a1551e96a5a6418691891be9f04c1d15d6f8f",
+    "subdir": "vue3-demo/home",
+    "sparse": ["vue3-demo"],
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npm", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Public Vue 3 webpack 5 Module Federation remote. Useful for webpack/vue-loader output even when SFC recovery is limited."
+  },
+  {
+    "name": "module-federation-vue3-layout-webpack5",
+    "enabled": false,
+    "tier": "small",
+    "bundler": "webpack5",
+    "repo": "https://github.com/module-federation/module-federation-examples.git",
+    "ref": "583a1551e96a5a6418691891be9f04c1d15d6f8f",
+    "subdir": "vue3-demo/layout",
+    "sparse": ["vue3-demo"],
+    "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
+    "build": ["npm", "run", "build"],
+    "inputs": ["dist"],
+    "notes": "Public Vue 3 webpack 5 Module Federation host consuming remote Vue components. Useful for non-Vite coverage and fallback accounting."
+  },
+  {
     "name": "vitepress-docs",
     "enabled": false,
     "tier": "large",
