@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render, render_rule};
 use wakaru_core::{rules::UnNullishCoalescing, RewriteLevel};
 
 fn apply(input: &str) -> String {
@@ -11,6 +11,146 @@ fn apply_with_level(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |unresolved_mark| {
         UnNullishCoalescing::new(unresolved_mark, level)
     })
+}
+
+#[test]
+fn preserves_existing_nullish_assignment() {
+    let input = r#"foo ??= "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_identifier_nullish_assignment_form() {
+    let input = r#"foo ?? (foo = "bar")"#;
+    let expected = r#"foo ??= "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_unresolved_identifier_nullish_assignment_form_at_minimal() {
+    let input = r#"foo ?? (foo = "bar")"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_local_identifier_nullish_assignment_form_at_minimal() {
+    let input = r#"let foo;
+foo ?? (foo = "bar")"#;
+    let expected = r#"let foo;
+foo ??= "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_unresolved_identifier_nullish_assignment_form_at_standard() {
+    let input = r#"foo ?? (foo = "bar")"#;
+    let expected = r#"foo ??= "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_mismatched_nullish_assignment_target() {
+    let input = r#"foo ?? (bar = "bar")"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_transform_member_nullish_assignment_form_at_standard() {
+    // Unresolved member bases can behave like global/dynamic references.
+    let input = r#"obj.value ?? (obj.value = "bar")"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_static_local_base_member_nullish_assignment_form_at_standard() {
+    let input = r#"let obj;
+obj.value ?? (obj.value = "bar")"#;
+    let expected = r#"let obj;
+obj.value ??= "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_static_local_base_member_nullish_assignment_form_at_minimal() {
+    let input = r#"let obj;
+obj.value ?? (obj.value = "bar")"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_member_nullish_assignment_form_at_aggressive() {
+    let input = r#"obj.value ?? (obj.value = "bar")"#;
+    let expected = r#"obj.value ??= "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_nested_member_nullish_assignment_form_at_standard() {
+    let input = r#"let obj;
+obj.meta.value ?? (obj.meta.value = "bar")"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_nested_member_nullish_assignment_form_at_aggressive() {
+    let input = r#"let obj;
+obj.meta.value ?? (obj.meta.value = "bar")"#;
+    let expected = r#"let obj;
+obj.meta.value ??= "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_computed_member_nullish_assignment_form_at_standard() {
+    let input = r#"let obj;
+obj[key] ?? (obj[key] = "bar")"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_computed_member_nullish_assignment_form_at_aggressive() {
+    let input = r#"let obj;
+obj[key] ?? (obj[key] = "bar")"#;
+    let expected = r#"let obj;
+obj[key] ??= "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_call_base_member_nullish_assignment_form_at_aggressive() {
+    let input = r#"getObj().value ?? (getObj().value = "bar")"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn pipeline_recovers_strict_nullish_assignment_lowering() {
+    // Reproduced by TypeScript 5.9.3 and @swc/core 1.15.41 targeting ES5 for:
+    // `let cache; const out = cache ??= make();`
+    let input = r#"
+var cache;
+var out = cache !== null && cache !== void 0 ? cache : cache = make();
+"#;
+    let expected = r#"
+let cache;
+const out = cache ??= make();
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

@@ -1,13 +1,15 @@
 # Optional/Nullish Reproduction Matrix
 
-This harness checks how common tools lower optional chaining and nullish
-coalescing snippets, then runs wakaru on the lowered output. Babel is tested
-across a few meaningful lines: early proposal plugins, assumptions-era Babel 7,
-current transform plugins, and the Babel 8 RC line.
+This harness checks how common tools lower optional chaining, nullish
+coalescing, and nullish assignment snippets, then runs wakaru on the lowered
+output. Babel is tested across a few meaningful lines: early proposal plugins,
+assumptions-era Babel 7, current transform plugins, and the Babel 8 RC line.
 
 The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
 output minified through Terser, because optional/nullish lowering can become a
-different recoverable shape after minification.
+different recoverable shape after minification. The `nullish-assignment-ident`
+row reproduces `cache ??= make()` lowering such as TypeScript/SWC's strict
+ternary form and esbuild/Babel loose nullish forms.
 
 The logical-AND rows include issue #166-style boolean prefixes, such as a
 lowered optional chain followed by ordinary suffix conditions or a second

@@ -75,6 +75,11 @@ const snippets = [
     expected: ["??"],
   },
   {
+    name: "nullish-assignment-ident",
+    source: "let cache;\nconst out = cache ??= make();\n",
+    expected: ["cache ??= make()"],
+  },
+  {
     name: "nullish-with-optional-middle",
     source: "const out = foo ?? bar?.prop ?? baz;\n",
     expected: ["foo ??", "bar?.prop ?? baz"],
@@ -92,6 +97,7 @@ const babelProfiles = [
     core: "7.8.7",
     optionalPlugin: ["@babel/plugin-proposal-optional-chaining", "7.8.3"],
     nullishPlugin: ["@babel/plugin-proposal-nullish-coalescing-operator", "7.8.3"],
+    logicalAssignmentPlugin: ["@babel/plugin-proposal-logical-assignment-operators", "7.8.3"],
     modes: ["spec", "loose"],
   },
   {
@@ -99,6 +105,7 @@ const babelProfiles = [
     core: "7.13.16",
     optionalPlugin: ["@babel/plugin-proposal-optional-chaining", "7.13.12"],
     nullishPlugin: ["@babel/plugin-proposal-nullish-coalescing-operator", "7.13.8"],
+    logicalAssignmentPlugin: ["@babel/plugin-proposal-logical-assignment-operators", "7.13.8"],
     modes: ["spec", "noDocumentAll", "loose"],
   },
   {
@@ -106,6 +113,7 @@ const babelProfiles = [
     core: "7.28.5",
     optionalPlugin: ["@babel/plugin-transform-optional-chaining", "7.28.5"],
     nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "7.28.6"],
+    logicalAssignmentPlugin: ["@babel/plugin-transform-logical-assignment-operators", "7.28.5"],
     modes: ["spec", "noDocumentAll", "loose"],
   },
   {
@@ -113,6 +121,7 @@ const babelProfiles = [
     core: "8.0.0-rc.5",
     optionalPlugin: ["@babel/plugin-transform-optional-chaining", "8.0.0-rc.5"],
     nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "8.0.0-rc.5"],
+    logicalAssignmentPlugin: ["@babel/plugin-transform-logical-assignment-operators", "8.0.0-rc.5"],
     modes: ["spec", "noDocumentAll", "loose"],
   },
 ];
@@ -133,12 +142,14 @@ function babelModeOptions(mode) {
 function babelOptionalNullishBatch(sources, profile, options) {
   const [optionalName, optionalVersion] = profile.optionalPlugin;
   const [nullishName, nullishVersion] = profile.nullishPlugin;
+  const [logicalAssignmentName, logicalAssignmentVersion] = profile.logicalAssignmentPlugin;
   const packages = [
     `@babel/core@${profile.core}`,
     `${optionalName}@${optionalVersion}`,
     `${nullishName}@${nullishVersion}`,
+    `${logicalAssignmentName}@${logicalAssignmentVersion}`,
   ];
-  const toolKey = `babel-${profile.core}-optional-chaining-nullish-coalescing`;
+  const toolKey = `babel-${profile.core}-optional-nullish-logical-assignment`;
   const toolDir = ensureNodeTool(toolKey, packages);
   const helper = join(toolDir, "babel-optional-nullish-batch.mjs");
   writeFileSync(
@@ -148,9 +159,11 @@ import fs from "node:fs";
 const babelModule = await import("@babel/core");
 const optionalModule = await import(${JSON.stringify(optionalName)});
 const nullishModule = await import(${JSON.stringify(nullishName)});
+const logicalAssignmentModule = await import(${JSON.stringify(logicalAssignmentName)});
 const babel = babelModule.default ?? babelModule;
 const optional = optionalModule.default ?? optionalModule;
 const nullish = nullishModule.default ?? nullishModule;
+const logicalAssignment = logicalAssignmentModule.default ?? logicalAssignmentModule;
 const options = JSON.parse(process.env.MATRIX_BABEL_OPTIONS || "{}");
 const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map(source => {
@@ -158,6 +171,7 @@ const results = sources.map(source => {
     const transformOptions = {
       filename: "input.js", babelrc: false, configFile: false, comments: false, compact: false,
       plugins: [
+        [logicalAssignment, options.pluginOptions || {}],
         [optional, options.pluginOptions || {}],
         [nullish, options.pluginOptions || {}],
       ],

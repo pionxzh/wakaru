@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit, Module,
-    SimpleAssignTarget,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit,
+    MemberExpr, MemberProp, Module, SimpleAssignTarget,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -78,6 +78,11 @@ fn try_nullish_coalescing(
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
+    // Native logical assignment shape: `target ?? (target = fallback)` → `target ??= fallback`.
+    if let Some(result) = try_nullish_assignment(expr, unresolved_mark, policy) {
+        return Some(result);
+    }
+
     // Pattern C: `(tmp = X) === null || tmp === undefined || tmp` → `X ?? true`
     // (||‐chain encoding of nullish coalescing with boolean `true` default)
     if let Some(result) = try_pattern_c_coalescing(
@@ -128,6 +133,99 @@ fn try_nullish_coalescing(
     }
 
     None
+}
+
+fn try_nullish_assignment(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::NullishCoalescing,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+
+    let Expr::Assign(assign) = strip_parens(right) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+
+    if !assign_target_recoverable_as_nullish_assignment(&assign.left, unresolved_mark, policy) {
+        return None;
+    }
+    let left_target_expr = assign_target_to_expr(&assign.left)?;
+    if !exprs_structurally_equal(left, &left_target_expr) {
+        return None;
+    }
+
+    Some(Expr::Assign(AssignExpr {
+        span: expr.span(),
+        op: AssignOp::NullishAssign,
+        left: assign.left.clone(),
+        right: assign.right.clone(),
+    }))
+}
+
+fn assign_target_recoverable_as_nullish_assignment(
+    target: &AssignTarget,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> bool {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
+            id.id.ctxt.outer() != unresolved_mark || policy.level >= RewriteLevel::Standard
+        }
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+            member_recoverable_as_nullish_assignment(member, unresolved_mark, policy)
+        }
+        _ => false,
+    }
+}
+
+fn member_recoverable_as_nullish_assignment(
+    member: &MemberExpr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> bool {
+    if is_static_member_with_local_base(member, unresolved_mark) {
+        return policy.level >= RewriteLevel::Standard;
+    }
+
+    policy.assumptions.pure_getters && is_member_chain_without_side_effectful_base(member)
+}
+
+fn is_static_member_with_local_base(member: &MemberExpr, unresolved_mark: Mark) -> bool {
+    matches!(member.obj.as_ref(), Expr::Ident(base) if base.ctxt.outer() != unresolved_mark)
+        && matches!(member.prop, MemberProp::Ident(_))
+}
+
+fn is_member_chain_without_side_effectful_base(member: &MemberExpr) -> bool {
+    if !matches!(member.prop, MemberProp::Ident(_) | MemberProp::Computed(_)) {
+        return false;
+    }
+
+    match member.obj.as_ref() {
+        Expr::Ident(_) | Expr::This(_) => true,
+        Expr::Member(base) => is_member_chain_without_side_effectful_base(base),
+        _ => false,
+    }
+}
+
+fn assign_target_to_expr(target: &AssignTarget) -> Option<Expr> {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => Some(Expr::Ident(id.id.clone())),
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+            Some(Expr::Member(member.clone()))
+        }
+        _ => None,
+    }
 }
 
 fn try_loose_pattern_coalescing(
