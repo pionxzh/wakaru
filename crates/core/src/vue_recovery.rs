@@ -6951,6 +6951,21 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_element_text_string_concat_children() {
+        let input = r#"
+import { openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("span", null, "(" + toDisplayString(_ctx.count) + ")", 1);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span>({{ count }})</span>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_render_list_destructured_param() {
         let input = r#"
 import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
