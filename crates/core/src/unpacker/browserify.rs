@@ -104,6 +104,7 @@ fn extract_browserify_modules(
                 .into_iter()
                 .collect(),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 

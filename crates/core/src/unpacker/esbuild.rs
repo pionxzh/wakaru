@@ -846,6 +846,7 @@ pub(super) fn detect_from_module_with_source(
             filename: factory.filename,
             source_ranges: span_byte_range(&cm, factory.span).into_iter().collect(),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 
@@ -865,6 +866,7 @@ pub(super) fn detect_from_module_with_source(
             filename: "entry.js".to_string(),
             source_ranges: entry_ranges,
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 
@@ -2545,6 +2547,7 @@ fn extract_scope_hoisted_modules(
             filename: meta.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, body_spans.into_iter()),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
     drop(emit_modules_enter);

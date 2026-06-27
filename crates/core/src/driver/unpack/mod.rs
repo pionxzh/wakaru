@@ -151,6 +151,7 @@ pub fn unpack_files(
                             filename: filename_for_fallback_input(&input.filename),
                             source_ranges: vec![(0, input.source.len() as u32)],
                             source_input: input.filename.clone(),
+                            generated_source_map: Vec::new(),
                             code: input.source,
                         },
                     )),
@@ -163,6 +164,7 @@ pub fn unpack_files(
                     filename: filename_for_fallback_input(&input.filename),
                     source_ranges: vec![(0, input.source.len() as u32)],
                     source_input: input.filename.clone(),
+                    generated_source_map: Vec::new(),
                     code: input.source,
                 },
             )),
@@ -346,6 +348,7 @@ pub fn unpack_files_raw(
                 filename: filename_for_fallback_input(&input.filename),
                 source_ranges: vec![(0, input.source.len() as u32)],
                 source_input: input.filename.clone(),
+                generated_source_map: Vec::new(),
                 code: input.source.to_string(),
             })),
         }

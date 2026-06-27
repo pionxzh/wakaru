@@ -3,7 +3,7 @@
 //! builders) can map modules back to source-map positions.
 
 use wakaru_core::{
-    unpack, unpack_files, unpack_raw, DecompileOptions, ModuleProvenance, UnpackInput,
+    unpack, unpack_files, unpack_raw, DecompileOptions, ModuleProvenance, RewriteLevel, UnpackInput,
 };
 
 fn provenance_for<'a>(provenance: &'a [ModuleProvenance], filename: &str) -> &'a ModuleProvenance {
@@ -118,6 +118,85 @@ fn webpack5_modules_report_factory_body_ranges() {
     assert!(
         !texts.contains("console.log"),
         "cjs module range should not cover the index module, got: {texts:?}"
+    );
+}
+
+#[test]
+fn nested_webpack5_scope_split_reports_child_original_ranges() {
+    let source = r#"
+(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
+  [0],
+  {
+    100: function(module, exports, require) {
+      "use strict";
+      function helperA1() { return 1; }
+      function helperA2() { return helperA1() + 1; }
+      function helperA3() { return helperA2() * 2; }
+      function helperA4() { return helperA3() + 5; }
+      function publicA() { return helperA4(); }
+
+      function helperB1() { return 10; }
+      function helperB2() { return helperB1() + 10; }
+      function helperB3() { return helperB2() * 20; }
+      function helperB4() { return helperB3() + 50; }
+      function publicB() { return helperB4(); }
+
+      const result = publicA() + publicB();
+      require.r(exports);
+      require.d(exports, {
+        result: function() { return result; }
+      });
+    }
+  }
+]);
+"#;
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "chunk.js".to_string(),
+            heuristic_split: true,
+            level: RewriteLevel::Aggressive,
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
+
+    let child_entries = output
+        .provenance
+        .iter()
+        .filter(|entry| entry.filename.starts_with("module-100/"))
+        .collect::<Vec<_>>();
+    assert!(
+        !child_entries.is_empty(),
+        "aggressive nested split should create child modules, got {:?}\nmodules: {:?}",
+        output
+            .provenance
+            .iter()
+            .map(|entry| &entry.filename)
+            .collect::<Vec<_>>(),
+        output.modules
+    );
+
+    let child_texts = child_entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.filename.as_str(),
+                range_text(source, entry).join("\n"),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (filename, text) in &child_texts {
+        assert!(
+            !text.contains("helperA1") || !text.contains("helperB1"),
+            "{filename} should not inherit the full parent factory range, got {text:?}"
+        );
+    }
+    assert!(
+        child_texts
+            .iter()
+            .any(|(_, text)| text.contains("helperA1") && !text.contains("helperB1")),
+        "one child range should cover a nested helper family without the full parent, got {child_texts:?}"
     );
 }
 

@@ -534,14 +534,16 @@ pub(super) fn unpack_multi_module_with_plan(
     // Build final provenance from the surviving output modules, mapping
     // provisional filenames to their recovered names.  Dead helper modules
     // that were eliminated above are excluded.
+    let reverse_rename: std::collections::HashMap<&str, &str> = rename_ref
+        .iter()
+        .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
+        .collect();
     let provenance: Vec<ModuleProvenance> = modules
         .iter()
         .filter_map(|(final_filename, _)| {
-            // Phase 2 may have renamed via rename_ref; look up the
-            // provisional name that maps to this final filename.
-            let provisional = rename_ref
-                .iter()
-                .find_map(|(prov, renamed)| (renamed == final_filename).then_some(prov.as_str()))
+            let provisional = reverse_rename
+                .get(final_filename.as_str())
+                .copied()
                 .unwrap_or(final_filename.as_str());
             let (input, ranges) = provenance_by_provisional.get(provisional)?;
             Some(ModuleProvenance {

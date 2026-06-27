@@ -61,6 +61,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             filename,
             source_ranges: register_range.into_iter().collect(),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 

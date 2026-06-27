@@ -18,7 +18,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
-use crate::unpacker::{spans_byte_ranges, BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    generated_source_map_points, spans_byte_ranges, BundleFormat, GeneratedSourceMapPoint,
+    UnpackResult, UnpackedModule,
+};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -281,6 +284,7 @@ pub(super) fn detect_runtime_entry_from_module(
                     filename: "entry.js".to_string(),
                     source_ranges: vec![(0, source.len() as u32)],
                     source_input: String::new(),
+                    generated_source_map: Vec::new(),
                 }],
                 BundleFormat::Webpack5,
             ));
@@ -582,7 +586,8 @@ fn extract_modules_from_object(
     let mut modules = Vec::new();
 
     for entry in &module_entries {
-        let code = emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
+        let (code, generated_source_map) =
+            emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
         modules.push(UnpackedModule {
             id: entry.id.clone(),
             is_entry: false,
@@ -590,6 +595,7 @@ fn extract_modules_from_object(
             filename: entry.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
             source_input: String::new(),
+            generated_source_map,
         });
     }
 
@@ -647,7 +653,7 @@ fn extract_webpack5_modules(
         let span = tracing::info_span!("webpack5: emit all modules", count = module_entries.len());
         let _enter = span.enter();
         for entry in &module_entries {
-            let code =
+            let (code, generated_source_map) =
                 emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
             modules.push(UnpackedModule {
                 id: entry.id.clone(),
@@ -656,6 +662,7 @@ fn extract_webpack5_modules(
                 filename: entry.filename.clone(),
                 source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
                 source_input: String::new(),
+                generated_source_map,
             });
         }
     }
@@ -676,6 +683,7 @@ fn extract_webpack5_modules(
             filename: "entry.js".to_string(),
             source_ranges: entry_ranges,
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
         true
     } else {
@@ -1127,7 +1135,7 @@ fn emit_webpack5_module(
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
-) -> Option<String> {
+) -> Option<(String, Vec<GeneratedSourceMapPoint>)> {
     let span = tracing::info_span!("webpack5: emit_module");
     let _enter = span.enter();
 
@@ -1138,7 +1146,7 @@ fn emit_webpack5_module(
         let span = tracing::info_span!("webpack5: fixer+emit");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).ok()?;
-        emit_module(&synthetic_module, cm).ok()
+        emit_module_with_source_map(&synthetic_module, cm).ok()
     }
 }
 
@@ -1459,19 +1467,29 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
 }
 
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
+    emit_module_with_source_map(module, cm).map(|(code, _)| code)
+}
+
+fn emit_module_with_source_map(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+) -> anyhow::Result<(String, Vec<GeneratedSourceMapPoint>)> {
     let mut output = Vec::new();
+    let mut srcmap_buf = Vec::new();
     {
         let mut emitter = Emitter {
             cfg: Config::default().with_minify(false),
             cm: cm.clone(),
             comments: None,
-            wr: JsWriter::new(cm.clone(), "\n", &mut output, None),
+            wr: JsWriter::new(cm.clone(), "\n", &mut output, Some(&mut srcmap_buf)),
         };
         emitter
             .emit_module(module)
             .map_err(|e| anyhow!("emit error: {e:?}"))?;
     }
-    String::from_utf8(output).map_err(|e| anyhow!("utf8 error: {e}"))
+    let code = String::from_utf8(output).map_err(|e| anyhow!("utf8 error: {e}"))?;
+    let mappings = generated_source_map_points(&code, &cm, &srcmap_buf);
+    Ok((code, mappings))
 }
 
 #[cfg(test)]

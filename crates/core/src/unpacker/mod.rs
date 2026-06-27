@@ -10,7 +10,9 @@ mod wrappers;
 use std::panic::{self, AssertUnwindSafe};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, Span, SyntaxContext, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, BytePos, FileName, LineCol, SourceMap, Span, SyntaxContext, GLOBALS,
+};
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
@@ -27,6 +29,16 @@ pub struct UnpackedModule {
     /// Input filename the ranges refer to. Unpackers leave this empty; the
     /// driver fills it in for multi-source unpacks.
     pub source_input: String,
+    /// Mapping points from this module's emitted code back to the original
+    /// input source. Used internally to compose provenance when this emitted
+    /// module is split again.
+    pub generated_source_map: Vec<GeneratedSourceMapPoint>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GeneratedSourceMapPoint {
+    pub generated_offset: u32,
+    pub source_offset: u32,
 }
 
 /// Convert an AST span to a 0-based byte range into the parsed source.
@@ -59,6 +71,70 @@ pub(crate) fn spans_byte_ranges(
         }
     }
     out
+}
+
+pub(crate) fn generated_source_map_points(
+    generated_code: &str,
+    cm: &SourceMap,
+    mappings: &[(BytePos, LineCol)],
+) -> Vec<GeneratedSourceMapPoint> {
+    let line_starts = line_start_offsets(generated_code);
+    let mut points = mappings
+        .iter()
+        .filter_map(|(source_pos, generated_pos)| {
+            if source_pos.0 == 0 {
+                return None;
+            }
+            let generated_offset =
+                line_col_to_byte_offset(&line_starts, generated_code, generated_pos)?;
+            let file = cm.lookup_byte_offset(*source_pos).sf;
+            let source_offset = source_pos.0.checked_sub(file.start_pos.0)?;
+            (source_offset as usize <= file.src.len()).then_some(GeneratedSourceMapPoint {
+                generated_offset,
+                source_offset,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    points.sort_unstable_by_key(|point| (point.generated_offset, point.source_offset));
+    points.dedup();
+    points
+}
+
+fn line_start_offsets(source: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (idx, byte) in source.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(idx + 1);
+        }
+    }
+    starts
+}
+
+fn line_col_to_byte_offset(line_starts: &[usize], source: &str, loc: &LineCol) -> Option<u32> {
+    let line_start = *line_starts.get(loc.line as usize)?;
+    let line_end = source[line_start..]
+        .find('\n')
+        .map(|offset| line_start + offset)
+        .unwrap_or(source.len());
+    let line = &source[line_start..line_end];
+    let mut utf16_col = 0u32;
+    let mut byte_col = 0usize;
+    for ch in line.chars() {
+        if utf16_col == loc.col {
+            break;
+        }
+        utf16_col = utf16_col.checked_add(ch.len_utf16() as u32)?;
+        byte_col = byte_col.checked_add(ch.len_utf8())?;
+        if utf16_col > loc.col {
+            return None;
+        }
+    }
+    if utf16_col != loc.col {
+        return None;
+    }
+    let offset = line_start.checked_add(byte_col)?;
+    (offset <= source.len()).then_some(offset as u32)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

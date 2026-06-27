@@ -468,23 +468,47 @@ fn renders_provenance_json_with_final_names_and_default_input() {
             input: "chunk-1.js".to_string(),
             ranges: vec![(0, 5)],
         },
+        wakaru_core::ModuleProvenance {
+            filename: "module-1/chunk_a.js".to_string(),
+            input: String::new(),
+            ranges: vec![(50, 60)],
+        },
     ];
     let mut final_names = HashMap::new();
     // CLI-side dedup renamed b.js on disk.
     final_names.insert("b.js", "b_2.js".to_string());
 
-    let json = render_provenance_json(&provenance, &final_names, "bundle.js");
+    let json = render_provenance_json(
+        &provenance,
+        &final_names,
+        "bundle.js",
+        &[wakaru_core::BundleFormat::Webpack5],
+    );
 
     assert!(
-        json.contains(r#""b_2.js": {"input": "bundle.js", "ranges": [[10,20],[30,40]]}"#),
+        json.contains(r#""format": "webpack5""#),
+        "format metadata missing:\n{json}"
+    );
+    assert!(
+        json.contains(r#""strategy": "mixed""#),
+        "strategy metadata missing:\n{json}"
+    );
+    assert!(
+        json.contains(r#""b_2.js": {"input": "bundle.js", "ranges": [[10,20],[30,40]], "extraction": "structural"}"#),
         "renamed module with default input missing:\n{json}"
     );
     assert!(
-        json.contains(r#""a \"quoted\".js": {"input": "chunk-1.js", "ranges": [[0,5]]}"#),
+        json.contains(r#""a \"quoted\".js": {"input": "chunk-1.js", "ranges": [[0,5]], "extraction": "structural"}"#),
         "escaped filename with explicit input missing:\n{json}"
+    );
+    assert!(
+        json.contains(r#""module-1/chunk_a.js": {"input": "bundle.js", "ranges": [[50,60]], "extraction": "heuristic"}"#),
+        "nested heuristic module metadata missing:\n{json}"
     );
     // Must be alphabetically sorted and valid JSON shape.
     assert!(json.find("a \\\"quoted\\\"").unwrap() < json.find("b_2.js").unwrap());
-    assert!(json.starts_with("{\n  \"modules\": {\n"));
+    assert!(json.starts_with(
+        "{\n  \"format\": \"webpack5\",\n  \"strategy\": \"mixed\",\n  \"modules\": {\n"
+    ));
     assert!(json.ends_with("  }\n}\n"));
 }

@@ -219,6 +219,7 @@ pub(crate) fn merge_import_cycles(
                 filename: representative.clone(),
                 source_ranges,
                 source_input,
+                generated_source_map: Vec::new(),
             });
         } else {
             let code = if module_imports_retargeted_cycle_member(
@@ -244,6 +245,7 @@ pub(crate) fn merge_import_cycles(
                 filename: module.filename.clone(),
                 source_ranges: module.source_ranges.clone(),
                 source_input: module.source_input.clone(),
+                generated_source_map: Vec::new(),
             });
         }
     }

@@ -15,6 +15,11 @@ fn nested_scope_split_gate_requires_heuristic_split_and_aggressive() {
         level: RewriteLevel::Standard,
         ..Default::default()
     }));
+    assert!(!nested_scope_split_enabled(&DecompileOptions {
+        heuristic_split: true,
+        level: RewriteLevel::Minimal,
+        ..Default::default()
+    }));
     assert!(nested_scope_split_enabled(&DecompileOptions {
         heuristic_split: true,
         level: RewriteLevel::Aggressive,

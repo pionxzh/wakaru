@@ -11,8 +11,8 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, extract_source_entries, format_trace_events, normalize, parse_sourcemap,
-    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, DceMode, DecompileOptions,
-    NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
+    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, BundleFormat, DceMode,
+    DecompileOptions, NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
 mod color;
@@ -390,6 +390,7 @@ fn run_default(cli: Cli) -> Result<()> {
                 &provenance,
                 &final_names,
                 single_input_name.as_deref().unwrap_or(""),
+                &output.detected_formats,
             );
             let provenance_path = out_dir.join("provenance.json");
             fs::write(&provenance_path, json)
@@ -815,6 +816,7 @@ fn render_provenance_json(
     provenance: &[wakaru_core::ModuleProvenance],
     final_names: &HashMap<&str, String>,
     default_input: &str,
+    detected_formats: &[BundleFormat],
 ) -> String {
     let mut entries: Vec<(String, &wakaru_core::ModuleProvenance)> = provenance
         .iter()
@@ -828,7 +830,14 @@ fn render_provenance_json(
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut json = String::from("{\n  \"modules\": {\n");
+    let format = provenance_format(detected_formats);
+    let strategy = provenance_strategy(&entries, detected_formats);
+
+    let mut json = format!(
+        "{{\n  \"format\": \"{}\",\n  \"strategy\": \"{}\",\n  \"modules\": {{\n",
+        json_escape(format),
+        strategy,
+    );
     for (i, (name, entry)) in entries.iter().enumerate() {
         let input = if entry.input.is_empty() {
             default_input
@@ -841,16 +850,69 @@ fn render_provenance_json(
             .map(|(start, end)| format!("[{start},{end}]"))
             .collect::<Vec<_>>()
             .join(",");
+        let extraction = provenance_extraction(name, strategy);
         json.push_str(&format!(
-            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}]}}{}\n",
+            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}], \"extraction\": \"{}\"}}{}\n",
             json_escape(name),
             json_escape(input),
             ranges,
+            extraction,
             if i + 1 < entries.len() { "," } else { "" }
         ));
     }
     json.push_str("  }\n}\n");
     json
+}
+
+fn provenance_format(detected_formats: &[BundleFormat]) -> &'static str {
+    let mut non_scope = detected_formats
+        .iter()
+        .copied()
+        .filter(|format| *format != BundleFormat::ScopeHoisted);
+    let Some(first) = non_scope.next() else {
+        return detected_formats
+            .first()
+            .map(|format| format.as_str())
+            .unwrap_or("unknown");
+    };
+    if non_scope.any(|format| format != first) {
+        "unknown"
+    } else {
+        first.as_str()
+    }
+}
+
+fn provenance_strategy(
+    entries: &[(String, &wakaru_core::ModuleProvenance)],
+    detected_formats: &[BundleFormat],
+) -> &'static str {
+    let has_scope_format = detected_formats.contains(&BundleFormat::ScopeHoisted);
+    let has_structural_format = detected_formats
+        .iter()
+        .any(|format| *format != BundleFormat::ScopeHoisted);
+    let has_heuristic_modules = entries
+        .iter()
+        .any(|(name, _)| is_heuristic_provenance_module(name));
+
+    if has_scope_format && !has_structural_format {
+        "heuristic"
+    } else if has_heuristic_modules || (has_scope_format && has_structural_format) {
+        "mixed"
+    } else {
+        "structural"
+    }
+}
+
+fn provenance_extraction(name: &str, strategy: &str) -> &'static str {
+    if strategy == "heuristic" || is_heuristic_provenance_module(name) {
+        "heuristic"
+    } else {
+        "structural"
+    }
+}
+
+fn is_heuristic_provenance_module(name: &str) -> bool {
+    name.starts_with("chunk_") || name.contains("/chunk_")
 }
 
 fn json_escape(s: &str) -> String {

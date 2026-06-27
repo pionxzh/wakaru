@@ -20,6 +20,13 @@ pub fn split_scope_hoisted(source: &str) -> Option<UnpackResult> {
     })
 }
 
+pub(crate) fn split_scope_hoisted_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+) -> Option<UnpackResult> {
+    split_from_module(module, cm)
+}
+
 fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     // Unwrap IIFE wrapper if present: `(()=>{ ... })()` or `(function(){ ... })()`
     let iife_body = unwrap_iife(module);
@@ -1225,6 +1232,7 @@ fn emit_clusters(
                 cluster.item_indices.iter().map(|&i| body[i].span()),
             ),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 

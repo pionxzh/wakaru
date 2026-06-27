@@ -580,6 +580,7 @@ fn extract_webpack4_array_modules(
                 .into_iter()
                 .collect(),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 
@@ -732,6 +733,7 @@ fn extract_webpack4_object_modules(
                 .into_iter()
                 .collect(),
             source_input: String::new(),
+            generated_source_map: Vec::new(),
         });
     }
 
