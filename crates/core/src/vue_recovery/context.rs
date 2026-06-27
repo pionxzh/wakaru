@@ -1209,16 +1209,7 @@ impl HelperInference<'_> {
             .args
             .first()
             .and_then(|arg| ident_expr(arg.expr.as_ref()))?;
-        if !self.candidates.contains(&fragment.sym) && !self.is_known_fragment(&fragment.sym) {
-            return None;
-        }
         Some((callee, fragment))
-    }
-
-    fn is_known_fragment(&self, binding: &Atom) -> bool {
-        self.known_helpers
-            .get(binding)
-            .is_some_and(|helper| helper == &VueHelper::Fragment)
     }
 
     fn infer_unref_expr(&mut self, expr: &Expr) {

@@ -2906,6 +2906,40 @@ export const gs = (value) => value == null ? "" : String(value);
     }
 
     #[test]
+    fn recovers_split_runtime_fragment_alias_without_export_metadata() {
+        let input = r#"
+import { ft } from "./chunk-ft.js";
+import { It } from "./entry.js";
+export function render(_ctx, _cache) {
+  return ft("div", null, [
+    ft(It, null, [
+      ft("span", null, "Ready")
+    ], 64)
+  ]);
+}
+"#;
+        let block_chunk = r#"
+import { V } from "./chunk-vnode.js";
+function closeBlock(vnode) {
+  vnode.dynamicChildren = [];
+  return vnode;
+}
+export function ft(t, e, n, s, r, o) {
+  return closeBlock(V(t, e, n, s, r, o, true));
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./chunk-ft.js").then(|| block_chunk.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <div>\n    <span>Ready</span>\n  </div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_vite_scoped_render_helper_with_local_options() {
         let input = r#"
 import { openBlock, createElementBlock, toDisplayString } from "vue";
