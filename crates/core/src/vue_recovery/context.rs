@@ -1089,7 +1089,7 @@ fn vue_component_name_from_source(source: &str) -> Option<String> {
 }
 
 pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecoveryContext) {
-    if ctx.vue_helper_candidates.is_empty() {
+    if ctx.vue_helper_candidates.is_empty() && ctx.vue_helpers.is_empty() {
         return;
     }
 
@@ -1155,6 +1155,12 @@ impl Visit for HelperInference<'_> {
                 .insert(callee.sym.clone(), VueHelper::CreateElementBlock);
             self.inferred
                 .insert(fragment.sym.clone(), VueHelper::Fragment);
+        }
+
+        if let Some(callee) = self.with_directives_call(call) {
+            self.inferred
+                .entry(callee.sym.clone())
+                .or_insert(VueHelper::WithDirectives);
         }
 
         if let Some(callee) = call_callee_ident(call) {
@@ -1239,6 +1245,41 @@ impl HelperInference<'_> {
             .first()
             .and_then(|arg| ident_expr(arg.expr.as_ref()))?;
         Some((callee, fragment))
+    }
+
+    fn with_directives_call<'a>(
+        &self,
+        call: &'a CallExpr,
+    ) -> Option<&'a swc_core::ecma::ast::Ident> {
+        let callee = call_callee_ident(call)?;
+        if !is_with_directives_call(&call.args) {
+            return None;
+        }
+        let base = call.args.first()?;
+        self.is_likely_vnode_expr(base.expr.as_ref())
+            .then_some(callee)
+    }
+
+    fn is_likely_vnode_expr(&self, expr: &Expr) -> bool {
+        match unwrap_paren_expr(expr) {
+            Expr::Seq(seq) => seq
+                .exprs
+                .last()
+                .is_some_and(|expr| self.is_likely_vnode_expr(expr.as_ref())),
+            Expr::Call(call) => self
+                .call_helper(call)
+                .or_else(|| infer_call_helper(call))
+                .is_some_and(|helper| {
+                    matches!(
+                        helper,
+                        VueHelper::CreateBlock
+                            | VueHelper::CreateElementBlock
+                            | VueHelper::CreateElementVNode
+                            | VueHelper::CreateVNode
+                    )
+                }),
+            _ => false,
+        }
     }
 
     fn infer_unref_expr(&mut self, expr: &Expr) {
