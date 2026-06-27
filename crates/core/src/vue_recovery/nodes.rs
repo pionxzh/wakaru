@@ -6,7 +6,8 @@ use swc_core::ecma::ast::{
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
-use super::directives::recover_directive_tuple;
+use super::context::unwrap_paren_expr;
+use super::directives::{directive_modifiers, recover_directive_tuple};
 use super::expressions::{
     clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr,
     unsupported_vnode_children_expr,
@@ -791,13 +792,69 @@ fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
     };
 
     for directive in directives.elems.iter().flatten() {
-        let Some(attr) = recover_directive_tuple(directive.expr.as_ref(), ctx)? else {
+        let attr = match recover_directive_tuple(directive.expr.as_ref(), ctx)? {
+            Some(attr) => Some(attr),
+            None => recover_implicit_model_directive(directive.expr.as_ref(), &node, ctx)?,
+        };
+        let Some(attr) = attr else {
             continue;
         };
         push_attr_to_node(&mut node, attr);
     }
 
     Ok(node)
+}
+
+fn recover_implicit_model_directive(
+    expr: &Expr,
+    node: &VueNode,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueAttr>> {
+    if !node_has_model_update_event(node) {
+        return Ok(None);
+    }
+    let Expr::Array(tuple) = expr else {
+        return Ok(None);
+    };
+    let Some(value) = tuple.elems.get(1).and_then(|elem| elem.as_ref()) else {
+        return Ok(None);
+    };
+    let modifiers = tuple
+        .elems
+        .get(3)
+        .and_then(|elem| elem.as_ref())
+        .map(|elem| directive_modifiers(elem.expr.as_ref()))
+        .unwrap_or_default();
+
+    Ok(Some(VueAttr::Directive(VueDirective {
+        name: "model".to_string(),
+        arg: None,
+        expr: Some(printed_vue_expr(value.expr.as_ref(), ctx)?),
+        modifiers,
+        scope: Default::default(),
+    })))
+}
+
+fn node_has_model_update_event(node: &VueNode) -> bool {
+    match node {
+        VueNode::Element(element) => element.attrs.iter().any(|attr| {
+            matches!(
+                attr,
+                VueAttr::On { name, .. } if name == "update:modelValue"
+            )
+        }),
+        VueNode::Fragment(children) => children.iter().any(node_has_model_update_event),
+        VueNode::If(branches) => branches
+            .iter()
+            .any(|branch| node_has_model_update_event(&branch.node)),
+        VueNode::For(for_node) => node_has_model_update_event(&for_node.node),
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
+        | VueNode::RawExpr(_)
+        | VueNode::Unsupported(_) => false,
+    }
 }
 
 fn recover_with_memo(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
@@ -972,17 +1029,67 @@ fn recover_element(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<Op
         .transpose()?
         .unwrap_or_default();
 
-    let children = args
-        .get(2)
-        .map(|arg| recover_children(arg.expr.as_ref(), ctx))
-        .transpose()?
-        .unwrap_or_default();
+    let children = recover_element_children(args, ctx)?;
 
     Ok(Some(VueNode::Element(
         VueElement::new(tag)
             .with_attrs(attrs)
             .with_children(children),
     )))
+}
+
+fn recover_element_children(
+    args: &[ExprOrSpread],
+    ctx: &VueRecoveryContext,
+) -> Result<Vec<VueNode>> {
+    let Some(children_arg) = args.get(2) else {
+        return Ok(Vec::new());
+    };
+    if is_text_patch_flag(args.get(3).map(|arg| arg.expr.as_ref())) {
+        if let Some(child) = recover_dynamic_text_child(children_arg.expr.as_ref(), ctx)? {
+            return Ok(recovered_node_children(Some(child)));
+        }
+    }
+    recover_children(children_arg.expr.as_ref(), ctx)
+}
+
+fn recover_dynamic_text_child(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    match unwrap_paren_expr(expr) {
+        Expr::Lit(Lit::Null(_)) | Expr::Array(_) | Expr::Cond(_) => Ok(None),
+        expr if string_lit(expr).is_some() => Ok(Some(VueNode::Text(
+            string_lit(expr).expect("checked string literal"),
+        ))),
+        Expr::Tpl(tpl) => recover_template_literal(tpl, ctx).map(Some),
+        Expr::Bin(bin) if bin.op == BinaryOp::Add => {
+            if let Some(node) = recover_text_concat(expr, ctx)? {
+                return Ok(Some(node));
+            }
+            Ok(Some(VueNode::Interpolation(VueExpr::new(clean_expr(
+                &print_expr(expr, ctx)?,
+                ctx,
+            )))))
+        }
+        Expr::Call(call) if helper_name(&call.callee, ctx) == Some(VueHelper::ToDisplayString) => {
+            let Some(arg) = call.args.first() else {
+                return Ok(Some(VueNode::Interpolation(VueExpr::new(String::new()))));
+            };
+            Ok(Some(VueNode::Interpolation(VueExpr::new(clean_expr(
+                &print_expr(arg.expr.as_ref(), ctx)?,
+                ctx,
+            )))))
+        }
+        expr => Ok(Some(VueNode::Interpolation(VueExpr::new(clean_expr(
+            &print_expr(expr, ctx)?,
+            ctx,
+        ))))),
+    }
+}
+
+fn is_text_patch_flag(expr: Option<&Expr>) -> bool {
+    matches!(
+        expr.map(unwrap_paren_expr),
+        Some(Expr::Lit(Lit::Num(number))) if (number.value as i32) & 1 != 0
+    )
 }
 
 pub(super) fn clean_condition_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {

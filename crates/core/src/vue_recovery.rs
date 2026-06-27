@@ -346,6 +346,8 @@ fn recover_vue_sfcs_from_js_inner(
         imported_metadata.component_bindings,
         composable_ref_props,
     );
+    ctx.directive_bindings
+        .extend(imported_metadata.directive_bindings);
     ctx.vue_helper_candidates
         .extend(imported_metadata.vue_helper_candidates);
     let renders = find_render_sources(&module, preferred_component_name);
@@ -425,12 +427,14 @@ fn has_recovered_template_structure(node: &VueNode) -> bool {
 #[derive(Default)]
 struct ImportedVueMetadata {
     component_bindings: HashMap<Atom, String>,
+    directive_bindings: HashMap<Atom, String>,
     composable_ref_props: HashMap<Atom, HashSet<Atom>>,
     vue_helper_candidates: HashSet<Atom>,
 }
 
 struct ResolvedImportMetadata {
     component_exports: HashMap<String, String>,
+    directive_exports: HashMap<String, String>,
     composable_ref_props: HashMap<String, HashSet<Atom>>,
     vue_helper_exports: HashSet<String>,
 }
@@ -460,6 +464,7 @@ fn collect_imported_vue_metadata(
             let resolved = resolve_import(&source).unwrap_or_default();
             let source_metadata = ResolvedImportMetadata {
                 component_exports: component_exports_from_source(&resolved).unwrap_or_default(),
+                directive_exports: directive_exports_from_source(&resolved),
                 composable_ref_props: imports::composable_ref_props_from_source(&resolved),
                 vue_helper_exports: vue_helper_exports_from_source(&resolved),
             };
@@ -469,6 +474,7 @@ fn collect_imported_vue_metadata(
                 .expect("inserted source export cache")
         };
         if source_metadata.component_exports.is_empty()
+            && source_metadata.directive_exports.is_empty()
             && source_metadata.composable_ref_props.is_empty()
             && source_metadata.vue_helper_exports.is_empty()
         {
@@ -488,6 +494,11 @@ fn collect_imported_vue_metadata(
                             .component_bindings
                             .insert(named.local.sym.clone(), component.clone());
                     }
+                    if let Some(directive) = source_metadata.directive_exports.get(&imported) {
+                        metadata
+                            .directive_bindings
+                            .insert(named.local.sym.clone(), directive.clone());
+                    }
                     if let Some(ref_props) = source_metadata.composable_ref_props.get(&imported) {
                         metadata
                             .composable_ref_props
@@ -504,6 +515,11 @@ fn collect_imported_vue_metadata(
                         metadata
                             .component_bindings
                             .insert(default.local.sym.clone(), component.clone());
+                    }
+                    if let Some(directive) = source_metadata.directive_exports.get("default") {
+                        metadata
+                            .directive_bindings
+                            .insert(default.local.sym.clone(), directive.clone());
                     }
                     if let Some(ref_props) = source_metadata.composable_ref_props.get("default") {
                         metadata
@@ -522,6 +538,103 @@ fn collect_imported_vue_metadata(
     }
 
     Ok(metadata)
+}
+
+fn directive_exports_from_source(source: &str) -> HashMap<String, String> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let Ok(module) = parse_module(source, cm) else {
+        return HashMap::new();
+    };
+    let local_directives = local_directive_bindings(&module);
+    let mut exported = HashMap::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Var(var) = &export.decl {
+                    for decl in &var.decls {
+                        let Pat::Ident(binding) = &decl.name else {
+                            continue;
+                        };
+                        let Some(init) = decl.init.as_deref() else {
+                            continue;
+                        };
+                        if let Some(name) = directive_name_from_init(init) {
+                            exported.insert(binding.id.sym.to_string(), name);
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(default)) => {
+                if let Some(name) = directive_name_from_init(default.expr.as_ref()) {
+                    exported.insert("default".to_string(), name);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
+                for specifier in &export.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let local = module_export_name(&named.orig);
+                    let Some(name) = local_directives.get(&local) else {
+                        continue;
+                    };
+                    let exported_name = named
+                        .exported
+                        .as_ref()
+                        .map(module_export_name)
+                        .unwrap_or(local);
+                    exported.insert(exported_name, name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    exported
+}
+
+fn local_directive_bindings(module: &Module) -> HashMap<String, String> {
+    let mut bindings = HashMap::new();
+    for item in &module.body {
+        let var = match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => var,
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Var(var) => var,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if let Some(name) = directive_name_from_init(init) {
+                bindings.insert(binding.id.sym.to_string(), name);
+            }
+        }
+    }
+    bindings
+}
+
+fn directive_name_from_init(expr: &Expr) -> Option<String> {
+    let Expr::Object(object) = context::unwrap_paren_expr(expr) else {
+        return None;
+    };
+    object.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        (prop_name(&key_value.key).as_deref() == Some("name"))
+            .then(|| string_lit(key_value.value.as_ref()))
+            .flatten()
+    })
 }
 
 fn vue_helper_exports_from_source(source: &str) -> HashSet<String> {
@@ -7145,6 +7258,21 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_text_patch_expression_children() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("p", null, _ctx.format(_ctx.price), 1);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p>{{ format(price) }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_render_list_destructured_param() {
         let input = r#"
 import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
@@ -7794,6 +7922,40 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <input v-model.trim.number=\"value\" v-show=\"visible\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_split_runtime_model_and_show_directives() {
+        let input = r#"
+import { withDirs } from "./chunk-directives.js";
+import { modelText } from "./chunk-model.js";
+import { show } from "./chunk-show.js";
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return withDirs((openBlock(), createElementBlock("input", {
+    "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => _ctx.value = $event)
+  }, null, 512)), [
+    [modelText, _ctx.value],
+    [show, _ctx.visible]
+  ]);
+}
+"#;
+        let show_chunk = r#"
+const localShow = {
+  name: "show",
+  beforeMount() {}
+};
+export { localShow as show };
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./chunk-show.js").then(|| show_chunk.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<template>\n  <input v-model=\"value\" v-show=\"visible\" />\n</template>\n"
         );
     }
 
