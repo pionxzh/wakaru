@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.6.0](https://github.com/pionxzh/wakaru/compare/v1.5.0...v1.6.0) (2026-06-28)
+
+### Features
+
+* **smart-rename:** infer names for React 19 useActionState hook ([b58c48e8](https://github.com/pionxzh/wakaru/commit/b58c48e82858b6a8197d7cd24e65ea405d46cf8e))
+* **core:** rename bindings from exported getter namespace in UnExportRename ([0fdfaf7d](https://github.com/pionxzh/wakaru/commit/0fdfaf7dcaa966702abdd5942ac25bc7c25c2237))
+* **core:** use getter return values as SmartRename hints ([23845071](https://github.com/pionxzh/wakaru/commit/238450714cf64fe3800964428ee0f1a0e5f8e441))
+* **core:** fold consecutive Object.defineProperty getter calls into object literal ([44fc2f22](https://github.com/pionxzh/wakaru/commit/44fc2f22e928ea44801086eb83515c0bccd9318b))
+* **core:** add ClassExpressionToDeclaration rule ([7e4ad911](https://github.com/pionxzh/wakaru/commit/7e4ad911ad540f35f6b0280d6399582a0d7dbed8))
+* **playground:** source map visualization with mapping toggle ([8a00dfe2](https://github.com/pionxzh/wakaru/commit/8a00dfe220eea988b9a6309516dd050c9ef6f3c8))
+* emit output source maps mapping decompiled code back to input ([3f39750e](https://github.com/pionxzh/wakaru/commit/3f39750e0d94f282cd2dd30901cf9da191dd7483))
+* **core:** fold async memoized member apply calls ([cb7acb71](https://github.com/pionxzh/wakaru/commit/cb7acb71f6cf888a8be8a236cb1b02e67c29169f))
+* **core:** recover TS state machine branch joins ([04d53c59](https://github.com/pionxzh/wakaru/commit/04d53c593f2a7133f68a93c211e5942b6d8c0233))
+* **core:** recover state machine if-else branches ([0c34d2bc](https://github.com/pionxzh/wakaru/commit/0c34d2bc7a77412d3bbaabfe1c24762f113bf178))
+* **cli:** add panic hook with prefilled GitHub issue URL ([c4181a8a](https://github.com/pionxzh/wakaru/commit/c4181a8aca2f2805d50781e9c759ee39a4817aeb))
+* **cli:** add timing, detected format, color, JSON output, and better error messages ([3958ac22](https://github.com/pionxzh/wakaru/commit/3958ac229caca2e2f517b9d4a1e20a7f3f971831))
+
+### Bug Fixes
+
+* use generic action name for useActionState ([e2f9fe95](https://github.com/pionxzh/wakaru/commit/e2f9fe95ef81281fdd2cd58dacb65f4ff4c14092))
+* **core:** avoid class promotion parameter conflicts ([d73e001d](https://github.com/pionxzh/wakaru/commit/d73e001d372e1a0b991cd2c27b9a453517ff8118))
+* **playground:** disable formatter during mapping ([c58ad58a](https://github.com/pionxzh/wakaru/commit/c58ad58a00ce54bbe0fef8624ead0ad3a6171fe8))
+* **core:** include imports in class promotion scope check, tighten ODP adjacency ([251935b8](https://github.com/pionxzh/wakaru/commit/251935b8d356989e06ef1eb7386945cbde46c81d))
+* **core:** address review findings in decompile quality rules ([19c1afc6](https://github.com/pionxzh/wakaru/commit/19c1afc6215cf792e899d1b586dee678cce363ee))
+* **core:** emit JSX string children as text nodes instead of expression containers ([6dd7489d](https://github.com/pionxzh/wakaru/commit/6dd7489d45b7b194d4f48a67fea05044d167d29f))
+* **sourcemap:** propagate spans for class members and try/catch blocks ([c3cb3cd8](https://github.com/pionxzh/wakaru/commit/c3cb3cd8e85d44659578fc4fff66a2f261570f86))
+* **sourcemap:** propagate input spans in tier-2 transformation rules ([5b5093a1](https://github.com/pionxzh/wakaru/commit/5b5093a10c0db534ea7d64935f4f497b83e41d65))
+* **sourcemap:** emit unpack maps from phase2 source maps ([bcaf6fc5](https://github.com/pionxzh/wakaru/commit/bcaf6fc5b49ae2967545eb65c6a9fe955cf1cf40))
+* **sourcemap:** propagate input spans in tier-1 transformation rules ([459530b3](https://github.com/pionxzh/wakaru/commit/459530b302118b4b491a453441b14d96b7c67d4d))
+* **sourcemap:** preserve input spans in high-impact rules ([9de613c9](https://github.com/pionxzh/wakaru/commit/9de613c92339440ff7debbf2bba41efd4ac4707e))
+* **core:** recover inlined esbuild cjs wrappers ([bd126f62](https://github.com/pionxzh/wakaru/commit/bd126f629238a656a1feaec653320a3d13666400))
+* **core:** forward adjacent assignment aliases ([c2d41056](https://github.com/pionxzh/wakaru/commit/c2d410569c56cdf5788ea39afaec54a7ad20275f))
+* **core:** preserve object rest helpers for async recovery ([d85dab0d](https://github.com/pionxzh/wakaru/commit/d85dab0d64302c7b66dec6c2def9e980f47066b1))
+* **core:** recover async nullish defaults after destructuring ([1f4fa482](https://github.com/pionxzh/wakaru/commit/1f4fa4822ba0e7443ab0aa8dc3a75f8ef59726f5))
+* **core:** recover object rest after source init access ([6755a1fe](https://github.com/pionxzh/wakaru/commit/6755a1fe0173380035d3cba265724d7c27b36be3))
+* **core:** remove consumed regenerator runtime helpers ([51c2ee29](https://github.com/pionxzh/wakaru/commit/51c2ee29bc71e7d521d600cbd597cee0a3d8d6df))
+* **core:** preserve recovered generators in delta dce ([9eb9a5f0](https://github.com/pionxzh/wakaru/commit/9eb9a5f0b13d90272550eb8cc27a6f922e937517))
+* **core:** lower esbuild factory threshold for CJS-helper bundles ([2fa6b97a](https://github.com/pionxzh/wakaru/commit/2fa6b97a07292264c7f0468309ed3fef01593545))
+* **core:** detect mangled tagged template helpers (loose + tsc body shapes) ([e3c89339](https://github.com/pionxzh/wakaru/commit/e3c89339e1331720b0550f796661ea55e4d5bf9d))
+* **repro:** add mangle-insensitive validation to four reproduction matrices ([4f932fcf](https://github.com/pionxzh/wakaru/commit/4f932fcf09a5b021ea79af8d6675a789cc1f3bca))
+* **core:** recover Babel 7.8 nested destructuring defaults in UnParameters ([862c049a](https://github.com/pionxzh/wakaru/commit/862c049a98de839dfb26a4ecd09822cf468b125d))
+* **core:** catch SWC panics in parser and fixer passes ([737a0405](https://github.com/pionxzh/wakaru/commit/737a040536c6eb95868dec2e75299b213467628c))
+* **core:** skip regex literals in UnAssignmentMerging (#193) ([cd1d7fdb](https://github.com/pionxzh/wakaru/commit/cd1d7fdb7d04f0d11497aa8828567bd3f08064c9))
+* **core:** preserve dependent assignment chains ([9c18dd51](https://github.com/pionxzh/wakaru/commit/9c18dd51e38782cfbe4ec488b0d910891119373a))
+* **core:** reuse template helper cache in pipeline ([018f5a24](https://github.com/pionxzh/wakaru/commit/018f5a24962bc9d1508d1935999b79591eb9e404))
+* **core:** merge scope writers sharing init factories ([1a5a1dd0](https://github.com/pionxzh/wakaru/commit/1a5a1dd02e1f4ee5bfe3d2f4c7bcea9f21bea96d))
+* **core:** preserve hoisted var semantics in generated cli ([77006765](https://github.com/pionxzh/wakaru/commit/7700676571a7b7bb840dd71ac878301c60d16855))
+* **core:** merge init factory state claimed by scope modules ([c4b51d05](https://github.com/pionxzh/wakaru/commit/c4b51d051d6cd10cd430345f6a0b2ff0ad2c1d16))
+* **core:** gate nested scope-hoist splitting to aggressive ([84e243d5](https://github.com/pionxzh/wakaru/commit/84e243d5164ebeffdff8bb9dff4484cf1c01343e))
+* **core:** preserve imports in scope-hoist split chunks ([fecbe597](https://github.com/pionxzh/wakaru/commit/fecbe5976be55df8894ccc2578acaacb53574b23))
+* **core:** wire LocalHelperContext into UnTemplateLiteral; narrow HelperDependency sweeps ([8c32e308](https://github.com/pionxzh/wakaru/commit/8c32e3086878c05d940f6941b40142626d5a1642))
+* **core:** classify and remove imported createForOfIteratorHelper ([f263536f](https://github.com/pionxzh/wakaru/commit/f263536f0659adf8bc88aeca1d0fb5f721719d79))
+* **core:** add missing inheritsLoose helper paths from completeness audit ([f7e38e99](https://github.com/pionxzh/wakaru/commit/f7e38e990f798e92bb4064d0238b84d3c4a9bd33))
+* **core:** classify and remove imported sub-helper dependencies ([c70f2a04](https://github.com/pionxzh/wakaru/commit/c70f2a04b2aa2bd2aea91543ecaddb4ec83e11b9))
+* **core:** recognize SWC _tagged_template_literal_loose imported helper ([41035593](https://github.com/pionxzh/wakaru/commit/41035593e21772e0475b14ed82f9805672f9aeb4))
+* **core:** recognize imported typeof/callSuper/taggedTemplateLiteral helpers ([d9cb7851](https://github.com/pionxzh/wakaru/commit/d9cb78513acbf33d43917c55c4793a99b6485974))
+
+### Performance
+
+* **test262:** parallel decompilation and concurrent matrix jobs ([a49b7f80](https://github.com/pionxzh/wakaru/commit/a49b7f807aab68131eb00c1f792312c9c8dfad05))
+* **core:** replace clone with take in VisitMut rules ([000d4bca](https://github.com/pionxzh/wakaru/commit/000d4bcafbcfdb3acc189a81a9a982609b714adc))
+
 ## [1.5.0](https://github.com/pionxzh/wakaru/compare/v1.4.0...v1.5.0) (2026-06-18)
 
 ### Features
