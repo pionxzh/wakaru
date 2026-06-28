@@ -100,8 +100,34 @@ wakaru input.js --emit-source-map -o output.js    # emit output .map alongside d
 Source maps enable identifier recovery and import deduplication. They are
 currently supported only with a single input file.
 
-`--emit-source-map` writes a `.map` file alongside each output file, mapping
-the decompiled output back to the input.
+`--emit-source-map` writes a `.map` file alongside each decompiled JavaScript
+output file, mapping the output back to the input. Vue SFC sidecars from
+`--vue-sfc` do not get source maps.
+
+### Vue SFC recovery
+
+```bash
+wakaru input.js --vue-sfc
+wakaru input.js --vue-sfc -o App.vue
+wakaru custom/target.min.mjs --vue-sfc -o out/renamed.mjs
+wakaru bundle.js --unpack --vue-sfc -o out/
+```
+
+`--vue-sfc` is a best-effort Vue 3 render recovery path. In single-file mode
+without `-o`, Wakaru prints a recovered `.vue` artifact when recovery succeeds
+and normal decompiled JavaScript otherwise.
+
+With `-o`, `.vue` paths are Vue-only: `-o App.vue` writes the recovered SFC and
+errors if recovery fails. Other output paths are JavaScript-primary: Wakaru
+writes normal decompiled JavaScript to the requested path and, when Vue
+recovery succeeds, also writes a sibling `.vue` sidecar named from the input
+filename. For example, `custom/target.min.mjs --vue-sfc -o out/renamed.mjs`
+writes `out/renamed.mjs` and `out/target.min.vue`.
+
+In unpack mode, `--vue-sfc` is additive: every module still gets JavaScript
+output, and recovered Vue render modules also get sibling `.vue` artifacts.
+See [docs/vue-decompile.md](docs/vue-decompile.md) for the supported recovery
+scope.
 
 ### Extract original sources
 

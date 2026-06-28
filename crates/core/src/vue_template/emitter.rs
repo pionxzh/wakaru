@@ -90,7 +90,7 @@ impl TemplateEmitter {
             VueNode::Comment(comment) => {
                 self.indent(depth);
                 self.out.push_str("<!-- ");
-                self.out.push_str(comment.trim());
+                self.out.push_str(&escape_comment(comment.trim()));
                 self.out.push_str(" -->\n");
             }
             VueNode::RawHtml(html) => {

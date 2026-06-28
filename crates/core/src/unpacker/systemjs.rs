@@ -170,13 +170,19 @@ fn registers_from_iife_expr(expr: &Expr) -> Option<Vec<SystemRegister>> {
         };
         register.prelude = body.stmts[..idx]
             .iter()
-            .filter(|stmt| !matches!(stmt, Stmt::Expr(expr) if is_use_strict(expr)))
+            .filter(|stmt| {
+                !matches!(stmt, Stmt::Expr(expr) if is_use_strict(expr) || is_register_expr_stmt(expr))
+            })
             .cloned()
             .collect();
         registers.push(register);
     }
 
     Some(registers)
+}
+
+fn is_register_expr_stmt(expr: &ExprStmt) -> bool {
+    register_from_expr(expr.expr.as_ref()).is_some()
 }
 
 fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
@@ -1102,6 +1108,50 @@ System.register(["./dep.js"], (_export) => {
             .code
             .contains("export default decorate(\"ready\");"));
         assert!(!result.modules[0].code.contains("use strict"));
+    }
+
+    #[test]
+    fn iife_wrapped_multiple_registers_do_not_copy_prior_registers_into_prelude() {
+        let result = unpack(
+            r#"
+!function () {
+  function decorate(value) {
+    return value + "!";
+  }
+  System.register("first", [], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("one"));
+      }
+    };
+  });
+  System.register("second", [], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("two"));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 2);
+        assert_eq!(result.modules[1].filename, "second.js");
+        assert!(result.modules[1].code.contains("function decorate(value)"));
+        assert!(result.modules[1]
+            .code
+            .contains("export default decorate(\"two\");"));
+        assert!(
+            !result.modules[1].code.contains("System.register"),
+            "later modules must not copy prior register calls as prelude:\n{}",
+            result.modules[1].code
+        );
+        assert!(
+            !result.modules[1].code.contains("decorate(\"one\")"),
+            "later modules must not copy prior register execute bodies:\n{}",
+            result.modules[1].code
+        );
     }
 
     #[test]
