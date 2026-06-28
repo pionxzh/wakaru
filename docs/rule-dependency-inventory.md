@@ -686,16 +686,20 @@ These rules restore structural patterns and clean up minification artifacts.
 | Family | TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
-| Suspected prerequisites | Must run after module-system helper cleanup has completed, so removing consumed inline TS async helpers cannot hide `__esModule` patterns from UnEsm. |
+| Confirmed prerequisites | **UnEsm** (`confirmed` — consumed inline TS async helper cleanup must not hide `__esModule` / interop patterns before module-system reconstruction), LocalHelperContext (`confirmed` — async helper identities are consumed directly). |
 | Shape prerequisites | `__generator` state machine structure, `__awaiter` wrapper, or aliases detected by `LocalHelperContext` |
 | Produces | `async` functions, `function*` generators, `yield`/`await` expressions |
-| Downstream dependents | UnWebpackInterop2 (may expose new getter patterns after async restoration) |
+| Downstream dependents | UnObjectRest3, UnArgumentSpread2, UnWebpackInterop2 (async/regenerator recovery may expose additional object-rest, spread, and interop getter shapes). |
 | Fact behavior | **Reader** — consumes detected TypeScript helper identities from `LocalHelperContext`; removes consumed inline `__awaiter` / `__generator` declarations via shared TS helper cleanup after transformation. |
 | Safety | Heuristic (state machine reconstruction) |
 
 ### 44. UnWebpackInterop2
 
-See #35 (second pass of UnWebpackInterop).
+See #35 (second pass of UnWebpackInterop). In the current registry this pass runs
+after UnAsyncAwait and after UnEsm. It is late cleanup for interop getter shapes
+that become visible after async/regenerator recovery, not a prerequisite for
+UnEsm. A later cleanup pass, UnWebpackInterop3, runs after UnEsm to catch direct
+`require.n(importBinding)` helper shapes exposed by import conversion.
 
 ### 45. UnVariableMergingDeclsOnly
 
@@ -719,13 +723,13 @@ See #35 (second pass of UnWebpackInterop).
 | Family | Module-system |
 | Role | Module-system reconstruction |
 | Uses `unresolved_mark` | No |
-| Confirmed prerequisites | UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnVariableMergingDeclsOnly (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern), **UnWebpackInterop2** (`confirmed hard` — fixture regression without it), UnAsyncAwait → UnWebpackInterop2 chain (`confirmed`) |
-| Shape prerequisites | Clean `require()` calls, clean `exports.X = val` / `module.exports = val`, all interop getters resolved |
+| Confirmed prerequisites | UnCurlyBraces (`confirmed` — enables assignment splitting), UnUseStrict (`confirmed` — removes directive noise), UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnVariableMergingDeclsOnly (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern). |
+| Shape prerequisites | Clean `require()` calls, clean `exports.X = val` / `module.exports = val`, and first-pass interop getter cleanup where required for import classification. Later interop shapes are handled after UnEsm by UnWebpackInterop2/3. |
 | Produces | `import`/`export` declarations; renames conflicting export bindings |
-| Downstream dependents | UnAsyncAwait (must run after the module-system reconstruction point for inline TS helper cleanup), UnImportRename, UnExportRename, SmartInline |
+| Downstream dependents | Fact extraction barrier, UnObjectSpread2, UnObjectRest2, UnSlicedToArray2, UnAsyncAwait cleanup, UnWebpackInterop3, UnImportRename, UnExportRename, SmartInline |
 | Fact behavior | **Writer** — could emit import/export summary, module classification (CJS/ESM) |
 | Safety | Heuristic (classification logic for default vs named imports/exports) |
-| Notes | **Experimentally validated.** Current position (end of Stage 5, after UnWebpackInterop2) is the earliest safe position. Core require→import conversion works as early as Stage 2, but webpack interop getter patterns require the full UnAsyncAwait → UnWebpackInterop2 chain to complete first. See Step 3 experiments for details. Level-gated: entire rule disabled below `standard`. |
+| Notes | Current registry position is the Helpers-stage module-system barrier, before UnAsyncAwait and UnWebpackInterop2. Historical experiments below found a fixture regression when a then-current pipeline moved UnEsm before the second interop pass; that conclusion is now superseded by the live registry and the added late interop cleanup passes. Treat `crates/core/src/rules/pipeline.rs` and the two-phase model in `architecture.md` / `fact-system.md` as authoritative for current ordering. Level-gated: entire rule disabled below `standard`. |
 
 ---
 
@@ -1002,12 +1006,19 @@ See #36 (second pass of UnIife, after SmartInline).
 | Family | Generic |
 | Role | Cleanup |
 | Uses `unresolved_mark` | No |
-| Suspected prerequisites | All prior rules (runs last — earlier rules may introduce tail returns) |
+| Suspected prerequisites | All prior restructuring rules — earlier rules may introduce tail returns |
 | Shape prerequisites | None |
 | Produces | Removes tail `return undefined` / `return void 0` |
-| Downstream dependents | None (last rule) |
+| Downstream dependents | UnConditionals2 (late conditional cleanup can simplify patterns exposed by tail-return removal) |
 | Fact behavior | Neither |
 | Safety | Safe |
+
+### 67. UnConditionals2
+
+See #37 (second pass of UnConditionals). In the current registry this is the
+final rule. Late passes such as SmartInline, ArrowFunction/ArrowReturn, and
+UnReturn can expose conditional patterns that the first UnConditionals pass
+could not see.
 
 ---
 
@@ -1056,8 +1067,8 @@ Transform between module systems (CJS ↔ ESM).
 | Rule | Current Stage | Notes |
 |------|--------------|-------|
 | UnEsmoduleFlag | 3 | Early cleanup — removes noise for UnEsm |
-| UnWebpackInterop | 4 + 5 | Removes getter wrappers for UnEsm |
-| UnEsm | 5 | **Central rule** — most complex dependencies |
+| UnWebpackInterop | Helpers + Complex + Cleanup | First pass removes getter wrappers before UnEsm; later passes clean shapes exposed by async recovery and import conversion |
+| UnEsm | Helpers barrier | **Central rule** — import/export reconstruction and fact extraction boundary |
 | UnImportRename | 7 | Post-UnEsm naming |
 | UnExportRename | 7 | Post-UnEsm naming |
 
@@ -1067,7 +1078,7 @@ Webpack/bundler-specific runtime artifact removal.
 
 | Rule | Current Stage | Notes |
 |------|--------------|-------|
-| UnWebpackInterop | 4 + 5 | Also in module-system category |
+| UnWebpackInterop | Helpers + Complex + Cleanup | Also in module-system category |
 | UnWebpackDefineGetters | 7 | Webpack runtime |
 | UnWebpackObjectGetters | 7 | Depends on UnWebpackDefineGetters |
 
@@ -1125,7 +1136,8 @@ Final cleanup, inlining, and renaming.
 | UnUndefinedInit | 6 | Needs RemoveVoid |
 | SmartInline | 7 | Needs stable bindings |
 | SmartRename | 7 | Needs SmartInline |
-| UnReturn | 7 | Must be last |
+| UnReturn | 7 | Penultimate tail-return cleanup |
+| UnConditionals2 | 7 | Final late conditional cleanup after UnReturn |
 
 ---
 
@@ -1141,6 +1153,8 @@ UnBracketNotation ──┬→ UnInteropRequireDefault ──[C]──┐    │
                     ├→ UnInteropRequireWildcard ──[C]─┤    │                                    → UnReturn
                     ├→ UnObjectRest                   ↓    │
                     └→ UnWebpackInterop (pass 1) [C]→ UnEsm [C]→ async helper cleanup must run after
+                                                      ↓
+                                              UnAsyncAwait ──→ UnWebpackInterop2
                                                       ↑
 UnIndirectCall ─────┬→ UnInteropRequireDefault        │
                     └→ UnInteropRequireWildcard        │
@@ -1148,7 +1162,6 @@ UnIndirectCall ─────┬→ UnInteropRequireDefault        │
 UnAssignmentMerging ┬→ UnVariableMerging              │
                     └──────────────────────[C]────────┤
 UnEsmoduleFlag ────────────────────────────[C]────────┤
-UnAsyncAwait ──→ UnWebpackInterop2 [C]─┘
 
 UnClassCallCheck ───┬→ UnEs6Class ──→ UnClassFields
 UnPossibleConstructorReturn ↗
@@ -1206,6 +1219,11 @@ Rules that could benefit from merged cross-module facts:
 Five experiments were run on 2026-04-15. Each modified the pipeline ordering, ran
 the full unit test suite (~550 tests), and the most promising candidate was also
 tested against the real-world fixture corpus (4500+ webpack modules).
+
+**Current-state note:** the live registry now runs UnEsm before UnAsyncAwait and
+UnWebpackInterop2, with additional late interop cleanup after UnEsm. Treat the
+experiment logs below as historical evidence about fragile shapes, not as an
+authoritative replacement for `RuleDescriptor::requires`.
 
 ### Experiment 1: UnEsm → Stage 2 (after UnAssignmentMerging)
 
@@ -1320,13 +1338,17 @@ to also handle the single-return-of-ternary block form:
 - This broke UnJsx — `o().createElement(...)` was not recognized as React element creation.
 - SmartRename produced worse names (`A1` → `a`, `V` → `v`).
 
-**Conclusion:** UnEsm **depends on UnWebpackInterop2** (the second pass), which itself
-depends on UnAsyncAwait completing. The current Stage 5 position (after UnWebpackInterop2)
-is correct.
+**Superseded conclusion:** this experiment proved that interop wrappers exposed
+after async restoration can materially affect output quality. It no longer proves
+that UnWebpackInterop2 must precede UnEsm: the current registry places UnEsm
+before UnAsyncAwait/UnWebpackInterop2 and relies on later interop cleanup passes
+for shapes exposed after import conversion.
 
 **Prerequisite status updates:**
-- UnWebpackInterop2 → UnEsm: `confirmed` (hard dependency, proven by fixture regression)
-- UnAsyncAwait → UnWebpackInterop2 → UnEsm: `confirmed` chain
+- UnAsyncAwait → UnWebpackInterop2: `confirmed` (late interop cleanup still depends
+  on async restoration)
+- UnWebpackInterop2 → UnEsm: `historical / superseded` (fixture regression under
+  the then-current pipeline, but not a current registry edge)
 
 ---
 
@@ -1338,7 +1360,7 @@ is correct.
 | Disable UnWebpackInterop | 1 | — | **Soft** prerequisite for UnEsm |
 | TS async helper cleanup → Stage 2 | 2 | — | **Blocked** — must stay after UnEsm |
 | UnCurlyBraces → Stage 1 | 2 | — | **Conditionally safe** (needs pattern matcher fix) |
-| UnEsm → Stage 4 | 0 | **1 file** | **Blocked** by UnWebpackInterop2 |
+| UnEsm → Stage 4 | 0 | **1 file** | **Historical regression**; superseded by current late interop cleanup |
 
 ### Confirmed Dependency Chain for UnEsm
 
@@ -1348,21 +1370,20 @@ UnIndirectCall ─────→ UnInteropRequireWildcard ──┤
 UnAssignmentMerging ────────────────────────────┤
 UnEsmoduleFlag ─────────────────────────────────┤
 UnWebpackInterop (pass 1) ──────────────────────┤
-UnAsyncAwait → UnWebpackInterop2 ───────────────┤
                                                  ↓
                                               UnEsm
 ```
 
-All arrows are `confirmed`. UnEsm's current position (end of Stage 5, after
-UnWebpackInterop2) is the earliest safe position given the current pattern matchers.
+All arrows are `confirmed` current prerequisites. UnEsm's current position is the
+Helpers-stage module-system barrier, before UnAsyncAwait and UnWebpackInterop2.
 
-### Discovered Hidden Dependency
+### Superseded Historical Dependency
 
-**UnWebpackInterop2 → UnEsm** was not previously documented. The second
-UnWebpackInterop pass catches interop getters that only become visible after
-UnAsyncAwait simplifies `__awaiter`/`__generator` state machines. Without it,
-interop wrappers leak into the final output and break downstream rules (UnJsx,
-SmartRename).
+The 2026-04 experiments recorded **UnWebpackInterop2 → UnEsm** as a hard edge.
+That edge is not present in the current registry. The underlying output-quality
+risk remains real: async/regenerator recovery can expose additional interop
+getter shapes, and those shapes must still be cleaned by late interop passes
+before final output quality checks.
 
 ### Prerequisite Status Update Summary
 
@@ -1373,8 +1394,8 @@ SmartRename).
 | UnAssignmentMerging → UnEsm | `confirmed` | Exp 1: passes |
 | UnEsmoduleFlag → UnEsm | `confirmed` | Exp 1: passes |
 | UnWebpackInterop → UnEsm | `confirmed soft` | Exp 2: only getter pattern affected |
-| UnWebpackInterop2 → UnEsm | `confirmed hard` | Exp 5: fixture regression without it |
-| UnAsyncAwait → UnWebpackInterop2 | `confirmed` | Exp 5: interop wrappers leak after async restoration |
+| UnWebpackInterop2 → UnEsm | `historical / superseded` | Exp 5 fixture regression predates the current registry edge set |
+| UnAsyncAwait → UnWebpackInterop2 | `confirmed` | Exp 5: interop wrappers can leak after async restoration without late cleanup |
 | LocalHelperContext → UnAsyncAwait | `confirmed` | UnAsyncAwait consumes detected TS async helper identities directly |
 | UnEsm → UnAsyncAwait cleanup | `confirmed` | Exp 3: consumed inline TS async helper cleanup must run after UnEsm |
 | UnCurlyBraces ↛ Stage 1 | `confirmed fragile` | Exp 4: breaks interop getter pattern match |
@@ -1390,10 +1411,11 @@ SmartRename).
    it caught real issues in 4 of 5 experiments. It should be documented as a
    critical regression test for pipeline ordering.
 
-3. **Fact barrier position:** The confirmed dependency chain shows the barrier
-   cannot be placed before end-of-Stage-5 for UnEsm-dependent facts. However,
-   observation *emission* (write-only) could start as early as Stage 2 (helper
-   unwrapping rules can emit provenance observations without needing merged facts).
+3. **Fact barrier position:** The current dependency chain places the read barrier
+   after UnEsm, matching the two-phase model in `architecture.md` and
+   `fact-system.md`. Observation *emission* (write-only) could start before that
+   if helper-unwrapping rules later emit provenance observations without needing
+   merged facts.
 
 ---
 
@@ -1404,10 +1426,9 @@ SmartRename).
    `match_interop_cond` in `un_webpack_interop.rs` needs to handle:
    `() => { return mod && mod.__esModule ? mod.default : mod; }`
 
-2. **Where is the optimal fact barrier?** Confirmed: the barrier must be after
-   Stage 5 for UnEsm-dependent facts. But write-only observation emission could
-   start at Stage 2. The phased model from the proposal (write → merge → read)
-   remains viable with the barrier after UnEsm.
+2. **Where is the optimal fact barrier?** Current design places the read barrier
+   after UnEsm. Write-only observation emission could start earlier, before the
+   merge/read phase, if future fact producers need it.
 
 3. **Should SmartInline and SmartRename be experimentally validated?** They're
    late-pipeline rules with complex interactions. Validating their prerequisites
