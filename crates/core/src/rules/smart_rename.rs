@@ -411,9 +411,9 @@ fn collect_array_pat_react_renames(
             rename_array_elem_if_short(array_pat, 1, &setter_name, renames, used_names);
         }
         "useActionState" => {
-            // `const [state, formAction, isPending] = useActionState(action, initialState)`
+            // `const [state, dispatchAction, isPending] = useActionState(action, initialState)`
             rename_array_elem_if_short(array_pat, 0, "state", renames, used_names);
-            rename_array_elem_if_short(array_pat, 1, "formAction", renames, used_names);
+            rename_array_elem_if_short(array_pat, 1, "dispatchAction", renames, used_names);
             rename_array_elem_if_short(array_pat, 2, "isPending", renames, used_names);
         }
         _ => {}

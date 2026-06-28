@@ -369,9 +369,9 @@ const [optimisticCount, k, l] = useActionState(reducer, count);
 const [m, n, p] = useActionState(action);
 "#;
     let expected = r#"
-const [state, formAction, isPending] = useActionState(submitForm, null);
-const [state_1, formAction_1, isPending_1] = o.useActionState(action, initialState);
-const [optimisticCount, formAction_2, isPending_2] = useActionState(reducer, count);
+const [state, dispatchAction, isPending] = useActionState(submitForm, null);
+const [state_1, dispatchAction_1, isPending_1] = o.useActionState(action, initialState);
+const [optimisticCount, dispatchAction_2, isPending_2] = useActionState(reducer, count);
 const [m, n, p] = useActionState(action);
 "#;
     let output = apply(input);
