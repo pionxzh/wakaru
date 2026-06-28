@@ -5,6 +5,7 @@ use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
+use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
 use crate::unpacker::{sanitize_relative_path, BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
@@ -467,27 +468,6 @@ fn resolve_amd_id(from_id: &str, dep: &str) -> String {
         }
     }
     parts.join("/")
-}
-
-fn relative_import_specifier(from_filename: &str, to_filename: &str) -> String {
-    let from_parts: Vec<&str> = from_filename.split('/').collect();
-    let to_parts: Vec<&str> = to_filename.split('/').collect();
-    let from_dir = &from_parts[..from_parts.len().saturating_sub(1)];
-
-    let mut common = 0;
-    while common < from_dir.len() && common < to_parts.len() && from_dir[common] == to_parts[common]
-    {
-        common += 1;
-    }
-
-    let mut rel: Vec<&str> = Vec::new();
-    rel.extend(std::iter::repeat_n("..", from_dir.len() - common));
-    rel.extend_from_slice(&to_parts[common..]);
-    let mut specifier = rel.join("/");
-    if !specifier.starts_with('.') {
-        specifier = format!("./{specifier}");
-    }
-    specifier
 }
 
 fn emit_module(mut module: Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {

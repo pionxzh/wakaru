@@ -28,7 +28,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::super::io::{parse_js, print_js};
 use super::super::types::UnpackWarning;
-use super::merge::resolve_relative_specifier;
+use crate::module_path::resolve_relative_specifier;
 
 /// Per-module facts needed to decide dead-module elimination, gathered from the
 /// final Phase-2 AST (before print).

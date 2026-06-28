@@ -15,7 +15,9 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
+use crate::unpacker::webpack4::{
+    rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
+};
 use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -570,11 +572,15 @@ fn extract_modules_from_object(
                 .map(|n| (n, entry.filename.clone()))
         })
         .collect();
+    let str_id_to_filename: HashMap<String, String> = module_entries
+        .iter()
+        .map(|entry| (entry.id.clone(), entry.filename.clone()))
+        .collect();
 
     let mut modules = Vec::new();
 
     for entry in &module_entries {
-        let code = emit_webpack5_module(entry, cm.clone(), &id_to_filename)?;
+        let code = emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
         modules.push(UnpackedModule {
             id: entry.id.clone(),
             is_entry: false,
@@ -626,6 +632,10 @@ fn extract_webpack5_modules(
                 .map(|n| (n, entry.filename.clone()))
         })
         .collect();
+    let str_id_to_filename: HashMap<String, String> = module_entries
+        .iter()
+        .map(|entry| (entry.id.clone(), entry.filename.clone()))
+        .collect();
 
     let mut modules = Vec::new();
 
@@ -633,7 +643,8 @@ fn extract_webpack5_modules(
         let span = tracing::info_span!("webpack5: emit all modules", count = module_entries.len());
         let _enter = span.enter();
         for entry in &module_entries {
-            let code = emit_webpack5_module(entry, cm.clone(), &id_to_filename)?;
+            let code =
+                emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
             modules.push(UnpackedModule {
                 id: entry.id.clone(),
                 is_entry: false,
@@ -645,7 +656,12 @@ fn extract_webpack5_modules(
 
     // Check for trailing IIFE entry point
     let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
-        let code = emit_webpack5_entry_module(entry_body, cm.clone(), &id_to_filename)?;
+        let code = emit_webpack5_entry_module(
+            entry_body,
+            cm.clone(),
+            &id_to_filename,
+            &str_id_to_filename,
+        )?;
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
@@ -682,9 +698,10 @@ fn emit_webpack5_entry_module(
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
+    str_id_to_filename: &HashMap<String, String>,
 ) -> Option<String> {
     let (mut synthetic_module, _) =
-        normalize_extracted_webpack_entry_module(body_stmts, id_to_filename);
+        normalize_extracted_webpack_entry_module(body_stmts, id_to_filename, str_id_to_filename);
     apply_fixer(&mut synthetic_module).ok()?;
     emit_module(&synthetic_module, cm).ok()
 }
@@ -697,6 +714,7 @@ fn emit_webpack5_entry_module(
 fn normalize_extracted_webpack_entry_module(
     body_stmts: Vec<Stmt>,
     id_to_filename: &HashMap<usize, String>,
+    str_id_to_filename: &HashMap<String, String>,
 ) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
@@ -709,9 +727,17 @@ fn normalize_extracted_webpack_entry_module(
     let mut id_rewriter = RequireIdRewriter {
         require_sym: require_sym.clone(),
         unresolved_mark,
+        from_filename: "entry.js",
         id_to_filename,
     };
     synthetic_module.visit_mut_with(&mut id_rewriter);
+    let mut str_rewriter = RequireStringIdRewriter {
+        require_sym: require_sym.clone(),
+        unresolved_mark,
+        from_filename: "entry.js",
+        id_to_filename: str_id_to_filename,
+    };
+    synthetic_module.visit_mut_with(&mut str_rewriter);
 
     rewrite_require_n_accesses(&mut synthetic_module, require_sym.clone(), unresolved_mark);
 
@@ -1091,11 +1117,13 @@ fn emit_webpack5_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
+    str_id_to_filename: &HashMap<String, String>,
 ) -> Option<String> {
     let span = tracing::info_span!("webpack5: emit_module");
     let _enter = span.enter();
 
-    let (mut synthetic_module, _) = normalize_extracted_webpack_module(descriptor, id_to_filename);
+    let (mut synthetic_module, _) =
+        normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename);
 
     {
         let span = tracing::info_span!("webpack5: fixer+emit");
@@ -1114,6 +1142,7 @@ fn emit_webpack5_module(
 fn normalize_extracted_webpack_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     id_to_filename: &HashMap<usize, String>,
+    str_id_to_filename: &HashMap<String, String>,
 ) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(descriptor.body_stmts.to_vec());
 
@@ -1164,9 +1193,17 @@ fn normalize_extracted_webpack_module(
         let mut id_rewriter = RequireIdRewriter {
             require_sym: require_sym.clone(),
             unresolved_mark,
+            from_filename: &descriptor.filename,
             id_to_filename,
         };
         synthetic_module.visit_mut_with(&mut id_rewriter);
+        let mut str_rewriter = RequireStringIdRewriter {
+            require_sym: require_sym.clone(),
+            unresolved_mark,
+            from_filename: &descriptor.filename,
+            id_to_filename: str_id_to_filename,
+        };
+        synthetic_module.visit_mut_with(&mut str_rewriter);
 
         rewrite_require_n_accesses(&mut synthetic_module, require_sym.clone(), unresolved_mark);
 

@@ -40,6 +40,7 @@ use super::transpiler_helper_utils::{
 pub struct UnObjectRest<'a> {
     unresolved_mark: Mark,
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
 }
 
 impl UnObjectRest<'_> {
@@ -47,6 +48,7 @@ impl UnObjectRest<'_> {
         Self {
             unresolved_mark,
             module_facts: None,
+            current_filename: None,
         }
     }
 }
@@ -56,6 +58,7 @@ impl<'a> UnObjectRest<'a> {
         Self {
             unresolved_mark,
             module_facts: Some(module_facts),
+            current_filename: None,
         }
     }
 
@@ -64,8 +67,15 @@ impl<'a> UnObjectRest<'a> {
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
     ) {
-        run_un_object_rest(module, unresolved_mark, local_helpers, module_facts);
+        run_un_object_rest(
+            module,
+            unresolved_mark,
+            local_helpers,
+            module_facts,
+            current_filename,
+        );
     }
 }
 
@@ -114,6 +124,7 @@ impl VisitMut for UnObjectRest<'_> {
             self.unresolved_mark,
             &local_helpers,
             self.module_facts,
+            self.current_filename,
         );
     }
 }
@@ -123,6 +134,7 @@ fn run_un_object_rest(
     unresolved_mark: Mark,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
+    current_filename: Option<&str>,
 ) {
     // Collect named OWP helpers (function declarations detected by transpiler_helper_utils)
     let local_named_helpers =
@@ -130,7 +142,7 @@ fn run_un_object_rest(
     let mut named_helpers = local_named_helpers.clone();
     let mut cross_module_helpers = module_facts
         .map(|facts| {
-            collect_cross_module_helper_refs(module, facts, |kind| {
+            collect_cross_module_helper_refs(module, facts, current_filename, |kind| {
                 kind == TranspilerHelperKind::ObjectWithoutProperties
             })
         })
@@ -142,8 +154,12 @@ fn run_un_object_rest(
             .map(|(key, kind)| (key.clone(), *kind)),
     );
     if let Some(module_facts) = module_facts {
-        let ts_rest_refs =
-            collect_cross_module_ts_helper_refs(module, module_facts, TypeScriptHelperKind::Rest);
+        let ts_rest_refs = collect_cross_module_ts_helper_refs(
+            module,
+            module_facts,
+            current_filename,
+            TypeScriptHelperKind::Rest,
+        );
         named_helpers.extend(
             ts_rest_refs
                 .direct

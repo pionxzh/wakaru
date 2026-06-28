@@ -20,6 +20,7 @@ use super::transpiler_helper_utils::{
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
 pub struct UnToConsumableArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
     unresolved_mark: Option<Mark>,
 }
 
@@ -27,6 +28,7 @@ impl UnToConsumableArray<'_> {
     pub fn new() -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             unresolved_mark: None,
         }
     }
@@ -34,6 +36,7 @@ impl UnToConsumableArray<'_> {
     pub fn new_with_mark(unresolved_mark: Mark) -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             unresolved_mark: Some(unresolved_mark),
         }
     }
@@ -43,6 +46,7 @@ impl<'a> UnToConsumableArray<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            current_filename: None,
             unresolved_mark: None,
         }
     }
@@ -52,8 +56,15 @@ impl<'a> UnToConsumableArray<'a> {
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
     ) {
-        run_un_to_consumable_array(module, Some(unresolved_mark), local_helpers, module_facts);
+        run_un_to_consumable_array(
+            module,
+            Some(unresolved_mark),
+            local_helpers,
+            module_facts,
+            current_filename,
+        );
     }
 }
 
@@ -71,6 +82,7 @@ impl VisitMut for UnToConsumableArray<'_> {
             self.unresolved_mark,
             &local_helpers,
             self.module_facts,
+            self.current_filename,
         );
     }
 }
@@ -80,6 +92,7 @@ fn run_un_to_consumable_array(
     unresolved_mark: Option<Mark>,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
+    current_filename: Option<&str>,
 ) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::ToConsumableArray);
     let ts_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArray);
@@ -89,23 +102,41 @@ fn run_un_to_consumable_array(
     let ts_read_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Read);
     let cross_module_ts_helpers = module_facts
         .map(|facts| {
-            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::SpreadArray)
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::SpreadArray,
+            )
         })
         .unwrap_or_default();
     let mut cross_module_ts_legacy_array_spread_helpers = module_facts
         .map(|facts| {
-            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Spread)
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::Spread,
+            )
         })
         .unwrap_or_default();
     if let Some(facts) = module_facts {
         cross_module_ts_legacy_array_spread_helpers.extend(collect_cross_module_ts_helper_refs(
             module,
             facts,
+            current_filename,
             TypeScriptHelperKind::SpreadArrays,
         ));
     }
     let cross_module_ts_read_helpers = module_facts
-        .map(|facts| collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Read))
+        .map(|facts| {
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::Read,
+            )
+        })
         .unwrap_or_default();
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let maybe_array_like = collect_maybe_array_like_bindings(module);

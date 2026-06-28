@@ -36,6 +36,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// `var a = _ref[0]; var b = _ref[1]` → `const [a, b] = expr`.
 pub struct UnSlicedToArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
 }
@@ -51,6 +52,7 @@ impl UnSlicedToArray<'_> {
     pub fn new() -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             level: RewriteLevel::Standard,
             unresolved_mark: None,
         }
@@ -59,6 +61,7 @@ impl UnSlicedToArray<'_> {
     pub fn new_with_level(level: RewriteLevel) -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             level,
             unresolved_mark: None,
         }
@@ -69,6 +72,7 @@ impl<'a> UnSlicedToArray<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            current_filename: None,
             level: RewriteLevel::Standard,
             unresolved_mark: None,
         }
@@ -77,6 +81,7 @@ impl<'a> UnSlicedToArray<'a> {
     pub fn new_with_facts_and_level(module_facts: &'a ModuleFactsMap, level: RewriteLevel) -> Self {
         Self {
             module_facts: Some(module_facts),
+            current_filename: None,
             level,
             unresolved_mark: None,
         }
@@ -87,6 +92,7 @@ impl<'a> UnSlicedToArray<'a> {
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
         level: RewriteLevel,
     ) {
         run_un_sliced_to_array(
@@ -94,6 +100,7 @@ impl<'a> UnSlicedToArray<'a> {
             Some(unresolved_mark),
             local_helpers,
             module_facts,
+            current_filename,
             level,
         );
     }
@@ -113,6 +120,7 @@ impl VisitMut for UnSlicedToArray<'_> {
             self.unresolved_mark,
             &local_helpers,
             self.module_facts,
+            self.current_filename,
             self.level,
         );
     }
@@ -123,13 +131,14 @@ fn run_un_sliced_to_array(
     unresolved_mark: Option<Mark>,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
+    current_filename: Option<&str>,
     level: RewriteLevel,
 ) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::SlicedToArray);
     let ts_read_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Read);
     let mut cross_module_helpers = module_facts
         .map(|facts| {
-            collect_cross_module_helper_refs(module, facts, |kind| {
+            collect_cross_module_helper_refs(module, facts, current_filename, |kind| {
                 kind == TranspilerHelperKind::SlicedToArray
             })
         })
@@ -137,7 +146,12 @@ fn run_un_sliced_to_array(
     if let Some(facts) = module_facts {
         extend_cross_module_helpers(
             &mut cross_module_helpers,
-            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Read),
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::Read,
+            ),
             TranspilerHelperKind::SlicedToArray,
         );
     }

@@ -83,12 +83,64 @@ fn webpack5_require_n_default_interop_is_recovered() {
         .expect("expected index module");
 
     assert!(
-        index.contains("import ") && index.contains(r#""./src/cjs.js""#),
+        index.contains("import ") && index.contains(r#""./cjs.js""#),
         "expected recovered import in webpack5 require.n module:\n{index}"
     );
     assert!(
         !index.contains("require.n") && !index.contains("__esModule"),
         "webpack5 require.n helper should not survive:\n{index}"
+    );
+}
+
+#[test]
+fn webpack4_string_module_ids_use_relative_output_imports() {
+    let source = r#"
+!function(__webpack_modules__) {
+  function __webpack_require__(moduleId) {
+    var module = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  return __webpack_require__("./src/index.js");
+}({
+  "./src/value.js": function(module) {
+    module.exports = "ok";
+  },
+  "./src/index.js": function(module, exports, __webpack_require__) {
+    var value = __webpack_require__("./src/value.js");
+    module.exports = value;
+  }
+});
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-string-ids.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let index = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/index.js")
+        .map(|(_, code)| code)
+        .expect("expected index module");
+
+    assert!(
+        index.contains("import ") && index.contains(r#""./value.js""#),
+        "expected import relative to src/index.js:\n{index}"
+    );
+    assert!(
+        !index.contains(r#""./src/value.js""#),
+        "import must not be relative to the bundle root:\n{index}"
     );
 }
 

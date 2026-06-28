@@ -67,6 +67,7 @@ struct RuleRunContext<'a> {
     rewrite_level: RewriteLevel,
     dce_mode: DceMode,
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
     pre_dead: Option<Rc<PreDeadSet>>,
@@ -197,6 +198,7 @@ fn run_un_to_consumable_array(module: &mut Module, ctx: RuleRunContext<'_>) {
         ctx.unresolved_mark,
         local_helpers.as_ref(),
         ctx.module_facts,
+        ctx.current_filename,
     );
 }
 
@@ -207,6 +209,7 @@ fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
         ctx.unresolved_mark,
         local_helpers.as_ref(),
         ctx.module_facts,
+        ctx.current_filename,
     );
 }
 
@@ -221,6 +224,7 @@ fn run_un_object_rest(module: &mut Module, ctx: RuleRunContext<'_>) {
         ctx.unresolved_mark,
         local_helpers.as_ref(),
         ctx.module_facts,
+        ctx.current_filename,
     );
 }
 
@@ -240,6 +244,7 @@ fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
         ctx.unresolved_mark,
         local_helpers.as_ref(),
         ctx.module_facts,
+        ctx.current_filename,
         ctx.rewrite_level,
     );
 }
@@ -285,6 +290,7 @@ fn run_un_template_literal(module: &mut Module, ctx: RuleRunContext<'_>) {
     } else {
         UnTemplateLiteral::new_with_level(ctx.rewrite_level)
     };
+    rule.set_current_filename(ctx.current_filename);
     rule.run_with_helpers(module, local_helpers.as_ref());
 }
 runner!(run_un_while_loop, UnWhileLoop);
@@ -359,6 +365,7 @@ fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
         module,
         ctx.unresolved_mark,
         ctx.module_facts,
+        ctx.current_filename,
         local_helpers.as_ref(),
     );
 }
@@ -401,6 +408,7 @@ fn run_un_for_of(module: &mut Module, ctx: RuleRunContext<'_>) {
     } else {
         UnForOf::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
     };
+    rule.set_current_filename(ctx.current_filename);
     rule.run_with_helpers(module, local_helpers.as_ref());
 }
 runner!(run_un_webpack_define_getters, |ctx| {
@@ -734,6 +742,7 @@ pub struct RulePipelineOptions<'a> {
     pub dce_mode: DceMode,
     pub rewrite_level: RewriteLevel,
     pub module_facts: Option<&'a ModuleFactsMap>,
+    pub current_filename: Option<&'a str>,
 }
 
 impl Default for RulePipelineOptions<'_> {
@@ -744,6 +753,7 @@ impl Default for RulePipelineOptions<'_> {
             dce_mode: DceMode::Full,
             rewrite_level: RewriteLevel::Standard,
             module_facts: None,
+            current_filename: None,
         }
     }
 }
@@ -776,6 +786,11 @@ impl<'a> RulePipelineOptions<'a> {
 
     pub fn with_module_facts(mut self, module_facts: &'a ModuleFactsMap) -> Self {
         self.module_facts = Some(module_facts);
+        self
+    }
+
+    pub fn with_current_filename(mut self, current_filename: &'a str) -> Self {
+        self.current_filename = Some(current_filename);
         self
     }
 }
@@ -822,6 +837,7 @@ fn apply_rules_impl(
         rewrite_level: options.rewrite_level,
         dce_mode: options.dce_mode,
         module_facts: options.module_facts,
+        current_filename: options.current_filename,
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::new())),
         pre_dead,
@@ -919,6 +935,7 @@ mod tests {
                 rewrite_level: RewriteLevel::Standard,
                 dce_mode: DceMode::Full,
                 module_facts: None,
+                current_filename: None,
                 local_helpers: Rc::new(RefCell::new(Some(Rc::new(LocalHelperContext::default())))),
                 extracted_function_names: Default::default(),
                 pre_dead: None,

@@ -20,8 +20,13 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::facts::ModuleFactsMap;
+use crate::module_path::relative_import_specifier;
 
-pub fn run_reexport_consolidation(module: &mut Module, module_facts: &ModuleFactsMap) {
+pub fn run_reexport_consolidation(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+) {
     if module_facts.is_empty() {
         return;
     }
@@ -42,7 +47,7 @@ pub fn run_reexport_consolidation(module: &mut Module, module_facts: &ModuleFact
             };
 
             let source_str = import.src.value.as_str().unwrap_or("");
-            let target = resolve_passthrough(source_str, module_facts)?;
+            let target = resolve_passthrough(source_str, module_facts, current_filename)?;
 
             let mut analyzer = MemberOnlyAnalyzer {
                 target_sym: &default_spec.local.sym,
@@ -75,8 +80,13 @@ pub fn run_reexport_consolidation(module: &mut Module, module_facts: &ModuleFact
     }
 }
 
-fn resolve_passthrough(source: &str, facts: &ModuleFactsMap) -> Option<Atom> {
-    let mut current = source.to_string();
+fn resolve_passthrough(
+    source: &str,
+    facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+) -> Option<Atom> {
+    let original_importer = current_filename?;
+    let mut current = facts.resolve_key_from(current_filename, source)?;
     let mut seen = std::collections::HashSet::new();
 
     loop {
@@ -87,11 +97,16 @@ fn resolve_passthrough(source: &str, facts: &ModuleFactsMap) -> Option<Atom> {
         let target = module_facts.passthrough_target.as_ref()?;
         let target_str = target.as_ref();
 
-        if let Some(target_facts) = facts.get(target_str) {
+        if let Some(target_key) = facts.resolve_key_from(Some(&current), target_str) {
+            let target_facts = facts.get(&target_key)?;
             if target_facts.passthrough_target.is_some() {
-                current = target_str.to_string();
+                current = target_key;
                 continue;
             }
+            return Some(Atom::from(relative_import_specifier(
+                original_importer,
+                &target_key,
+            )));
         }
         return Some(target.clone());
     }

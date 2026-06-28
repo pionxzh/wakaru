@@ -63,8 +63,12 @@ struct DecompCandidate {
 ///
 /// `module_facts` provides lookup from module specifier → facts of the target module.
 /// This allows checking whether the target module actually exports the accessed names.
-pub fn run_namespace_decomposition(module: &mut Module, module_facts: &ModuleFactsMap) {
-    let candidates = find_decomposition_candidates(module, module_facts);
+pub fn run_namespace_decomposition(
+    module: &mut Module,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+) {
+    let candidates = find_decomposition_candidates(module, module_facts, current_filename);
     if candidates.is_empty() {
         return;
     }
@@ -75,6 +79,7 @@ pub fn run_namespace_decomposition(module: &mut Module, module_facts: &ModuleFac
 fn find_decomposition_candidates(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
 ) -> Vec<DecompCandidate> {
     // Collect ALL bindings at every scope level (including function params,
     // catch clauses, inner var/let/const, etc.) to detect naming collisions.
@@ -126,7 +131,7 @@ fn find_decomposition_candidates(
     let mut candidates = Vec::new();
     for (import_index, local_sym, local_ctxt, source) in namespace_like_imports {
         // Check if target module's exports are known
-        let Some(target_facts) = module_facts.get(source.as_ref()) else {
+        let Some(target_facts) = module_facts.get_from(current_filename, source.as_ref()) else {
             continue;
         };
 

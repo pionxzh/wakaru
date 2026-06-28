@@ -32,6 +32,7 @@ impl CrossModuleTsHelperRefs {
 pub(crate) fn collect_cross_module_helper_refs(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     include: impl Fn(TranspilerHelperKind) -> bool,
 ) -> CrossModuleHelperRefs {
     let mut refs = CrossModuleHelperRefs::default();
@@ -41,7 +42,7 @@ pub(crate) fn collect_cross_module_helper_refs(
             continue;
         };
         let source = str_to_atom(&import.src.value);
-        let Some(facts) = module_facts.get(source.as_ref()) else {
+        let Some(facts) = module_facts.get_from(current_filename, source.as_ref()) else {
             continue;
         };
 
@@ -157,6 +158,7 @@ pub(crate) fn cross_module_member_helper_kind(
 pub(crate) fn collect_cross_module_ts_helper_refs(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     kind: TypeScriptHelperKind,
 ) -> CrossModuleTsHelperRefs {
     let mut refs = CrossModuleTsHelperRefs::default();
@@ -170,7 +172,13 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
         for specifier in &import.specifiers {
             match specifier {
                 ImportSpecifier::Default(default) => {
-                    if module_exports_ts_helper(module_facts, &source, "default", kind) {
+                    if module_exports_ts_helper(
+                        module_facts,
+                        current_filename,
+                        &source,
+                        "default",
+                        kind,
+                    ) {
                         refs.direct
                             .insert((default.local.sym.clone(), default.local.ctxt));
                     }
@@ -181,13 +189,20 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
                         .as_ref()
                         .map(export_name_to_atom)
                         .unwrap_or_else(|| named.local.sym.clone());
-                    if module_exports_ts_helper(module_facts, &source, imported.as_ref(), kind) {
+                    if module_exports_ts_helper(
+                        module_facts,
+                        current_filename,
+                        &source,
+                        imported.as_ref(),
+                        kind,
+                    ) {
                         refs.direct
                             .insert((named.local.sym.clone(), named.local.ctxt));
                     }
                 }
                 ImportSpecifier::Namespace(namespace) => {
-                    let exported_names = ts_helper_export_names(module_facts, &source, kind);
+                    let exported_names =
+                        ts_helper_export_names(module_facts, current_filename, &source, kind);
                     if !exported_names.is_empty() {
                         refs.namespaces.insert(
                             (namespace.local.sym.clone(), namespace.local.ctxt),
@@ -220,25 +235,29 @@ pub(crate) fn cross_module_ts_member_helper(
 
 fn module_exports_ts_helper(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     exported: &str,
     kind: TypeScriptHelperKind,
 ) -> bool {
-    module_facts.get(source.as_ref()).is_some_and(|facts| {
-        facts
-            .ts_helper_exports
-            .iter()
-            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
-    })
+    module_facts
+        .get_from(current_filename, source.as_ref())
+        .is_some_and(|facts| {
+            facts
+                .ts_helper_exports
+                .iter()
+                .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+        })
 }
 
 fn ts_helper_export_names(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     kind: TypeScriptHelperKind,
 ) -> HashSet<String> {
     module_facts
-        .get(source.as_ref())
+        .get_from(current_filename, source.as_ref())
         .map(|facts| {
             facts
                 .ts_helper_exports

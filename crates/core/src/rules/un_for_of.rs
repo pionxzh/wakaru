@@ -37,6 +37,7 @@ pub struct UnForOf<'a> {
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
     helper_context: ForOfHelperContext,
 }
 
@@ -46,6 +47,7 @@ impl UnForOf<'_> {
             level,
             unresolved_mark: None,
             module_facts: None,
+            current_filename: None,
             helper_context: ForOfHelperContext::default(),
         }
     }
@@ -55,6 +57,7 @@ impl UnForOf<'_> {
             level,
             unresolved_mark: Some(unresolved_mark),
             module_facts: None,
+            current_filename: None,
             helper_context: ForOfHelperContext::default(),
         }
     }
@@ -70,8 +73,13 @@ impl<'a> UnForOf<'a> {
             level,
             unresolved_mark: Some(unresolved_mark),
             module_facts: Some(module_facts),
+            current_filename: None,
             helper_context: ForOfHelperContext::default(),
         }
+    }
+
+    pub(crate) fn set_current_filename(&mut self, current_filename: Option<&'a str>) {
+        self.current_filename = current_filename;
     }
 
     pub(crate) fn run_with_helpers(
@@ -87,6 +95,7 @@ impl<'a> UnForOf<'a> {
             local_helpers,
             self.unresolved_mark,
             self.module_facts,
+            self.current_filename,
         );
         let previous = std::mem::replace(&mut self.helper_context, helper_context);
         module.visit_mut_children_with(self);
@@ -108,9 +117,10 @@ impl ForOfHelperContext {
         local_helpers: &LocalHelperContext,
         unresolved_mark: Option<Mark>,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
     ) -> Self {
         let cross_module_values = module_facts
-            .map(|facts| collect_cross_module_values_refs(module, facts))
+            .map(|facts| collect_cross_module_values_refs(module, facts, current_filename))
             .unwrap_or_default();
         let mut values_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Values);
         values_helpers.extend(cross_module_values.direct);
@@ -153,6 +163,7 @@ struct CrossModuleValuesRefs {
 fn collect_cross_module_values_refs(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
 ) -> CrossModuleValuesRefs {
     let mut refs = CrossModuleValuesRefs::default();
     let mut namespace_factories: HashMap<BindingKey, HashSet<String>> = HashMap::new();
@@ -162,8 +173,12 @@ fn collect_cross_module_values_refs(
             continue;
         };
         let source = Atom::from(import.src.value.as_str().unwrap_or(""));
-        let exported_values =
-            ts_helper_export_names(module_facts, &source, TypeScriptHelperKind::Values);
+        let exported_values = ts_helper_export_names(
+            module_facts,
+            current_filename,
+            &source,
+            TypeScriptHelperKind::Values,
+        );
         if exported_values.is_empty() {
             continue;
         }
@@ -174,6 +189,7 @@ fn collect_cross_module_values_refs(
                     let local = binding_key(&default.local);
                     if module_exports_ts_helper(
                         module_facts,
+                        current_filename,
                         &source,
                         "default",
                         TypeScriptHelperKind::Values,
@@ -192,6 +208,7 @@ fn collect_cross_module_values_refs(
                     let local = binding_key(&named.local);
                     if module_exports_ts_helper(
                         module_facts,
+                        current_filename,
                         &source,
                         imported.as_ref(),
                         TypeScriptHelperKind::Values,
@@ -252,25 +269,29 @@ fn collect_cross_module_values_refs(
 
 fn module_exports_ts_helper(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     exported: &str,
     kind: TypeScriptHelperKind,
 ) -> bool {
-    module_facts.get(source.as_ref()).is_some_and(|facts| {
-        facts
-            .ts_helper_exports
-            .iter()
-            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
-    })
+    module_facts
+        .get_from(current_filename, source.as_ref())
+        .is_some_and(|facts| {
+            facts
+                .ts_helper_exports
+                .iter()
+                .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+        })
 }
 
 fn ts_helper_export_names(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     kind: TypeScriptHelperKind,
 ) -> HashSet<String> {
     module_facts
-        .get(source.as_ref())
+        .get_from(current_filename, source.as_ref())
         .map(|facts| {
             facts
                 .ts_helper_exports

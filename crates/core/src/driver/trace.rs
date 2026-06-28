@@ -98,6 +98,7 @@ pub fn trace_rules(
                     dce_mode: options.dce_mode,
                     rewrite_level: options.level,
                     module_facts: None,
+                    current_filename: None,
                 },
                 &mut observer,
             );

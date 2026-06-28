@@ -6,7 +6,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -81,6 +81,23 @@ fn ts_helper_export(
         local: local.map(|s| s.into()),
         kind,
     }
+}
+
+#[test]
+fn module_facts_map_resolves_relative_specifiers_from_importer() {
+    let mut map = ModuleFactsMap::new();
+    map.insert("src/value.js", ModuleFacts::default());
+    map.insert("shared/helper.js", ModuleFacts::default());
+
+    assert!(map.get_from(Some("src/index.js"), "./value.js").is_some());
+    assert!(map
+        .get_from(Some("src/views/page.js"), "../../shared/helper.js")
+        .is_some());
+    assert!(map
+        .get_from(Some("src/index.js"), "../../value.js")
+        .is_none());
+    assert!(map.get_from(Some("index.js"), "../value.js").is_none());
+    assert!(map.get("./value.js").is_none());
 }
 
 // ── Import kind detection ──────────────────────────────────────────

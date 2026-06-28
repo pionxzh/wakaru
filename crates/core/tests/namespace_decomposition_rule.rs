@@ -35,7 +35,7 @@ fn run_decomp(source: &str, facts: &ModuleFactsMap) -> String {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts);
+        run_namespace_decomposition(&mut module, facts, None);
 
         let mut output = Vec::new();
         {
@@ -77,7 +77,7 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts);
+        run_namespace_decomposition(&mut module, facts, None);
         apply_rules(
             &mut module,
             unresolved_mark,
@@ -121,7 +121,7 @@ fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        run_namespace_decomposition(&mut module, facts);
+        run_namespace_decomposition(&mut module, facts, None);
         apply_rules(
             &mut module,
             unresolved_mark,

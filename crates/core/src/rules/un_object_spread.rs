@@ -38,6 +38,7 @@ use crate::utils::paren::strip_parens;
 ///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
 pub struct UnObjectSpread<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
     unresolved_mark: Option<Mark>,
 }
 
@@ -45,6 +46,7 @@ impl UnObjectSpread<'_> {
     pub fn new() -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             unresolved_mark: None,
         }
     }
@@ -52,6 +54,7 @@ impl UnObjectSpread<'_> {
     pub fn new_with_mark(unresolved_mark: Mark) -> Self {
         Self {
             module_facts: None,
+            current_filename: None,
             unresolved_mark: Some(unresolved_mark),
         }
     }
@@ -61,6 +64,7 @@ impl<'a> UnObjectSpread<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            current_filename: None,
             unresolved_mark: None,
         }
     }
@@ -70,8 +74,15 @@ impl<'a> UnObjectSpread<'a> {
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
     ) {
-        run_un_object_spread(module, Some(unresolved_mark), local_helpers, module_facts);
+        run_un_object_spread(
+            module,
+            Some(unresolved_mark),
+            local_helpers,
+            module_facts,
+            current_filename,
+        );
     }
 }
 
@@ -86,6 +97,7 @@ impl VisitMut for UnObjectSpread<'_> {
             self.unresolved_mark,
             &local_helpers,
             self.module_facts,
+            self.current_filename,
         );
     }
 }
@@ -95,6 +107,7 @@ fn run_un_object_spread(
     unresolved_mark: Option<Mark>,
     local_helper_context: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
+    current_filename: Option<&str>,
 ) {
     let mut local_helpers: HashMap<BindingKey, TranspilerHelperKind> = local_helper_context
         .helpers()
@@ -114,11 +127,12 @@ fn run_un_object_spread(
         helpers.extend(collect_cross_module_object_spread_helpers(
             module,
             module_facts,
+            current_filename,
         ));
     }
     let cross_module_helper_refs = module_facts
         .map(|facts| {
-            collect_cross_module_helper_refs(module, facts, |kind| {
+            collect_cross_module_helper_refs(module, facts, current_filename, |kind| {
                 matches!(
                     kind,
                     TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread
@@ -134,7 +148,12 @@ fn run_un_object_spread(
     );
     let cross_module_ts_assign_refs = module_facts
         .map(|facts| {
-            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Assign)
+            collect_cross_module_ts_helper_refs(
+                module,
+                facts,
+                current_filename,
+                TypeScriptHelperKind::Assign,
+            )
         })
         .unwrap_or_default();
     helpers.extend(
@@ -765,6 +784,7 @@ fn pat_ident(pat: &Pat) -> Option<&Ident> {
 fn collect_cross_module_object_spread_helpers(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
 ) -> HashMap<BindingKey, TranspilerHelperKind> {
     let mut helpers = HashMap::new();
 
@@ -777,8 +797,12 @@ fn collect_cross_module_object_spread_helpers(
         for specifier in &import.specifiers {
             match specifier {
                 ImportSpecifier::Default(default) => {
-                    if let Some(kind) = module_helper_export_kind(module_facts, &source, "default")
-                    {
+                    if let Some(kind) = module_helper_export_kind(
+                        module_facts,
+                        current_filename,
+                        &source,
+                        "default",
+                    ) {
                         helpers.insert((default.local.sym.clone(), default.local.ctxt), kind);
                     }
                 }
@@ -788,9 +812,12 @@ fn collect_cross_module_object_spread_helpers(
                         .as_ref()
                         .map(export_name_to_atom)
                         .unwrap_or_else(|| named.local.sym.clone());
-                    if let Some(kind) =
-                        module_helper_export_kind(module_facts, &source, imported.as_ref())
-                    {
+                    if let Some(kind) = module_helper_export_kind(
+                        module_facts,
+                        current_filename,
+                        &source,
+                        imported.as_ref(),
+                    ) {
                         helpers.insert((named.local.sym.clone(), named.local.ctxt), kind);
                     }
                 }
@@ -804,16 +831,19 @@ fn collect_cross_module_object_spread_helpers(
 
 fn module_helper_export_kind(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     exported: &str,
 ) -> Option<TranspilerHelperKind> {
-    module_facts.get(source.as_ref()).and_then(|facts| {
-        facts
-            .helper_exports
-            .iter()
-            .find(|helper| helper.exported.as_ref() == exported)
-            .and_then(|helper| helper_kind_to_transpiler(helper.kind))
-    })
+    module_facts
+        .get_from(current_filename, source.as_ref())
+        .and_then(|facts| {
+            facts
+                .helper_exports
+                .iter()
+                .find(|helper| helper.exported.as_ref() == exported)
+                .and_then(|helper| helper_kind_to_transpiler(helper.kind))
+        })
 }
 
 fn helper_kind_to_transpiler(kind: HelperKind) -> Option<TranspilerHelperKind> {

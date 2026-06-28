@@ -15,6 +15,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::module_path::relative_import_specifier;
 use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -145,6 +146,7 @@ impl WebpackRuntimeNormalizer {
 pub(crate) struct RequireIdRewriter<'a> {
     pub(crate) require_sym: Atom,
     pub(crate) unresolved_mark: Mark,
+    pub(crate) from_filename: &'a str,
     pub(crate) id_to_filename: &'a std::collections::HashMap<usize, String>,
 }
 
@@ -178,10 +180,10 @@ impl VisitMut for RequireIdRewriter<'_> {
         }
 
         if let Some(filename) = self.id_to_filename.get(&id) {
-            let path = format!("./{filename}");
+            let path = relative_import_specifier(self.from_filename, filename);
             *call.args[0].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
-                value: path.as_str().into(),
+                value: path.into(),
                 raw: None,
             }));
         }
@@ -191,10 +193,11 @@ impl VisitMut for RequireIdRewriter<'_> {
 /// Rewrites `require("./src/greet.js")` calls (where the string arg is an original module key)
 /// to `require("./<sanitized_filename>")`. Used for object-form webpack4 bundles where modules
 /// are keyed by string paths instead of numeric indices.
-struct RequireStringIdRewriter<'a> {
-    require_sym: Atom,
-    unresolved_mark: Mark,
-    id_to_filename: &'a HashMap<String, String>,
+pub(crate) struct RequireStringIdRewriter<'a> {
+    pub(crate) require_sym: Atom,
+    pub(crate) unresolved_mark: Mark,
+    pub(crate) from_filename: &'a str,
+    pub(crate) id_to_filename: &'a HashMap<String, String>,
 }
 
 impl VisitMut for RequireStringIdRewriter<'_> {
@@ -224,10 +227,10 @@ impl VisitMut for RequireStringIdRewriter<'_> {
         };
 
         if let Some(filename) = self.id_to_filename.get(key) {
-            let path = format!("./{filename}");
+            let path = relative_import_specifier(self.from_filename, filename);
             *call.args[0].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
-                value: path.as_str().into(),
+                value: path.into(),
                 raw: None,
             }));
         }
@@ -537,6 +540,15 @@ fn extract_webpack4_array_modules(
         };
 
         let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
+        let filename = if is_entry {
+            if entry_ids.len() == 1 {
+                "entry.js".to_string()
+            } else {
+                format!("entry-{idx}.js")
+            }
+        } else {
+            format!("module-{idx}.js")
+        };
 
         let (mut synthetic_module, _) = normalize_extracted_webpack_module(
             fn_expr,
@@ -544,6 +556,7 @@ fn extract_webpack4_array_modules(
                 let mut id_rewriter = RequireIdRewriter {
                     require_sym: post_rename_require_sym.clone(),
                     unresolved_mark: unresolv_mark,
+                    from_filename: &filename,
                     id_to_filename: &id_to_filename,
                 };
                 module.visit_mut_with(&mut id_rewriter);
@@ -556,16 +569,6 @@ fn extract_webpack4_array_modules(
         let code = match emit_module(&synthetic_module, cm.clone()) {
             Ok(c) => c,
             Err(_) => continue,
-        };
-
-        let filename = if is_entry {
-            if entry_ids.len() == 1 {
-                "entry.js".to_string()
-            } else {
-                format!("entry-{idx}.js")
-            }
-        } else {
-            format!("module-{idx}.js")
         };
 
         modules.push(UnpackedModule {
@@ -672,6 +675,18 @@ fn extract_webpack4_object_modules(
         } else {
             entry_ids.contains(&ModuleId::Named(key.clone()))
         };
+        let filename = if all_numeric {
+            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
+            num_id_to_filename
+                .get(&idx)
+                .cloned()
+                .unwrap_or_else(|| format!("module-{key}.js"))
+        } else {
+            str_id_to_filename
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| sanitize_filename(key))
+        };
 
         let (mut synthetic_module, _) = normalize_extracted_webpack_module(
             fn_expr,
@@ -680,6 +695,7 @@ fn extract_webpack4_object_modules(
                     let mut id_rewriter = RequireIdRewriter {
                         require_sym: post_rename_require_sym.clone(),
                         unresolved_mark: unresolv_mark,
+                        from_filename: &filename,
                         id_to_filename: &num_id_to_filename,
                     };
                     module.visit_mut_with(&mut id_rewriter);
@@ -687,6 +703,7 @@ fn extract_webpack4_object_modules(
                     let mut str_rewriter = RequireStringIdRewriter {
                         require_sym: post_rename_require_sym.clone(),
                         unresolved_mark: unresolv_mark,
+                        from_filename: &filename,
                         id_to_filename: &str_id_to_filename,
                     };
                     module.visit_mut_with(&mut str_rewriter);
@@ -700,19 +717,6 @@ fn extract_webpack4_object_modules(
         let code = match emit_module(&synthetic_module, cm.clone()) {
             Ok(c) => c,
             Err(_) => continue,
-        };
-
-        let filename = if all_numeric {
-            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
-            num_id_to_filename
-                .get(&idx)
-                .cloned()
-                .unwrap_or_else(|| format!("module-{key}.js"))
-        } else {
-            str_id_to_filename
-                .get(key)
-                .cloned()
-                .unwrap_or_else(|| sanitize_filename(key))
         };
 
         modules.push(UnpackedModule {

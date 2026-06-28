@@ -25,6 +25,7 @@ use crate::utils::paren::strip_parens;
 pub struct UnTemplateLiteral<'a> {
     level: RewriteLevel,
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
 }
 
 impl UnTemplateLiteral<'_> {
@@ -36,6 +37,7 @@ impl UnTemplateLiteral<'_> {
         Self {
             level,
             module_facts: None,
+            current_filename: None,
         }
     }
 }
@@ -45,7 +47,12 @@ impl<'a> UnTemplateLiteral<'a> {
         Self {
             level,
             module_facts: Some(module_facts),
+            current_filename: None,
         }
+    }
+
+    pub(crate) fn set_current_filename(&mut self, current_filename: Option<&'a str>) {
+        self.current_filename = current_filename;
     }
 
     pub(crate) fn run_with_helpers(
@@ -56,7 +63,7 @@ impl<'a> UnTemplateLiteral<'a> {
         let cross_module_helpers = self
             .module_facts
             .map(|facts| {
-                collect_cross_module_helper_refs(module, facts, |kind| {
+                collect_cross_module_helper_refs(module, facts, self.current_filename, |kind| {
                     kind == TranspilerHelperKind::TaggedTemplateLiteral
                 })
             })

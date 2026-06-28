@@ -20,6 +20,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::module_path::resolve_relative_specifier;
 use crate::rules::helper_matcher::{
     binding_key, binding_key_from_ident_pat, expr_matches_binding, BindingKey,
 };
@@ -182,11 +183,42 @@ impl ModuleFactsMap {
     /// Look up facts by module specifier. Tries the specifier as-is, then
     /// common variants (with/without `./`, with/without `.js`).
     pub fn get(&self, specifier: &str) -> Option<&ModuleFacts> {
+        self.resolve_key(specifier)
+            .and_then(|key| self.inner.get(key.as_str()))
+    }
+
+    /// Look up facts for a specifier as written by a specific importing module.
+    /// Relative sources are resolved from `from_filename` before common lookup
+    /// variants are tried.
+    pub fn get_from(&self, from_filename: Option<&str>, specifier: &str) -> Option<&ModuleFacts> {
+        self.resolve_key_from(from_filename, specifier)
+            .and_then(|key| self.inner.get(key.as_str()))
+    }
+
+    /// Resolve a specifier to the canonical key stored in this map.
+    pub fn resolve_key(&self, specifier: &str) -> Option<String> {
+        self.resolve_key_from(None, specifier)
+    }
+
+    /// Resolve a specifier as written by a specific importing module to the
+    /// canonical key stored in this map.
+    pub fn resolve_key_from(&self, from_filename: Option<&str>, specifier: &str) -> Option<String> {
+        if let Some(from_filename) = from_filename {
+            if let Some(resolved) = resolve_relative_specifier(from_filename, specifier) {
+                if let Some(key) = self.resolve_key_exact_variants(&resolved) {
+                    return Some(key);
+                }
+            }
+        }
+        self.resolve_key_exact_variants(specifier)
+    }
+
+    fn resolve_key_exact_variants(&self, specifier: &str) -> Option<String> {
         let canon = Self::canonicalize(specifier);
 
         // Try canonical form first
-        if let Some(f) = self.inner.get(&canon) {
-            return Some(f);
+        if self.inner.contains_key(&canon) {
+            return Some(canon);
         }
 
         // Try common extensions added
@@ -196,8 +228,8 @@ impl ModuleFactsMap {
         if !has_ext {
             for ext in [".js", ".jsx"] {
                 let with_ext = format!("{canon}{ext}");
-                if let Some(f) = self.inner.get(&with_ext) {
-                    return Some(f);
+                if self.inner.contains_key(&with_ext) {
+                    return Some(with_ext);
                 }
             }
         }
@@ -205,8 +237,8 @@ impl ModuleFactsMap {
         // Try with extension stripped
         for ext in [".js", ".jsx"] {
             if let Some(stripped) = canon.strip_suffix(ext) {
-                if let Some(f) = self.inner.get(stripped) {
-                    return Some(f);
+                if self.inner.contains_key(stripped) {
+                    return Some(stripped.to_string());
                 }
             }
         }

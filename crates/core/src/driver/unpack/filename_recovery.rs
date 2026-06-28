@@ -29,7 +29,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::super::output::safe_relative_module_path;
-use super::merge::{relative_import_specifier, resolve_relative_specifier};
+use crate::module_path::{relative_import_specifier, resolve_relative_specifier};
 
 const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
 const COMPONENT_KEYS: &[&str] = &["data-sentry-component", "dataSentryComponent"];

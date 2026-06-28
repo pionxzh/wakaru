@@ -19,6 +19,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::super::io::{apply_fixer, parse_js, print_js};
 use super::super::types::{UnpackOutput, UnpackWarning, UnpackWarningKind};
+use crate::module_path::relative_import_specifier;
 use crate::unpacker::UnpackedModule;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
@@ -559,59 +560,6 @@ fn rewrite_numeric_arg_to_filename(arg: &mut ExprOrSpread, from_filename: &str, 
         value: path.into(),
         raw: None,
     }));
-}
-
-/// Resolve a relative module specifier (`./x`, `../y/z.js`) written in
-/// `from_filename` to the normalized module key it points at. Returns `None`
-/// for bare/package specifiers (`react`, `fs`) that do not name a local module.
-pub(super) fn resolve_relative_specifier(from_filename: &str, spec: &str) -> Option<String> {
-    if !(spec.starts_with("./") || spec.starts_with("../")) {
-        return None;
-    }
-    let from = from_filename.replace('\\', "/");
-    let mut parts: Vec<&str> = from
-        .rsplit_once('/')
-        .map(|(dir, _)| dir.split('/').filter(|part| !part.is_empty()).collect())
-        .unwrap_or_default();
-    for part in spec.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            other => parts.push(other),
-        }
-    }
-    Some(parts.join("/"))
-}
-
-pub(super) fn relative_import_specifier(from_filename: &str, target_filename: &str) -> String {
-    let from = from_filename.replace('\\', "/");
-    let target = target_filename.replace('\\', "/");
-    let from_dir: Vec<&str> = from
-        .rsplit_once('/')
-        .map(|(dir, _)| dir.split('/').filter(|part| !part.is_empty()).collect())
-        .unwrap_or_default();
-    let target_parts: Vec<&str> = target.split('/').filter(|part| !part.is_empty()).collect();
-
-    let mut common = 0usize;
-    while common < from_dir.len()
-        && common < target_parts.len()
-        && from_dir[common] == target_parts[common]
-    {
-        common += 1;
-    }
-
-    let mut parts = Vec::new();
-    parts.extend(std::iter::repeat_n("..", from_dir.len() - common));
-    parts.extend(target_parts[common..].iter().copied());
-
-    let path = parts.join("/");
-    if path.starts_with("../") {
-        path
-    } else {
-        format!("./{path}")
-    }
 }
 
 fn member_prop_is(prop: &MemberProp, expected: &str) -> bool {

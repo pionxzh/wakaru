@@ -32,6 +32,7 @@ use crate::utils::paren::strip_parens;
 pub struct UnRegenerator<'a> {
     unresolved_mark: Mark,
     module_facts: Option<&'a ModuleFactsMap>,
+    current_filename: Option<&'a str>,
 }
 
 impl UnRegenerator<'_> {
@@ -39,6 +40,7 @@ impl UnRegenerator<'_> {
         Self {
             unresolved_mark,
             module_facts: None,
+            current_filename: None,
         }
     }
 }
@@ -48,6 +50,7 @@ impl<'a> UnRegenerator<'a> {
         Self {
             unresolved_mark,
             module_facts: Some(module_facts),
+            current_filename: None,
         }
     }
 
@@ -55,9 +58,16 @@ impl<'a> UnRegenerator<'a> {
         module: &mut Module,
         unresolved_mark: Mark,
         module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
         local_helpers: &LocalHelperContext,
     ) {
-        run_un_regenerator(module, unresolved_mark, module_facts, local_helpers);
+        run_un_regenerator(
+            module,
+            unresolved_mark,
+            module_facts,
+            current_filename,
+            local_helpers,
+        );
     }
 }
 
@@ -68,6 +78,7 @@ impl VisitMut for UnRegenerator<'_> {
             module,
             self.unresolved_mark,
             self.module_facts,
+            self.current_filename,
             &local_helpers,
         );
     }
@@ -77,6 +88,7 @@ fn run_un_regenerator(
     module: &mut Module,
     unresolved_mark: Mark,
     module_facts: Option<&ModuleFactsMap>,
+    current_filename: Option<&str>,
     local_helpers: &LocalHelperContext,
 ) {
     // Phase 1: Detect _asyncToGenerator helper bindings (scope-aware)
@@ -88,8 +100,12 @@ fn run_un_regenerator(
         .collect();
     let mut async_to_gen_default_members = Vec::new();
     if let Some(module_facts) = module_facts {
-        let imported_helpers =
-            collect_cross_module_async_helpers(module, module_facts, unresolved_mark);
+        let imported_helpers = collect_cross_module_async_helpers(
+            module,
+            module_facts,
+            current_filename,
+            unresolved_mark,
+        );
         async_to_gen_bindings.extend(imported_helpers.direct);
         async_to_gen_default_members.extend(imported_helpers.default_members);
     }
@@ -178,6 +194,7 @@ struct CrossModuleAsyncHelpers {
 fn collect_cross_module_async_helpers(
     module: &Module,
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     unresolved_mark: Mark,
 ) -> CrossModuleAsyncHelpers {
     let mut helpers = CrossModuleAsyncHelpers::default();
@@ -187,6 +204,7 @@ fn collect_cross_module_async_helpers(
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
                 if !module_exports_helper(
                     module_facts,
+                    current_filename,
                     &str_to_atom(&import.src.value),
                     "default",
                     HelperKind::AsyncToGenerator,
@@ -234,6 +252,7 @@ fn collect_cross_module_async_helpers(
                     };
                     if module_exports_helper(
                         module_facts,
+                        current_filename,
                         &source,
                         "default",
                         HelperKind::AsyncToGenerator,
@@ -253,16 +272,19 @@ fn collect_cross_module_async_helpers(
 
 fn module_exports_helper(
     module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
     source: &Atom,
     exported: &str,
     kind: HelperKind,
 ) -> bool {
-    module_facts.get(source.as_ref()).is_some_and(|facts| {
-        facts
-            .helper_exports
-            .iter()
-            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
-    })
+    module_facts
+        .get_from(current_filename, source.as_ref())
+        .is_some_and(|facts| {
+            facts
+                .helper_exports
+                .iter()
+                .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+        })
 }
 
 fn collect_regenerator_runtime_helpers(
