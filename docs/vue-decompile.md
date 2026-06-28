@@ -12,10 +12,19 @@ cargo run -p wakaru-cli -- input.js --vue-sfc
 cargo run -p wakaru-cli -- --unpack bundle.js --vue-sfc -o unpacked/
 ```
 
-In single-file mode, `--vue-sfc` prints a `.vue`-like artifact when the render
-module matches supported Vue helper shapes, and falls back to normal JavaScript
-otherwise. If a recovered SFC is written to a file, the output path must use a
-`.vue` extension so the synthetic Vue artifact is not mistaken for JavaScript.
+In single-file mode without `-o`, `--vue-sfc` prints a `.vue`-like artifact
+when the render module matches supported Vue helper shapes, and falls back to
+normal JavaScript otherwise.
+
+With `-o`, only `.vue` output paths are Vue-only. `-o App.vue` writes the
+recovered SFC and returns an error if the input cannot be recovered as Vue.
+All other output paths are JavaScript-primary: Wakaru writes decompiled
+JavaScript to the requested path, and when Vue recovery succeeds it also writes
+a sibling `.vue` sidecar. The sidecar name comes from the input filename with
+the final suffix replaced by `.vue`; for example,
+`custom/target.min.mjs --vue-sfc -o out/renamed.mjs` writes
+`out/renamed.mjs` and `out/target.min.vue`. Source maps, when requested, are
+emitted only for the JavaScript artifact.
 
 In unpack mode, `--vue-sfc` is additive: every module still gets a JavaScript
 artifact, and recoverable Vue render modules also get a sibling `.vue`

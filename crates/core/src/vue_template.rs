@@ -1006,22 +1006,25 @@ mod tests {
     #[test]
     fn escapes_text_attrs_and_comments() {
         let template = VueTemplate {
-            children: vec![VueNode::Element(
-                VueElement::new("div")
-                    .with_attrs(vec![VueAttr::Static {
-                        name: "title".into(),
-                        value: Some("\"quoted\" <tag>".into()),
-                    }])
-                    .with_children(vec![
-                        VueNode::Text("Tom & <Jerry>".into()),
-                        VueNode::RawExpr("a--b".into()),
-                    ]),
-            )],
+            children: vec![
+                VueNode::Element(
+                    VueElement::new("div")
+                        .with_attrs(vec![VueAttr::Static {
+                            name: "title".into(),
+                            value: Some("\"quoted\" <tag>".into()),
+                        }])
+                        .with_children(vec![
+                            VueNode::Text("Tom & <Jerry>".into()),
+                            VueNode::RawExpr("a--b".into()),
+                        ]),
+                ),
+                VueNode::Comment("a--b".into()),
+            ],
         };
 
         assert_eq!(
             template.print(),
-            "<template>\n  <div title=\"&quot;quoted&quot; &lt;tag>\">Tom &amp; &lt;Jerry&gt;{{ a--b }}</div>\n</template>\n"
+            "<template>\n  <div title=\"&quot;quoted&quot; &lt;tag>\">Tom &amp; &lt;Jerry&gt;{{ a--b }}</div>\n  <!-- a- -b -->\n</template>\n"
         );
     }
 

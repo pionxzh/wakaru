@@ -216,11 +216,15 @@ fn vue_sfc_writes_recovered_vite_setup_component() {
 }
 
 #[test]
-fn vue_sfc_single_file_rejects_js_output_path_when_recovered() {
-    let dir = temp_test_dir("vue-sfc-js-output");
-    fs::create_dir_all(&dir).expect("create temp dir");
-    let input_path = dir.join("render.js");
-    let output_path = dir.join("App.js");
+fn vue_sfc_single_file_js_primary_output_writes_vue_sidecar_from_input_name() {
+    let dir = temp_test_dir("vue-sfc-js-primary-output");
+    let input_dir = dir.join("custom");
+    let output_dir = dir.join("out");
+    fs::create_dir_all(&input_dir).expect("create input dir");
+    fs::create_dir_all(&output_dir).expect("create output dir");
+    let input_path = input_dir.join("target.min.mjs");
+    let output_path = output_dir.join("renamed.mjs");
+    let sidecar_path = output_dir.join("target.min.vue");
     fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
 
     let cli = Cli::try_parse_from([
@@ -231,11 +235,46 @@ fn vue_sfc_single_file_rejects_js_output_path_when_recovered() {
         output_path.to_str().expect("output path should be utf8"),
     ])
     .expect("vue sfc cli should parse");
-    let err = run_default(cli).expect_err("recovered vue sfc should reject .js output");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    let js = fs::read_to_string(&output_path).expect("read js primary output");
+    assert!(
+        js.contains("export function render"),
+        "primary output should remain JavaScript:\n{js}"
+    );
+    assert_eq!(
+        fs::read_to_string(&sidecar_path).expect("read vue sidecar output"),
+        "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_vue_only_output_errors_when_not_recovered() {
+    let dir = temp_test_dir("vue-sfc-vue-only-miss");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("plain.js");
+    let output_path = dir.join("Plain.vue");
+    fs::write(&input_path, "const value = 1;").expect("write plain input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    let err = run_default(cli).expect_err("vue-only output should require recovered SFC");
     assert!(
         err.to_string()
-            .contains("--vue-sfc recovered a Vue SFC but output path ends with .js"),
+            .contains("--vue-sfc did not recover a Vue SFC"),
         "unexpected error: {err}"
+    );
+    assert!(
+        !output_path.exists(),
+        "vue-only miss should not write fallback JavaScript to .vue"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -264,6 +303,43 @@ fn vue_sfc_single_file_does_not_write_source_map_for_recovered_sfc() {
     assert!(
         !append_map_extension(&output_path).exists(),
         "recovered vue sfc must not get a stale JS source map"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_js_primary_output_writes_source_map_only_for_js() {
+    let dir = temp_test_dir("vue-sfc-js-primary-output-map");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("App.js");
+    let output_path = dir.join("custom.jsx");
+    let sidecar_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert!(output_path.exists(), "primary JS output should be written");
+    assert!(
+        sidecar_path.exists(),
+        "recovered Vue sidecar should be written"
+    );
+    assert!(
+        append_map_extension(&output_path).exists(),
+        "primary JS output should get the source map"
+    );
+    assert!(
+        !append_map_extension(&sidecar_path).exists(),
+        "recovered Vue sidecar must not get a stale JS source map"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -353,6 +429,29 @@ fn vue_sfc_unpack_import_resolver_reads_module_relative_source() {
             "./components/ChildPanel.vue"
         ),
         Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_prefers_module_relative_over_root_collision() {
+    let module_sources = HashMap::from([
+        (
+            "components/ChildPanel.vue".to_string(),
+            "export default { name: 'RootChild' };".to_string(),
+        ),
+        (
+            "src/components/ChildPanel.vue".to_string(),
+            "export default { name: 'ScopedChild' };".to_string(),
+        ),
+    ]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue"
+        ),
+        Some("export default { name: 'ScopedChild' };".to_string())
     );
 }
 
