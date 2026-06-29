@@ -5,7 +5,8 @@ use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
     ExportSpecifier, Expr, Function, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
-    Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UpdateExpr, VarDeclarator,
+    Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -38,7 +39,11 @@ pub(super) fn composable_ref_props_from_source(source: &str) -> HashMap<String, 
 }
 
 fn composable_ref_props_from_module(module: &Module) -> HashMap<String, HashSet<Atom>> {
-    let (local_ref_props, ref_returning_functions) = local_composable_ref_prop_analysis(module);
+    let (mut local_ref_props, ref_returning_functions) = local_composable_ref_prop_analysis(module);
+    local_ref_props.extend(local_injected_composable_ref_props(
+        module,
+        &local_ref_props,
+    ));
     composable_ref_prop_exports(module, &local_ref_props, &ref_returning_functions)
 }
 
@@ -62,6 +67,114 @@ fn local_composable_ref_prop_analysis(
         .collect::<HashMap<_, _>>();
 
     (local_ref_props, ref_returning_functions)
+}
+
+fn local_injected_composable_ref_props(
+    module: &Module,
+    local_ref_props: &HashMap<Atom, HashSet<Atom>>,
+) -> HashMap<Atom, HashSet<Atom>> {
+    let mut values = local_ref_props.values();
+    let Some(provider_ref_props) = values.next() else {
+        return HashMap::new();
+    };
+    if values.next().is_some() {
+        return HashMap::new();
+    }
+
+    local_function_likes(module)
+        .into_iter()
+        .filter(|(binding, _)| !local_ref_props.contains_key(binding))
+        .filter_map(|(binding, function)| {
+            function_returns_guarded_call_result(function)
+                .then(|| (binding, provider_ref_props.clone()))
+        })
+        .collect()
+}
+
+fn function_returns_guarded_call_result(function: FunctionLike<'_>) -> bool {
+    if !function_has_no_params(function) {
+        return false;
+    }
+    let return_exprs = function_return_exprs(function);
+    let [return_expr] = return_exprs.as_slice() else {
+        return false;
+    };
+    let Expr::Ident(returned) = unwrap_paren_expr(return_expr) else {
+        return false;
+    };
+    let Some(stmts) = function_block_stmts(function) else {
+        return false;
+    };
+    block_declares_call_result(stmts, &returned.sym)
+        && block_guards_missing_result(stmts, &returned.sym)
+}
+
+fn function_has_no_params(function: FunctionLike<'_>) -> bool {
+    match function {
+        FunctionLike::Function(function) => function.params.is_empty(),
+        FunctionLike::Arrow(arrow) => arrow.params.is_empty(),
+    }
+}
+
+fn function_block_stmts(function: FunctionLike<'_>) -> Option<&[Stmt]> {
+    match function {
+        FunctionLike::Function(function) => {
+            function.body.as_ref().map(|body| body.stmts.as_slice())
+        }
+        FunctionLike::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
+            BlockStmtOrExpr::Expr(_) => None,
+        },
+    }
+}
+
+fn block_declares_call_result(stmts: &[Stmt], binding: &Atom) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
+        var.decls.iter().any(|decl| {
+            let Pat::Ident(ident) = &decl.name else {
+                return false;
+            };
+            &ident.id.sym == binding
+                && decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| matches!(unwrap_paren_expr(init), Expr::Call(_)))
+        })
+    })
+}
+
+fn block_guards_missing_result(stmts: &[Stmt], binding: &Atom) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::If(if_stmt) if is_missing_binding_test(if_stmt.test.as_ref(), binding) => {
+            stmt_contains_throw(if_stmt.cons.as_ref())
+                || if_stmt.alt.as_deref().is_some_and(stmt_contains_throw)
+        }
+        _ => false,
+    })
+}
+
+fn is_missing_binding_test(expr: &Expr, binding: &Atom) -> bool {
+    matches!(
+        unwrap_paren_expr(expr),
+        Expr::Unary(unary)
+            if unary.op == UnaryOp::Bang
+                && matches!(unwrap_paren_expr(unary.arg.as_ref()), Expr::Ident(ident) if &ident.sym == binding)
+    )
+}
+
+fn stmt_contains_throw(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Throw(_) => true,
+        Stmt::Block(block) => block.stmts.iter().any(stmt_contains_throw),
+        Stmt::If(if_stmt) => {
+            stmt_contains_throw(if_stmt.cons.as_ref())
+                || if_stmt.alt.as_deref().is_some_and(stmt_contains_throw)
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy)]
