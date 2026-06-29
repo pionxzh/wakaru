@@ -2739,6 +2739,56 @@ export function render(e, _cache) {
     }
 
     #[test]
+    fn recovers_setup_object_destructure_used_by_template() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock, toDisplayString } from "vue";
+import { useData } from "./data.js";
+import { useView } from "./view.js";
+export default defineComponent({
+  setup() {
+    const view = useView();
+    const { frontmatter, site } = useData();
+    watch(frontmatter, refresh);
+    return () => (
+      openBlock(), createElementBlock("div", { title: site.value.title }, toDisplayString(view.label), 9, ["title"])
+    );
+  }
+});
+"#;
+        let data = r#"
+function tracked(source) {
+  const value = createRef();
+  watch(source, (next) => {
+    value.value = next;
+  });
+  return readonly(value);
+}
+export function createData(source) {
+  return {
+    frontmatter: tracked(() => source.frontmatter),
+    site: tracked(() => source.site)
+  };
+}
+export function useData() {
+  const data = inject(dataKey);
+  if (!data) {
+    throw new Error("missing data");
+  }
+  return data;
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js_with_import_resolver(input, |source| {
+                (source == "./data.js").then(|| data.to_string())
+            })
+            .unwrap()
+            .unwrap(),
+            "<script setup>\nimport { useData } from \"./data.js\";\nimport { useView } from \"./view.js\";\n\nconst view = useView();\nconst { frontmatter, site } = useData();\n</script>\n\n<template>\n  <div :title=\"site.title\">{{ view.label }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_setup_returned_render_arrow() {
         let input = r#"
 import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
@@ -4118,6 +4168,32 @@ export default _sfc_main;
             selected,
             vec!["const t = toRefs(props);", "const value = t.event;"]
         );
+    }
+
+    #[test]
+    fn setup_dependencies_select_object_destructure_read_by_template() {
+        let ctx = VueRecoveryContext {
+            bindings: VueBindingTable {
+                composable_refs: test_atom_set(&["site"]),
+                ..Default::default()
+            },
+            setup_local_bindings: vec![test_local_binding(
+                "const { frontmatter, site } = useData();",
+                &["frontmatter", "site"],
+                &["frontmatter", "site"],
+                &["useData"],
+            )],
+            ..Default::default()
+        };
+        let root = VueNode::Interpolation(VueExpr::new("site.value.contentProps"));
+        let template_usage = VueTemplateUsage::new(&root);
+
+        let selected = setup_local_declarations(&ctx, &template_usage)
+            .into_iter()
+            .map(|declaration| declaration.source.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected, vec!["const { frontmatter, site } = useData();"]);
     }
 
     #[test]
