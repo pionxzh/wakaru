@@ -8,9 +8,10 @@ The recovery path does not rely on source maps. It decompiles JavaScript first,
 recognizes Vue runtime render shapes, builds Wakaru's own Vue IR, and prints a
 best-effort SFC with Wakaru's template/script emitters.
 
-## Merge Posture
+## Experimental Posture
 
-The feature is acceptable to ship behind `--vue-sfc` as experimental because:
+Keep the feature behind `--vue-sfc` as experimental while these constraints
+hold:
 
 - The default JavaScript decompile path remains the primary output.
 - In unpack mode, Vue SFC output is additive: recoverable modules get sibling
@@ -93,3 +94,9 @@ neutral synthetic unit test that does not contain third-party project code.
   emitter or selection heuristics.
 - Periodically run the public corpus before release notes or before promoting
   the feature out of experimental status.
+
+## Keeping This Document Current
+
+Update this file whenever the CLI output contract, recovery scope, public corpus
+harness, or experimental status changes. Keep `README.md` and
+`docs/vue-decompile.md` aligned with the same user-facing expectations.
