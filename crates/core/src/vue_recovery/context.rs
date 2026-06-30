@@ -793,29 +793,27 @@ fn unique_script_import_alias(binding: &Atom, used_bindings: &mut HashSet<Atom>)
     }
 }
 
-struct ImportAliasRenamer<'a> {
-    aliases: &'a HashMap<Atom, Atom>,
-    scopes: Vec<HashSet<Atom>>,
-}
+struct ScopeStack(Vec<HashSet<Atom>>);
 
-impl<'a> ImportAliasRenamer<'a> {
-    fn new(aliases: &'a HashMap<Atom, Atom>) -> Self {
-        Self {
-            aliases,
-            scopes: vec![HashSet::new()],
-        }
+impl ScopeStack {
+    fn new() -> Self {
+        Self(vec![HashSet::new()])
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
+        self.0.push(HashSet::new());
     }
 
     fn pop_scope(&mut self) {
-        self.scopes.pop();
+        self.0.pop();
+    }
+
+    fn depth(&self) -> usize {
+        self.0.len()
     }
 
     fn declare(&mut self, sym: &Atom) {
-        if let Some(scope) = self.scopes.last_mut() {
+        if let Some(scope) = self.0.last_mut() {
             scope.insert(sym.clone());
         }
     }
@@ -844,13 +842,27 @@ impl<'a> ImportAliasRenamer<'a> {
     }
 
     fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
+        self.0.iter().rev().any(|scope| scope.contains(sym))
+    }
+}
+
+struct ImportAliasRenamer<'a> {
+    aliases: &'a HashMap<Atom, Atom>,
+    scopes: ScopeStack,
+}
+
+impl<'a> ImportAliasRenamer<'a> {
+    fn new(aliases: &'a HashMap<Atom, Atom>) -> Self {
+        Self {
+            aliases,
+            scopes: ScopeStack::new(),
+        }
     }
 }
 
 impl VisitMut for ImportAliasRenamer<'_> {
     fn visit_mut_ident(&mut self, ident: &mut Ident) {
-        if !self.is_shadowed(&ident.sym) {
+        if !self.scopes.is_shadowed(&ident.sym) {
             if let Some(alias) = self.aliases.get(&ident.sym) {
                 ident.sym = alias.clone();
             }
@@ -858,7 +870,7 @@ impl VisitMut for ImportAliasRenamer<'_> {
     }
 
     fn visit_mut_binding_ident(&mut self, ident: &mut BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_mut_prop_name(&mut self, prop: &mut PropName) {
@@ -874,39 +886,39 @@ impl VisitMut for ImportAliasRenamer<'_> {
     }
 
     fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
-        self.declare_pat(&declarator.name);
+        self.scopes.declare_pat(&declarator.name);
         if let Some(init) = &mut declarator.init {
             init.visit_mut_with(self);
         }
     }
 
     fn visit_mut_fn_decl(&mut self, function: &mut FnDecl) {
-        self.declare(&function.ident.sym);
+        self.scopes.declare(&function.ident.sym);
         self.visit_mut_function(&mut function.function);
     }
 
     fn visit_mut_function(&mut self, function: &mut Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &mut function.body {
             body.visit_mut_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_mut_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_mut_class_decl(&mut self, class: &mut ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.scopes.declare(&class.ident.sym);
         class.class.visit_mut_with(self);
     }
 }
@@ -2117,7 +2129,7 @@ fn setup_ref_object_alias_refs(stmts: &[Stmt]) -> HashSet<Atom> {
 
 fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<Atom> {
     let mut collector = NonValueMemberRefCollector {
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     for stmt in stmts {
@@ -2128,7 +2140,7 @@ fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<Atom> {
 
 fn setup_value_member_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<Atom> {
     let mut collector = ValueMemberIdentRefCollector {
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     for stmt in setup_stmts {
@@ -2139,53 +2151,15 @@ fn setup_value_member_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<
 }
 
 struct ValueMemberIdentRefCollector {
-    scopes: Vec<HashSet<Atom>>,
+    scopes: ScopeStack,
     refs: HashSet<Atom>,
 }
 
 impl ValueMemberIdentRefCollector {
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if self.scopes.len() <= 1 {
-            return;
+    fn declare_if_nested(&mut self, sym: &Atom) {
+        if self.scopes.depth() > 1 {
+            self.scopes.declare(sym);
         }
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
     }
 }
 
@@ -2193,7 +2167,7 @@ impl Visit for ValueMemberIdentRefCollector {
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
-                if !self.is_shadowed(&object.sym) {
+                if !self.scopes.is_shadowed(&object.sym) {
                     self.refs.insert(object.sym.clone());
                 }
             }
@@ -2202,100 +2176,64 @@ impl Visit for ValueMemberIdentRefCollector {
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.declare_if_nested(&ident.id.sym);
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.declare_pat(&declarator.name);
+        if self.scopes.depth() > 1 {
+            self.scopes.declare_pat(&declarator.name);
+        }
         if let Some(init) = &declarator.init {
             init.visit_with(self);
         }
     }
 
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare(&function.ident.sym);
-        self.push_scope();
+        self.declare_if_nested(&function.ident.sym);
+        self.scopes.push_scope();
         for param in &function.function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         function.function.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.declare_if_nested(&class.ident.sym);
         class.class.visit_with(self);
     }
 }
 
 struct NonValueMemberRefCollector {
-    scopes: Vec<HashSet<Atom>>,
+    scopes: ScopeStack,
     refs: HashSet<Atom>,
 }
 
 impl NonValueMemberRefCollector {
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if self.scopes.len() <= 1 {
-            return;
+    fn declare_if_nested(&mut self, sym: &Atom) {
+        if self.scopes.depth() > 1 {
+            self.scopes.declare(sym);
         }
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
     }
 }
 
@@ -2303,7 +2241,7 @@ impl Visit for NonValueMemberRefCollector {
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
-                if !self.is_shadowed(&object.sym) {
+                if !self.scopes.is_shadowed(&object.sym) {
                     self.refs.insert(object.sym.clone());
                 }
             }
@@ -2312,43 +2250,45 @@ impl Visit for NonValueMemberRefCollector {
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.declare_if_nested(&ident.id.sym);
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.declare_pat(&declarator.name);
+        if self.scopes.depth() > 1 {
+            self.scopes.declare_pat(&declarator.name);
+        }
         if let Some(init) = &declarator.init {
             init.visit_with(self);
         }
     }
 
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare(&function.ident.sym);
+        self.declare_if_nested(&function.ident.sym);
         self.visit_function(&function.function);
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.declare_if_nested(&class.ident.sym);
         class.class.visit_with(self);
     }
 }
@@ -2402,7 +2342,7 @@ impl Visit for TemplateRefAliasCollector {
 
 fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
     let mut collector = IdentRefCollector {
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     render.visit_with(&mut collector);
@@ -2464,7 +2404,7 @@ fn setup_render_template_ref_refs(
         object_value_candidates: &object_value_candidates,
         unref_candidates: &unref_candidates,
         ctx,
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         tuple_value_refs: HashSet::new(),
         object_value_refs: HashSet::new(),
         unref_refs: HashSet::new(),
@@ -2500,7 +2440,7 @@ fn collect_setup_value_template_tuple_refs(
 
 fn value_member_refs_in_expr(expr: &Expr) -> HashSet<Atom> {
     let mut collector = ValueMemberIdentRefCollector {
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     expr.visit_with(&mut collector);
@@ -2512,54 +2452,13 @@ struct RenderTemplateRefCollector<'a> {
     object_value_candidates: &'a HashSet<Atom>,
     unref_candidates: &'a HashSet<Atom>,
     ctx: &'a VueRecoveryContext,
-    scopes: Vec<HashSet<Atom>>,
+    scopes: ScopeStack,
     tuple_value_refs: HashSet<Atom>,
     object_value_refs: HashSet<Atom>,
     unref_refs: HashSet<Atom>,
 }
 
 impl RenderTemplateRefCollector<'_> {
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
-    }
-
     fn collect_value_member(&mut self, member: &MemberExpr) {
         if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             return;
@@ -2567,7 +2466,7 @@ impl RenderTemplateRefCollector<'_> {
         let Expr::Ident(object) = member.obj.as_ref() else {
             return;
         };
-        if self.is_shadowed(&object.sym) {
+        if self.scopes.is_shadowed(&object.sym) {
             return;
         }
         if self.tuple_value_candidates.contains(&object.sym) {
@@ -2588,7 +2487,7 @@ impl RenderTemplateRefCollector<'_> {
         let Expr::Ident(object) = unwrap_paren_expr(arg.expr.as_ref()) else {
             return;
         };
-        if self.unref_candidates.contains(&object.sym) && !self.is_shadowed(&object.sym) {
+        if self.unref_candidates.contains(&object.sym) && !self.scopes.is_shadowed(&object.sym) {
             self.unref_refs.insert(object.sym.clone());
         }
     }
@@ -2620,7 +2519,7 @@ impl Visit for RenderTemplateRefCollector<'_> {
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_prop_name(&mut self, prop: &PropName) {
@@ -2639,36 +2538,36 @@ impl Visit for RenderTemplateRefCollector<'_> {
         if let Some(init) = &declarator.init {
             init.visit_with(self);
         }
-        self.declare_pat(&declarator.name);
+        self.scopes.declare_pat(&declarator.name);
     }
 
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare(&function.ident.sym);
+        self.scopes.declare(&function.ident.sym);
         self.visit_function(&function.function);
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.scopes.declare(&class.ident.sym);
         class.class.visit_with(self);
     }
 }
@@ -3577,7 +3476,7 @@ fn is_computed_script_setup_call(call: &CallExpr, getter: &Expr, ctx: &VueRecove
 fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
     let mut collector = ScriptImportRefCollector {
         imports,
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     expr.visit_with(&mut collector);
@@ -3587,7 +3486,7 @@ fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> 
 fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
     let mut collector = ScriptImportRefCollector {
         imports,
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     stmt.visit_with(&mut collector);
@@ -3596,7 +3495,7 @@ fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> Ha
 
 pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
     let mut collector = IdentRefCollector {
-        scopes: vec![HashSet::new()],
+        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     stmt.visit_with(&mut collector);
@@ -3604,62 +3503,19 @@ pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
 }
 
 struct IdentRefCollector {
-    scopes: Vec<HashSet<Atom>>,
+    scopes: ScopeStack,
     refs: HashSet<Atom>,
-}
-
-impl IdentRefCollector {
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
-    }
 }
 
 impl Visit for IdentRefCollector {
     fn visit_ident(&mut self, ident: &Ident) {
-        if !self.is_shadowed(&ident.sym) {
+        if !self.scopes.is_shadowed(&ident.sym) {
             self.refs.insert(ident.sym.clone());
         }
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_prop_name(&mut self, prop: &PropName) {
@@ -3675,101 +3531,58 @@ impl Visit for IdentRefCollector {
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.declare_pat(&declarator.name);
+        self.scopes.declare_pat(&declarator.name);
         if let Some(init) = &declarator.init {
             init.visit_with(self);
         }
     }
 
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare(&function.ident.sym);
+        self.scopes.declare(&function.ident.sym);
         self.visit_function(&function.function);
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.scopes.declare(&class.ident.sym);
         class.class.visit_with(self);
     }
 }
 
 struct ScriptImportRefCollector<'a> {
     imports: &'a HashMap<Atom, VueScriptImport>,
-    scopes: Vec<HashSet<Atom>>,
+    scopes: ScopeStack,
     refs: HashSet<Atom>,
-}
-
-impl ScriptImportRefCollector<'_> {
-    fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains(sym))
-    }
 }
 
 impl Visit for ScriptImportRefCollector<'_> {
     fn visit_ident(&mut self, ident: &Ident) {
-        if self.imports.contains_key(&ident.sym) && !self.is_shadowed(&ident.sym) {
+        if self.imports.contains_key(&ident.sym) && !self.scopes.is_shadowed(&ident.sym) {
             self.refs.insert(ident.sym.clone());
         }
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare(&ident.id.sym);
+        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_prop_name(&mut self, prop: &PropName) {
@@ -3785,39 +3598,39 @@ impl Visit for ScriptImportRefCollector<'_> {
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.declare_pat(&declarator.name);
+        self.scopes.declare_pat(&declarator.name);
         if let Some(init) = &declarator.init {
             init.visit_with(self);
         }
     }
 
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare(&function.ident.sym);
+        self.scopes.declare(&function.ident.sym);
         self.visit_function(&function.function);
     }
 
     fn visit_function(&mut self, function: &Function) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &function.params {
-            self.declare_pat(&param.pat);
+            self.scopes.declare_pat(&param.pat);
         }
         if let Some(body) = &function.body {
             body.visit_with(self);
         }
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.push_scope();
+        self.scopes.push_scope();
         for param in &arrow.params {
-            self.declare_pat(param);
+            self.scopes.declare_pat(param);
         }
         arrow.body.visit_with(self);
-        self.pop_scope();
+        self.scopes.pop_scope();
     }
 
     fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare(&class.ident.sym);
+        self.scopes.declare(&class.ident.sym);
         class.class.visit_with(self);
     }
 }
