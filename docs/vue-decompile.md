@@ -4,6 +4,8 @@ Wakaru's Vue support is a no-sourcemap, best-effort recovery path for generated
 Vue 3 render modules. It does not parse original `.vue` single-file components;
 instead it decompiles JavaScript first, recognizes Vue runtime helper calls, and
 prints a reconstructed SFC-like artifact with Wakaru's own template printer.
+This feature is experimental; see `docs/vue-sfc-recovery-status.md` for the
+current merge posture, known gaps, and follow-up targets.
 
 Run:
 
