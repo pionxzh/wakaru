@@ -1681,12 +1681,9 @@ fn with_component_options<'a>(
             setup_slots,
             component_options: Some(component_options),
         },
-        RenderSource::Function {
+        RenderSource::Function { render, .. } => RenderSource::Function {
             render,
-            component_options,
-        } => RenderSource::Function {
-            render,
-            component_options,
+            component_options: Some(component_options),
         },
     }
 }
