@@ -99,6 +99,631 @@ fn parses_formatter_option() {
 }
 
 #[test]
+fn parses_vue_sfc_option() {
+    let cli = Cli::try_parse_from(["wakaru", "input.js", "--vue-sfc"]).expect("vue option parses");
+    assert!(cli.vue_sfc);
+}
+
+#[test]
+fn rejects_vue_sfc_with_raw_unpack() {
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "bundle.js",
+        "--unpack",
+        "--raw",
+        "--vue-sfc",
+        "-o",
+        "out",
+    ])
+    .expect("raw vue unpack args should parse before runtime validation");
+
+    let err = run_default(cli).expect_err("raw vue output should be rejected");
+    assert!(
+        err.to_string()
+            .contains("--vue-sfc cannot be combined with --raw"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn vue_output_filename_replaces_known_extension() {
+    assert_eq!(vue_output_filename("module-1.js"), "module-1.vue");
+    assert_eq!(
+        vue_output_filename("src/App.render.mjs"),
+        "src/App.render.vue"
+    );
+    assert_eq!(vue_output_filename("module-plain"), "module-plain.vue");
+}
+
+#[test]
+fn vue_js_output_filename_avoids_vue_artifact_collision() {
+    assert_eq!(vue_js_output_filename("src/App.vue"), "src/App.vue.js");
+    assert_eq!(vue_js_output_filename("src/App.js"), "src/App.js");
+    assert_eq!(vue_js_output_filename("module-plain"), "module-plain");
+}
+
+#[test]
+fn vue_output_filename_for_component_disambiguates_multi_sfc_modules() {
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("HelloWorld"), true),
+        "entry.HelloWorld.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("src/entry.js", Some("App"), true),
+        "src/entry.App.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("../App"), true),
+        "entry.___App.vue"
+    );
+    assert_eq!(
+        vue_output_filename_for_component("entry.js", Some("App"), false),
+        "entry.vue"
+    );
+}
+
+#[test]
+fn vue_sfc_writes_recovered_single_file_component() {
+    let dir = temp_test_dir("vue-sfc-output");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let output_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_writes_recovered_vite_setup_component() {
+    let dir = temp_test_dir("vue-sfc-vite-setup");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("PanelWrapper.js");
+    let output_path = dir.join("PanelWrapper.vue");
+    fs::write(&input_path, vite_setup_component_module_source())
+        .expect("write vite setup component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<script setup>\nimport { computed } from \"vue\";\nimport { P as Panel_1 } from \"./Panel.vue\";\n\nconst Panel = computed(()=>createPanelState({\n        title: \"Ready\",\n        enabled: true,\n        rank: 1,\n        group: \"main\"\n    }));\n</script>\n\n<template>\n  <Panel_1 :state=\"Panel\" />\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_js_primary_output_writes_vue_sidecar_from_input_name() {
+    let dir = temp_test_dir("vue-sfc-js-primary-output");
+    let input_dir = dir.join("custom");
+    let output_dir = dir.join("out");
+    fs::create_dir_all(&input_dir).expect("create input dir");
+    fs::create_dir_all(&output_dir).expect("create output dir");
+    let input_path = input_dir.join("target.min.mjs");
+    let output_path = output_dir.join("renamed.mjs");
+    let sidecar_path = output_dir.join("target.min.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    let js = fs::read_to_string(&output_path).expect("read js primary output");
+    assert!(
+        js.contains("export function render"),
+        "primary output should remain JavaScript:\n{js}"
+    );
+    assert_eq!(
+        fs::read_to_string(&sidecar_path).expect("read vue sidecar output"),
+        "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_vue_only_output_errors_when_not_recovered() {
+    let dir = temp_test_dir("vue-sfc-vue-only-miss");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("plain.js");
+    let output_path = dir.join("Plain.vue");
+    fs::write(&input_path, "const value = 1;").expect("write plain input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    let err = run_default(cli).expect_err("vue-only output should require recovered SFC");
+    assert!(
+        err.to_string()
+            .contains("--vue-sfc did not recover a Vue SFC"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !output_path.exists(),
+        "vue-only miss should not write fallback JavaScript to .vue"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_does_not_write_source_map_for_recovered_sfc() {
+    let dir = temp_test_dir("vue-sfc-output-map");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let output_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert!(output_path.exists(), "recovered vue sfc should be written");
+    assert!(
+        !append_map_extension(&output_path).exists(),
+        "recovered vue sfc must not get a stale JS source map"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_single_file_js_primary_output_writes_source_map_only_for_js() {
+    let dir = temp_test_dir("vue-sfc-js-primary-output-map");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("App.js");
+    let output_path = dir.join("custom.jsx");
+    let sidecar_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert!(output_path.exists(), "primary JS output should be written");
+    assert!(
+        sidecar_path.exists(),
+        "recovered Vue sidecar should be written"
+    );
+    assert!(
+        append_map_extension(&output_path).exists(),
+        "primary JS output should get the source map"
+    );
+    assert!(
+        !append_map_extension(&sidecar_path).exists(),
+        "recovered Vue sidecar must not get a stale JS source map"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_relative_import_resolver_ignores_stdin_base() {
+    assert_eq!(read_relative_import_source("<stdin>", "./main.js"), None);
+}
+
+#[test]
+fn vue_sfc_relative_import_resolver_reads_extensionless_and_query_paths() {
+    let dir = temp_test_dir("vue-sfc-relative-import-resolver");
+    let components_dir = dir.join("components");
+    fs::create_dir_all(&components_dir).expect("create temp dir");
+    let input_path = dir.join("App.js");
+    fs::write(&input_path, "export default {};").expect("write input");
+    fs::write(components_dir.join("Child.vue"), "export default {};").expect("write component");
+    fs::write(components_dir.join("Panel.js"), "export default {};").expect("write js module");
+    fs::create_dir_all(components_dir.join("Dialog")).expect("create index dir");
+    fs::write(
+        components_dir.join("Dialog").join("index.vue"),
+        "export default {};",
+    )
+    .expect("write index component");
+
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Child.vue?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Child?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Panel"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        read_relative_import_source(
+            input_path.to_str().expect("input path should be utf8"),
+            "./components/Dialog"
+        ),
+        Some("export default {};".to_string())
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_root_relative_module_source() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./src/components/ChildPanel.vue"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_module_relative_source() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_prefers_module_relative_over_root_collision() {
+    let module_sources = HashMap::from([
+        (
+            "components/ChildPanel.vue".to_string(),
+            "export default { name: 'RootChild' };".to_string(),
+        ),
+        (
+            "src/components/ChildPanel.vue".to_string(),
+            "export default { name: 'ScopedChild' };".to_string(),
+        ),
+    ]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue"
+        ),
+        Some("export default { name: 'ScopedChild' };".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_extensionless_query_and_index_sources() {
+    let module_sources = HashMap::from([
+        (
+            "src/components/ChildPanel.vue".to_string(),
+            "export default {};".to_string(),
+        ),
+        (
+            "src/components/Panel.js".to_string(),
+            "export const panel = true;".to_string(),
+        ),
+        (
+            "src/components/Dialog/index.vue".to_string(),
+            "export const dialog = true;".to_string(),
+        ),
+    ]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel.vue?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/App.vue",
+            "./components/ChildPanel?vue&type=script"
+        ),
+        Some("export default {};".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(&module_sources, "src/App.vue", "./components/Panel"),
+        Some("export const panel = true;".to_string())
+    );
+    assert_eq!(
+        resolve_unpack_import_source(&module_sources, "src/App.vue", "./components/Dialog"),
+        Some("export const dialog = true;".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_unpack_import_resolver_reads_parent_relative_sources() {
+    let module_sources = HashMap::from([(
+        "src/components/ChildPanel.vue".to_string(),
+        "export default {};".to_string(),
+    )]);
+
+    assert_eq!(
+        resolve_unpack_import_source(
+            &module_sources,
+            "src/views/App.vue",
+            "../components/ChildPanel"
+        ),
+        Some("export default {};".to_string())
+    );
+}
+
+#[test]
+fn vue_sfc_recovers_single_system_register_module() {
+    let dir = temp_test_dir("vue-sfc-system-register");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("legacy.js");
+    let output_path = dir.join("Recovered.vue");
+    fs::write(
+        &input_path,
+        r#"
+System.register(["./vendor-vue.js"], function (exports) {
+  "use strict";
+  var defineComponent, openBlock, createElementBlock;
+  return {
+    setters: [
+      function (module) {
+        defineComponent = module.d, openBlock = module.q, createElementBlock = module.X;
+      }
+    ],
+    execute: function () {
+      exports("_", defineComponent({
+        __name: "LegacyGreeting",
+        setup: function () {
+          return function () {
+            return openBlock(), createElementBlock("p", null, "Legacy");
+          };
+        }
+      }));
+    }
+  };
+});
+"#,
+    )
+    .expect("write vue system register input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<template>\n  <p>Legacy</p>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_resolves_relative_component_export_alias() {
+    let dir = temp_test_dir("vue-sfc-relative-component");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let shared_path = dir.join("main.js");
+    let output_path = dir.join("Recovered.vue");
+    fs::write(
+        &input_path,
+        r#"
+import { q as ob, aa as cb, _ as rd } from "./vendor-vue.js";
+import { B as B_1 } from "./main.js";
+export function render(_ctx, _cache) {
+  return ob(), cb(rd(B_1), { text: "Details" }, null, 8, ["text"]);
+}
+"#,
+    )
+    .expect("write vue render input");
+    fs::write(
+        &shared_path,
+        r#"
+import { defineComponent } from "vue";
+const YP = defineComponent({
+  name: "VTooltip",
+  props: { text: String }
+});
+export { YP as B };
+"#,
+    )
+    .expect("write shared component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<script setup>\nimport { B as VTooltip } from \"./main.js\";\n</script>\n\n<template>\n  <VTooltip text=\"Details\" />\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_recovers_webpack_namespace_component() {
+    let dir = temp_test_dir("vue-sfc-webpack");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert!(
+        out_dir.join("src/App.vue.js").exists(),
+        "decompiled JS should remain next to the recovered SFC"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
+        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./src/components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_writes_multiple_recovered_components_from_one_module() {
+    let dir = temp_test_dir("vue-sfc-webpack-multi");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_multi_vue_sfc_bundle_source())
+        .expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert!(
+        out_dir.join("src/entry.js").exists(),
+        "decompiled JS should remain next to recovered SFCs"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/entry.Child.vue")).expect("read child sfc"),
+        "<script setup>\nconst props = defineProps({\n    msg: String\n});\nconst { msg } = props;\n</script>\n\n<template>\n  <span>{{ msg }}</span>\n</template>\n"
+    );
+    assert_eq!(
+        fs::read_to_string(out_dir.join("src/entry.App.vue")).expect("read app sfc"),
+        "<template>\n  <main>\n    <Child msg=\"Hi\" />\n  </main>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn vue_sfc_unpack_writes_source_maps_only_for_js_artifacts() {
+    let dir = temp_test_dir("vue-sfc-webpack-map");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, webpack5_vue_sfc_bundle_source()).expect("write webpack vue bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--vue-sfc",
+        "--emit-source-map",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc unpack cli should parse");
+    run_default(cli).expect("vue sfc webpack unpack should succeed");
+
+    assert!(
+        out_dir.join("src/App.vue").exists(),
+        "recovered vue sfc should be written"
+    );
+    assert!(
+        out_dir.join("src/App.vue.js").exists(),
+        "decompiled JS should be written"
+    );
+    assert!(
+        out_dir.join("src/App.vue.js.map").exists(),
+        "decompiled JS should keep its source map"
+    );
+    assert!(
+        !out_dir.join("src/App.vue.map").exists(),
+        "recovered vue sfc must not get a stale JS source map"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
@@ -111,6 +736,119 @@ fn parses_json_with_unpack() {
         .expect("json with unpack should parse");
     assert!(cli.json);
     assert!(cli.unpack.is_some());
+}
+
+#[test]
+fn json_modules_describe_vue_sfc_artifact_roles() {
+    let modules = vec![
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/plain.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::Decompiled,
+            source_filename: None,
+            source_map_filename: Some("src/plain.js".to_string()),
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/App.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcSourceJs,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: Some("src/App.vue".to_string()),
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/App.vue".to_string(),
+            code: "<template />".to_string(),
+            kind: JsonModuleKind::VueSfc,
+            status: JsonModuleStatus::RecoveredVueSfc,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: None,
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/Broken.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcFallbackJs,
+            source_filename: Some("src/Broken.vue".to_string()),
+            source_map_filename: Some("src/Broken.vue".to_string()),
+        }),
+    ];
+
+    assert_eq!(
+        serde_json::to_value(modules).expect("serialize modules"),
+        serde_json::json!([
+            {
+                "filename": "src/plain.js",
+                "kind": "javascript",
+                "status": "decompiled"
+            },
+            {
+                "filename": "src/App.vue.js",
+                "kind": "javascript",
+                "status": "vue_sfc_source_js",
+                "source_filename": "src/App.vue"
+            },
+            {
+                "filename": "src/App.vue",
+                "kind": "vue_sfc",
+                "status": "recovered_vue_sfc",
+                "source_filename": "src/App.vue"
+            },
+            {
+                "filename": "src/Broken.vue.js",
+                "kind": "javascript",
+                "status": "vue_sfc_fallback_js",
+                "source_filename": "src/Broken.vue"
+            }
+        ])
+    );
+}
+
+#[test]
+fn vue_sfc_js_artifact_status_marks_only_likely_vue_fallbacks() {
+    assert_eq!(
+        vue_sfc_js_artifact_status(false, false),
+        JsonModuleStatus::Decompiled
+    );
+    assert_eq!(
+        vue_sfc_js_artifact_status(false, true),
+        JsonModuleStatus::VueSfcFallbackJs
+    );
+    assert_eq!(
+        vue_sfc_js_artifact_status(true, true),
+        JsonModuleStatus::VueSfcSourceJs
+    );
+}
+
+#[test]
+fn vue_sfc_artifact_summary_counts_recovered_and_fallback_modules() {
+    let artifacts = vec![
+        test_cli_artifact(JsonModuleStatus::VueSfcSourceJs),
+        test_cli_artifact(JsonModuleStatus::RecoveredVueSfc),
+        test_cli_artifact(JsonModuleStatus::VueSfcFallbackJs),
+        test_cli_artifact(JsonModuleStatus::Decompiled),
+    ];
+
+    let summary = vue_sfc_artifact_summary(&artifacts);
+    assert_eq!(
+        summary,
+        Some(VueSfcArtifactSummary {
+            recovered: 1,
+            fallback: 1
+        })
+    );
+    assert_eq!(
+        format_vue_sfc_artifact_summary(summary.expect("summary")),
+        "vue-sfc: 1 recovered, 1 fallback"
+    );
+}
+
+#[test]
+fn vue_sfc_artifact_summary_ignores_plain_js_modules() {
+    let artifacts = vec![test_cli_artifact(JsonModuleStatus::Decompiled)];
+
+    assert_eq!(vue_sfc_artifact_summary(&artifacts), None);
 }
 
 #[test]
@@ -394,6 +1132,50 @@ fn temp_test_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
 }
 
+fn test_cli_artifact(status: JsonModuleStatus) -> CliOutputArtifact {
+    CliOutputArtifact {
+        filename: "module.js".to_string(),
+        code: "export {};".to_string(),
+        kind: JsonModuleKind::JavaScript,
+        status,
+        source_filename: None,
+        source_map_filename: None,
+    }
+}
+
+fn vue_render_module_source() -> &'static str {
+    r#"
+import { toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue";
+const __sfc__ = { props: { msg: String } };
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock("div", null, _toDisplayString(_ctx.msg), 1));
+}
+__sfc__.render = render;
+export default __sfc__;
+"#
+}
+
+fn vite_setup_component_module_source() -> &'static str {
+    r#"
+import { defineComponent, computed, openBlock, createVNode } from "vue";
+import { P } from "./Panel.vue";
+export default defineComponent({
+  __name: "PanelWrapper",
+  setup() {
+    const Panel = computed(() => createPanelState({
+      title: "Ready",
+      enabled: true,
+      rank: 1,
+      group: "main"
+    }));
+    return () => (
+      openBlock(), createVNode(P, { state: Panel.value }, null, 8, ["state"])
+    );
+  }
+});
+"#
+}
+
 fn webpack5_chunk_source() -> &'static str {
     r#"
 (self.webpackChunk = self.webpackChunk || []).push([
@@ -420,6 +1202,146 @@ fn webpack5_runtime_entry_source() -> &'static str {
   require.u = function(id) { return id + ".bundle.js"; };
   require.t = function(value) { return value; };
   require.e(529).then(require.t.bind(require, 529, 19));
+})();
+"#
+}
+
+fn webpack5_vue_sfc_bundle_source() -> &'static str {
+    r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./node_modules/vue/index.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, {
+        createElementBlock: () => createElementBlock,
+        createVNode: () => createVNode,
+        defineComponent: () => defineComponent,
+        openBlock: () => openBlock,
+        toDisplayString: () => toDisplayString
+      });
+      function createElementBlock() {}
+      function createVNode() {}
+      function defineComponent(options) { return options; }
+      function openBlock() {}
+      function toDisplayString(value) { return String(value); }
+    }),
+    "./src/components/ChildPanel.vue": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, { default: () => __WEBPACK_DEFAULT_EXPORT__ });
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        name: "ChildPanel",
+        props: { label: String }
+      });
+    }),
+    "./src/App.vue": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, { default: () => __WEBPACK_DEFAULT_EXPORT__ });
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      var _components_ChildPanel_vue__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__("./src/components/ChildPanel.vue");
+      const _hoisted_1 = { class: "notice" };
+      function render(_ctx, _cache) {
+        return (0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("section", _hoisted_1, [
+          (0, vue__WEBPACK_IMPORTED_MODULE_0__.createVNode)(_components_ChildPanel_vue__WEBPACK_IMPORTED_MODULE_1__["default"], { label: _ctx.message }, null, 8, ["label"]),
+          (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("span", null, (0, vue__WEBPACK_IMPORTED_MODULE_0__.toDisplayString)(_ctx.message), 1)
+        ]);
+      }
+      const __WEBPACK_DEFAULT_EXPORT__ = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        name: "WebpackPanel",
+        props: { message: String },
+        render
+      });
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = (exports, definition) => {
+    for (var key in definition) {
+      if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+        Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+      }
+    }
+  };
+  __webpack_require__.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+  __webpack_require__.r = (exports) => {
+    if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+      Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+    }
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__("./src/App.vue");
+})();
+"#
+}
+
+fn webpack5_multi_vue_sfc_bundle_source() -> &'static str {
+    r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./node_modules/vue/index.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      __webpack_require__.d(__webpack_exports__, {
+        createElementBlock: () => createElementBlock,
+        createVNode: () => createVNode,
+        defineComponent: () => defineComponent,
+        openBlock: () => openBlock,
+        toDisplayString: () => toDisplayString
+      });
+      function createElementBlock() {}
+      function createVNode() {}
+      function defineComponent(options) { return options; }
+      function openBlock() {}
+      function toDisplayString(value) { return String(value); }
+    }),
+    "./src/entry.js": ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+      __webpack_require__.r(__webpack_exports__);
+      var vue__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__("./node_modules/vue/index.js");
+      const Child = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        __name: "Child",
+        props: { msg: String },
+        setup(props) {
+          return (_ctx, _cache) => ((0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("span", null, props.msg, 1));
+        }
+      });
+      const App = (0, vue__WEBPACK_IMPORTED_MODULE_0__.defineComponent)({
+        __name: "App",
+        setup() {
+          return (_ctx, _cache) => ((0, vue__WEBPACK_IMPORTED_MODULE_0__.openBlock)(), (0, vue__WEBPACK_IMPORTED_MODULE_0__.createElementBlock)("main", null, [
+            (0, vue__WEBPACK_IMPORTED_MODULE_0__.createVNode)(Child, { msg: "Hi" })
+          ]));
+        }
+      });
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = (exports, definition) => {
+    for (var key in definition) {
+      if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+        Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+      }
+    }
+  };
+  __webpack_require__.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+  __webpack_require__.r = (exports) => {
+    if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+      Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+    }
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__("./src/entry.js");
 })();
 "#
 }

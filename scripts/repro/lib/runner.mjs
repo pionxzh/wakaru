@@ -9,7 +9,7 @@ const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 // Decompile results keyed by `${level}\0${source}`, populated in parallel before
 // the (synchronous) comparison loop so each shape's wakaru run is amortized.
 const decompileCache = new Map();
-const decompileKey = (level, source) => `${level}\0${source}`;
+const decompileKey = (level, source, wakaruArgs = []) => `${level}\0${wakaruArgs.join("\0")}\0${source}`;
 
 export function readOption(name, fallback) {
   const equalsArg = process.argv.find((arg) => arg.startsWith(`${name}=`));
@@ -41,6 +41,7 @@ async function runMatrixAsync(config) {
     expectedNeedles = defaultExpectedNeedles,
     validateRecovered,
     prewarm,
+    wakaruArgs = [],
   } = config;
   const showDetails = process.argv.includes("--details");
   const jsonMode = process.argv.includes("--json");
@@ -83,7 +84,7 @@ async function runMatrixAsync(config) {
     // --dump <snippet> <tool>: print full lowered + recovered for one shape
     if (dumpShape) {
       const dumpTool = process.argv[process.argv.indexOf("--dump") + 2] ?? "";
-      dumpSingleShape(filteredSnippets, transformers, tmpRoot, rewriteLevel, dumpShape, dumpTool);
+      dumpSingleShape(filteredSnippets, transformers, tmpRoot, rewriteLevel, dumpShape, dumpTool, wakaruArgs);
       return;
     }
 
@@ -98,7 +99,7 @@ async function runMatrixAsync(config) {
         if (!shape.transformError) allLowered.push(shape.lowered);
       }
     }
-    await decompileAll(allLowered, rewriteLevel);
+    await decompileAll(allLowered, rewriteLevel, wakaruArgs);
 
     // Let the matrix prewarm any comparison-time work (e.g. structural
     // normalization of recovered output) concurrently, before the synchronous
@@ -108,7 +109,7 @@ async function runMatrixAsync(config) {
       for (const snippet of filteredSnippets) {
         for (const shape of shapesBySnippet.get(snippet)) {
           if (shape.transformError) continue;
-          const recovered = decompileCache.get(decompileKey(rewriteLevel, shape.lowered));
+          const recovered = decompileCache.get(decompileKey(rewriteLevel, shape.lowered, wakaruArgs));
           rows.push({ snippet, shape, recovered: recovered instanceof Error ? null : recovered });
         }
       }
@@ -117,7 +118,15 @@ async function runMatrixAsync(config) {
 
     for (const snippet of filteredSnippets) {
       for (const shape of shapesBySnippet.get(snippet)) {
-        const result = runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered);
+        const result = runShape(
+          snippet,
+          shape,
+          tmpRoot,
+          rewriteLevel,
+          expectedNeedles,
+          validateRecovered,
+          wakaruArgs,
+        );
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
         }
@@ -208,7 +217,7 @@ async function runMatrixAsync(config) {
   }
 }
 
-function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetName, toolHint) {
+function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetName, toolHint, wakaruArgs = []) {
   const snippet = snippets.find((s) => s.name === snippetName || s.name.includes(snippetName));
   if (!snippet) {
     const available = snippets.map((s) => s.name).join(", ");
@@ -242,6 +251,7 @@ function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetN
         `${snippet.name}-dump.js`,
         tmpRoot,
         rewriteLevel,
+        wakaruArgs,
       );
       console.log(recovered);
     } catch (error) {
@@ -297,14 +307,22 @@ function collectShapes(snippet, transformers) {
   return shapes;
 }
 
-function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered) {
+function runShape(
+  snippet,
+  shape,
+  tmpRoot,
+  rewriteLevel,
+  expectedNeedles,
+  validateRecovered,
+  wakaruArgs,
+) {
   if (shape.transformError) {
     return { recovered: false, status: "transform-failed", notes: shape.transformError.message };
   }
 
   let recovered;
   try {
-    recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel);
+    recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel, wakaruArgs);
   } catch (error) {
     return { recovered: false, status: "wakaru-failed", notes: error.message, lowered: shape.lowered };
   }
@@ -420,8 +438,8 @@ async function printFailureClusters(name, rewriteLevel, rows) {
   });
 }
 
-function runWakaru(source, name, tmpRoot, rewriteLevel) {
-  const cached = decompileCache.get(decompileKey(rewriteLevel, source));
+function runWakaru(source, name, tmpRoot, rewriteLevel, wakaruArgs = []) {
+  const cached = decompileCache.get(decompileKey(rewriteLevel, source, wakaruArgs));
   if (cached !== undefined) {
     if (cached instanceof Error) throw cached;
     return cached;
@@ -429,7 +447,7 @@ function runWakaru(source, name, tmpRoot, rewriteLevel) {
   // Uncached fallback (e.g. the synchronous --dump path).
   const input = join(tmpRoot, name);
   writeFileSync(input, source);
-  return runWakaruArgs(["--level", rewriteLevel, input]);
+  return runWakaruArgs(["--level", rewriteLevel, ...wakaruArgs, input]);
 }
 
 function defaultConcurrency() {
@@ -450,15 +468,15 @@ export async function runPool(items, worker, concurrency = defaultConcurrency())
 
 // Decompile every (unique) source concurrently and fill decompileCache, so the
 // comparison loop runs against in-memory results instead of serial spawns.
-async function decompileAll(sources, rewriteLevel) {
+async function decompileAll(sources, rewriteLevel, wakaruArgs = []) {
   const { command, prefix } = resolveWakaruCmd();
   const pending = [...new Set(sources)].filter(
-    (source) => !decompileCache.has(decompileKey(rewriteLevel, source)),
+    (source) => !decompileCache.has(decompileKey(rewriteLevel, source, wakaruArgs)),
   );
   await runPool(pending, async (source) => {
-    const key = decompileKey(rewriteLevel, source);
+    const key = decompileKey(rewriteLevel, source, wakaruArgs);
     try {
-      decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, "-"], source));
+      decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, ...wakaruArgs, "-"], source));
     } catch (error) {
       decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
     }

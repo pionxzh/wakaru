@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
@@ -10,9 +10,12 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, extract_source_entries, format_trace_events, normalize, parse_sourcemap,
-    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, DceMode, DecompileOptions,
-    NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
+    decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
+    is_likely_vue_sfc_source, normalize, parse_sourcemap,
+    recover_vue_sfc_source_from_js_with_import_resolver,
+    recover_vue_sfcs_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
+    unpack_files_raw, unpack_raw, DceMode, DecompileOptions, NormalizeOptions, RewriteLevel,
+    RuleTraceOptions, UnpackInput,
 };
 
 mod color;
@@ -24,7 +27,10 @@ mod output;
 use color::Styled;
 use discovery::{scan_directory_for_unpack_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
-use json_output::{JsonDecompileOutput, JsonModule, JsonUnpackOutput, JsonWarning};
+use json_output::{
+    JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonUnpackOutput,
+    JsonWarning,
+};
 use output::{canonicalize_output_dir, resolve_unpack_output_path, write_file, write_if_changed};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -111,12 +117,17 @@ struct Cli {
     #[arg(long)]
     diagnostics: bool,
 
+    /// Recover Vue 3 render functions into best-effort .vue single-file components.
+    #[arg(long)]
+    vue_sfc: bool,
+
     /// Run a final formatter pass on decompiled output.
     #[arg(long)]
     formatter: bool,
 
-    /// Emit a source map (.map) alongside each output file, mapping the
-    /// decompiled output back to the input. Requires -o/--output.
+    /// Emit a source map (.map) alongside each decompiled JavaScript output
+    /// file, mapping the output back to the input. Requires -o/--output.
+    /// Vue SFC sidecars are not mapped.
     #[arg(long = "emit-source-map")]
     emit_source_map: bool,
 
@@ -243,9 +254,12 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.unpack.is_some() && cli.output.is_none() {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
+    if cli.vue_sfc && cli.raw {
+        bail!("--vue-sfc cannot be combined with --raw");
+    }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
-    let formatter = selected_formatter(cli.formatter);
+    let js_formatter = selected_formatter(cli.formatter);
     let styled = if cli.json {
         Styled::off()
     } else {
@@ -310,12 +324,63 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_iter()
             .collect();
 
-        let pairs = output.modules;
-        let pairs: Vec<(String, String)> = pairs
+        let module_sources = cli
+            .vue_sfc
+            .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
+        let modules = output.modules;
+        let artifacts: Vec<CliOutputArtifact> = modules
             .into_par_iter()
-            .map(|(filename, code)| {
-                let formatted = format_cli_output(code, &filename, formatter);
-                (filename, formatted)
+            .flat_map(|(filename, code)| {
+                let mut artifacts = Vec::new();
+                let recovered_vue_sfcs = if cli.vue_sfc {
+                    let module_sources = module_sources
+                        .as_ref()
+                        .expect("vue sfc module source map is initialized");
+                    recover_vue_sfcs_from_js_with_import_resolver(&code, |specifier| {
+                        resolve_unpack_import_source(module_sources, &filename, specifier)
+                    })
+                    .ok()
+                    .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let recovered_vue_sfc = !recovered_vue_sfcs.is_empty();
+                let likely_vue_sfc = cli.vue_sfc
+                    && (recovered_vue_sfc || is_likely_vue_sfc_source(&code).unwrap_or(false));
+                let formatted = format_cli_output(code.clone(), &filename, js_formatter);
+                artifacts.push(CliOutputArtifact {
+                    filename: if cli.vue_sfc {
+                        vue_js_output_filename(&filename)
+                    } else {
+                        filename.clone()
+                    },
+                    code: formatted,
+                    kind: JsonModuleKind::JavaScript,
+                    status: if cli.vue_sfc {
+                        vue_sfc_js_artifact_status(recovered_vue_sfc, likely_vue_sfc)
+                    } else {
+                        JsonModuleStatus::Decompiled
+                    },
+                    source_filename: (cli.vue_sfc && likely_vue_sfc).then(|| filename.clone()),
+                    source_map_filename: Some(filename.clone()),
+                });
+
+                let multiple_vue_sfcs = recovered_vue_sfcs.len() > 1;
+                for recovered in recovered_vue_sfcs {
+                    artifacts.push(CliOutputArtifact {
+                        filename: vue_output_filename_for_component(
+                            &filename,
+                            recovered.name.as_deref(),
+                            multiple_vue_sfcs,
+                        ),
+                        code: recovered.sfc.print(),
+                        kind: JsonModuleKind::VueSfc,
+                        status: JsonModuleStatus::RecoveredVueSfc,
+                        source_filename: Some(filename.clone()),
+                        source_map_filename: None,
+                    });
+                }
+                artifacts
             })
             .collect();
 
@@ -323,11 +388,12 @@ fn run_default(cli: Cli) -> Result<()> {
             let span = tracing::info_span!("cli_resolve_output_paths");
             let _enter = span.enter();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-            pairs
+            artifacts
                 .iter()
-                .map(|(filename, code)| {
-                    let out_path = resolve_unpack_output_path(&out_dir, filename, &mut seen)?;
-                    Ok((out_path, code.as_str()))
+                .map(|artifact| {
+                    let out_path =
+                        resolve_unpack_output_path(&out_dir, &artifact.filename, &mut seen)?;
+                    Ok((out_path, artifact.code.as_str()))
                 })
                 .collect::<Result<_>>()?
         };
@@ -352,8 +418,12 @@ fn run_default(cli: Cli) -> Result<()> {
                 .iter()
                 .map(|(f, m)| (f.as_str(), m.as_str()))
                 .collect();
-            for ((orig_filename, _), (out_path, _)) in pairs.iter().zip(resolved.iter()) {
-                if let Some(map_json) = srcmap_map.get(orig_filename.as_str()) {
+            for (artifact, (out_path, _)) in artifacts.iter().zip(resolved.iter()) {
+                if let Some(map_json) = artifact
+                    .source_map_filename
+                    .as_deref()
+                    .and_then(|filename| srcmap_map.get(filename))
+                {
                     let map_path = append_map_extension(out_path);
                     write_file(&map_path, map_json)?;
                 }
@@ -367,12 +437,7 @@ fn run_default(cli: Cli) -> Result<()> {
                     .iter()
                     .map(|f| f.as_str().to_string())
                     .collect(),
-                modules: pairs
-                    .iter()
-                    .map(|(filename, _)| JsonModule {
-                        filename: filename.clone(),
-                    })
-                    .collect(),
+                modules: artifacts.iter().map(json_module_for_artifact).collect(),
                 warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
                 total: resolved.len(),
                 failed: error_modules.len(),
@@ -392,6 +457,9 @@ fn run_default(cli: Cli) -> Result<()> {
             if !output.detected_formats.is_empty() {
                 let names: Vec<&str> = output.detected_formats.iter().map(|f| f.as_str()).collect();
                 eprintln!("detected: {}", names.join(", "));
+            }
+            if let Some(summary) = vue_sfc_artifact_summary(&artifacts) {
+                eprintln!("{}", format_vue_sfc_artifact_summary(summary));
             }
             let fail_info = if error_modules.is_empty() {
                 String::new()
@@ -438,31 +506,77 @@ fn run_default(cli: Cli) -> Result<()> {
             diagnostics: cli.diagnostics,
             emit_source_map: cli.emit_source_map,
         };
-
+        let output_path = cli.output.clone();
+        let vue_file_output = cli.vue_sfc
+            && output_path
+                .as_ref()
+                .is_some_and(|path| is_vue_output_path(path));
+        let js_primary_vue_output = cli.vue_sfc
+            && output_path
+                .as_ref()
+                .is_some_and(|path| !is_vue_output_path(path));
         let start = Instant::now();
-        let output = decompile(&input, options)?;
+        let (output, vue_sidecar) = if js_primary_vue_output {
+            let output = decompile(&input, options)?;
+            let vue_sidecar =
+                recover_vue_sfc_source_from_js_with_import_resolver(&output.code, |specifier| {
+                    read_relative_import_source(&output_filename, specifier)
+                })?;
+            (output, vue_sidecar)
+        } else if cli.vue_sfc {
+            (
+                decompile_vue_sfc_with_import_resolver(&input, options, |specifier| {
+                    read_relative_import_source(&output_filename, specifier)
+                })?,
+                None,
+            )
+        } else {
+            (decompile(&input, options)?, None)
+        };
+        let vue_sidecar_path = output_path
+            .as_ref()
+            .filter(|_| js_primary_vue_output)
+            .and_then(|path| {
+                vue_sidecar
+                    .as_ref()
+                    .map(|_| single_file_vue_sidecar_path(&output_filename, path))
+            });
         let elapsed = start.elapsed();
 
         if !cli.json {
             print_warnings(&output.warnings, &styled);
         }
         let has_errors = output.has_errors();
+        let recovered_vue_sfc = cli.vue_sfc && is_recovered_vue_sfc_output(&output.code);
+        if vue_file_output && !recovered_vue_sfc {
+            bail!("--vue-sfc did not recover a Vue SFC; cannot write Vue-only output");
+        }
+        let formatter = selected_formatter(cli.formatter && !recovered_vue_sfc);
         let code = format_cli_output(output.code, &output_filename, formatter);
 
         if cli.json {
-            let json_code = if cli.output.is_none() {
+            let json_code = if output_path.is_none() {
                 Some(code.clone())
             } else {
                 None
             };
-            if let Some(ref path) = cli.output {
+            if let Some(ref path) = output_path {
                 ensure_output_file(path, cli.force)?;
+                if let Some(ref sidecar_path) = vue_sidecar_path {
+                    ensure_output_file(sidecar_path, cli.force)?;
+                }
                 fs::write(path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
                 if let Some(ref map_json) = output.source_map {
                     let map_path = append_map_extension(path);
                     fs::write(&map_path, map_json)
                         .with_context(|| format!("failed to write {}", map_path.display()))?;
+                }
+                if let (Some(sidecar_path), Some(sidecar_code)) =
+                    (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
+                {
+                    fs::write(sidecar_path, sidecar_code)
+                        .with_context(|| format!("failed to write {}", sidecar_path.display()))?;
                 }
             }
             let json = JsonDecompileOutput {
@@ -476,15 +590,25 @@ fn run_default(cli: Cli) -> Result<()> {
                 serde_json::to_string(&json).expect("JSON serialization")
             );
         } else {
-            match cli.output {
+            match output_path {
                 Some(path) => {
                     ensure_output_file(&path, cli.force)?;
+                    if let Some(ref sidecar_path) = vue_sidecar_path {
+                        ensure_output_file(sidecar_path, cli.force)?;
+                    }
                     fs::write(&path, &code)
                         .with_context(|| format!("failed to write {}", path.display()))?;
                     if let Some(ref map_json) = output.source_map {
                         let map_path = append_map_extension(&path);
                         fs::write(&map_path, map_json)
                             .with_context(|| format!("failed to write {}", map_path.display()))?;
+                    }
+                    if let (Some(sidecar_path), Some(sidecar_code)) =
+                        (vue_sidecar_path.as_ref(), vue_sidecar.as_ref())
+                    {
+                        fs::write(sidecar_path, sidecar_code).with_context(|| {
+                            format!("failed to write {}", sidecar_path.display())
+                        })?;
                     }
                 }
                 None => {
@@ -672,6 +796,204 @@ fn read_input(input: Option<&PathBuf>) -> Result<(String, String)> {
     }
 }
 
+fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<String> {
+    if base_filename == "<stdin>" {
+        return None;
+    }
+    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+        return None;
+    }
+    let specifier = strip_import_query_and_hash(specifier);
+    let base = Path::new(base_filename);
+    let parent = base.parent()?;
+    relative_import_path_candidates(parent.join(specifier))
+        .into_iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+}
+
+struct CliOutputArtifact {
+    filename: String,
+    code: String,
+    kind: JsonModuleKind,
+    status: JsonModuleStatus,
+    source_filename: Option<String>,
+    source_map_filename: Option<String>,
+}
+
+fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
+    JsonModule {
+        filename: artifact.filename.clone(),
+        kind: artifact.kind,
+        status: artifact.status,
+        source_filename: artifact.source_filename.clone(),
+    }
+}
+
+fn vue_sfc_js_artifact_status(recovered_vue_sfc: bool, likely_vue_sfc: bool) -> JsonModuleStatus {
+    if recovered_vue_sfc {
+        JsonModuleStatus::VueSfcSourceJs
+    } else if likely_vue_sfc {
+        JsonModuleStatus::VueSfcFallbackJs
+    } else {
+        JsonModuleStatus::Decompiled
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VueSfcArtifactSummary {
+    recovered: usize,
+    fallback: usize,
+}
+
+fn vue_sfc_artifact_summary(artifacts: &[CliOutputArtifact]) -> Option<VueSfcArtifactSummary> {
+    let summary =
+        artifacts
+            .iter()
+            .fold(VueSfcArtifactSummary::default(), |mut summary, artifact| {
+                match artifact.status {
+                    JsonModuleStatus::RecoveredVueSfc => summary.recovered += 1,
+                    JsonModuleStatus::VueSfcFallbackJs => summary.fallback += 1,
+                    _ => {}
+                }
+                summary
+            });
+
+    (summary.recovered > 0 || summary.fallback > 0).then_some(summary)
+}
+
+fn format_vue_sfc_artifact_summary(summary: VueSfcArtifactSummary) -> String {
+    format!(
+        "vue-sfc: {} recovered, {} fallback",
+        summary.recovered, summary.fallback
+    )
+}
+
+fn resolve_unpack_import_source(
+    module_sources: &HashMap<String, String>,
+    base_filename: &str,
+    specifier: &str,
+) -> Option<String> {
+    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+        return None;
+    }
+
+    let specifiers = import_lookup_specifiers(specifier);
+
+    for specifier in &specifiers {
+        if let Some(base_relative) =
+            normalize_relative_module_specifier_from_base(base_filename, specifier)
+        {
+            if let Some(source) = find_resolved_module_source(module_sources, &base_relative) {
+                return Some(source);
+            }
+        }
+    }
+
+    for specifier in &specifiers {
+        if let Some(root_relative) = normalize_relative_module_specifier(specifier) {
+            if let Some(source) = find_resolved_module_source(module_sources, &root_relative) {
+                return Some(source);
+            }
+        }
+    }
+
+    None
+}
+
+const VUE_IMPORT_RESOLVE_EXTENSIONS: &[&str] = &["vue", "js", "mjs", "cjs"];
+
+fn strip_import_query_and_hash(specifier: &str) -> &str {
+    specifier
+        .find(['?', '#'])
+        .map_or(specifier, |idx| &specifier[..idx])
+}
+
+fn import_lookup_specifiers(specifier: &str) -> Vec<&str> {
+    let stripped = strip_import_query_and_hash(specifier);
+    if stripped == specifier {
+        vec![specifier]
+    } else {
+        vec![specifier, stripped]
+    }
+}
+
+fn relative_import_path_candidates(path: PathBuf) -> Vec<PathBuf> {
+    let mut candidates = vec![path.clone()];
+    if path.extension().is_none() {
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| path.with_extension(ext)),
+        );
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| path.join(format!("index.{ext}"))),
+        );
+    }
+    candidates
+}
+
+fn find_resolved_module_source(
+    module_sources: &HashMap<String, String>,
+    normalized: &str,
+) -> Option<String> {
+    module_lookup_candidates(normalized)
+        .into_iter()
+        .find_map(|candidate| module_sources.get(&candidate).cloned())
+}
+
+fn module_lookup_candidates(normalized: &str) -> Vec<String> {
+    let mut candidates = vec![normalized.to_string()];
+    if Path::new(normalized).extension().is_none() {
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| format!("{normalized}.{ext}")),
+        );
+        candidates.extend(
+            VUE_IMPORT_RESOLVE_EXTENSIONS
+                .iter()
+                .map(|ext| format!("{normalized}/index.{ext}")),
+        );
+    }
+    candidates
+}
+
+fn normalize_relative_module_specifier(specifier: &str) -> Option<String> {
+    normalize_relative_module_path(Vec::new(), specifier)
+}
+
+fn normalize_relative_module_specifier_from_base(
+    base_filename: &str,
+    specifier: &str,
+) -> Option<String> {
+    let mut parts = normalized_path_parts(base_filename);
+    parts.pop()?;
+    normalize_relative_module_path(parts, specifier)
+}
+
+fn normalize_relative_module_path(mut parts: Vec<String>, path: &str) -> Option<String> {
+    for part in path.replace('\\', "/").split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part.to_string()),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn normalized_path_parts(path: &str) -> Vec<String> {
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(ToString::to_string)
+        .collect()
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct UnpackInputSet {
     inputs: Vec<UnpackInput>,
@@ -727,6 +1049,88 @@ fn append_map_extension(path: &Path) -> PathBuf {
     let mut map_name = path.as_os_str().to_owned();
     map_name.push(".map");
     PathBuf::from(map_name)
+}
+
+fn vue_output_filename(filename: &str) -> String {
+    let path = Path::new(filename);
+    if path.extension().is_some() {
+        return path.with_extension("vue").to_string_lossy().to_string();
+    }
+    format!("{filename}.vue")
+}
+
+fn vue_output_filename_for_component(
+    filename: &str,
+    component_name: Option<&str>,
+    disambiguate: bool,
+) -> String {
+    let vue_filename = vue_output_filename(filename);
+    if !disambiguate {
+        return vue_filename;
+    }
+    let Some(component_name) = component_name.and_then(safe_vue_component_filename_part) else {
+        return vue_filename;
+    };
+    let (dir, file) = vue_filename
+        .rfind(['/', '\\'])
+        .map(|index| vue_filename.split_at(index + 1))
+        .unwrap_or(("", vue_filename.as_str()));
+    let stem = file.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file);
+    let stem = if stem.is_empty() { "component" } else { stem };
+    format!("{dir}{stem}.{component_name}.vue")
+}
+
+fn safe_vue_component_filename_part(name: &str) -> Option<String> {
+    let safe = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    (!safe.is_empty() && safe.chars().any(|ch| ch != '_')).then_some(safe)
+}
+
+fn vue_js_output_filename(filename: &str) -> String {
+    let path = Path::new(filename);
+    if path.extension().is_some_and(|ext| ext == "vue") {
+        return format!("{filename}.js");
+    }
+    filename.to_string()
+}
+
+fn single_file_vue_sidecar_path(input_filename: &str, output_path: &Path) -> PathBuf {
+    let input_file_name = if input_filename == "<stdin>" {
+        output_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("output")
+    } else {
+        Path::new(input_filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("output")
+    };
+    let sidecar_name = vue_output_filename(input_file_name);
+    output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.join(&sidecar_name))
+        .unwrap_or_else(|| PathBuf::from(sidecar_name))
+}
+
+fn is_recovered_vue_sfc_output(code: &str) -> bool {
+    let code = code.trim_start();
+    code.starts_with("<template") || code.starts_with("<script")
+}
+
+fn is_vue_output_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("vue"))
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {

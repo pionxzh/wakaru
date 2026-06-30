@@ -857,6 +857,55 @@ const x = { ...y };
 }
 
 #[test]
+fn detects_inline_object_spread_callee() {
+    let input = r#"
+var x = (function(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = null != arguments[i] ? arguments[i] : {};
+        i % 2 ? ownKeys(Object(source), true).forEach(function(key) {
+            target[key] = source[key];
+        }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function(key) {
+            Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+        });
+    }
+    return target;
+})({ cursor: pointer }, padding && { padding: padding });
+"#;
+    let expected = r#"
+var x = { cursor: pointer, ...padding && { padding: padding } };
+"#;
+
+    assert_eq_normalized(&render_rule(input, |_| UnObjectSpread::new()), expected);
+}
+
+#[test]
+fn inline_object_spread_callee_preserves_extra_target_write_side_effects() {
+    let input = r#"
+var x = (function(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = arguments[i] != null ? arguments[i] : {};
+        Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : Object.keys(source).forEach(function(key) {
+            target[key] = source[key];
+        });
+    }
+    target.extra = expensive();
+    return target;
+})({}, y);
+"#;
+
+    let output = render_rule(input, |_| UnObjectSpread::new());
+
+    assert!(
+        output.contains("expensive()"),
+        "retained inline helper call must keep side effects:\n{output}"
+    );
+    assert!(
+        !output.contains("var x = { ...y };"),
+        "inline helper with target side effects must not be collapsed:\n{output}"
+    );
+}
+
+#[test]
 fn detects_var_assigned_extends() {
     let input = r#"
 var _extends = function() {

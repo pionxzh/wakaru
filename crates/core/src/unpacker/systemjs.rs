@@ -7,8 +7,9 @@ use swc_core::ecma::ast::{
     ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
     ExprStmt, FnExpr, Function, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
     ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr,
-    MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, VarDecl, VarDeclarator,
+    MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -22,14 +23,13 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
-        let Expr::Call(call) = expr.as_ref() else {
-            continue;
-        };
-        if !is_system_register_call(call) {
+        if let Some(register) = register_from_expr(expr.as_ref()) {
+            registers.push(register);
             continue;
         }
-        let register = parse_register_call(call)?;
-        registers.push(register);
+        if let Some(wrapped_registers) = registers_from_iife_expr(expr.as_ref()) {
+            registers.extend(wrapped_registers);
+        }
     }
 
     if registers.is_empty() {
@@ -101,6 +101,7 @@ struct SystemRegister {
     name: Option<String>,
     deps: Vec<String>,
     declare: Function,
+    prelude: Vec<Stmt>,
 }
 
 fn is_system_register_call(call: &CallExpr) -> bool {
@@ -130,7 +131,66 @@ fn parse_register_call(call: &CallExpr) -> Option<SystemRegister> {
         name,
         deps,
         declare,
+        prelude: Vec::new(),
     })
+}
+
+fn register_from_expr(expr: &Expr) -> Option<SystemRegister> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if !is_system_register_call(call) {
+        return None;
+    }
+    parse_register_call(call)
+}
+
+fn registers_from_iife_expr(expr: &Expr) -> Option<Vec<SystemRegister>> {
+    let body = iife_body(expr)?;
+    let mut registers = Vec::new();
+
+    for (idx, stmt) in body.stmts.iter().enumerate() {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            continue;
+        };
+        let Some(mut register) = register_from_expr(expr_stmt.expr.as_ref()) else {
+            continue;
+        };
+        register.prelude = body.stmts[..idx]
+            .iter()
+            .filter(|stmt| {
+                !matches!(stmt, Stmt::Expr(expr) if is_use_strict(expr) || is_register_expr_stmt(expr))
+            })
+            .cloned()
+            .collect();
+        registers.push(register);
+    }
+
+    Some(registers)
+}
+
+fn is_register_expr_stmt(expr: &ExprStmt) -> bool {
+    register_from_expr(expr.expr.as_ref()).is_some()
+}
+
+fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
+    match expr {
+        Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => iife_body(unary.arg.as_ref()),
+        Expr::Call(call) => match &call.callee {
+            Callee::Expr(callee) => match callee.as_ref() {
+                Expr::Fn(function) => function.function.body.as_ref(),
+                Expr::Arrow(arrow) => match arrow.body.as_ref() {
+                    BlockStmtOrExpr::BlockStmt(body) => Some(body),
+                    BlockStmtOrExpr::Expr(_) => None,
+                },
+                Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn extract_string_array(expr: &Expr) -> Option<Vec<String>> {
@@ -205,6 +265,7 @@ fn emit_system_module(
     for import in &imports {
         items.extend(import.to_module_items());
     }
+    items.extend(register.prelude.iter().cloned().map(ModuleItem::Stmt));
 
     let mut transformer = SystemExecuteTransformer::new(export_sym, context_sym);
     for stmt in outer_hoisted_stmts(body, &imported_locals) {
@@ -244,12 +305,15 @@ fn extract_register_descriptor(body: &BlockStmt) -> Option<RegisterDescriptor> {
         let PropOrSpread::Prop(prop) = prop else {
             continue;
         };
-        let Prop::KeyValue(key_value) = prop.as_ref() else {
-            continue;
-        };
-        match prop_name(&key_value.key).as_deref() {
-            Some("setters") => setters = Some(extract_setters(key_value.value.as_ref())?),
-            Some("execute") => execute = Some(extract_function(key_value.value.as_ref())?),
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) => match prop_name(&key_value.key).as_deref() {
+                Some("setters") => setters = Some(extract_setters(key_value.value.as_ref())?),
+                Some("execute") => execute = Some(extract_function(key_value.value.as_ref())?),
+                _ => {}
+            },
+            Prop::Method(method) if prop_name(&method.key).as_deref() == Some("execute") => {
+                execute = Some(*method.function.clone());
+            }
             _ => {}
         }
     }
@@ -270,7 +334,9 @@ fn extract_setters(expr: &Expr) -> Option<Vec<Option<Function>>> {
             setters.push(None);
             continue;
         };
-        if matches!(expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined") {
+        if matches!(expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined")
+            || matches!(expr.as_ref(), Expr::Lit(Lit::Null(_)))
+        {
             setters.push(None);
             continue;
         }
@@ -404,11 +470,12 @@ fn collect_imports(deps: &[String], setters: &[Option<Function>]) -> Option<Vec<
         }
         let module_sym = module_sym?;
         for stmt in &body.stmts {
-            let (local, kind) = setter_assignment(stmt, &module_sym)?;
-            match kind {
-                SetterImportKind::Default => parts.default = Some(local),
-                SetterImportKind::Named(imported) => parts.named.push((imported, local)),
-                SetterImportKind::Namespace => parts.namespace = Some(local),
+            for (local, kind) in setter_assignments(stmt, &module_sym)? {
+                match kind {
+                    SetterImportKind::Default => parts.default = Some(local),
+                    SetterImportKind::Named(imported) => parts.named.push((imported, local)),
+                    SetterImportKind::Namespace => parts.namespace = Some(local),
+                }
             }
         }
         imports.push(parts);
@@ -422,11 +489,22 @@ enum SetterImportKind {
     Namespace,
 }
 
-fn setter_assignment(stmt: &Stmt, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
+fn setter_assignments(stmt: &Stmt, module_sym: &Atom) -> Option<Vec<(Atom, SetterImportKind)>> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
-    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+    match expr_stmt.expr.as_ref() {
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .map(|expr| setter_assignment_expr(expr.as_ref(), module_sym))
+            .collect(),
+        expr => setter_assignment_expr(expr, module_sym).map(|assignment| vec![assignment]),
+    }
+}
+
+fn setter_assignment_expr(expr: &Expr, module_sym: &Atom) -> Option<(Atom, SetterImportKind)> {
+    let Expr::Assign(assign) = expr else {
         return None;
     };
     let left = assign.left.as_simple()?.as_ident()?.sym.clone();
@@ -510,10 +588,38 @@ impl SystemExecuteTransformer {
         let Stmt::Expr(expr_stmt) = stmt else {
             return None;
         };
-        let Expr::Call(call) = expr_stmt.expr.as_ref() else {
-            return None;
-        };
-        let export_call = parse_export_call(call, &self.export_sym)?;
+        match expr_stmt.expr.as_ref() {
+            Expr::Call(call) => {
+                let export_call = parse_export_call(call, &self.export_sym)?;
+                self.export_call_items(export_call)
+            }
+            Expr::Seq(seq) => {
+                let mut items = Vec::new();
+                let mut saw_export = false;
+                for expr in &seq.exprs {
+                    let export_call = match expr.as_ref() {
+                        Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                        _ => None,
+                    };
+                    if let Some(export_call) = export_call {
+                        items.extend(self.export_call_items(export_call)?);
+                        saw_export = true;
+                    } else {
+                        let mut stmt = Stmt::Expr(ExprStmt {
+                            span: DUMMY_SP,
+                            expr: expr.clone(),
+                        });
+                        stmt.visit_mut_with(self);
+                        items.push(ModuleItem::Stmt(stmt));
+                    }
+                }
+                saw_export.then_some(items)
+            }
+            _ => None,
+        }
+    }
+
+    fn export_call_items(&mut self, export_call: ExportCall) -> Option<Vec<ModuleItem>> {
         match export_call {
             ExportCall::Single { exported, value } => {
                 if let Expr::Assign(assign) = value.as_ref() {
@@ -639,7 +745,7 @@ impl VisitMut for SystemExecuteTransformer {
                 if let Some(local) = exported_value_local(value.as_ref()) {
                     self.add_export(local, exported);
                 }
-                *expr = *value;
+                *expr = export_replacement_expr(value);
                 expr.visit_mut_children_with(self);
                 return;
             }
@@ -728,6 +834,17 @@ fn exported_value_local(expr: &Expr) -> Option<Atom> {
         Expr::Ident(id) => Some(id.sym.clone()),
         Expr::Assign(assign) => assign.left.as_simple()?.as_ident().map(|id| id.sym.clone()),
         _ => None,
+    }
+}
+
+fn export_replacement_expr(value: Box<Expr>) -> Expr {
+    if matches!(value.as_ref(), Expr::Assign(_)) {
+        Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: value,
+        })
+    } else {
+        *value
     }
 }
 
@@ -919,6 +1036,240 @@ System.register("../chunks/main", [], function (exports) {
         );
 
         assert_eq!(result.modules[0].filename, "chunks/main.js");
+    }
+
+    #[test]
+    fn object_method_execute_reconstructs_module() {
+        let result = unpack(
+            r#"
+System.register(["./dep.js"], (_export) => {
+  let value;
+  let label;
+  return {
+    setters: [
+      (module) => {
+        value = module.value, label = module.label;
+      }
+    ],
+    execute () {
+      _export("default", `${label}:${value + 1}`);
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].filename, "entry.js");
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import { value, label } from "./dep.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains("export default `${label}:${value + 1}`;"));
+    }
+
+    #[test]
+    fn iife_wrapped_register_preserves_helper_prelude() {
+        let result = unpack(
+            r#"
+!function () {
+  "use strict";
+  function decorate(value) {
+    return value + "!";
+  }
+  System.register([], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("ready"));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].filename, "entry.js");
+        assert!(result.modules[0].code.contains("function decorate(value)"));
+        assert!(result.modules[0]
+            .code
+            .contains("export default decorate(\"ready\");"));
+        assert!(!result.modules[0].code.contains("use strict"));
+    }
+
+    #[test]
+    fn iife_wrapped_multiple_registers_do_not_copy_prior_registers_into_prelude() {
+        let result = unpack(
+            r#"
+!function () {
+  function decorate(value) {
+    return value + "!";
+  }
+  System.register("first", [], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("one"));
+      }
+    };
+  });
+  System.register("second", [], function (_export) {
+    return {
+      execute: function () {
+        _export("default", decorate("two"));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 2);
+        assert_eq!(result.modules[1].filename, "second.js");
+        assert!(result.modules[1].code.contains("function decorate(value)"));
+        assert!(result.modules[1]
+            .code
+            .contains("export default decorate(\"two\");"));
+        assert!(
+            !result.modules[1].code.contains("System.register"),
+            "later modules must not copy prior register calls as prelude:\n{}",
+            result.modules[1].code
+        );
+        assert!(
+            !result.modules[1].code.contains("decorate(\"one\")"),
+            "later modules must not copy prior register execute bodies:\n{}",
+            result.modules[1].code
+        );
+    }
+
+    #[test]
+    fn null_setters_reconstruct_imports() {
+        let result = unpack(
+            r#"
+!function () {
+  function decorate(value) {
+    return value;
+  }
+  System.register(["./side-effect.js", "./dep.js"], function (_export) {
+    var component;
+    return {
+      setters: [
+        null,
+        function (module) {
+          component = module.component;
+        }
+      ],
+      execute: function () {
+        const button = _export("V", decorate(component));
+      }
+    };
+  });
+}();
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import "./side-effect.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains(r#"import { component } from "./dep.js";"#));
+        assert!(result.modules[0]
+            .code
+            .contains("const button = decorate(component);"));
+        assert!(result.modules[0].code.contains("export { button as V };"));
+    }
+
+    #[test]
+    fn sequence_export_calls_reconstruct_each_export() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  function make(value) {
+    return { value };
+  }
+  return {
+    execute: function () {
+      _export("C", make(1)), _export("_", make(2));
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0].code.contains("export const C = make(1);"));
+        assert!(result.modules[0].code.contains("export const _ = make(2);"));
+    }
+
+    #[test]
+    fn mixed_sequence_side_effects_preserve_direct_export_value() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  return {
+    execute: function () {
+      style.textContent = ".badge{}", document.head.appendChild(style), _export("_", defineComponent({
+        __name: "TeamBadge"
+      }));
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains("style.textContent = \".badge{}\";"));
+        assert!(result.modules[0]
+            .code
+            .contains("document.head.appendChild(style);"));
+        assert!(result.modules[0]
+            .code
+            .contains("export const _ = defineComponent({"));
+    }
+
+    #[test]
+    fn assignment_export_in_logical_member_object_is_parenthesized() {
+        let result = unpack(
+            r#"
+System.register([], function (_export) {
+  var Kind;
+  return {
+    execute: function () {
+      (Kind || _export("Kind", Kind = {})).Ready = "Ready";
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0]
+            .code
+            .contains("(Kind || (Kind = {})).Ready = \"Ready\";"));
+        assert!(result.modules[0].code.contains("export { Kind };"));
+    }
+
+    #[test]
+    fn ignores_unrelated_top_level_expressions() {
+        let result = unpack(
+            r#"
+console.log("loading");
+System.register([], function (_export) {
+  return {
+    execute: function () {
+      _export("default", 1);
+    }
+  };
+});
+"#,
+        );
+
+        assert_eq!(result.modules.len(), 1);
+        assert!(result.modules[0].code.contains("export default 1;"));
     }
 
     #[test]
