@@ -1794,10 +1794,10 @@ mod object_form_tests {
             .find(|m| m.id == "./src/index.js")
             .expect("should find index module");
 
-        // The require should reference the sanitized path with ./ prefix
+        // The require should reference the sanitized path relative to the importer
         assert!(
-            index_module.code.contains("\"./src/greet.js\""),
-            "require should reference sanitized path, got: {}",
+            index_module.code.contains("\"./greet.js\""),
+            "require should reference sanitized path relative to importer, got: {}",
             index_module.code
         );
     }
