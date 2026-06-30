@@ -113,9 +113,9 @@ wakaru custom/target.min.mjs --vue-sfc -o out/renamed.mjs
 wakaru bundle.js --unpack --vue-sfc -o out/
 ```
 
-`--vue-sfc` is a best-effort Vue 3 render recovery path. In single-file mode
-without `-o`, Wakaru prints a recovered `.vue` artifact when recovery succeeds
-and normal decompiled JavaScript otherwise.
+`--vue-sfc` is an experimental, best-effort Vue 3 render recovery path. In
+single-file mode without `-o`, Wakaru prints a recovered `.vue` artifact when
+recovery succeeds and normal decompiled JavaScript otherwise.
 
 With `-o`, `.vue` paths are Vue-only: `-o App.vue` writes the recovered SFC and
 errors if recovery fails. Other output paths are JavaScript-primary: Wakaru
@@ -127,7 +127,8 @@ writes `out/renamed.mjs` and `out/target.min.vue`.
 In unpack mode, `--vue-sfc` is additive: every module still gets JavaScript
 output, and recovered Vue render modules also get sibling `.vue` artifacts.
 See [docs/vue-decompile.md](docs/vue-decompile.md) for the supported recovery
-scope.
+scope and [docs/vue-sfc-recovery-status.md](docs/vue-sfc-recovery-status.md)
+for current gaps and follow-up targets.
 
 ### Extract original sources
 
