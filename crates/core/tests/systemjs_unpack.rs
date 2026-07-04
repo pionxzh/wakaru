@@ -297,3 +297,46 @@ System.register("odd", "not-an-array", function (_export) {
         "invalid mixed System.register input should not be reported as a successful split"
     );
 }
+
+#[test]
+fn invalid_iife_system_register_preserves_whole_input() {
+    let source = r#"
+(function () {
+  System.register("entry", "not-an-array", function (_export) {
+    return {
+      execute: function () {
+        _export("value", 1);
+      }
+    };
+  });
+})();
+"#;
+
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should preserve invalid IIFE System.register input");
+
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "invalid IIFE System.register must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert_eq!(output.modules[0].0, "module.js");
+    assert!(
+        output.modules[0]
+            .1
+            .contains(r#"System.register("entry", "not-an-array""#),
+        "fallback module should preserve the invalid IIFE register:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "invalid IIFE System.register input should not be reported as a successful split"
+    );
+}
