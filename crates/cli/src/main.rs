@@ -339,7 +339,7 @@ fn run_default(cli: Cli) -> Result<()> {
             .vue_sfc
             .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
         let modules = output.modules;
-        let artifacts: Vec<CliOutputArtifact> = modules
+        let artifacts: Vec<CliOutputArtifact> = modules.clone()
             .into_par_iter()
             .flat_map(|(filename, code)| {
                 let mut artifacts = Vec::new();
@@ -443,8 +443,8 @@ fn run_default(cli: Cli) -> Result<()> {
 
         if cli.provenance {
             // Map each module to its final on-disk relative path: `resolved`
-            // is parallel to `pairs`, and CLI-side dedup may have renamed.
-            let final_names: HashMap<&str, String> = pairs
+            // is parallel to `modules`, and CLI-side dedup may have renamed.
+            let final_names: HashMap<&str, String> = modules
                 .iter()
                 .zip(resolved.iter())
                 .map(|((filename, _), (path, _))| {
