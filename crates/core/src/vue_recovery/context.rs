@@ -4,12 +4,12 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
-    ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
-    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
-    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, AssignTargetPat, BinaryOp,
+    BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl,
+    ExportSpecifier, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier,
+    KeyValuePatProp, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -868,6 +868,116 @@ impl ScopeStack {
     }
 }
 
+fn visit_assign_expr_refs<V: Visit + ?Sized>(assign: &AssignExpr, visitor: &mut V) {
+    visit_assign_target_refs(&assign.left, visitor);
+    assign.right.visit_with(visitor);
+}
+
+fn visit_assign_target_refs<V: Visit + ?Sized>(target: &AssignTarget, visitor: &mut V) {
+    match target {
+        AssignTarget::Simple(target) => visit_simple_assign_target_refs(target, visitor),
+        AssignTarget::Pat(target) => visit_assign_target_pat_refs(target, visitor),
+    }
+}
+
+fn visit_simple_assign_target_refs<V: Visit + ?Sized>(
+    target: &SimpleAssignTarget,
+    visitor: &mut V,
+) {
+    match target {
+        SimpleAssignTarget::Ident(binding) => binding.id.visit_with(visitor),
+        SimpleAssignTarget::Member(member) => member.visit_with(visitor),
+        SimpleAssignTarget::Paren(paren) => paren.expr.visit_with(visitor),
+        SimpleAssignTarget::TsAs(ts_as) => {
+            ts_as.expr.visit_with(visitor);
+            ts_as.type_ann.visit_with(visitor);
+        }
+        SimpleAssignTarget::TsSatisfies(ts_satisfies) => {
+            ts_satisfies.expr.visit_with(visitor);
+            ts_satisfies.type_ann.visit_with(visitor);
+        }
+        SimpleAssignTarget::TsNonNull(ts_non_null) => {
+            ts_non_null.expr.visit_with(visitor);
+        }
+        SimpleAssignTarget::TsTypeAssertion(ts_assertion) => {
+            ts_assertion.expr.visit_with(visitor);
+            ts_assertion.type_ann.visit_with(visitor);
+        }
+        SimpleAssignTarget::TsInstantiation(ts_instantiation) => {
+            ts_instantiation.expr.visit_with(visitor);
+            ts_instantiation.type_args.visit_with(visitor);
+        }
+        _ => target.visit_children_with(visitor),
+    }
+}
+
+fn visit_assign_target_pat_refs<V: Visit + ?Sized>(target: &AssignTargetPat, visitor: &mut V) {
+    match target {
+        AssignTargetPat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                visit_assignment_pat_refs(elem, visitor);
+            }
+        }
+        AssignTargetPat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        key_value.key.visit_with(visitor);
+                        visit_assignment_pat_refs(key_value.value.as_ref(), visitor);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        assign.key.visit_with(visitor);
+                        if let Some(value) = &assign.value {
+                            value.visit_with(visitor);
+                        }
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        visit_assignment_pat_refs(rest.arg.as_ref(), visitor);
+                    }
+                }
+            }
+        }
+        AssignTargetPat::Invalid(_) => {}
+    }
+}
+
+fn visit_assignment_pat_refs<V: Visit + ?Sized>(pat: &Pat, visitor: &mut V) {
+    match pat {
+        Pat::Ident(binding) => binding.id.visit_with(visitor),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                visit_assignment_pat_refs(elem, visitor);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        key_value.key.visit_with(visitor);
+                        visit_assignment_pat_refs(key_value.value.as_ref(), visitor);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        assign.key.visit_with(visitor);
+                        if let Some(value) = &assign.value {
+                            value.visit_with(visitor);
+                        }
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        visit_assignment_pat_refs(rest.arg.as_ref(), visitor);
+                    }
+                }
+            }
+        }
+        Pat::Assign(assign) => {
+            visit_assignment_pat_refs(assign.left.as_ref(), visitor);
+            assign.right.visit_with(visitor);
+        }
+        Pat::Rest(rest) => visit_assignment_pat_refs(rest.arg.as_ref(), visitor),
+        Pat::Expr(expr) => expr.visit_with(visitor),
+        Pat::Invalid(_) => {}
+    }
+}
+
 struct ImportAliasRenamer<'a> {
     aliases: &'a HashMap<Atom, Atom>,
     scopes: ScopeStack,
@@ -889,6 +999,23 @@ impl VisitMut for ImportAliasRenamer<'_> {
                 ident.sym = alias.clone();
             }
         }
+    }
+
+    fn visit_mut_prop(&mut self, prop: &mut Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            if !self.scopes.is_shadowed(&ident.sym) {
+                if let Some(alias) = self.aliases.get(&ident.sym) {
+                    let key = PropName::Ident(ident.clone().into());
+                    let value = Expr::Ident(Ident::new(alias.clone(), ident.span, ident.ctxt));
+                    *prop = Prop::KeyValue(KeyValueProp {
+                        key,
+                        value: Box::new(value),
+                    });
+                    return;
+                }
+            }
+        }
+        prop.visit_mut_children_with(self);
     }
 
     fn visit_mut_binding_ident(&mut self, ident: &mut BindingIdent) {
@@ -2186,6 +2313,10 @@ impl ValueMemberIdentRefCollector {
 }
 
 impl Visit for ValueMemberIdentRefCollector {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        visit_assign_expr_refs(assign, self);
+    }
+
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
@@ -2260,6 +2391,10 @@ impl NonValueMemberRefCollector {
 }
 
 impl Visit for NonValueMemberRefCollector {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        visit_assign_expr_refs(assign, self);
+    }
+
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
@@ -2517,10 +2652,7 @@ impl RenderTemplateRefCollector<'_> {
 
 impl Visit for RenderTemplateRefCollector<'_> {
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
-            self.collect_value_member(member);
-        }
-        assign.visit_children_with(self);
+        visit_assign_expr_refs(assign, self);
     }
 
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
@@ -3539,6 +3671,10 @@ struct IdentRefCollector {
 }
 
 impl Visit for IdentRefCollector {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        visit_assign_expr_refs(assign, self);
+    }
+
     fn visit_ident(&mut self, ident: &Ident) {
         if !self.scopes.is_shadowed(&ident.sym) {
             self.refs.insert(ident.sym.clone());
@@ -3606,6 +3742,10 @@ struct ScriptImportRefCollector<'a> {
 }
 
 impl Visit for ScriptImportRefCollector<'_> {
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        visit_assign_expr_refs(assign, self);
+    }
+
     fn visit_ident(&mut self, ident: &Ident) {
         if self.imports.contains_key(&ident.sym) && !self.scopes.is_shadowed(&ident.sym) {
             self.refs.insert(ident.sym.clone());
@@ -4617,7 +4757,12 @@ pub(super) fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::is_vue_helper_candidate_source;
+    use super::{is_vue_helper_candidate_source, ImportAliasRenamer};
+    use std::collections::HashMap;
+    use swc_core::atoms::Atom;
+    use swc_core::common::DUMMY_SP;
+    use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
+    use swc_core::ecma::visit::VisitMutWith;
 
     #[test]
     fn vue_helper_candidates_exclude_adjacent_bare_packages() {
@@ -4638,5 +4783,21 @@ mod tests {
         assert!(is_vue_helper_candidate_source("@vue/runtime-core"));
         assert!(is_vue_helper_candidate_source("@vue/runtime-dom"));
         assert!(is_vue_helper_candidate_source("./vendor-vue.js"));
+    }
+
+    #[test]
+    fn import_alias_renamer_expands_shorthand_property_keys() {
+        let mut prop = Prop::Shorthand(Ident::new(Atom::from("P"), DUMMY_SP, Default::default()));
+        let aliases = HashMap::from([(Atom::from("P"), Atom::from("Panel_1"))]);
+
+        prop.visit_mut_with(&mut ImportAliasRenamer::new(&aliases));
+
+        let Prop::KeyValue(key_value) = prop else {
+            panic!("shorthand property should be expanded when its value is aliased");
+        };
+        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "P"));
+        assert!(
+            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "Panel_1")
+        );
     }
 }

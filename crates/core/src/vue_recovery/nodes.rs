@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
@@ -18,6 +20,7 @@ use super::slots::{
     recover_direct_slot, recover_slot, recover_slot_binding, slot_pat,
 };
 use super::syntax::{string_lit, wtf8_to_string};
+use super::usage::VueTemplateUsage;
 use super::{RenderSource, VueRecoveryContext, VueRenderChildListSource};
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
@@ -389,7 +392,7 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
             ctx,
         )));
     };
-    let Some(for_params) = recover_for_params(&callback.params, "item", ctx)? else {
+    let Some(mut for_params) = recover_for_params(&callback.params, "item", ctx)? else {
         return Ok(raw_expr(clean_expr(
             &print_expr(callback_arg.expr.as_ref(), ctx)?,
             ctx,
@@ -413,6 +416,7 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
             &item_ctx,
         )));
     };
+    avoid_for_param_rename_collisions(&mut for_params, &item_node);
     apply_for_param_renames(&mut item_node, &for_params);
 
     let scope = for_params.template_scope();
@@ -429,6 +433,7 @@ pub(super) struct RecoveredForParams {
     pub(super) value: String,
     renames: Vec<(Atom, String)>,
     bindings: Vec<Atom>,
+    values: Vec<String>,
 }
 
 impl RecoveredForParams {
@@ -464,8 +469,8 @@ pub(super) fn recover_for_params(
         collect_pat_bindings(param, &mut bindings);
         match param {
             Pat::Ident(binding) => {
-                values.push(fallback.to_string());
-                renames.push((binding.id.sym.clone(), fallback.to_string()));
+                values.push(fallback.clone());
+                renames.push((binding.id.sym.clone(), fallback));
             }
             _ => {
                 let Some(value) = for_param_pat(param, ctx)? else {
@@ -476,26 +481,81 @@ pub(super) fn recover_for_params(
         }
     }
 
-    let value = if values.len() == 1 {
-        values.remove(0)
-    } else {
-        format!("({})", values.join(", "))
-    };
+    let value = format_for_value(&values);
 
     Ok(Some(RecoveredForParams {
         value,
         renames,
         bindings,
+        values,
     }))
 }
 
-fn for_param_fallback_names(count: usize, first: &'static str) -> Vec<&'static str> {
-    match count {
+fn for_param_fallback_names(count: usize, first: &'static str) -> Vec<String> {
+    let bases = match count {
         0 => Vec::new(),
         1 => vec![first],
         2 => vec![first, "index"],
         _ => vec![first, "key", "index"],
+    };
+    bases.into_iter().map(str::to_string).collect()
+}
+
+fn format_for_value(values: &[String]) -> String {
+    if values.len() == 1 {
+        values[0].clone()
+    } else {
+        format!("({})", values.join(", "))
     }
+}
+
+fn avoid_for_param_rename_collisions(params: &mut RecoveredForParams, node: &VueNode) {
+    if params.renames.is_empty() {
+        return;
+    }
+
+    let usage = VueTemplateUsage::new(node);
+    let mut used = usage
+        .expr_refs
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+    for binding in &params.bindings {
+        used.remove(binding.as_ref());
+    }
+
+    let mut changed = false;
+    for (_, to) in &mut params.renames {
+        if !used.contains(to) {
+            used.insert(to.clone());
+            continue;
+        }
+        let old = to.clone();
+        let next = unique_for_param_fallback(&old, &mut used);
+        for value in &mut params.values {
+            if *value == old {
+                *value = next.clone();
+            }
+        }
+        *to = next;
+        changed = true;
+    }
+    if changed {
+        params.value = format_for_value(&params.values);
+    }
+}
+
+fn unique_for_param_fallback(base: &str, used: &mut HashSet<String>) -> String {
+    if used.insert(base.to_string()) {
+        return base.to_string();
+    }
+    for index in 1.. {
+        let candidate = format!("{base}_{index}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded fallback name search")
 }
 
 fn for_param_pat(pat: &Pat, ctx: &VueRecoveryContext) -> Result<Option<String>> {
@@ -556,6 +616,22 @@ pub(super) fn list_item_context(
         .bindings
         .template_refs
         .retain(|binding| !params.shadows(binding));
+    let unsafe_values = item_ctx
+        .bindings
+        .values
+        .iter()
+        .filter_map(|(binding, value)| {
+            let mut refs = HashSet::new();
+            super::collect_js_unshadowed_read_refs(&value.value, &mut refs);
+            refs.iter()
+                .any(|name| params.shadows(name))
+                .then_some(binding.clone())
+        })
+        .collect::<Vec<_>>();
+    for binding in unsafe_values {
+        item_ctx.bindings.values.remove(&binding);
+        item_ctx.bindings.refs.insert(binding);
+    }
     item_ctx
 }
 

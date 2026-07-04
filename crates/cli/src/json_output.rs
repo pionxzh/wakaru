@@ -16,6 +16,14 @@ pub struct JsonDecompileOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_map: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<JsonModuleKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<JsonModuleStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vue_sidecar_filename: Option<String>,
     pub warnings: Vec<JsonWarning>,
     pub elapsed_ms: u64,
 }

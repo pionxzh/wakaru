@@ -10,8 +10,8 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, decompile_vue_sfc_with_import_resolver, extract_source_entries, format_trace_events,
-    is_likely_vue_sfc_source, normalize, parse_sourcemap,
+    decompile, decompile_vue_sfc_output_with_import_resolver, extract_source_entries,
+    format_trace_events, is_likely_vue_sfc_source, normalize, parse_sourcemap,
     recover_vue_sfc_source_from_js_with_import_resolver,
     recover_vue_sfcs_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
     unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
@@ -340,7 +340,6 @@ fn run_default(cli: Cli) -> Result<()> {
             .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
         let modules = output.modules;
         let artifacts: Vec<CliOutputArtifact> = modules
-            .clone()
             .into_par_iter()
             .flat_map(|(filename, code)| {
                 let mut artifacts = Vec::new();
@@ -359,7 +358,7 @@ fn run_default(cli: Cli) -> Result<()> {
                 let recovered_vue_sfc = !recovered_vue_sfcs.is_empty();
                 let likely_vue_sfc = cli.vue_sfc
                     && (recovered_vue_sfc || is_likely_vue_sfc_source(&code).unwrap_or(false));
-                let formatted = format_cli_output(code.clone(), &filename, js_formatter);
+                let formatted = format_cli_output(code, &filename, js_formatter);
                 artifacts.push(CliOutputArtifact {
                     filename: if cli.vue_sfc {
                         vue_js_output_filename(&filename)
@@ -549,24 +548,19 @@ fn run_default(cli: Cli) -> Result<()> {
                 .as_ref()
                 .is_some_and(|path| !is_vue_output_path(path));
         let start = Instant::now();
-        let (output, vue_sidecar) = if js_primary_vue_output {
+        let (output, vue_sidecar, recovered_vue_sfc) = if js_primary_vue_output {
             let output = decompile(&input, options)?;
-            let vue_sidecar =
-                recover_vue_sfc_source_from_js_with_import_resolver(&output.code, |specifier| {
-                    read_relative_import_source(&output_filename, specifier)
-                })
-                .ok()
-                .flatten();
-            (output, vue_sidecar)
+            let vue_sidecar = recover_single_file_vue_sidecar(&output.code, &output_filename);
+            let recovered_vue_sfc = vue_sidecar.is_some();
+            (output, vue_sidecar, recovered_vue_sfc)
         } else if cli.vue_sfc {
-            (
-                decompile_vue_sfc_with_import_resolver(&input, options, |specifier| {
+            let output =
+                decompile_vue_sfc_output_with_import_resolver(&input, options, |specifier| {
                     read_relative_import_source(&output_filename, specifier)
-                })?,
-                None,
-            )
+                })?;
+            (output.output, None, output.recovered_sfc)
         } else {
-            (decompile(&input, options)?, None)
+            (decompile(&input, options)?, None, false)
         };
         let vue_sidecar_path = output_path
             .as_ref()
@@ -588,10 +582,37 @@ fn run_default(cli: Cli) -> Result<()> {
             print_warnings(&output.warnings, &styled);
         }
         let has_errors = output.has_errors();
-        let recovered_vue_sfc = cli.vue_sfc && is_recovered_vue_sfc_output(&output.code);
         if vue_file_output && !recovered_vue_sfc {
             bail!("--vue-sfc did not recover a Vue SFC; cannot write Vue-only output");
         }
+        let vue_metadata = if cli.vue_sfc {
+            let likely_vue_sfc =
+                recovered_vue_sfc || is_likely_vue_sfc_source(&output.code).unwrap_or(false);
+            Some(SingleFileVueMetadata {
+                kind: if recovered_vue_sfc && !js_primary_vue_output {
+                    JsonModuleKind::VueSfc
+                } else {
+                    JsonModuleKind::JavaScript
+                },
+                status: if recovered_vue_sfc {
+                    if js_primary_vue_output {
+                        JsonModuleStatus::VueSfcSourceJs
+                    } else {
+                        JsonModuleStatus::RecoveredVueSfc
+                    }
+                } else if likely_vue_sfc {
+                    JsonModuleStatus::VueSfcFallbackJs
+                } else {
+                    JsonModuleStatus::Decompiled
+                },
+                source_filename: likely_vue_sfc.then(|| output_filename.clone()),
+                vue_sidecar_filename: vue_sidecar_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+            })
+        } else {
+            None
+        };
         let formatter = selected_formatter(cli.formatter && !recovered_vue_sfc);
         let code = format_cli_output(output.code, &output_filename, formatter);
 
@@ -623,6 +644,14 @@ fn run_default(cli: Cli) -> Result<()> {
             let json = JsonDecompileOutput {
                 code: json_code,
                 source_map: output.source_map.clone(),
+                kind: vue_metadata.as_ref().map(|metadata| metadata.kind),
+                status: vue_metadata.as_ref().map(|metadata| metadata.status),
+                source_filename: vue_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.source_filename.clone()),
+                vue_sidecar_filename: vue_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.vue_sidecar_filename.clone()),
                 warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
                 elapsed_ms: elapsed.as_millis() as u64,
             };
@@ -852,6 +881,14 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
         .find_map(|path| fs::read_to_string(path).ok())
 }
 
+fn recover_single_file_vue_sidecar(code: &str, output_filename: &str) -> Option<String> {
+    recover_vue_sfc_source_from_js_with_import_resolver(code, |specifier| {
+        read_relative_import_source(output_filename, specifier)
+    })
+    .ok()
+    .flatten()
+}
+
 struct CliOutputArtifact {
     filename: String,
     code: String,
@@ -859,6 +896,13 @@ struct CliOutputArtifact {
     status: JsonModuleStatus,
     source_filename: Option<String>,
     source_map_filename: Option<String>,
+}
+
+struct SingleFileVueMetadata {
+    kind: JsonModuleKind,
+    status: JsonModuleStatus,
+    source_filename: Option<String>,
+    vue_sidecar_filename: Option<String>,
 }
 
 fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
@@ -1161,11 +1205,6 @@ fn single_file_vue_sidecar_path(input_filename: &str, output_path: &Path) -> Pat
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(|parent| parent.join(&sidecar_name))
         .unwrap_or_else(|| PathBuf::from(sidecar_name))
-}
-
-fn is_recovered_vue_sfc_output(code: &str) -> bool {
-    let code = code.trim_start();
-    code.starts_with("<template") || code.starts_with("<script")
 }
 
 fn is_vue_output_path(path: &Path) -> bool {

@@ -176,6 +176,11 @@ pub struct RecoveredVueSfc {
     pub sfc: VueSfc,
 }
 
+pub struct VueSfcDecompileOutput {
+    pub output: DecompileOutput,
+    pub recovered_sfc: bool,
+}
+
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
     Ok(recover_vue_sfc_from_js(source)?.map(|sfc| sfc.print()))
 }
@@ -200,8 +205,19 @@ pub fn decompile_vue_sfc(source: &str, options: DecompileOptions) -> Result<Deco
 pub fn decompile_vue_sfc_with_import_resolver<F>(
     source: &str,
     options: DecompileOptions,
-    mut resolve_import: F,
+    resolve_import: F,
 ) -> Result<DecompileOutput>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    Ok(decompile_vue_sfc_output_with_import_resolver(source, options, resolve_import)?.output)
+}
+
+pub fn decompile_vue_sfc_output_with_import_resolver<F>(
+    source: &str,
+    options: DecompileOptions,
+    mut resolve_import: F,
+) -> Result<VueSfcDecompileOutput>
 where
     F: FnMut(&str) -> Option<String>,
 {
@@ -212,7 +228,10 @@ where
         preferred_component_name.as_deref(),
         &mut resolve_import,
     )? {
-        return Ok(output);
+        return Ok(VueSfcDecompileOutput {
+            output,
+            recovered_sfc: true,
+        });
     }
 
     let mut output = decompile(source, options)?;
@@ -225,10 +244,16 @@ where
     {
         output.code = sfc;
         output.source_map = None;
-        return Ok(output);
+        return Ok(VueSfcDecompileOutput {
+            output,
+            recovered_sfc: true,
+        });
     }
 
-    Ok(output)
+    Ok(VueSfcDecompileOutput {
+        output,
+        recovered_sfc: false,
+    })
 }
 
 fn decompile_single_unpacked_vue_sfc<F>(
@@ -3855,6 +3880,60 @@ export default defineComponent({
     }
 
     #[test]
+    fn computed_value_inliner_avoids_arrow_param_capture() {
+        let input = r#"
+import { defineComponent, computed, renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export default defineComponent({
+  __name: "ComputedCapture",
+  setup() {
+    const selected = useSelected();
+    const current = computed(() => selected.id);
+    const items = useItems();
+    return () => (
+      openBlock(), createElementBlock("ul", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(items, selected => (
+          openBlock(), createElementBlock("li", {
+            key: selected.id,
+            class: current.value === selected.id ? "active" : ""
+          }, toDisplayString(selected.name), 3)
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nimport { computed } from \"vue\";\n\nconst selected = useSelected();\nconst current = computed(()=>selected.id);\nconst items = useItems();\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\" :class='current === item.id ? \"active\" : \"\"'>{{ item.name }}</li>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn assignment_targets_in_nested_handlers_do_not_shadow_setup_bindings() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "ToggleButton",
+  setup() {
+    let open = false;
+    function toggle() {
+      open = !open;
+    }
+    return () => (
+      openBlock(), createElementBlock("button", { onClick: toggle }, open ? "Open" : "Closed", 9, ["onClick"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nlet open = false;\nfunction toggle() {\n    open = !open;\n}\n</script>\n\n<template>\n  <button @click=\"toggle\">\n    <template v-if=\"open\">\n      Open\n    </template>\n    <template v-else>\n      Closed\n    </template>\n  </button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_vite_setup_computed_value_alias() {
         let input = r#"
 import { d as dc, c as cp, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
@@ -6192,6 +6271,22 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn keeps_lowercase_on_prefixed_props_as_bindings() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", { once: _ctx.once }, "Run", 8, ["once"]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <button :once=\"once\">Run</button>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_shorthand_event_handler() {
         let input = r#"
 import { B as Badge } from "./Badge.vue";
@@ -7235,6 +7330,31 @@ export function render(e, a) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn v_for_fallback_param_avoids_outer_template_binding_capture() {
+        let input = r#"
+import { defineComponent, renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export default defineComponent({
+  setup() {
+    const item = useSelectedItem();
+    const items = useItems();
+    return () => (
+      openBlock(), createElementBlock("ul", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(items, e => (
+          openBlock(), createElementBlock("li", { key: e.id, title: item.label }, toDisplayString(e.name), 9, ["title"])
+        )), 128))
+      ])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script setup>\nconst item = useSelectedItem();\nconst items = useItems();\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item_1 in items\" :key=\"item_1.id\" :title=\"item.label\">{{ item_1.name }}</li>\n  </ul>\n</template>\n"
         );
     }
 

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
@@ -8,7 +8,7 @@ use swc_core::ecma::ast::{
     VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helpers::VueHelper;
 use super::VueRecoveryContext;
@@ -580,7 +580,9 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
             let ident = &input[start..cursor];
             if input[cursor..].starts_with(".value") {
                 if let Some(value) = ctx.bindings.values.iter().find_map(|(binding, value)| {
-                    (binding.as_ref() == ident).then_some(&value.value)
+                    (binding.as_ref() == ident
+                        && setup_value_can_inline_in_expr(input, value.value.as_str(), ctx))
+                    .then_some(&value.value)
                 }) {
                     output.push_str(&format!("({})", value.trim()));
                     cursor += ".value".len();
@@ -598,6 +600,39 @@ fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (
     }
 
     (output, changed)
+}
+
+fn setup_value_can_inline_in_expr(input: &str, value: &str, ctx: &VueRecoveryContext) -> bool {
+    let mut refs = HashSet::new();
+    super::collect_js_unshadowed_read_refs(value, &mut refs);
+    refs.is_empty() || !expr_binds_any_name(input, &refs, ctx)
+}
+
+fn expr_binds_any_name(input: &str, names: &HashSet<Atom>, ctx: &VueRecoveryContext) -> bool {
+    let Ok(module) =
+        super::parse_module(&format!("const __wakaru_expr = {input};"), ctx.cm.clone())
+    else {
+        return false;
+    };
+    let mut finder = BindingNameFinder {
+        names,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+struct BindingNameFinder<'a> {
+    names: &'a HashSet<Atom>,
+    found: bool,
+}
+
+impl Visit for BindingNameFinder<'_> {
+    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
+        if self.names.contains(&ident.id.sym) {
+            self.found = true;
+        }
+    }
 }
 
 fn replace_template_literal_bindings_once(

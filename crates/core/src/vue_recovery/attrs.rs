@@ -372,10 +372,13 @@ fn html_directive_name(name: &str) -> Option<&'static str> {
 }
 
 fn event_name_from_prop(name: &str, owner: AttrOwner) -> Option<String> {
-    let event_name = name
-        .strip_prefix("on")
-        .filter(|s| !s.is_empty())
-        .map(lower_first)?;
+    let event_suffix = name.strip_prefix("on").filter(|suffix| {
+        suffix
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+    })?;
+    let event_name = lower_first(event_suffix);
     if let Some(event_name) = vnode_lifecycle_event_name(&event_name) {
         return Some(event_name);
     }

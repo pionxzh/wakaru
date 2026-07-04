@@ -213,7 +213,9 @@ fn selects_safe_template_expr_local(
     expr_refs: &HashSet<Atom>,
     expr_read_refs: &HashSet<Atom>,
 ) -> bool {
-    if !declaration.template_selectable {
+    if !declaration.template_selectable
+        && !direct_computed_value_template_ref(ctx, declaration, expr_read_refs)
+    {
         return false;
     }
     if !any_binding_ref(declaration, expr_refs) {
@@ -270,6 +272,18 @@ fn any_binding_ref(declaration: &VueSetupLocalBinding, refs: &HashSet<Atom>) -> 
         .iter()
         .chain(declaration.emitted_bindings.iter())
         .any(|binding| refs.contains(binding))
+}
+
+fn direct_computed_value_template_ref(
+    ctx: &VueRecoveryContext,
+    declaration: &VueSetupLocalBinding,
+    expr_refs: &HashSet<Atom>,
+) -> bool {
+    declaration
+        .bindings
+        .iter()
+        .chain(declaration.emitted_bindings.iter())
+        .any(|binding| expr_refs.contains(binding) && ctx.bindings.values.contains_key(binding))
 }
 
 fn declaration_refs_setup_props(

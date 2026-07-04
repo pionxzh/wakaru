@@ -838,6 +838,60 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
 }
 
 #[test]
+fn json_decompile_describes_single_file_vue_sidecar() {
+    let json = JsonDecompileOutput {
+        code: None,
+        source_map: None,
+        kind: Some(JsonModuleKind::JavaScript),
+        status: Some(JsonModuleStatus::VueSfcSourceJs),
+        source_filename: Some("src/App.vue".to_string()),
+        vue_sidecar_filename: Some("dist/App.vue".to_string()),
+        warnings: Vec::new(),
+        elapsed_ms: 12,
+    };
+
+    assert_eq!(
+        serde_json::to_value(json).expect("serialize decompile json"),
+        serde_json::json!({
+            "kind": "javascript",
+            "status": "vue_sfc_source_js",
+            "source_filename": "src/App.vue",
+            "vue_sidecar_filename": "dist/App.vue",
+            "warnings": [],
+            "elapsed_ms": 12
+        })
+    );
+}
+
+#[test]
+fn json_decompile_omits_vue_fields_for_plain_js() {
+    let json = JsonDecompileOutput {
+        code: Some("export {};".to_string()),
+        source_map: None,
+        kind: None,
+        status: None,
+        source_filename: None,
+        vue_sidecar_filename: None,
+        warnings: Vec::new(),
+        elapsed_ms: 3,
+    };
+
+    assert_eq!(
+        serde_json::to_value(json).expect("serialize decompile json"),
+        serde_json::json!({
+            "code": "export {};",
+            "warnings": [],
+            "elapsed_ms": 3
+        })
+    );
+}
+
+#[test]
+fn vue_sidecar_recovery_errors_fall_back_to_js_primary_output() {
+    assert!(recover_single_file_vue_sidecar("function {", "src/App.js").is_none());
+}
+
+#[test]
 fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
     let out_dir = PathBuf::from("/tmp/wakaru-out");
     let artifacts = vec![
