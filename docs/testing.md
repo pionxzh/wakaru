@@ -40,14 +40,12 @@ focused rule regression test as well.
    cargo test -p wakaru-core --test my_rule_rule
    ```
 
-2. Pipeline tests:
+2. The full core suite — it covers the pipeline and unpack snapshot tests for
+   every bundler format (webpack4/5, browserify, SystemJS, esbuild, AMD,
+   Rollup, multi-file), which is broader than any hand-picked subset:
 
    ```bash
-   cargo test -p wakaru-core --test noop_pipeline
-   cargo test -p wakaru-core --test webpack4_unpack
-   cargo test -p wakaru-core --test webpack4_unpack_raw
-   cargo test -p wakaru-core --test bundle_unpack
-   cargo test -p wakaru-core --test esbuild_unpack
+   cargo nextest run -p wakaru-core
    ```
 
 3. Formatting and linting:

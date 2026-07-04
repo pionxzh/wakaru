@@ -44,7 +44,8 @@ Two main operations:
 
 Each unpacker detects a specific bundle format and extracts individual modules as raw JS strings. Detection is attempted in order — first match wins:
 
-1. **webpack5** — IIFE/arrow with module factory array or object
+1. **webpack5** — IIFE/arrow with module factory array or object (plus a
+   runtime-entry variant for entry files that only carry the webpack runtime)
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
@@ -52,12 +53,27 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 6. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
    Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
-   bundles from Bun are detected and split by this unpacker. Pure ESM
-   scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
-   `__export` or `__commonJS` markers falls through to single-file decompile.
+   bundles from Bun are detected and split by this unpacker.
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves.
+
+If nothing matches directly, `wrappers.rs` unwraps UMD factory and AMD
+`define()` wrapper shapes and retries the same detection chain on each
+unwrapped candidate. Finally, **AMD** (`amd.rs`) detects files consisting of
+top-level `define(id, deps, factory)` calls and splits each define into a
+module.
+
+Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
+`__export` / `__commonJS` markers has no runtime markers to detect. When no
+bundle format matches, the driver falls back to heuristic scope-hoisted
+splitting (`scope_hoist.rs`, format `scope-hoisted`): it clusters top-level
+declarations by reference graph and emits one module per cluster. This
+fallback is on by default for `--unpack` (disabled by `--unpack=strict`) and
+requires a minimum declaration count plus at least two clusters; otherwise
+the file goes through single-file decompile. The same splitter also runs on
+detected modules to break up scope-hoisted chunks nested inside another
+bundle format.
 
 Unpackers emit module code strings. They do not run the normal decompile rule
 pipeline — that's the driver's job. Webpack4 is the exception only for
@@ -310,21 +326,22 @@ crates/
       unpacker/
         mod.rs                      — unpack_bundle() dispatch
         webpack4.rs                 — webpack4 splitter + normalization
-        webpack5.rs                 — webpack5 splitter
+        webpack5.rs                 — webpack5 splitter (incl. runtime entry + chunk)
         browserify.rs               — browserify splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
         esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
-        scope_hoist.rs              — scope-hoisted ESM extraction (esbuild, Bun, Vite)
+        amd.rs                      — AMD define() bundle splitter
+        wrappers.rs                 — UMD/AMD wrapper unwrapping for detection retry
+        scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
       utils/
         matcher.rs                  — AST helper predicates
     tests/
       common/mod.rs                 — test helpers (see docs/testing.md)
       *_rule.rs                     — per-rule unit tests
-      webpack4_unpack.rs            — pipeline snapshot tests (decompiled output)
-      webpack4_unpack_raw.rs        — raw-unpack normalization snapshot tests
-      esbuild_unpack.rs             — esbuild detection tests
-      bundle_unpack.rs              — webpack5 + browserify tests
-      systemjs_unpack.rs            — SystemJS compiler/bundler fixture tests
+      *_unpack.rs                   — per-bundler unpack/pipeline snapshot tests
+                                      (webpack4 + raw, webpack5 chunk, bundle_unpack
+                                      = webpack5 + browserify, esbuild, systemjs,
+                                      amd, rollup, bun, multi-file)
       noop_pipeline.rs              — stability tests
       snapshots/                    — insta snapshot files
 
@@ -340,8 +357,11 @@ docs/
   fact-system.md                    — cross-module fact system
   rule-dependency-inventory.md      — rule dependency relationships
   rewrite-assumptions.md            — semantic assumptions and rewrite policy
-  proposals/
-    skip-unless.md                  — deferred performance proposal
+  releasing.md                      — changelog and release workflow
+  test262-roundtrip.md              — semantic round-trip runner and baselines
+  test262-baselines/                — tracked Test262 baseline summaries
+  proposals/                        — design proposals (deferred or in progress)
+  learnings/                        — approaches that were built, measured, and rejected
 ```
 
 ## Related docs

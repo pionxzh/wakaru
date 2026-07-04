@@ -1,6 +1,6 @@
 # Wakaru
 
-Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It unpacks bundles (webpack4, webpack5, esbuild, browserify), restores transpiler helpers (Babel, TypeScript), and applies ~60 rewrite rules to recover idiomatic source.
+Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It unpacks bundles (webpack4, webpack5, browserify, SystemJS, esbuild/Bun, AMD, plus heuristic scope-hoisted splitting), restores transpiler helpers (Babel, TypeScript), and applies ~60 rewrite rules to recover idiomatic source.
 
 Written in Rust using the SWC AST ecosystem. The workspace is split into three crates under `crates/`: `core`, `cli`, and `wasm`.
 
@@ -22,7 +22,7 @@ cargo run -p wakaru-cli -- input.js -o output.js            # decompile single f
 cargo run -p wakaru-cli -- --unpack bundle.js -o unpacked/  # unpack bundle
 cargo run -p wakaru-cli -- --unpack --raw bundle.js -o raw/ # raw extraction (no rules)
 cargo run -p wakaru-cli -- input.js -m input.js.map         # with source map
-cargo run -p wakaru-cli -- --trace-rules path/to/module.js  # debug: per-rule diffs
+cargo run -p wakaru-cli -- debug trace path/to/module.js    # debug: per-rule diffs
 ```
 
 ## Testing
@@ -96,12 +96,8 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
 ## Definition of Done
 
 1. Run the focused rule tests you touched
-2. Run pipeline tests:
-   - `cargo test -p wakaru-core --test noop_pipeline`
-   - `cargo test -p wakaru-core --test webpack4_unpack`
-   - `cargo test -p wakaru-core --test webpack4_unpack_raw`
-   - `cargo test -p wakaru-core --test bundle_unpack` (webpack5 + browserify)
-   - `cargo test -p wakaru-core --test esbuild_unpack`
+2. Run the full core suite (covers all pipeline + unpack snapshot tests):
+   - `cargo nextest run -p wakaru-core`
 3. Run formatting and lint checks:
    - `cargo fmt --check`
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
@@ -123,4 +119,4 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
 - Before making a non-obvious choice, ask "why this and not the alternative?" Research until you can answer.
 - If neighboring code does something differently, find out _why_ before deviating — its choices are often load-bearing.
 - Don't take a bug report's suggested fix at face value; verify it's the right layer.
-- Use `render_pipeline_until()` or `--trace-rules` to verify the AST shape reaching your rule.
+- Use `render_pipeline_until()` or `debug trace` to verify the AST shape reaching your rule.
