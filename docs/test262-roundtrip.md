@@ -179,87 +179,13 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbui
 node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
 ```
 
-Recorded on 2026-05-25, with the scope, control-flow, calls, and operators
-slices added on 2026-05-29, and literals, block-scope-syntax, variables,
-assignment-target-type, arguments-object, identifiers, function-code, asi,
-keywords, and reserved-words added on 2026-05-30:
+The recorded totals are **not** kept inline here — they live in two places
+that stay current:
 
-| Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| default | 2180 | 1647 | 533 | 34 | 128 | 1485 | 0 |
-| classes | 8426 | 5064 | 3362 | 34 | 681 | 4349 | 0 |
-| destructuring | 1034 | 891 | 143 | 28 | 54 | 809 | 0 |
-| async-generators | 1707 | 666 | 1041 | 15 | 6 | 645 | 0 |
-| scope | 1396 | 1146 | 250 | 20 | 8 | 1118 | 0 |
-| control-flow | 1117 | 782 | 335 | 24 | 10 | 748 | 0 |
-| calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
-| operators | 2200 | 2011 | 189 | 108 | 83 | 1820 | 0 |
-| templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
-| literals | 534 | 215 | 319 | 0 | 4 | 211 | 0 |
-| block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
-| variables | 178 | 130 | 48 | 4 | 0 | 126 | 0 |
-| assignment-target-type | 324 | 8 | 316 | 2 | 0 | 6 | 0 |
-| arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
-| identifiers | 268 | 152 | 116 | 8 | 112 | 32 | 0 |
-| function-code | 217 | 217 | 0 | 0 | 0 | 217 | 0 |
-| asi | 102 | 66 | 36 | 0 | 3 | 63 | 0 |
-| keywords | 25 | 0 | 25 | 0 | 0 | 0 | 0 |
-| reserved-words | 27 | 14 | 13 | 1 | 1 | 12 | 0 |
-| modules | 755 | 358 | 397 | 10 | 22 | 326 | 0 |
-
-Additional producer baselines recorded on 2026-05-25:
-
-| Pipeline | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| swc-minify | default | 2180 | 1647 | 533 | 30 | 100 | 1517 | 0 |
-| swc-minify | classes | 8426 | 5064 | 3362 | 27 | 156 | 4881 | 0 |
-| swc-minify | destructuring | 1034 | 891 | 143 | 27 | 49 | 815 | 0 |
-| swc-minify | async-generators | 1707 | 666 | 1041 | 17 | 19 | 630 | 0 |
-| swc-minify | scope | 1396 | 1146 | 250 | 19 | 33 | 1094 | 0 |
-| swc-minify | control-flow | 1117 | 782 | 335 | 24 | 14 | 744 | 0 |
-| swc-minify | calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
-| swc-minify | operators | 2200 | 2011 | 189 | 107 | 49 | 1855 | 0 |
-| swc-minify | templates | 84 | 67 | 17 | 2 | 0 | 65 | 0 |
-| swc-minify | literals | 534 | 215 | 319 | 0 | 1 | 214 | 0 |
-| swc-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
-| swc-minify | variables | 178 | 130 | 48 | 3 | 3 | 124 | 0 |
-| swc-minify | assignment-target-type | 324 | 8 | 316 | 1 | 1 | 6 | 0 |
-| swc-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
-| swc-minify | identifiers | 268 | 152 | 116 | 8 | 112 | 32 | 0 |
-| swc-minify | function-code | 217 | 217 | 0 | 0 | 0 | 217 | 0 |
-| swc-minify | asi | 102 | 66 | 36 | 0 | 0 | 66 | 0 |
-| swc-minify | keywords | 25 | 0 | 25 | 0 | 0 | 0 | 0 |
-| swc-minify | reserved-words | 27 | 14 | 13 | 1 | 1 | 12 | 0 |
-| swc-minify | modules | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
-| esbuild-minify | default | 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
-| esbuild-minify | classes | 8426 | 5064 | 3362 | 28 | 389 | 4647 | 0 |
-| esbuild-minify | destructuring | 1034 | 891 | 143 | 0 | 84 | 807 | 0 |
-| esbuild-minify | async-generators | 1707 | 666 | 1041 | 7 | 40 | 619 | 0 |
-| esbuild-minify | scope | 1396 | 1146 | 250 | 10 | 190 | 946 | 0 |
-| esbuild-minify | control-flow | 1117 | 782 | 335 | 21 | 44 | 717 | 0 |
-| esbuild-minify | calls | 193 | 185 | 8 | 7 | 3 | 175 | 0 |
-| esbuild-minify | operators | 2200 | 2011 | 189 | 93 | 38 | 1880 | 0 |
-| esbuild-minify | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
-| esbuild-minify | literals | 534 | 215 | 319 | 0 | 0 | 215 | 0 |
-| esbuild-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
-| esbuild-minify | variables | 178 | 130 | 48 | 1 | 17 | 112 | 0 |
-| esbuild-minify | assignment-target-type | 324 | 8 | 316 | 1 | 1 | 6 | 0 |
-| esbuild-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
-| esbuild-minify | identifiers | 268 | 152 | 116 | 8 | 8 | 136 | 0 |
-| esbuild-minify | function-code | 217 | 217 | 0 | 0 | 52 | 165 | 0 |
-| esbuild-minify | asi | 102 | 66 | 36 | 0 | 0 | 66 | 0 |
-| esbuild-minify | keywords | 25 | 0 | 25 | 0 | 0 | 0 | 0 |
-| esbuild-minify | reserved-words | 27 | 14 | 13 | 0 | 1 | 13 | 0 |
-| esbuild-minify | modules | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
-
-Module graph baselines recorded on 2026-05-25:
-
-| Pipeline | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| none | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
-| swc-minify | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
-| esbuild-minify | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
-| babel-env-terser | 755 | 358 | 397 | 10 | 39 | 309 | 0 |
+- `scripts/correctness/test262-stats.json` — cached totals per producer and
+  slice (update with `test262-collect-stats.mjs`, verify with `--check`);
+- [test262-baselines/](test262-baselines/) — the full deterministic Markdown
+  summaries per producer/slice, reviewed as git diffs when baselines move.
 
 Treat baseline movement as follows:
 

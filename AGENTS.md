@@ -6,11 +6,23 @@ Written in Rust using the SWC AST ecosystem. The workspace is split into three c
 
 ## Understand the Project
 
-Read these before contributing:
-- `docs/architecture.md` — pipeline flow, components, design patterns
-- `docs/testing.md` — test patterns, helpers, organization
-- `docs/helper-detection.md` — how transpiler helpers are detected and restored
-- `docs/debugging.md` — rule tracing, snapshot debugging, fixture workflow
+Read `docs/architecture.md` first — pipeline flow, components, design
+patterns. It is the universal entry point. Then read by task, instead of
+reading everything:
+
+| Task | Also read |
+|---|---|
+| Any code change | `docs/testing.md` — test patterns, helpers, required verification |
+| Rule bugfix / snapshot regression | `docs/debugging.md` — rule tracing, snapshot layers, fixture workflow |
+| New rule, or moving a rule | `docs/rule-dependency-inventory.md` — ordering rationale, fragile edges; `docs/rewrite-assumptions.md` — level gating, named assumptions |
+| Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
+| Cross-module / unpack behavior | `docs/fact-system.md` — the two-phase barrier and module facts |
+| Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |
+| Before proposing a redesign | `docs/learnings/` — approaches already built, measured, and reverted |
+| Cutting a release | `docs/releasing.md` |
+
+`docs/README.md` carries this same map for agents and tools that do not
+auto-load this file.
 
 ## Building and Running
 
