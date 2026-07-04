@@ -302,10 +302,17 @@ System.register("odd", "not-an-array", function (_export) {
 fn invalid_iife_system_register_preserves_whole_input() {
     let source = r#"
 (function () {
-  System.register("entry", "not-an-array", function (_export) {
+  System.register("dep", [], function (_export) {
     return {
       execute: function () {
         _export("value", 1);
+      }
+    };
+  });
+  System.register("entry", "not-an-array", function (_export) {
+    return {
+      execute: function () {
+        _export("value", 2);
       }
     };
   });
@@ -329,10 +336,11 @@ fn invalid_iife_system_register_preserves_whole_input() {
     );
     assert_eq!(output.modules[0].0, "module.js");
     assert!(
-        output.modules[0]
-            .1
-            .contains(r#"System.register("entry", "not-an-array""#),
-        "fallback module should preserve the invalid IIFE register:\n{}",
+        output.modules[0].1.contains(r#"System.register("dep""#)
+            && output.modules[0]
+                .1
+                .contains(r#"System.register("entry", "not-an-array""#),
+        "fallback module should preserve the valid and invalid IIFE registers:\n{}",
         output.modules[0].1
     );
     assert!(

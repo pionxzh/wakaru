@@ -1047,6 +1047,20 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_template_expr_object_cannot_close_mustache() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("p").with_children(vec![
+                VueNode::Interpolation(r#"`x${{ a: 1 }}`"#.into()),
+            ]))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <p>{{ `x${{ a: 1 } }` }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn raw_static_html_escapes_mixed_case_template_and_mustache() {
         let template = VueTemplate {
             children: vec![VueNode::RawHtml("</Template><span>{{ raw }}</span>".into())],

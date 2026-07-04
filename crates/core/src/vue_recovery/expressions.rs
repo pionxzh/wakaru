@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
-    IdentName, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    IdentName, KeyValueProp, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, Prop, PropName,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -212,6 +212,24 @@ impl<'a> SetupAliasCleaner<'a> {
 }
 
 impl VisitMut for SetupAliasCleaner<'_> {
+    fn visit_mut_prop(&mut self, prop: &mut Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            if let Some(replacement) = self.active_alias(ident.sym.as_ref()).cloned() {
+                *prop = Prop::KeyValue(KeyValueProp {
+                    key: PropName::Ident(ident.clone().into()),
+                    value: Box::new(Expr::Ident(Ident::new(
+                        replacement,
+                        DUMMY_SP,
+                        Default::default(),
+                    ))),
+                });
+                return;
+            }
+        }
+
+        prop.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -833,18 +851,38 @@ fn should_parenthesize_unwrapped_call(
     if input[..start].trim().is_empty() && input[close_paren + 1..].trim().is_empty() {
         return false;
     }
+
+    let prev = previous_non_ws(input, start);
+    let next = next_non_ws(input, close_paren + 1);
+    if next.is_some_and(|ch| matches!(ch, '.' | '[' | '(')) && postfix_base_needs_parens(inner) {
+        return true;
+    }
+
     if !has_top_level_operator(inner) {
         return false;
     }
 
-    let prev = previous_non_ws(input, start);
-    let next = next_non_ws(input, close_paren + 1);
     next.is_some_and(|ch| matches!(ch, '.' | '[' | '('))
         || prev.is_some_and(is_expression_operator)
         || next.is_some_and(is_expression_operator)
         || previous_word(input, start).is_some_and(is_prefix_word_operator)
         || previous_word(input, start).is_some_and(is_binary_word_operator)
         || next_word(input, close_paren + 1).is_some_and(is_binary_word_operator)
+}
+
+fn postfix_base_needs_parens(input: &str) -> bool {
+    let trimmed = input.trim_start();
+    trimmed.starts_with('{')
+        || starts_with_keyword(trimmed, "function")
+        || starts_with_keyword(trimmed, "class")
+        || trimmed.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        || has_top_level_operator(input)
+}
+
+fn starts_with_keyword(input: &str, keyword: &str) -> bool {
+    input
+        .strip_prefix(keyword)
+        .is_some_and(|rest| rest.chars().next().is_none_or(|ch| !is_ident_continue(ch)))
 }
 
 fn previous_non_ws(input: &str, start: usize) -> Option<char> {
@@ -1162,7 +1200,12 @@ pub(super) fn unsupported_vnode_children_expr(expr: impl Into<String>) -> VueNod
 
 #[cfg(test)]
 mod tests {
-    use super::strip_callee_wrappers;
+    use super::super::VueRecoveryContext;
+    use super::{strip_callee_wrappers, SetupAliasCleaner};
+    use swc_core::atoms::Atom;
+    use swc_core::common::DUMMY_SP;
+    use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
+    use swc_core::ecma::visit::VisitMutWith;
 
     #[test]
     fn strip_callee_wrappers_requires_identifier_boundary() {
@@ -1182,6 +1225,14 @@ mod tests {
         assert_eq!(
             strip_callee_wrappers("unref(a || b).c", "unref"),
             "(a || b).c"
+        );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_parenthesizes_numeric_member_base() {
+        assert_eq!(
+            strip_callee_wrappers("unref(1).toString()", "unref"),
+            "(1).toString()"
         );
     }
 
@@ -1206,6 +1257,25 @@ mod tests {
         assert_eq!(
             strip_callee_wrappers("/unref(x)?/.test(value)", "unref"),
             "/unref(x)?/.test(value)"
+        );
+    }
+
+    #[test]
+    fn setup_alias_cleaner_expands_shorthand_property_keys() {
+        let mut ctx = VueRecoveryContext::default();
+        ctx.bindings
+            .aliases
+            .insert(Atom::from("p"), Atom::from("props"));
+        let mut prop = Prop::Shorthand(Ident::new(Atom::from("p"), DUMMY_SP, Default::default()));
+
+        prop.visit_mut_with(&mut SetupAliasCleaner::new(&ctx));
+
+        let Prop::KeyValue(key_value) = prop else {
+            panic!("shorthand property should be expanded when its value is aliased");
+        };
+        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "p"));
+        assert!(
+            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "props")
         );
     }
 }

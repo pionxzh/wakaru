@@ -2926,6 +2926,34 @@ export default defineComponent({
     }
 
     #[test]
+    fn expands_setup_props_shorthand_in_script_local_declarations() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  props: {
+    title: String
+  },
+  setup(p) {
+    const snapshot = { p, extra: p.title };
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("pre", null, toDisplayString(snapshot.extra), 1)
+    );
+  }
+});
+"#;
+
+        let output = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            output.contains("const snapshot = {\n    p: props,\n    extra: title\n};"),
+            "setup props shorthand should preserve the property key and rewrite the value:\n{output}"
+        );
+        assert!(
+            !output.contains("{ p, extra: title }"),
+            "setup props shorthand must not leave a stale props alias:\n{output}"
+        );
+    }
+
+    #[test]
     fn recovers_vite_vendor_vue_helper_aliases() {
         let input = r#"
 import { d as dc, q as ob, X as ce, J as td } from "./vendor-vue-C85wAS_L.js";

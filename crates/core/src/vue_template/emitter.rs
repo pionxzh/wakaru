@@ -782,8 +782,9 @@ fn interpolation_delimiter_replacement(state: InterpolationState) -> Option<&'st
         | InterpolationState::Double { .. }
         | InterpolationState::Template { .. } => Some(r#"}\u007d"#),
         InterpolationState::Regex { .. } => Some(r#"}\}"#),
-        InterpolationState::LineComment | InterpolationState::BlockComment => Some("} }"),
-        InterpolationState::Normal { .. } => None,
+        InterpolationState::LineComment
+        | InterpolationState::BlockComment
+        | InterpolationState::Normal { .. } => Some("} }"),
     }
 }
 

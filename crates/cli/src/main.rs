@@ -613,7 +613,8 @@ fn run_default(cli: Cli) -> Result<()> {
         } else {
             None
         };
-        let formatter = selected_formatter(cli.formatter && !recovered_vue_sfc);
+        let formatter =
+            selected_formatter(cli.formatter && (!recovered_vue_sfc || js_primary_vue_output));
         let code = format_cli_output(output.code, &output_filename, formatter);
 
         if cli.json {

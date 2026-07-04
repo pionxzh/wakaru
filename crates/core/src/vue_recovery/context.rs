@@ -567,6 +567,11 @@ impl SetupPropsRefRewriter {
             .any(|(source, shadow_depth)| source == name && *shadow_depth == 0)
     }
 
+    fn replacement_ident(&self, ident: &Ident) -> Option<Ident> {
+        self.active_source(&ident.sym)
+            .then(|| Ident::new(self.replacement.clone(), ident.span, Default::default()))
+    }
+
     fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
         self.sources
             .iter()
@@ -617,15 +622,25 @@ impl SetupPropsRefRewriter {
 }
 
 impl VisitMut for SetupPropsRefRewriter {
+    fn visit_mut_prop(&mut self, prop: &mut Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            if let Some(replacement) = self.replacement_ident(ident) {
+                *prop = Prop::KeyValue(KeyValueProp {
+                    key: PropName::Ident(ident.clone().into()),
+                    value: Box::new(Expr::Ident(replacement)),
+                });
+                return;
+            }
+        }
+
+        prop.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
         let replacement = match expr {
-            Expr::Ident(ident) if self.active_source(&ident.sym) => Some(Ident::new(
-                self.replacement.clone(),
-                ident.span,
-                Default::default(),
-            )),
+            Expr::Ident(ident) => self.replacement_ident(ident),
             _ => None,
         };
         if let Some(replacement) = replacement {
@@ -4757,7 +4772,8 @@ pub(super) fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::{is_vue_helper_candidate_source, ImportAliasRenamer};
+    use super::super::VueRecoveryContext;
+    use super::{is_vue_helper_candidate_source, ImportAliasRenamer, SetupPropsRefRewriter};
     use std::collections::HashMap;
     use swc_core::atoms::Atom;
     use swc_core::common::DUMMY_SP;
@@ -4798,6 +4814,26 @@ mod tests {
         assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "P"));
         assert!(
             matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "Panel_1")
+        );
+    }
+
+    #[test]
+    fn setup_props_ref_rewriter_expands_shorthand_property_keys() {
+        let mut ctx = VueRecoveryContext {
+            setup_props_context: Some(Atom::from("p")),
+            ..Default::default()
+        };
+        ctx.setup_props_aliases.insert(Atom::from("propsAlias"));
+        let mut prop = Prop::Shorthand(Ident::new(Atom::from("p"), DUMMY_SP, Default::default()));
+
+        prop.visit_mut_with(&mut SetupPropsRefRewriter::new(&ctx, "props"));
+
+        let Prop::KeyValue(key_value) = prop else {
+            panic!("shorthand property should be expanded when its value is rewritten");
+        };
+        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "p"));
+        assert!(
+            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "props")
         );
     }
 }

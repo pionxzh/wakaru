@@ -231,13 +231,38 @@ fn vue_sfc_single_file_js_primary_output_writes_vue_sidecar_from_input_name() {
         "wakaru",
         input_path.to_str().expect("input path should be utf8"),
         "--vue-sfc",
+        "--formatter",
         "-o",
         output_path.to_str().expect("output path should be utf8"),
     ])
     .expect("vue sfc cli should parse");
+    let output_filename = input_path.to_string_lossy().into_owned();
+    let unformatted = decompile(
+        vue_render_module_source(),
+        DecompileOptions {
+            filename: output_filename.clone(),
+            ..Default::default()
+        },
+    )
+    .expect("fixture should decompile")
+    .code;
+    let formatted = format_cli_output(
+        unformatted.clone(),
+        &output_filename,
+        selected_formatter(true),
+    );
+    assert_ne!(
+        formatted, unformatted,
+        "fixture must expose whether --formatter ran"
+    );
+
     run_default(cli).expect("vue sfc decompile should succeed");
 
     let js = fs::read_to_string(&output_path).expect("read js primary output");
+    assert_eq!(
+        js, formatted,
+        "JS-primary --vue-sfc output should still run the formatter"
+    );
     assert!(
         js.contains("export function render"),
         "primary output should remain JavaScript:\n{js}"
