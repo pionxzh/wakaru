@@ -251,6 +251,38 @@ fn vue_sfc_single_file_js_primary_output_writes_vue_sidecar_from_input_name() {
 }
 
 #[test]
+fn vue_sfc_sidecar_refuses_to_overwrite_input_under_force() {
+    let dir = temp_test_dir("vue-sfc-sidecar-input-collision");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("App.vue");
+    let output_path = dir.join("App.js");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+    let original_input = fs::read_to_string(&input_path).expect("read input before run");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+        "--force",
+    ])
+    .expect("vue sfc cli should parse");
+    let err = run_default(cli).expect_err("sidecar must not overwrite input");
+    assert!(
+        err.to_string()
+            .contains("refusing to write Vue sidecar over input file"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(&input_path).expect("read input after run"),
+        original_input
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn vue_sfc_single_file_vue_only_output_errors_when_not_recovered() {
     let dir = temp_test_dir("vue-sfc-vue-only-miss");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -641,7 +673,7 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
     );
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
-        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./src/components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
+        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -802,6 +834,53 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
                 "source_filename": "src/Broken.vue"
             }
         ])
+    );
+}
+
+#[test]
+fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
+    let out_dir = PathBuf::from("/tmp/wakaru-out");
+    let artifacts = vec![
+        CliOutputArtifact {
+            filename: "src/App.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcSourceJs,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: Some("src/App.vue".to_string()),
+        },
+        CliOutputArtifact {
+            filename: "src/App.vue".to_string(),
+            code: "<template />".to_string(),
+            kind: JsonModuleKind::VueSfc,
+            status: JsonModuleStatus::RecoveredVueSfc,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: None,
+        },
+        CliOutputArtifact {
+            filename: "src/after.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::Decompiled,
+            source_filename: None,
+            source_map_filename: Some("src/after.js".to_string()),
+        },
+    ];
+    let resolved = vec![
+        (out_dir.join("src/App.vue.js"), artifacts[0].code.as_str()),
+        (out_dir.join("src/App.vue"), artifacts[1].code.as_str()),
+        (out_dir.join("src/after.js"), artifacts[2].code.as_str()),
+    ];
+
+    let final_names = provenance_final_names(&artifacts, &resolved, &out_dir);
+
+    assert_eq!(
+        final_names.get("src/App.vue").map(String::as_str),
+        Some("src/App.vue.js")
+    );
+    assert_eq!(
+        final_names.get("src/after.js").map(String::as_str),
+        Some("src/after.js")
     );
 }
 

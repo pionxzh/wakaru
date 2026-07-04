@@ -339,7 +339,8 @@ fn run_default(cli: Cli) -> Result<()> {
             .vue_sfc
             .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
         let modules = output.modules;
-        let artifacts: Vec<CliOutputArtifact> = modules.clone()
+        let artifacts: Vec<CliOutputArtifact> = modules
+            .clone()
             .into_par_iter()
             .flat_map(|(filename, code)| {
                 let mut artifacts = Vec::new();
@@ -442,20 +443,10 @@ fn run_default(cli: Cli) -> Result<()> {
         }
 
         if cli.provenance {
-            // Map each module to its final on-disk relative path: `resolved`
-            // is parallel to `modules`, and CLI-side dedup may have renamed.
-            let final_names: HashMap<&str, String> = modules
-                .iter()
-                .zip(resolved.iter())
-                .map(|((filename, _), (path, _))| {
-                    let relative = path
-                        .strip_prefix(&out_dir)
-                        .unwrap_or(path)
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    (filename.as_str(), relative)
-                })
-                .collect();
+            // Map each original module to the final JavaScript artifact path.
+            // Recovered Vue SFC sidecars interleave with JS artifacts, so this
+            // must use artifact metadata rather than zipping modules directly.
+            let final_names = provenance_final_names(&artifacts, &resolved, &out_dir);
             let json = render_provenance_json(
                 &provenance,
                 &final_names,
@@ -527,6 +518,11 @@ fn run_default(cli: Cli) -> Result<()> {
             }
         }
         let (input, filename) = read_input(cli.inputs.first())?;
+        let input_path_for_collision = cli
+            .inputs
+            .first()
+            .filter(|path| *path != &PathBuf::from("-"))
+            .cloned();
         let output_filename = filename.clone();
         let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
         let dce_mode = if cli.dce {
@@ -558,7 +554,9 @@ fn run_default(cli: Cli) -> Result<()> {
             let vue_sidecar =
                 recover_vue_sfc_source_from_js_with_import_resolver(&output.code, |specifier| {
                     read_relative_import_source(&output_filename, specifier)
-                })?;
+                })
+                .ok()
+                .flatten();
             (output, vue_sidecar)
         } else if cli.vue_sfc {
             (
@@ -578,6 +576,12 @@ fn run_default(cli: Cli) -> Result<()> {
                     .as_ref()
                     .map(|_| single_file_vue_sidecar_path(&output_filename, path))
             });
+        if let Some(ref sidecar_path) = vue_sidecar_path {
+            ensure_vue_sidecar_does_not_overwrite_input(
+                sidecar_path,
+                input_path_for_collision.as_deref(),
+            )?;
+        }
         let elapsed = start.elapsed();
 
         if !cli.json {
@@ -1180,6 +1184,31 @@ fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+fn ensure_vue_sidecar_does_not_overwrite_input(
+    sidecar_path: &Path,
+    input_path: Option<&Path>,
+) -> Result<()> {
+    let Some(input_path) = input_path else {
+        return Ok(());
+    };
+    if !sidecar_path.exists() {
+        return Ok(());
+    }
+    let Ok(sidecar_path) = fs::canonicalize(sidecar_path) else {
+        return Ok(());
+    };
+    let Ok(input_path) = fs::canonicalize(input_path) else {
+        return Ok(());
+    };
+    if sidecar_path == input_path {
+        bail!(
+            "refusing to write Vue sidecar over input file {}; choose a different output path",
+            input_path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Ensures an output directory is usable.
 ///
 /// Returns true when the directory already contained entries and writes should
@@ -1266,6 +1295,28 @@ fn render_provenance_json(
     }
     json.push_str("  }\n}\n");
     json
+}
+
+fn provenance_final_names<'a>(
+    artifacts: &'a [CliOutputArtifact],
+    resolved: &[(PathBuf, &str)],
+    out_dir: &Path,
+) -> HashMap<&'a str, String> {
+    let mut final_names = HashMap::new();
+    for (artifact, (path, _)) in artifacts.iter().zip(resolved.iter()) {
+        if artifact.kind != JsonModuleKind::JavaScript {
+            continue;
+        }
+        if let Some(source_filename) = artifact.source_map_filename.as_deref() {
+            let relative = path
+                .strip_prefix(out_dir)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            final_names.insert(source_filename, relative);
+        }
+    }
+    final_names
 }
 
 fn provenance_format(detected_formats: &[BundleFormat]) -> &'static str {
