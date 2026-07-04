@@ -1,1435 +1,325 @@
 # Rule Dependency Inventory
 
-This document maps the dependency relationships between all rules in the decompile pipeline.
-It serves as the foundation for Step 1 and Step 2 of the [fact system](fact-system.md).
-
-The executable subset of these relationships lives in
-`crates/core/src/rules/pipeline.rs` as `RuleDescriptor::requires`. That metadata
-records ordering constraints the pipeline should preserve; this document remains
-the broader prose inventory for safety notes, downstream effects, and open
-questions.
-
-**Legend**
-
-- **Prerequisite status**: `suspected` (inferred from code reading), `confirmed` (validated by test/experiment), `unknown` (needs investigation)
-- **Safety**: `safe` (semantics-preserving), `heuristic` (high-confidence pattern match), `aggressive` (may change semantics)
-- **Fact behavior**: `writer` (could emit observations), `reader` (could benefit from merged facts), `neither`
-
-**Note on safety vs user-facing levels**
-
-The `Safety` field in this document is internal rule metadata. It describes how risky
-the rewrite logic is in principle, not whether the rewrite is enabled for end users by
-default.
-
-User-facing configuration is controlled separately by `RewriteLevel` /
-`DecompileOptions.level`:
-
-- `minimal` — prefer direct, local, high-confidence rewrites and avoid recovery
-  that depends on assuming generated/transpiled source
-- `standard` — default output; recover common generated-source patterns when the
-  evidence is strong and local, even if the rewrite is not a perfect edge-case
-  semantics match
-- `aggressive` — enable speculative or compiler-intent-heavy recovery when the
-  pattern is promising but the proof is weaker
-
-`minimal` aims for runtime-equivalent output within documented dynamic-scope
-limits. `standard` and `aggressive` are readability policies that may rely on
-named assumptions. See [Rewrite assumptions](rewrite-assumptions.md) for the
-semantic contract and which assumptions each level may depend on.
-
-Mixed rules may contain subpatterns that belong to different user-facing levels. For
-those rules, level gating happens inside the rule rather than by enabling/disabling
-the whole rule.
-
-After the initial rollout, the remaining whole-rule heuristic defaults are:
-
-- `minimal`: `UnConditionals`, `SmartRename`
-- `standard`: `UnObjectRest`, `UnTypeConstructor`, `UnEnum`, `UnEs6Class`,
-  `UnClassFields`, `UnAsyncAwait`, `UnEsm`, `UnPrototypeClass`, `ArgRest`,
-  `UnForOf`
-
----
-
-## Stage 1 — Syntax Normalization
-
-These rules normalize minified syntax into canonical forms. Most are independent of each other.
-
-### 1. SimplifySequence
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | Yes — guards against removing non-pure calls |
-| Suspected prerequisites | None (runs first) |
-| Shape prerequisites | None |
-| Produces | Flat statement lists; drops dead expressions; splits `a, b, c` into separate statements |
-| Downstream dependents | Nearly everything — flat statements are assumed by most rules |
-| Fact behavior | Neither |
-| Safety | Safe (drops only provably side-effect-free expressions) |
-| Notes | Barestatement expressions (e.g. `65536;`) are dropped — test inputs must use `const x = ...` |
-
-### 2. FlipComparisons
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Normalized comparisons: literals on the right (`x === 0` not `0 === x`) |
-| Downstream dependents | UnParameters (pattern-matches `arg === void 0` with literal on right) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 3. UnTypeofStrict
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Strict equality for typeof checks (`typeof x === "string"`) |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 4. RemoveVoid
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | SimplifySequence (to flatten sequences containing `void 0`) — `suspected` |
-| Shape prerequisites | None |
-| Produces | `undefined` identifiers where `void 0` was used |
-| Downstream dependents | UnParameters (matches `arg === undefined`), UnOptionalChaining (matches `undefined` in ternary), UnUndefinedInit |
-| Fact behavior | Neither |
-| Safety | Safe (checks no local `undefined` binding exists) |
-| Notes | Conditional execution: `should_run()` checks module has no explicit `undefined` binding |
-
-### 5. UnminifyBooleans
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `true`/`false` literals |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 6. UnInfinity
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `Infinity` / `-Infinity` identifiers |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 7. UnIndirectCall
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | SimplifySequence (to see `(0, fn)()` clearly) — `suspected` |
-| Shape prerequisites | None |
-| Produces | Direct function calls (removes `(0, fn)()` and `Object(fn)()` wrappers) |
-| Downstream dependents | UnInteropRequireDefault, UnInteropRequireWildcard (need to see direct `require()` or `helper(require())` calls) |
-| Fact behavior | Neither |
-| Safety | Mixed: safe subset plus standard heuristic |
-| Notes | Level-gated by shape: `minimal` only removes indirect-call wrappers around direct identifier callees such as `(0, fn)()` → `fn()`, excluding `eval` and calls inside `with` scopes. Member callees and `Object(fn)` wrappers require `standard` because rewriting `(0, obj.method)()` → `obj.method()` changes the receiver `this` binding. |
-
-### 8. UnTypeof
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Standard `typeof x !== "undefined"` comparisons |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 9. UnNumericLiteral
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Normalized numeric literal display (clears `raw` field) |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 10. UnBracketNotation
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Syntax normalization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Dot notation: `obj["prop"]` → `obj.prop`, `obj["default"]` → `obj.default` |
-| Downstream dependents | UnInteropRequireDefault (`.default` access), UnInteropRequireWildcard, UnObjectRest (property keys), UnWebpackInterop (`.__esModule`, `.default`), UnEsm (`.default` on exports) |
-| Fact behavior | Neither |
-| Safety | Safe |
-| Notes | **Critical early normalizer** — many downstream rules pattern-match on dot notation |
-
----
-
-## Stage 2 — Transpiler Helper Unwrapping
-
-These rules detect and remove Babel/TypeScript/tslib/SWC transpiler helper calls, restoring original syntax.
-
-### 11. UnInteropRequireDefault
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / tslib |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnIndirectCall (`suspected`), UnBracketNotation (`suspected`) |
-| Shape prerequisites | Normalized `.default` access, direct function calls |
-| Produces | Direct `require()` calls; `.default` property accesses on bindings |
-| Downstream dependents | UnEsm (clean require patterns) |
-| Fact behavior | **Writer** — could emit "binding X was interop-require-default wrapped" |
-| Safety | Safe |
-
-### 12. UnInteropRequireWildcard
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / tslib |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnIndirectCall (`suspected`), UnBracketNotation (`suspected`) |
-| Shape prerequisites | Normalized member access, direct function calls |
-| Produces | Namespace-style require bindings |
-| Downstream dependents | UnEsm (namespace imports) |
-| Fact behavior | **Writer** — could emit "binding X was interop-require-wildcard wrapped" |
-| Safety | Safe |
-
-### 13. UnToConsumableArray
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript / SWC |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Spread array syntax `[...arr]` |
-| Downstream dependents | UnSpreadArrayLiteral (simplifies `fn(...[a,b])` → `fn(a,b)`) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 14. UnObjectSpread
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript / SWC / esbuild |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Object spread syntax `{...obj}` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe (only transforms when first arg is `{}`) |
-
-### 15. UnObjectRest
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript / SWC / esbuild |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnBracketNotation (`suspected`), SimplifySequence (`suspected`) |
-| Shape prerequisites | Flat statements, normalized property access |
-| Produces | Object rest destructuring `{a, b, ...rest} = obj` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic (backward scan to absorb property accesses) |
-
-### 16. UnSlicedToArray
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / tslib / SWC |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Direct expressions from `_slicedToArray(expr, N)` |
-| Downstream dependents | SmartInline (later converts `_ref[0]` accesses to destructuring) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 17. UnClassCallCheck
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / SWC |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Cleaned function/class bodies (guard calls removed) |
-| Downstream dependents | UnEs6Class (cleaner class body detection) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 18. UnPossibleConstructorReturn
-
-| Field | Value |
-|-------|-------|
-| Family | Babel |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Direct constructor return values |
-| Downstream dependents | UnEs6Class (cleaner constructor pattern) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 19. UnTypeofPolyfill
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `typeof x` unary expressions; removes polyfill declarations |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
----
-
-## Stage 3 — Structural Restoration
-
-These rules restore structural patterns and clean up minification artifacts.
-
-### 20. UnTemplateLiteral
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Template literal expressions |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 21. UnUseStrict
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Cleanup |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Removes `"use strict"` directives |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 22. UnWhileLoop
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `while(test){}` from `for(;test;){}` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 23. UnCurlyBraces
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Block statements around single-stmt control flow; block-body arrows |
-| Downstream dependents | UnConditionals (normalized blocks), UnParameters (block-body patterns) |
-| Fact behavior | Neither |
-| Safety | Safe |
-| Notes | JS version runs this first; Rust version runs it mid-pipeline. Difference may be worth investigating. |
-
-### 24. UnTypeConstructor
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `Number(x)`, `String(x)`, `Boolean(x)`, `Array(n)` calls |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic (`+x` → `Number(x)` is semantically equivalent but changes readability intent) |
-| Notes | Level-gated: entire rule disabled below `standard`. |
-
-### 25. UnEsmoduleFlag
-
-| Field | Value |
-|-------|-------|
-| Family | Module-system |
-| Role | Module-system reconstruction |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Removes `Object.defineProperty(exports, '__esModule', ...)` and `exports.__esModule = true` |
-| Downstream dependents | UnEsm (cleaner exports object — no noise statements) |
-| Fact behavior | **Writer** — could emit "module has __esModule flag" (ES module indicator) |
-| Safety | Safe |
-
-### 26. UnAssignmentMerging
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Split assignments: `a = b = val` → `a = val; b = val` |
-| Downstream dependents | UnVariableMerging (runs after), **UnEsm** (needs `exports.foo = val; exports.bar = val` split to detect named exports) |
-| Fact behavior | Neither |
-| Safety | Safe |
-| Notes | **High-priority rule for UnEsm dependency validation** per proposal |
-
-### 27. UnBuiltinPrototype
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `Array.prototype.slice.call(...)` from `[].slice.call(...)` etc. |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 28. UnArgumentSpread
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Spread call syntax: `fn.apply(ctx, args)` → `fn.call(ctx, ...args)` or `fn(...args)` |
-| Downstream dependents | UnSpreadArrayLiteral (consumes spread syntax) |
-| Fact behavior | **Reader** — could benefit from knowing whether a binding is a direct import vs namespace access (the `obj.fn.apply(null, args)` case documented in late-program-pass.md) |
-| Safety | Heuristic (Pattern 1 `fn.apply(null, args)` is safe; Pattern 2 `obj.fn.apply(obj, args)` is safe; `obj.fn.apply(null, args)` is intentionally skipped — not semantics-preserving without namespace decomposition) |
-| Notes | **Key rule for late-program-pass** — the `obj.fn.apply(undefined, args)` case requires cross-module context. Level-gated: entire rule disabled below `standard`. |
-
-### 29. UnArrayConcatSpread
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Array spread: `[a].concat(b)` → `[a, ...b]` |
-| Downstream dependents | UnSpreadArrayLiteral |
-| Fact behavior | Neither |
-| Safety | Heuristic (`standard` and above): assumes generated concat-spread arguments behave like arrays/rest args |
-| Notes | Level-gated: disabled below `standard`. The useful generated shape is usually `[fixed].concat(args)`; this is not strictly equivalent for arbitrary values because `Array.prototype.concat` and spread differ for scalars, strings, patched concat, and `Symbol.isConcatSpreadable`. |
-
-### 30. UnSpreadArrayLiteral
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnArgumentSpread (`suspected`), UnArrayConcatSpread (`suspected`), UnToConsumableArray (`suspected`) |
-| Shape prerequisites | Spread syntax must exist from earlier rules |
-| Produces | Flattened arguments: `fn(...[a,b,c])` → `fn(a,b,c)` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 31. ObjectAssignSpread
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | Yes — to match `Object.assign` on unresolved `Object` |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Object spread: `Object.assign({}, src)` → `{...src}` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe (only when first arg is `{}`) |
-
-### 32. UnVariableMerging
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnAssignmentMerging (`suspected` — creates more declarations to split) |
-| Shape prerequisites | None |
-| Produces | Individual `var` declarations from `var a=1, b=2` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 33. UnNullishCoalescing
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `x ?? fallback` expressions |
-| Downstream dependents | UnConditionals (should run after nullish coalescing to avoid converting `??`-eligible ternaries to if/else) |
-| Fact behavior | Neither |
-| Safety | Safe |
-| Notes | Level-gated: strict-check patterns (Patterns A/B: `x === null \|\| x === undefined`) run at all levels. Loose-check patterns (Pattern D: `x != null ? x : fallback`) require `standard+` (assumes `no_document_all`). Pattern C temp forms run at `minimal` when binding facts prove the temp is isolated; plain identifier Pattern C requires `standard+`; non-identifier bases (member expressions, computed access) require `aggressive` because collapsing three reads to one changes getter/proxy semantics (assumes `pure_getters`). |
-
-### 34. UnOptionalChaining
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | RemoveVoid (`suspected` — needs `undefined` instead of `void 0` in ternary alt) |
-| Shape prerequisites | `undefined` identifiers (not `void 0`) |
-| Produces | `x?.prop` optional chaining expressions |
-| Downstream dependents | UnConditionals (should run after optional chaining) |
-| Fact behavior | Neither |
-| Safety | Mixed: standard heuristic + aggressive subpatterns |
-| Notes | Shares helper functions with UnNullishCoalescing (`exprs_structurally_equal`, `is_undefined`). Level-gated behavior: `minimal` disables loose `x == null ? undefined : x.prop` recovery; `standard` enables loose null-check recovery when temp analysis or direct structural matching preserves evaluation count; `aggressive` additionally enables Babel loose repeated-property call forms such as `_obj.method == null ? undefined : _obj.method(arg)` → `obj?.method?.(arg)` because that recovery assumes stable property reads. |
-
----
-
-## Stage 4 — Bundler Artifacts
-
-### 35. UnWebpackInterop
-
-| Field | Value |
-|-------|-------|
-| Family | Webpack |
-| Role | Helper unwrapping / Bundler artifact |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnBracketNotation (`suspected` — normalizes `.__esModule`, `.default`), require() bindings present (`suspected` — must run before UnEsm) |
-| Shape prerequisites | Dot-notation member access on `__esModule` and `default` |
-| Produces | Direct require binding references (removes getter indirection) |
-| Downstream dependents | UnEsm (clean require patterns without getter wrappers) |
-| Fact behavior | **Writer** — could emit "binding X had webpack interop getter wrapper" |
-| Safety | Safe (verified by usage analysis: only inlines when all uses are safe) |
-| Notes | Runs twice — second pass after UnAsyncAwait catches newly exposed patterns. **High-priority for experimental validation.** |
-
-### 36. UnIife
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Inlined/flattened IIFE bodies; renamed single-char params |
-| Downstream dependents | UnEs6Class (class IIFEs become visible), UnEnum (enum IIFEs), SmartInline (second pass catches IIFEs it creates) |
-| Fact behavior | Neither |
-| Safety | Heuristic (parameter inlining uses usage counting) |
-| Notes | Second pass after SmartInline catches IIFEs created by inlining. Level-gated: param cleanup and literal hoisting disabled below `standard`; `.call()` unwrapping on arrows runs at all levels. |
-
-### 37. UnConditionals
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnOptionalChaining (`suspected`), UnNullishCoalescing (`suspected`) — must run after these to avoid converting `?.`/`??`-eligible patterns |
-| Shape prerequisites | Ternary/logical expressions not eligible for `?.` or `??` |
-| Produces | `if/else` statements from ternaries/logical expressions; `switch` statements from strict same-discriminant ternary chains |
-| Downstream dependents | UnParameters (needs if-statement form for default param detection) |
-| Fact behavior | Neither |
-| Safety | Heuristic (only converts "action-like" branches for statement conditionals; switch recovery is limited to strict equality over one identifier and literal cases) |
-
-### 38. UnParameters
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | FlipComparisons (`suspected` — normalized `arg === undefined` comparisons), RemoveVoid (`suspected` — `undefined` instead of `void 0`), UnConditionals (`suspected` — if-statement form), UnCurlyBraces (`suspected` — block bodies) |
-| Shape prerequisites | If-statements with `arg === undefined` tests in function bodies |
-| Produces | ES6 default parameters |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic (pattern match on guard shape) |
-| Notes | Level-gated: Pattern A (`if (arg === undefined) arg = val`) runs at all levels. Pattern B (`arguments[i]`-based reconstruction), Pattern C (object-alias default params), and destructured parameter alias folding require `standard`. |
-
-### 39. UnEnum
-
-| Field | Value |
-|-------|-------|
-| Family | TypeScript |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | SimplifySequence (`suspected` — needs paired var+IIFE visible as flat statements) |
-| Shape prerequisites | Adjacent `var X; (function(X){...})(X || (X = {}))` |
-| Produces | Object literal declarations |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic (enum IIFE pattern detection) |
-
----
-
-## Stage 5 — Complex Pattern Restoration
-
-### 40. UnJsx
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / React |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | Yes — to detect JSX pragma imports |
-| Suspected prerequisites | Import analysis (needs to identify pragma bindings) — `suspected` |
-| Shape prerequisites | JSX createElement / _jsx / _jsxs call patterns |
-| Produces | JSX element syntax |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic |
-| Notes | Level-gated: dynamic-tag alias synthesis (creating a local `const Component = expr` for non-identifier JSX tags) requires `aggressive`, or `standard` when strong JSX shape evidence is present. |
-
-### 41. UnEs6Class
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnClassCallCheck (`suspected`), UnPossibleConstructorReturn (`suspected`), UnIife (`suspected` — class IIFE wrappers) |
-| Shape prerequisites | IIFE-wrapped class patterns with `_inherits` / `__extends` / `_createClass` helpers |
-| Produces | ES6 `class` declarations |
-| Downstream dependents | UnClassFields (needs class syntax to detect `__init` methods) |
-| Fact behavior | Neither |
-| Safety | Heuristic (complex multi-pattern detection) |
-| Notes | Level-gated by subpattern: static method assignment recovery is part of class restoration, but static data field assignment recovery (`Ctor.x = value` -> `static x = value`) requires `standard+` and is skipped for derived classes because inherited static setters make assignment semantics observably different from class field definition. |
-
-### 42. UnClassFields
-
-| Field | Value |
-|-------|-------|
-| Family | Babel / TypeScript |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnEs6Class (`suspected` — needs class declarations to exist) |
-| Shape prerequisites | Class with `__init*()` methods and constructor calling them via `prototype.__init.call(this)` |
-| Produces | Simplified constructors with direct field assignments |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic |
-| Notes | Level-gated by subpattern: Babel constructor field helper recovery (`_defineProperty(this, "x", value)` -> `x = value`) requires `standard+`, runs only for base classes, and skips initializers that reference constructor params or `arguments`. Direct constructor assignments are preserved unless another pattern proves they came from class fields. |
-
-### 43. UnAsyncAwait
-
-| Field | Value |
-|-------|-------|
-| Family | TypeScript |
-| Role | Structural restoration |
-| Uses `unresolved_mark` | No |
-| Confirmed prerequisites | **UnEsm** (`confirmed` — consumed inline TS async helper cleanup must not hide `__esModule` / interop patterns before module-system reconstruction), LocalHelperContext (`confirmed` — async helper identities are consumed directly). |
-| Shape prerequisites | `__generator` state machine structure, `__awaiter` wrapper, or aliases detected by `LocalHelperContext` |
-| Produces | `async` functions, `function*` generators, `yield`/`await` expressions |
-| Downstream dependents | UnObjectRest3, UnArgumentSpread2, UnWebpackInterop2 (async/regenerator recovery may expose additional object-rest, spread, and interop getter shapes). |
-| Fact behavior | **Reader** — consumes detected TypeScript helper identities from `LocalHelperContext`; removes consumed inline `__awaiter` / `__generator` declarations via shared TS helper cleanup after transformation. |
-| Safety | Heuristic (state machine reconstruction) |
-
-### 44. UnWebpackInterop2
-
-See #35 (second pass of UnWebpackInterop). In the current registry this pass runs
-after UnAsyncAwait and after UnEsm. It is late cleanup for interop getter shapes
-that become visible after async/regenerator recovery, not a prerequisite for
-UnEsm. A later cleanup pass, UnWebpackInterop3, runs after UnEsm to catch direct
-`require.n(importBinding)` helper shapes exposed by import conversion.
-
-### 45. UnVariableMergingDeclsOnly
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Module-system prerequisite |
-| Uses `unresolved_mark` | No |
-| Confirmed prerequisites | UnAssignmentMerging |
-| Shape prerequisites | None |
-| Produces | Individual top-level declarations from declaration lists such as `var a = require("a"), b = require("b")` |
-| Downstream dependents | UnEsm (needs one declarator per statement to classify CJS imports) |
-| Fact behavior | Neither |
-| Safety | Safe |
-| Notes | This is the declaration-list subset of UnVariableMerging. The full UnVariableMerging pass stays later because its for-loop initializer extraction can interact with var-to-let conversion and loop scoping. |
-
-### 46. UnEsm
-
-| Field | Value |
-|-------|-------|
-| Family | Module-system |
-| Role | Module-system reconstruction |
-| Uses `unresolved_mark` | No |
-| Confirmed prerequisites | UnCurlyBraces (`confirmed` — enables assignment splitting), UnUseStrict (`confirmed` — removes directive noise), UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnVariableMergingDeclsOnly (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern). |
-| Shape prerequisites | Clean `require()` calls, clean `exports.X = val` / `module.exports = val`, and first-pass interop getter cleanup where required for import classification. Later interop shapes are handled after UnEsm by UnWebpackInterop2/3. |
-| Produces | `import`/`export` declarations; renames conflicting export bindings |
-| Downstream dependents | Fact extraction barrier, UnObjectSpread2, UnObjectRest2, UnSlicedToArray2, UnAsyncAwait cleanup, UnWebpackInterop3, UnImportRename, UnExportRename, SmartInline |
-| Fact behavior | **Writer** — could emit import/export summary, module classification (CJS/ESM) |
-| Safety | Heuristic (classification logic for default vs named imports/exports) |
-| Notes | Current registry position is the Helpers-stage module-system barrier, before UnAsyncAwait and UnWebpackInterop2. Historical experiments below found a fixture regression when a then-current pipeline moved UnEsm before the second interop pass; that conclusion is now superseded by the live registry and the added late interop cleanup passes. Treat `crates/core/src/rules/pipeline.rs` and the two-phase model in `architecture.md` / `fact-system.md` as authoritative for current ordering. Level-gated: entire rule disabled below `standard`. |
-
----
-
-## Stage 6 — Modernization
-
-### 47. UnThenCatch
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `.catch(handler)` from `.then(null, handler)` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 48. UnUndefinedInit
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Cleanup |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | RemoveVoid (`suspected` — needs `undefined` identifier, not `void 0`) |
-| Shape prerequisites | `undefined` identifiers in init positions |
-| Produces | `var x` without initializer (instead of `var x = undefined`) |
-| Downstream dependents | VarDeclToLetConst (fewer noisy inits) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 49. VarDeclToLetConst
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnUndefinedInit (`suspected` — cleaner declarations), all rules that introduce new variables should have run |
-| Shape prerequisites | Final variable declarations |
-| Produces | `let`/`const` declarations |
-| Downstream dependents | UnPrototypeClass (uses `const` detection) |
-| Fact behavior | Neither |
-| Safety | Safe (scope-aware analysis with SyntaxContext) |
-
-### 50. ObjShorthand
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `{foo}` shorthand from `{foo: foo}` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 51. ObjMethodShorthand
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `{foo(){}}` method shorthand |
-| Downstream dependents | UnPrototypeClass (needs method shorthand to detect class candidates) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 52. UnPrototypeClass
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | VarDeclToLetConst (`suspected`), ObjMethodShorthand (`suspected`) |
-| Shape prerequisites | `const`/`let` function declarations, method shorthand in prototype assignments |
-| Produces | ES6 `class` declarations from prototype-based patterns |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic |
-
-### 53. Exponent
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `a ** b` from `Math.pow(a, b)` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 54. ArgRest
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Rest parameters `...args` from `arguments` usage |
-| Downstream dependents | **UnRestArrayCopy** (hard — detects Babel copy loop for rest params created by ArgRest) |
-| Fact behavior | Neither |
-| Safety | Heuristic |
-| Notes | Level-gated: entire rule disabled below `standard`. |
-
-### 55. UnRestArrayCopy
-
-| Field | Value |
-|-------|-------|
-| Family | Babel |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | **ArgRest** (`suspected` — hard: detects rest param copy loops) |
-| Shape prerequisites | Rest parameter + Babel copy loop pattern |
-| Produces | Simplified function bodies (copy loop removed) |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 56. ArrowFunction
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | Arrow function expressions (checks for `this`/`arguments` usage) |
-| Downstream dependents | **ArrowReturn** (hard — needs arrows with block bodies to simplify) |
-| Fact behavior | Neither |
-| Safety | Heuristic (guarded, but function-to-arrow changes constructability and other observable function semantics) |
-| Notes | Level-gated: disabled below `standard`. The rule checks known blockers such as `this`, `arguments`, named function expressions, and bindings later used with `new`, but broad conversion is not a `minimal`-safe transform because arrows lack `prototype`, cannot be constructed, and differ for `new.target`/function observability. |
-
-### 57. ArrowReturn
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | **ArrowFunction** (`suspected` — hard: needs arrow expressions to exist) |
-| Shape prerequisites | Arrow functions with `{ return expr; }` body |
-| Produces | Concise arrow bodies `() => expr` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 58. UnForOf
-
-| Field | Value |
-|-------|-------|
-| Family | TypeScript |
-| Role | Modernization |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | None |
-| Shape prerequisites | Index-based array/array-like loops, iterator helper try/finally loops, optionally with temporary destructuring declarations |
-| Produces | `for...of` loops from TypeScript `downlevelIteration` true/false, Babel spec/loose/`iterableIsArray`, and SWC ES5 iteration patterns |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Heuristic |
-| Notes | Level-gated: entire rule disabled below `standard`. Helper recovery is conservative and requires the full emitted cleanup wrapper before removing iterator/error temporaries. |
-
----
-
-## Stage 7 — Cleanup and Renaming
-
-### 59. UnWebpackDefineGetters
-
-| Field | Value |
-|-------|-------|
-| Family | Webpack |
-| Role | Bundler artifact |
-| Uses `unresolved_mark` | Yes — to match webpack runtime `require("d")` calls |
-| Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `Object.defineProperties(obj, {...})` calls |
-| Downstream dependents | **UnWebpackObjectGetters** (hard — converts define calls to getter syntax) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 60. UnWebpackObjectGetters
-
-| Field | Value |
-|-------|-------|
-| Family | Webpack |
-| Role | Bundler artifact |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | **UnWebpackDefineGetters** (`suspected` — hard: consumes its output) |
-| Shape prerequisites | Adjacent `var x = {}; Object.defineProperties(x, {...})` |
-| Produces | Object literals with getter syntax `{ get prop() {...} }` |
-| Downstream dependents | None known |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 61. UnImportRename
-
-| Field | Value |
-|-------|-------|
-| Family | Module-system |
-| Role | Naming / presentation |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | **UnEsm** (`suspected` — hard: needs import declarations to exist) |
-| Shape prerequisites | Import declarations with aliases |
-| Produces | Renamed import bindings (local matches imported name) |
-| Downstream dependents | UnExportRename, SmartInline (stable bindings) |
-| Fact behavior | Neither |
-| Safety | Safe (uses BindingRenamer) |
-
-### 62. UnExportRename
-
-| Field | Value |
-|-------|-------|
-| Family | Module-system |
-| Role | Naming / presentation |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | **UnEsm** (`suspected` — hard: needs export declarations), UnImportRename (`suspected` — consistent naming) |
-| Shape prerequisites | Export declarations with alias patterns |
-| Produces | Promoted export bindings |
-| Downstream dependents | SmartInline (stable bindings) |
-| Fact behavior | Neither |
-| Safety | Safe (uses BindingRenamer) |
-
-### 63. SmartInline
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Cleanup |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | UnImportRename (`suspected`), UnExportRename (`suspected`) — needs stable import/export bindings before inlining aliases |
-| Shape prerequisites | Single-use `const`/`var` bindings |
-| Produces | Inlined expressions; may create new IIFEs `(() => expr)()` |
-| Downstream dependents | **UnIife2** (hard — catches IIFEs created by SmartInline), SmartRename (aliases removed) |
-| Fact behavior | Neither |
-| Safety | Heuristic (usage counting for inline decisions) |
-| Notes | Level-gated: temp-var inlining, useState tuple folding, property destructuring grouping, and builtin/global alias inlining (`const floor = Math.floor`, `const E = TypeError` → inline) require `standard`. Index-based destructuring grouping (`obj[0]`, `obj[1]` → array destructuring) requires `aggressive`. |
-
-### 64. UnIife2
-
-See #36 (second pass of UnIife, after SmartInline).
-
-### 65. SmartRename
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Naming / presentation |
-| Uses `unresolved_mark` | Yes — to match unresolved `Symbol.for` calls |
-| Suspected prerequisites | SmartInline (`suspected` — aliases removed, names stabilized), UnIndirectCall (`suspected` — partially, for cleaner patterns) |
-| Shape prerequisites | Final binding state |
-| Produces | Readable names from destructuring patterns, React hooks, member init, Symbol.for |
-| Downstream dependents | None known |
-| Fact behavior | **Reader** — could benefit from knowing original source names (source maps) or cross-module naming |
-| Safety | Heuristic |
-
-### 66. UnReturn
-
-| Field | Value |
-|-------|-------|
-| Family | Generic |
-| Role | Cleanup |
-| Uses `unresolved_mark` | No |
-| Suspected prerequisites | All prior restructuring rules — earlier rules may introduce tail returns |
-| Shape prerequisites | None |
-| Produces | Removes tail `return undefined` / `return void 0` |
-| Downstream dependents | UnConditionals2 (late conditional cleanup can simplify patterns exposed by tail-return removal) |
-| Fact behavior | Neither |
-| Safety | Safe |
-
-### 67. UnConditionals2
-
-See #37 (second pass of UnConditionals). In the current registry this is the
-final rule. Late passes such as SmartInline, ArrowFunction/ArrowReturn, and
-UnReturn can expose conditional patterns that the first UnConditionals pass
-could not see.
-
----
-
-## Step 2 — Role Re-categorization
-
-Rules grouped by conceptual role, independent of current pipeline position.
-
-### Syntax Normalization
-
-Pure syntactic transforms. No semantic dependencies. Could theoretically run in any order among themselves.
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| SimplifySequence | 1 | Must stay first — nearly everything depends on flat statements |
-| FlipComparisons | 1 | |
-| UnTypeofStrict | 1 | |
-| RemoveVoid | 1 | Conditional on no local `undefined` binding |
-| UnminifyBooleans | 1 | |
-| UnInfinity | 1 | |
-| UnIndirectCall | 1 | Enables helper detection downstream |
-| UnTypeof | 1 | |
-| UnNumericLiteral | 1 | |
-| UnBracketNotation | 1 | **Critical** — enables many downstream rules via `.default` normalization |
-
-### Helper Unwrapping
-
-Detect and remove Babel/TypeScript/tslib/SWC transpiler helper functions.
-
-| Rule | Current Stage | Family | Notes |
-|------|--------------|--------|-------|
-| UnInteropRequireDefault | 2 | Babel / tslib | Needs UnIndirectCall + UnBracketNotation |
-| UnInteropRequireWildcard | 2 | Babel / tslib | Needs UnIndirectCall + UnBracketNotation |
-| UnToConsumableArray | 2 | Babel / TypeScript / SWC | Independent |
-| UnObjectSpread | 2 | Babel / TypeScript / SWC / esbuild | Independent |
-| UnObjectRest | 2 | Babel / TypeScript / SWC / esbuild | Needs UnBracketNotation |
-| UnSlicedToArray | 2 | Babel / tslib / SWC | Independent |
-| UnClassCallCheck | 2 | Babel / SWC | Independent, enables UnEs6Class |
-| UnPossibleConstructorReturn | 2 | Babel | Independent, enables UnEs6Class |
-| UnTypeofPolyfill | 2 | Babel / TypeScript | Independent |
-| UnRestArrayCopy | 6 | Babel | Needs ArgRest |
-
-### Module-System Reconstruction
-
-Transform between module systems (CJS ↔ ESM).
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| UnEsmoduleFlag | 3 | Early cleanup — removes noise for UnEsm |
-| UnWebpackInterop | Helpers + Complex + Cleanup | First pass removes getter wrappers before UnEsm; later passes clean shapes exposed by async recovery and import conversion |
-| UnEsm | Helpers barrier | **Central rule** — import/export reconstruction and fact extraction boundary |
-| UnImportRename | 7 | Post-UnEsm naming |
-| UnExportRename | 7 | Post-UnEsm naming |
-
-### Bundler Artifacts
-
-Webpack/bundler-specific runtime artifact removal.
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| UnWebpackInterop | Helpers + Complex + Cleanup | Also in module-system category |
-| UnWebpackDefineGetters | 7 | Webpack runtime |
-| UnWebpackObjectGetters | 7 | Depends on UnWebpackDefineGetters |
-
-### Structural Restoration
-
-Restore higher-level code structures from minified/transpiled forms.
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| UnTemplateLiteral | 3 | Independent |
-| UnWhileLoop | 3 | Independent |
-| UnCurlyBraces | 3 | Enables UnConditionals, UnParameters |
-| UnTypeConstructor | 3 | Independent |
-| UnAssignmentMerging | 3 | Enables UnVariableMerging, UnEsm |
-| UnBuiltinPrototype | 3 | Independent |
-| UnArgumentSpread | 3 | Independent (but would benefit from cross-module facts) |
-| UnArrayConcatSpread | 3 | Independent |
-| UnSpreadArrayLiteral | 3 | Needs spread-producing rules |
-| ObjectAssignSpread | 3 | Independent |
-| UnVariableMerging | 3 | Needs UnAssignmentMerging |
-| UnIife | 4 + 7 | Enables class/enum detection; second pass after SmartInline |
-| UnConditionals | 4 | Needs UnOptionalChaining, UnNullishCoalescing |
-| UnEnum | 4 | Needs flat statements |
-| UnEs6Class | 5 | Needs helper unwrapping |
-| UnClassFields | 5 | Needs UnEs6Class |
-| UnAsyncAwait | 5 | Consumes detected TS async helper identities |
-
-### Modernization
-
-Upgrade to modern ES syntax.
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| UnNullishCoalescing | 3 | Independent |
-| UnOptionalChaining | 3 | Needs RemoveVoid |
-| UnParameters | 4 | Needs FlipComparisons, RemoveVoid, UnConditionals, UnCurlyBraces |
-| UnThenCatch | 6 | Independent |
-| VarDeclToLetConst | 6 | Late — scope-aware |
-| ObjShorthand | 6 | Independent |
-| ObjMethodShorthand | 6 | Independent, enables UnPrototypeClass |
-| UnPrototypeClass | 6 | Needs VarDeclToLetConst, ObjMethodShorthand |
-| Exponent | 6 | Independent |
-| ArgRest | 6 | Independent, enables UnRestArrayCopy |
-| ArrowFunction | 6 | Independent, enables ArrowReturn |
-| ArrowReturn | 6 | Needs ArrowFunction |
-| UnForOf | 6 | Independent |
-
-### Cleanup & Naming
-
-Final cleanup, inlining, and renaming.
-
-| Rule | Current Stage | Notes |
-|------|--------------|-------|
-| UnUseStrict | 3 | Could run anywhere |
-| UnUndefinedInit | 6 | Needs RemoveVoid |
-| SmartInline | 7 | Needs stable bindings |
-| SmartRename | 7 | Needs SmartInline |
-| UnReturn | 7 | Penultimate tail-return cleanup |
-| UnConditionals2 | 7 | Final late conditional cleanup after UnReturn |
-
----
-
-## Critical Dependency Chains
-
-Edges marked `[C]` are confirmed by experiment. Others are `suspected`.
-
-```
-SimplifySequence ─────────────────────────────────────────→ (all)
-
-                                                           ┌→ UnImportRename ──→ SmartInline ──→ UnIife2
-UnBracketNotation ──┬→ UnInteropRequireDefault ──[C]──┐    │  UnExportRename ──↗               → SmartRename
-                    ├→ UnInteropRequireWildcard ──[C]─┤    │                                    → UnReturn
-                    ├→ UnObjectRest                   ↓    │
-                    └→ UnWebpackInterop (pass 1) [C]→ UnEsm [C]→ async helper cleanup must run after
-                                                      ↓
-                                              UnAsyncAwait ──→ UnWebpackInterop2
-                                                      ↑
-UnIndirectCall ─────┬→ UnInteropRequireDefault        │
-                    └→ UnInteropRequireWildcard        │
-                                                      │
-UnAssignmentMerging ┬→ UnVariableMerging              │
-                    └──────────────────────[C]────────┤
-UnEsmoduleFlag ────────────────────────────[C]────────┤
-
-UnClassCallCheck ───┬→ UnEs6Class ──→ UnClassFields
-UnPossibleConstructorReturn ↗
-
-ArgRest ────────────→ UnRestArrayCopy
-ArrowFunction ──────→ ArrowReturn
-UnWebpackDefineGetters → UnWebpackObjectGetters
-SmartInline ────────→ UnIife2
-
-FlipComparisons ──┐
-RemoveVoid ───────┤
-UnConditionals ───┼→ UnParameters
-UnCurlyBraces ────┘
-
-UnNullishCoalescing ┬→ UnConditionals
-UnOptionalChaining ─┘
-
-UnToConsumableArray ┐
-UnArgumentSpread ───┼→ UnSpreadArrayLiteral
-UnArrayConcatSpread ┘
-
-VarDeclToLetConst ──┬→ UnPrototypeClass
-ObjMethodShorthand ─┘
-```
-
----
-
-## Candidate Fact Writers (Step 4 preview)
-
-Rules that perform reliable local detection and could emit observations:
-
-| Rule | Observation | Confidence |
-|------|------------|------------|
-| UnInteropRequireDefault | "binding X was interopRequireDefault-wrapped" | High |
-| UnInteropRequireWildcard | "binding X was interopRequireWildcard-wrapped" | High |
-| UnEsmoduleFlag | "module has __esModule marker" | High |
-| UnWebpackInterop | "binding X had webpack interop getter" | High |
-| LocalHelperContext | "module uses TS helpers: __awaiter, __generator, ..."; exported raw TS helper facts are available as `ts_helper_exports` | High |
-| UnEsm | "module classified as CJS→ESM; imports: [...]; exports: [...]" | Medium |
-
-## Candidate Fact Readers (Step 5 preview)
-
-Rules that could benefit from merged cross-module facts:
-
-| Rule | Fact needed | Use case |
-|------|------------|----------|
-| UnArgumentSpread | "binding X is a direct import, not namespace" | Safe `obj.fn.apply(null, args)` → `fn(...args)` |
-| SmartRename | "original source names from source maps" | Better rename decisions |
-| Late program pass | "exporter module's named exports" | Namespace decomposition |
-
----
-
-## Step 3 — Experimental Validation Results
-
-Five experiments were run on 2026-04-15. Each modified the pipeline ordering, ran
-the full unit test suite (~550 tests), and the most promising candidate was also
-tested against the real-world fixture corpus (4500+ webpack modules).
-
-**Current-state note:** the live registry now runs UnEsm before UnAsyncAwait and
-UnWebpackInterop2, with additional late interop cleanup after UnEsm. Treat the
-experiment logs below as historical evidence about fragile shapes, not as an
-authoritative replacement for `RuleDescriptor::requires`.
-
-### Experiment 1: UnEsm → Stage 2 (after UnAssignmentMerging)
-
-| Metric | Result |
-|--------|--------|
-| Unit test failures | **1** |
-| Snapshot regressions | 0 |
-| Fixture regressions | Not tested (unit failure) |
-
-**Failed test:** `webpack_default_getter_collapses_to_import` — UnWebpackInterop hasn't
-run yet at Stage 2, so the `() => mod && mod.__esModule ? mod.default : mod` getter
-survives and UnEsm can't collapse it.
-
-**Conclusion:** UnEsm's core `require()` → `import` conversion works fine at Stage 2.
-The only blocker is the webpack interop getter pattern, which needs UnWebpackInterop
-(first pass) to have cleaned it up first.
-
-**Prerequisite status updates:**
-- UnInteropRequireDefault → UnEsm: `confirmed` (passes)
-- UnInteropRequireWildcard → UnEsm: `confirmed` (passes)
-- UnAssignmentMerging → UnEsm: `confirmed` (passes)
-- UnWebpackInterop → UnEsm: `confirmed` (needed for getter collapsing)
-
----
-
-### Experiment 2: Disable both UnWebpackInterop passes
-
-| Metric | Result |
-|--------|--------|
-| Unit test failures | **1** |
-| Snapshot regressions | **0** |
-| Fixture regressions | Not tested |
-
-**Failed test:** Same `webpack_default_getter_collapses_to_import`.
-
-**Key finding:** Zero snapshot regressions means real-world bundles in the unit test
-corpus don't exercise the getter pattern in a way that UnEsm alone can't handle.
-Other rules (SmartInline, UnIife) compensate.
-
-**Conclusion:** UnWebpackInterop is a **soft prerequisite** for UnEsm. UnEsm handles
-plain `require()` conversion independently. The dependency is narrow: only the
-getter-wrapped default-access pattern requires pre-processing.
-
-**Prerequisite status update:**
-- UnWebpackInterop → UnEsm: `confirmed soft` (needed only for getter collapsing)
-
----
-
-### Experiment 3: TS async helper cleanup + UnAsyncAwait → Stage 2
-
-| Metric | Result |
-|--------|--------|
-| Unit test failures | **2** |
-| Snapshot regressions | 1 (cosmetic) |
-| Fixture regressions | Not tested |
-
-**Failed tests:**
-1. `webpack_default_getter_collapses_to_import` — early TS async helper cleanup stripped/rewrote the
-   `__esModule` pattern before UnEsm can use it for getter detection.
-2. `webpack4_unpack_snapshots` — cosmetic JSX diff (`{<U/>}` → `<U/>`), actually an
-   improvement.
-
-**Conclusion:** TS async helper cleanup cannot move before UnEsm. UnEsm needs to see the
-`__esModule` helper patterns intact before consumed inline TS async helper declarations are removed. The earliest safe
-position for async helper cleanup is after UnEsm.
-
-**Prerequisite status update:**
-- UnEsm → UnAsyncAwait cleanup: `confirmed` (consumed inline TS async helper cleanup must run after UnEsm)
-
----
-
-### Experiment 4: UnCurlyBraces → end of Stage 1
-
-| Metric | Result |
-|--------|--------|
-| Unit test failures | **2** |
-| Snapshot regressions | 1 (cosmetic improvement) |
-| Fixture regressions | Not tested |
-
-**Failed tests:**
-1. `webpack_default_getter_collapses_to_import` — UnCurlyBraces wraps arrow expression
-   bodies into block bodies (`() => expr` → `() => { return expr; }`), making the
-   interop getter pattern unrecognizable to UnWebpackInterop's `match_interop_cond`.
-2. `webpack4_unpack_snapshots` — same cosmetic JSX improvement.
-
-**Conclusion:** UnCurlyBraces at Stage 1 is **conditionally safe** — it would work if
-`match_interop_cond` and `match_interop_block` in `un_webpack_interop.rs` were updated
-to also handle the single-return-of-ternary block form:
-`() => { return cond ? x.default : x; }`.
-
-**Prerequisite status update:**
-- UnCurlyBraces position: `confirmed fragile` — current position works because
-  downstream pattern matchers assume expression-body arrows for interop getters.
-
----
-
-### Experiment 5: UnEsm → end of Stage 4 (after UnEnum)
-
-| Metric | Result |
-|--------|--------|
-| Unit test failures | **0** |
-| Snapshot regressions | 0 |
-| Fixture regressions | **YES — 1 file, clear regression** |
-
-**Unit tests:** All pass, including `webpack_default_getter_collapses_to_import`
-(because UnWebpackInterop first pass has already run).
-
-**Fixture regression:** `react-app/webpack4/decompiled/entry.js` (93 insertions, 18 deletions):
-- UnWebpackInterop2 (second pass) hadn't run yet → an interop wrapper
-  `const o = () => { if (n && n.__esModule) { return n.default; } return n; }` leaked
-  into the output.
-- This broke UnJsx — `o().createElement(...)` was not recognized as React element creation.
-- SmartRename produced worse names (`A1` → `a`, `V` → `v`).
-
-**Superseded conclusion:** this experiment proved that interop wrappers exposed
-after async restoration can materially affect output quality. It no longer proves
-that UnWebpackInterop2 must precede UnEsm: the current registry places UnEsm
-before UnAsyncAwait/UnWebpackInterop2 and relies on later interop cleanup passes
-for shapes exposed after import conversion.
-
-**Prerequisite status updates:**
-- UnAsyncAwait → UnWebpackInterop2: `confirmed` (late interop cleanup still depends
-  on async restoration)
-- UnWebpackInterop2 → UnEsm: `historical / superseded` (fixture regression under
-  the then-current pipeline, but not a current registry edge)
-
----
-
-### Summary Table
-
-| Experiment | Unit Failures | Fixture Regressions | Verdict |
-|-----------|--------------|--------------------|---------| 
-| UnEsm → Stage 2 | 1 | — | **Blocked** by UnWebpackInterop |
-| Disable UnWebpackInterop | 1 | — | **Soft** prerequisite for UnEsm |
-| TS async helper cleanup → Stage 2 | 2 | — | **Blocked** — must stay after UnEsm |
-| UnCurlyBraces → Stage 1 | 2 | — | **Conditionally safe** (needs pattern matcher fix) |
-| UnEsm → Stage 4 | 0 | **1 file** | **Historical regression**; superseded by current late interop cleanup |
-
-### Confirmed Dependency Chain for UnEsm
+**Authority split:** the registry in `crates/core/src/rules/pipeline.rs`
+(`RULE_DESCRIPTORS`, `RuleDescriptor::requires`, per-rule enable gates) owns
+*what* — the full rule list, execution order, stage membership, repeat passes,
+and enforced ordering edges. This document owns *why* — safety rationale,
+level-gating reasons, fragile orderings, and experiment results that code
+cannot express. When the two disagree about order or edges, the registry is
+right. Rules with nothing non-obvious to say have no entry here; absence of an
+entry means "no known constraints beyond the registry", not "undocumented".
+
+See also: [Fact system](fact-system.md) for the cross-module barrier and the
+fact-aware rules that shipped, [Rewrite assumptions](rewrite-assumptions.md)
+for the named semantic assumptions levels may rely on,
+[Debugging](debugging.md) for tracing which rule caused a regression.
+
+## Vocabulary
+
+- **Prerequisite status:** `suspected` (inferred from code reading),
+  `confirmed` (validated by test/experiment — see the experiment log below),
+  plus qualifiers `soft` (only a narrow subpattern depends on it) and
+  `fragile` (current position works only because downstream matchers assume a
+  specific shape).
+- **Safety** (internal rule metadata): `safe` (semantics-preserving),
+  `heuristic` (high-confidence pattern match), `aggressive` (may change
+  semantics). This describes how risky the rewrite logic is in principle —
+  it is *not* the user-facing level.
+- **User-facing levels** (`RewriteLevel` / `DecompileOptions.level`):
+  `minimal` prefers direct, local, high-confidence rewrites; `standard`
+  (default) recovers common generated-source patterns on strong local
+  evidence; `aggressive` enables speculative recovery. Whole-rule gates are
+  visible in the registry (each descriptor's enable gate); subpattern gates
+  live inside the rule and are documented in the notes below. `minimal` aims
+  for runtime-equivalent output within documented dynamic-scope limits;
+  `standard`/`aggressive` are readability policies that may rely on named
+  assumptions from [rewrite-assumptions.md](rewrite-assumptions.md).
+
+## Confirmed dependency chains
+
+Edges below are `confirmed` by experiment or by a dedicated regression test.
+The registry enforces the executable subset via `RuleDescriptor::requires`.
 
 ```
 UnBracketNotation ──→ UnInteropRequireDefault ──┐
 UnIndirectCall ─────→ UnInteropRequireWildcard ──┤
 UnAssignmentMerging ────────────────────────────┤
+UnVariableMergingDeclsOnly ─────────────────────┤
 UnEsmoduleFlag ─────────────────────────────────┤
-UnWebpackInterop (pass 1) ──────────────────────┤
+UnWebpackInterop (pass 1, soft) ────────────────┤
                                                  ↓
                                               UnEsm
+                                                 ↓
+              consumed inline TS async helper cleanup (UnAsyncAwait)
+                                                 ↓
+                                       UnWebpackInterop2
 ```
 
-All arrows are `confirmed` current prerequisites. UnEsm's current position is the
-Helpers-stage module-system barrier, before UnAsyncAwait and UnWebpackInterop2.
+Other hard chains (consumer directly matches the producer's output shape):
 
-### Superseded Historical Dependency
+```
+UnClassCallCheck ───┬→ UnEs6Class ──→ UnClassFields
+UnPossibleConstructorReturn ↗
+ArgRest ────────────→ UnRestArrayCopy
+ArrowFunction ──────→ ArrowReturn
+UnWebpackDefineGetters → UnWebpackObjectGetters
+SmartInline ────────→ UnIife2
+UnNullishCoalescing ┬→ UnConditionals
+UnOptionalChaining ─┘
+UnToConsumableArray ┐
+UnArgumentSpread ───┼→ UnSpreadArrayLiteral
+UnArrayConcatSpread ┘
+FlipComparisons ──┐
+RemoveVoid ───────┼→ UnParameters
+UnConditionals ───┤
+UnCurlyBraces ────┘
+VarDeclToLetConst ──┬→ UnPrototypeClass
+ObjMethodShorthand ─┘
+```
 
-The 2026-04 experiments recorded **UnWebpackInterop2 → UnEsm** as a hard edge.
-That edge is not present in the current registry. The underlying output-quality
-risk remains real: async/regenerator recovery can expose additional interop
-getter shapes, and those shapes must still be cleaned by late interop passes
-before final output quality checks.
+| Edge | Status | Evidence |
+|------|--------|----------|
+| UnInteropRequireDefault → UnEsm | confirmed | Exp 1 |
+| UnInteropRequireWildcard → UnEsm | confirmed | Exp 1 |
+| UnAssignmentMerging → UnEsm | confirmed | Exp 1 |
+| UnEsmoduleFlag → UnEsm | confirmed | Exp 1 |
+| UnWebpackInterop (pass 1) → UnEsm | confirmed **soft** | Exp 2: only the getter-wrapped default-access pattern needs it |
+| UnEsm → TS async helper cleanup (UnAsyncAwait) | confirmed | Exp 3 |
+| UnAsyncAwait → UnWebpackInterop2 | confirmed | Exp 5: async recovery exposes interop wrappers |
+| LocalHelperContext → UnAsyncAwait | confirmed | consumes detected helper identities directly |
+| UnCurlyBraces position | confirmed **fragile** | Exp 4: interop getter matchers assume expression-body arrows |
+| UnWebpackInterop2 → UnEsm | historical / **superseded** | Exp 5 predates the current registry; UnEsm now runs first with late interop cleanup after |
 
-### Prerequisite Status Update Summary
+## Rule notes
 
-| Prerequisite | Status | Evidence |
-|-------------|--------|---------|
-| UnInteropRequireDefault → UnEsm | `confirmed` | Exp 1: passes without other Stage 3-5 rules |
-| UnInteropRequireWildcard → UnEsm | `confirmed` | Exp 1: passes |
-| UnAssignmentMerging → UnEsm | `confirmed` | Exp 1: passes |
-| UnEsmoduleFlag → UnEsm | `confirmed` | Exp 1: passes |
-| UnWebpackInterop → UnEsm | `confirmed soft` | Exp 2: only getter pattern affected |
-| UnWebpackInterop2 → UnEsm | `historical / superseded` | Exp 5 fixture regression predates the current registry edge set |
-| UnAsyncAwait → UnWebpackInterop2 | `confirmed` | Exp 5: interop wrappers can leak after async restoration without late cleanup |
-| LocalHelperContext → UnAsyncAwait | `confirmed` | UnAsyncAwait consumes detected TS async helper identities directly |
-| UnEsm → UnAsyncAwait cleanup | `confirmed` | Exp 3: consumed inline TS async helper cleanup must run after UnEsm |
-| UnCurlyBraces ↛ Stage 1 | `confirmed fragile` | Exp 4: breaks interop getter pattern match |
+Grouped by pipeline area. Only rules with non-obvious constraints, safety
+rationale, or level gating appear.
 
-### Actionable Improvements Identified
+### Syntax normalization
 
-1. **Fix UnWebpackInterop pattern matcher** to handle block-body arrows
-   (`() => { return cond ? x.default : x; }`). This would unblock:
-   - Moving UnCurlyBraces to Stage 1 (like the JS version)
-   - Potentially simplifying the interop getter detection overall
+- **SimplifySequence** — runs first; nearly everything downstream assumes
+  flat statement lists. Drops provably side-effect-free bare expressions
+  (guarded by `unresolved_mark` for call purity). Test pitfall: a bare
+  literal statement (`65536;`) is dropped as dead — use `const x = 65536;`.
+- **FlipComparisons** — normalizes literals to the right-hand side.
+  UnParameters pattern-matches `arg === undefined` with the literal on the
+  right.
+- **RemoveVoid** — conditional execution: `should_run()` bails if the module
+  declares a local `undefined` binding. UnParameters, UnOptionalChaining, and
+  UnUndefinedInit all match the `undefined` identifier, not `void 0`.
+- **UnIndirectCall** — level-gated by shape: `minimal` removes only
+  indirect-call wrappers around direct identifier callees (`(0, fn)()` →
+  `fn()`), excluding `eval` and calls inside `with`. Member callees and
+  `Object(fn)()` wrappers require `standard` because
+  `(0, obj.method)()` → `obj.method()` changes the receiver `this`. Enables
+  interop helper detection downstream (`(0, x.default)()`).
+- **UnBracketNotation** — critical early normalizer: the interop rules,
+  UnObjectRest, UnWebpackInterop, and UnEsm all pattern-match dot-form
+  `.default` / `.__esModule`.
 
-2. **The `webpack_default_getter_collapses_to_import` test** is a sentinel —
-   it caught real issues in 4 of 5 experiments. It should be documented as a
-   critical regression test for pipeline ordering.
+### Transpiler helper unwrapping
 
-3. **Fact barrier position:** The current dependency chain places the read barrier
-   after UnEsm, matching the two-phase model in `architecture.md` and
-   `fact-system.md`. Observation *emission* (write-only) could start before that
-   if helper-unwrapping rules later emit provenance observations without needing
-   merged facts.
+- **UnInteropRequireDefault / UnInteropRequireWildcard** — need
+  UnIndirectCall and UnBracketNotation to have normalized call and member
+  shapes; both are confirmed prerequisites of UnEsm.
+- **UnObjectSpread** — safe because it only transforms when the first
+  argument is `{}`. The esbuild `__spreadValues`/`__spreadProps` variant is
+  stateful and deliberately rule-local — see
+  [helper-detection.md](helper-detection.md).
+- **UnObjectRest** — heuristic: a backward scan absorbs property accesses
+  into the rest pattern; needs flat statements and dot notation.
+- **UnClassCallCheck / UnPossibleConstructorReturn** — remove guard calls and
+  return indirection so UnEs6Class sees clean constructor bodies.
 
----
+### Structural restoration
 
-## Open Questions (Remaining)
+- **UnCurlyBraces** — position is confirmed *fragile* (Exp 4): moving it to
+  Stage 1 wraps arrow expression bodies into blocks
+  (`() => expr` → `() => { return expr; }`), which the interop getter
+  matchers in `un_webpack_interop.rs` do not recognize. The JS-era wakaru ran
+  it first; the Rust pipeline cannot until those matchers handle the
+  block-body form. Produces the block shapes UnConditionals and UnParameters
+  expect.
+- **UnTypeConstructor** — whole rule gated to `standard+`: `+x` → `Number(x)`
+  is semantically equivalent but changes readability intent.
+- **UnEsmoduleFlag** — removes `__esModule` flag statements; confirmed UnEsm
+  prerequisite (export classification noise).
+- **UnAssignmentMerging** — splits `a = b = val`; confirmed UnEsm
+  prerequisite: `exports.foo = exports.bar = val` must be split before named
+  export detection. Also feeds UnVariableMerging.
+- **UnVariableMergingDeclsOnly vs UnVariableMerging** — the decls-only subset
+  runs early as a confirmed UnEsm prerequisite (one declarator per statement
+  so CJS imports classify); the full pass stays later because its for-loop
+  initializer extraction interacts with var→let/const conversion and loop
+  scoping.
+- **UnArgumentSpread** — `standard+`. Pattern subtleties:
+  `fn.apply(null, args)` and `obj.fn.apply(obj, args)` are safe;
+  `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to
+  `fn(...args)` is not semantics-preserving without cross-module proof that
+  the member is a plain imported function (candidate fact reader).
+- **UnArrayConcatSpread** — `standard+`: `[a].concat(b)` → `[a, ...b]` is not
+  strictly equivalent for scalars, strings, patched `concat`, or
+  `Symbol.isConcatSpreadable`; the useful generated shape is
+  `[fixed].concat(args)`.
+- **UnNullishCoalescing** — pattern-level gating: strict null checks
+  (`x === null || x === undefined`) run at all levels; loose
+  `x != null ? x : y` requires `standard+` (assumes `no_document_all`);
+  temp-based forms run at `minimal` when binding analysis proves the temp is
+  isolated; non-identifier bases (member/computed) require `aggressive`
+  because collapsing three reads to one changes getter/proxy semantics
+  (assumes `pure_getters`). Must run before UnConditionals, which would
+  otherwise consume eligible ternaries.
+- **UnOptionalChaining** — needs `undefined` identifiers (RemoveVoid).
+  Gating mirrors UnNullishCoalescing: loose null-check recovery at
+  `standard` when evaluation count is preserved; Babel loose
+  repeated-property call forms
+  (`_obj.method == null ? undefined : _obj.method(arg)` → `obj?.method?.(arg)`)
+  require `aggressive` (assumes stable property reads). Shares
+  structural-equality helpers with UnNullishCoalescing. Must run before
+  UnConditionals.
 
-1. **Can the interop getter pattern matcher be made block-body-aware?** This is the
-   single change that would unlock the most pipeline flexibility. Specifically,
-   `match_interop_cond` in `un_webpack_interop.rs` needs to handle:
-   `() => { return mod && mod.__esModule ? mod.default : mod; }`
+### Bundler artifacts and module system
 
-2. **Where is the optimal fact barrier?** Current design places the read barrier
-   after UnEsm. Write-only observation emission could start earlier, before the
-   merge/read phase, if future fact producers need it.
+- **UnWebpackInterop** — three passes, each for a different exposure point:
+  pass 1 before UnEsm (confirmed-soft prerequisite — only the getter-wrapped
+  default-access pattern needs pre-cleaning, Exp 2); pass 2 after
+  UnAsyncAwait (async/regenerator recovery exposes interop getter shapes,
+  Exp 5); pass 3 after UnEsm (catches `require.n(importBinding)` shapes
+  exposed by import conversion).
+- **UnEsm** — the module-system barrier. `standard+`. Its confirmed
+  prerequisite chain is diagrammed above; multi-module unpack extracts
+  cross-module facts from its output (see
+  [fact-system.md](fact-system.md)). Historical experiments that placed it
+  elsewhere are superseded — treat the registry as authoritative.
+- **UnIife** — two passes; the second catches IIFEs created by SmartInline.
+  Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
+  param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on
+  arrows runs at all levels.
 
-3. **Should SmartInline and SmartRename be experimentally validated?** They're
-   late-pipeline rules with complex interactions. Validating their prerequisites
-   would complete the dependency map for the final stages.
+### Complex pattern restoration
+
+- **UnConditionals** — must run after `??`/`?.` recovery. Produces the
+  if-statement form UnParameters needs. Only converts "action-like" branches
+  to statements; switch recovery is limited to strict equality over one
+  identifier with literal cases. The second pass is the final pipeline rule:
+  SmartInline, ArrowFunction/ArrowReturn, and UnReturn expose conditionals
+  the first pass could not see.
+- **UnParameters** — needs the shapes produced by FlipComparisons,
+  RemoveVoid, UnConditionals, and UnCurlyBraces. Pattern A
+  (`if (arg === undefined) arg = val`) runs at all levels; `arguments[i]`
+  reconstruction, object-alias defaults, and destructured-alias folding are
+  `standard+`. Pitfall: `stmts_reference_ident` matches by *emitted name*,
+  ignoring SyntaxContext — intentional (prevents invalid parameter lists
+  after rewriting) but can make folds bail when an alias was inlined to a
+  short parameter name.
+- **UnEnum** — needs the paired `var X; (function(X){...})(X || (X = {}))`
+  visible as adjacent flat statements (SimplifySequence).
+- **UnJsx** — detects pragma imports via `unresolved_mark`. Dynamic-tag alias
+  synthesis (creating `const Component = expr` for non-identifier tags)
+  requires `aggressive`, or `standard` with strong JSX shape evidence.
+- **UnEs6Class** — needs UnClassCallCheck, UnPossibleConstructorReturn, and
+  UnIife (class IIFE wrappers). Static *method* assignment recovery is part
+  of class restoration; static *data field* recovery
+  (`Ctor.x = value` → `static x = value`) requires `standard+` and is
+  skipped for derived classes — inherited static setters make assignment
+  observably different from field definition.
+- **UnClassFields** — needs UnEs6Class. Babel constructor field recovery
+  (`_defineProperty(this, "x", value)` → `x = value`) is `standard+`, base
+  classes only, and skips initializers that reference constructor params or
+  `arguments`. Direct constructor assignments are preserved unless another
+  pattern proves they came from class fields.
+- **UnAsyncAwait** — consumes `__awaiter`/`__generator` identities detected
+  by `LocalHelperContext` directly (no alias renaming step). Its consumed
+  inline TS helper cleanup must run after UnEsm (Exp 3: early cleanup strips
+  `__esModule` patterns UnEsm needs for getter detection). Recovery exposes
+  new shapes for the late UnObjectRest, UnArgumentSpread, and
+  UnWebpackInterop passes.
+
+### Modernization
+
+- **VarDeclToLetConst** — late by design: every rule that introduces new
+  variables must run first.
+- **ArgRest → UnRestArrayCopy** — hard chain: UnRestArrayCopy detects the
+  Babel copy loop for rest params that ArgRest just created. ArgRest is
+  `standard+`.
+- **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
+  even though it checks known blockers (`this`, `arguments`, named function
+  expressions, bindings later used with `new`): arrows lack `prototype`,
+  cannot be constructed, and differ for `new.target`, so broad conversion is
+  not a `minimal`-safe transform.
+- **UnForOf** — `standard+`. Helper recovery is conservative: it requires the
+  full emitted cleanup wrapper before removing iterator/error temporaries.
+- **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst.
+- **UnPrototypeClass** — needs `const`/`let` declarations (VarDeclToLetConst)
+  and method shorthand (ObjMethodShorthand) to detect class candidates.
+
+### Cleanup and renaming
+
+- **UnWebpackDefineGetters → UnWebpackObjectGetters** — hard chain: the
+  second converts the `Object.defineProperties` calls the first produces
+  into getter syntax.
+- **UnImportRename / UnExportRename** — need UnEsm's import/export
+  declarations; both rename via `BindingRenamer`.
+- **SmartInline** — needs stable import/export bindings, so it runs after
+  the rename rules. It removes alias declarations (`var h = p`) — any rule
+  that needs aliases intact must run earlier. It can create new IIFEs, so
+  UnIife2 must follow. Gating: temp-var inlining, useState tuple folding,
+  property-destructuring grouping, and builtin/global alias inlining
+  (`const E = TypeError` → inline) are `standard` (assumes
+  `stable_builtins`); index-based destructuring grouping (`obj[0]`, `obj[1]`
+  → array destructuring) is `aggressive`.
+- **SmartRename** — after SmartInline (aliases removed, names stabilized).
+  Candidate consumer of source-map-recovered names.
+- **UnReturn** — removes tail `return undefined`; runs before the final
+  UnConditionals pass, which can simplify patterns this exposes.
+
+## Experiment log (2026-04-15, distilled)
+
+Five pipeline-reordering experiments, each run against the full unit suite;
+the most promising also ran against the real-world fixture corpus.
+**Current-state note:** the live registry now runs UnEsm before UnAsyncAwait
+and UnWebpackInterop2, with late interop cleanup after UnEsm. Read these as
+evidence about fragile shapes, not as the current edge set.
+
+1. **UnEsm → Stage 2 (after UnAssignmentMerging):** 1 unit failure
+   (`webpack_default_getter_collapses_to_import`) — the webpack interop
+   getter survives without UnWebpackInterop pass 1. Core `require()` →
+   `import` conversion itself worked. Confirmed the interop/assignment
+   edges in the table above.
+2. **Disable both UnWebpackInterop passes:** same single failure, zero
+   snapshot regressions — the dependency is narrow (getter-wrapped default
+   access only), hence *confirmed soft*.
+3. **TS async helper cleanup → Stage 2:** early cleanup stripped
+   `__esModule` patterns before UnEsm could use them. Cleanup must stay
+   after UnEsm.
+4. **UnCurlyBraces → end of Stage 1:** wrapping arrow bodies into blocks
+   made interop getters unrecognizable to `match_interop_cond`. Would be
+   safe if the matchers in `un_webpack_interop.rs` handled
+   `() => { return cond ? x.default : x; }` — the single change that would
+   unlock the most pipeline flexibility.
+5. **UnEsm → end of Stage 4:** all unit tests passed but one fixture file
+   regressed: an interop wrapper leaked (UnWebpackInterop2 had not run),
+   which broke UnJsx detection and degraded SmartRename output.
+   **Superseded:** it proved interop wrappers exposed after async
+   restoration materially affect output quality — not that UnWebpackInterop2
+   must precede UnEsm. The current registry handles this with late interop
+   passes.
+
+**Sentinel test:** `webpack_default_getter_collapses_to_import` caught real
+issues in 4 of 5 experiments. Treat it as the canary for pipeline-ordering
+changes.
+
+## Open questions and ideas
+
+1. **Block-body-aware interop matching** — make `match_interop_cond` in
+   `un_webpack_interop.rs` handle
+   `() => { return mod && mod.__esModule ? mod.default : mod; }`. Unlocks
+   moving UnCurlyBraces to Stage 1 and may simplify getter detection.
+2. **Cross-module receiver proof for UnArgumentSpread** — a fact proving
+   "binding X is a direct import, not a namespace" would make
+   `obj.fn.apply(null, args)` → `fn(...args)` safe to recover.
+3. **Source-map names for SmartRename** — feed recovered original names into
+   rename decisions.
+4. **SmartInline / SmartRename validation** — the late pipeline has complex
+   interactions that have not had the same experimental treatment as the
+   UnEsm neighborhood.
