@@ -98,12 +98,15 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
 1. Run the focused rule tests you touched
 2. Run the full core suite (covers all pipeline + unpack snapshot tests):
    - `cargo nextest run -p wakaru-core`
-3. Run formatting and lint checks:
+3. If you changed a rule that a reproduction matrix covers (see `scripts/repro/`), verify the recovery-rate baseline:
+   - `node scripts/repro/collect-stats.mjs --check`
+   - If rates deliberately moved, regenerate without `--check` and commit the `stats.json` diff with the change
+4. Run formatting and lint checks:
    - `cargo fmt --check`
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
    - Use the relevant package or `cargo clippy --workspace --all-targets -- -D warnings` when touching other crates or shared workspace code
-4. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
-5. `git status --short` — no stale `.snap.new` files or unrelated changes
+5. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
+6. `git status --short` — no stale `.snap.new` files or unrelated changes
 
 ## Important Rules
 

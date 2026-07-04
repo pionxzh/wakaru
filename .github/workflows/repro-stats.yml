@@ -1,0 +1,41 @@
+name: Repro Stats
+
+# Verifies that scripts/repro/stats.json matches a fresh run of every
+# reproduction matrix. Gated on scripts/repro/** so routine rule changes do
+# not pay the matrix cost in CI; after a rule change that moves recovery
+# rates, regenerate stats.json locally per the Definition of Done.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/repro/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/repro/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Build wakaru CLI
+        run: cargo build -p wakaru-cli
+      - name: Verify stats.json freshness
+        run: node scripts/repro/collect-stats.mjs --check
+        env:
+          WAKARU: ${{ github.workspace }}/target/debug/wakaru

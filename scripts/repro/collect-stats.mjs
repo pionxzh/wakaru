@@ -97,13 +97,20 @@ const json = JSON.stringify(stats, null, 2) + "\n";
 if (checkMode) {
   let existing;
   try {
-    existing = readFileSync(statsPath, "utf8");
+    existing = JSON.parse(readFileSync(statsPath, "utf8"));
   } catch {
-    console.error("\nstats.json does not exist. Run without --check to create it.");
+    console.error("\nstats.json is missing or invalid. Run without --check to create it.");
     process.exit(1);
   }
-  if (existing !== json) {
+  // Compare only the measured numbers. The commit/date fields are
+  // provenance: they change on every commit and every day, so including
+  // them would make --check permanently stale anywhere but the machine
+  // that just regenerated the file (e.g. always-failing in CI).
+  const measured = (s) => JSON.stringify({ aggregate: s.aggregate, matrices: s.matrices }, null, 2);
+  if (measured(existing) !== measured(stats)) {
     console.error("\nstats.json is stale. Run `node scripts/repro/collect-stats.mjs` to update.");
+    console.error(`  recorded:  ${existing.aggregate?.yes}/${existing.aggregate?.total} (${existing.aggregate?.pct}%)`);
+    console.error(`  measured:  ${yes}/${total} (${pct}%)`);
     process.exit(1);
   }
   console.log(`\nstats.json is up to date: ${yes}/${total} (${pct}%)`);

@@ -1,10 +1,10 @@
 {
-  "commit": "2fa6b97a",
-  "date": "2026-06-21",
+  "commit": "4d573cc1",
+  "date": "2026-07-04",
   "aggregate": {
-    "yes": 1430,
-    "total": 1529,
-    "pct": 93.5
+    "yes": 1510,
+    "total": 1545,
+    "pct": 97.7
   },
   "matrices": [
     {
@@ -17,11 +17,11 @@
     },
     {
       "name": "async-await",
-      "yes": 330,
-      "no": 64,
+      "yes": 394,
+      "no": 0,
       "error": 24,
       "total": 394,
-      "pct": 83.8
+      "pct": 100
     },
     {
       "name": "conditional-switch",
@@ -57,11 +57,11 @@
     },
     {
       "name": "optional-nullish",
-      "yes": 324,
+      "yes": 340,
       "no": 10,
       "error": 0,
-      "total": 334,
-      "pct": 97
+      "total": 350,
+      "pct": 97.1
     },
     {
       "name": "parameters",

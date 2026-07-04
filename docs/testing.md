@@ -48,7 +48,19 @@ focused rule regression test as well.
    cargo nextest run -p wakaru-core
    ```
 
-3. Formatting and linting:
+3. Recovery-rate baseline, when you changed a rule that a reproduction matrix
+   covers (see "Reproduction Matrices" below):
+
+   ```bash
+   node scripts/repro/collect-stats.mjs --check
+   ```
+
+   If rates deliberately moved, regenerate without `--check` and commit the
+   `stats.json` diff with the change. CI re-verifies this only when
+   `scripts/repro/**` itself changes (`.github/workflows/repro-stats.yml`),
+   so rule changes rely on this local step.
+
+4. Formatting and linting:
 
    ```bash
    cargo fmt --check
@@ -62,7 +74,7 @@ focused rule regression test as well.
    cargo clippy --workspace --all-targets -- -D warnings
    ```
 
-4. Build the release-profile CLI only when you need a standalone binary, such
+5. Build the release-profile CLI only when you need a standalone binary, such
    as before running reproduction matrices with `WAKARU=target/dev-release/wakaru.exe`
    or when validating CLI/build behavior directly:
 
@@ -73,7 +85,7 @@ focused rule regression test as well.
    The fixture runner below builds this profile itself, so do not run this as
    a separate required step only to prepare fixtures.
 
-5. Fixtures, when the change can affect decompile output, unpacking, bundler
+6. Fixtures, when the change can affect decompile output, unpacking, bundler
    behavior, rule ordering, helper detection, or CLI behavior. Run this only
    if you have the sibling `wakaru-fixtures` repository checked out. Run it from
    your worktree — it auto-detects and builds this checkout, decompiles every
@@ -88,7 +100,7 @@ focused rule regression test as well.
    To accept a deliberate, reviewed output improvement into the reference, run
    `../wakaru-fixtures/run.sh --update` and commit the `outputs/` change.
 
-6. Final cleanliness checks:
+7. Final cleanliness checks:
 
    ```bash
    git diff --check
