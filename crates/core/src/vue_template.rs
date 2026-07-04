@@ -1033,6 +1033,46 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_string_cannot_close_mustache() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("p").with_children(vec![
+                VueNode::Interpolation(r#"msg + "}}note""#.into()),
+            ]))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <p>{{ msg + \"}\\u007dnote\" }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn raw_static_html_escapes_mixed_case_template_and_mustache() {
+        let template = VueTemplate {
+            children: vec![VueNode::RawHtml("</Template><span>{{ raw }}</span>".into())],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  &lt;/Template><span>&#123;&#123; raw }}</span>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn script_strings_cannot_close_script_block() {
+        let sfc = VueSfc {
+            script: Some(r#"const html = "</script><div>";"#.into()),
+            script_setup: None,
+            template: VueTemplate::default(),
+        };
+
+        assert_eq!(
+            sfc.print(),
+            "<script>\nconst html = \"<\\/script><div>\";\n</script>\n\n<template>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn escapes_text_attrs_and_comments() {
         let template = VueTemplate {
             children: vec![

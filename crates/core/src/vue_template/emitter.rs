@@ -12,8 +12,9 @@ impl VueSfc {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
+            let script = escape_script_block(script);
             out.push_str("<script>\n");
-            out.push_str(script);
+            out.push_str(&script);
             if !script.ends_with('\n') {
                 out.push('\n');
             }
@@ -25,8 +26,9 @@ impl VueSfc {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
+            let script_setup = escape_script_block(script_setup);
             out.push_str("<script setup>\n");
-            out.push_str(script_setup);
+            out.push_str(&script_setup);
             if !script_setup.ends_with('\n') {
                 out.push('\n');
             }
@@ -84,7 +86,8 @@ impl TemplateEmitter {
             VueNode::Interpolation(expr) => {
                 self.indent(depth);
                 self.out.push_str("{{ ");
-                self.out.push_str(expr.as_str().trim());
+                self.out
+                    .push_str(&escape_interpolation_expr(expr.as_str().trim()));
                 self.out.push_str(" }}\n");
             }
             VueNode::Comment(comment) => {
@@ -471,12 +474,14 @@ impl TemplateEmitter {
                 VueNode::Text(text) => self.out.push_str(&escape_text(text)),
                 VueNode::Interpolation(expr) => {
                     self.out.push_str("{{ ");
-                    self.out.push_str(expr.as_str().trim());
+                    self.out
+                        .push_str(&escape_interpolation_expr(expr.as_str().trim()));
                     self.out.push_str(" }}");
                 }
                 VueNode::RawExpr(expr) => {
                     self.out.push_str("{{ ");
-                    self.out.push_str(expr.as_str().trim());
+                    self.out
+                        .push_str(&escape_interpolation_expr(expr.as_str().trim()));
                     self.out.push_str(" }}");
                 }
                 VueNode::Element(_)
@@ -521,9 +526,8 @@ fn escape_text(value: &str) -> String {
 }
 
 fn escape_raw_html(value: &str) -> String {
-    value
-        .replace("</template", "&lt;/template")
-        .replace("</TEMPLATE", "&lt;/TEMPLATE")
+    let value = value.replace("{{", "&#123;&#123;");
+    escape_closing_tag(&value, "template", "&lt;/")
 }
 
 fn escape_attr(value: &str) -> String {
@@ -551,6 +555,300 @@ fn preferred_expr_attr_quote(value: &str) -> char {
 
 fn escape_comment(value: &str) -> String {
     value.replace("--", "- -")
+}
+
+fn escape_script_block(value: &str) -> String {
+    escape_closing_tag(value, "script", "<\\/")
+}
+
+fn escape_closing_tag(value: &str, tag: &str, replacement_prefix: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while cursor < value.len() {
+        if let Some(end) = closing_tag_match_end(value, cursor, tag) {
+            output.push_str(replacement_prefix);
+            output.push_str(&value[cursor + 2..end]);
+            cursor = end;
+            continue;
+        }
+        let Some(ch) = value[cursor..].chars().next() else {
+            break;
+        };
+        output.push(ch);
+        cursor += ch.len_utf8();
+    }
+    output
+}
+
+fn closing_tag_match_end(value: &str, start: usize, tag: &str) -> Option<usize> {
+    if !value[start..].starts_with("</") {
+        return None;
+    }
+    let tag_start = start + 2;
+    let tag_end = tag_start + tag.len();
+    value
+        .get(tag_start..tag_end)
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(tag))
+        .then_some(tag_end)
+}
+
+#[derive(Clone, Copy)]
+enum InterpolationState {
+    Normal { template_depth: Option<usize> },
+    Single { escaped: bool },
+    Double { escaped: bool },
+    Template { escaped: bool },
+    Regex { escaped: bool, char_class: bool },
+    LineComment,
+    BlockComment,
+}
+
+fn escape_interpolation_expr(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let mut states = vec![InterpolationState::Normal {
+        template_depth: None,
+    }];
+
+    while cursor < value.len() {
+        if value[cursor..].starts_with("}}") {
+            if let Some(replacement) = interpolation_delimiter_replacement(*states.last().unwrap())
+            {
+                output.push_str(replacement);
+                cursor += 2;
+                continue;
+            }
+        }
+
+        let Some(ch) = value[cursor..].chars().next() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+        let next = cursor + ch_len;
+        let state = *states.last().unwrap();
+
+        match state {
+            InterpolationState::Normal { template_depth } => {
+                match ch {
+                    '\'' => states.push(InterpolationState::Single { escaped: false }),
+                    '"' => states.push(InterpolationState::Double { escaped: false }),
+                    '`' => states.push(InterpolationState::Template { escaped: false }),
+                    '/' if value[next..].starts_with('/') => {
+                        output.push_str("//");
+                        cursor = next + 1;
+                        states.push(InterpolationState::LineComment);
+                        continue;
+                    }
+                    '/' if value[next..].starts_with('*') => {
+                        output.push_str("/*");
+                        cursor = next + 1;
+                        states.push(InterpolationState::BlockComment);
+                        continue;
+                    }
+                    '/' if slash_starts_regex(value, cursor) => {
+                        states.push(InterpolationState::Regex {
+                            escaped: false,
+                            char_class: false,
+                        });
+                    }
+                    '{' => {
+                        if let Some(depth) = template_depth {
+                            *states.last_mut().unwrap() = InterpolationState::Normal {
+                                template_depth: Some(depth + 1),
+                            };
+                        }
+                    }
+                    '}' => {
+                        if let Some(depth) = template_depth {
+                            if depth == 1 {
+                                output.push(ch);
+                                cursor = next;
+                                states.pop();
+                                continue;
+                            }
+                            *states.last_mut().unwrap() = InterpolationState::Normal {
+                                template_depth: Some(depth - 1),
+                            };
+                        }
+                    }
+                    _ => {}
+                }
+                output.push(ch);
+                cursor = next;
+            }
+            InterpolationState::Single { escaped } => {
+                output.push(ch);
+                cursor = next;
+                *states.last_mut().unwrap() = InterpolationState::Single {
+                    escaped: !escaped && ch == '\\',
+                };
+                if ch == '\'' && !escaped {
+                    states.pop();
+                }
+            }
+            InterpolationState::Double { escaped } => {
+                output.push(ch);
+                cursor = next;
+                *states.last_mut().unwrap() = InterpolationState::Double {
+                    escaped: !escaped && ch == '\\',
+                };
+                if ch == '"' && !escaped {
+                    states.pop();
+                }
+            }
+            InterpolationState::Template { escaped } => {
+                if ch == '$' && !escaped && value[next..].starts_with('{') {
+                    output.push_str("${");
+                    cursor = next + 1;
+                    *states.last_mut().unwrap() = InterpolationState::Template { escaped: false };
+                    states.push(InterpolationState::Normal {
+                        template_depth: Some(1),
+                    });
+                    continue;
+                }
+                output.push(ch);
+                cursor = next;
+                *states.last_mut().unwrap() = InterpolationState::Template {
+                    escaped: !escaped && ch == '\\',
+                };
+                if ch == '`' && !escaped {
+                    states.pop();
+                }
+            }
+            InterpolationState::Regex {
+                escaped,
+                char_class,
+            } => {
+                output.push(ch);
+                cursor = next;
+                if escaped {
+                    *states.last_mut().unwrap() = InterpolationState::Regex {
+                        escaped: false,
+                        char_class,
+                    };
+                    continue;
+                }
+                match ch {
+                    '\\' => {
+                        *states.last_mut().unwrap() = InterpolationState::Regex {
+                            escaped: true,
+                            char_class,
+                        };
+                    }
+                    '[' => {
+                        *states.last_mut().unwrap() = InterpolationState::Regex {
+                            escaped: false,
+                            char_class: true,
+                        };
+                    }
+                    ']' => {
+                        *states.last_mut().unwrap() = InterpolationState::Regex {
+                            escaped: false,
+                            char_class: false,
+                        };
+                    }
+                    '/' if !char_class => {
+                        states.pop();
+                    }
+                    _ => {}
+                }
+            }
+            InterpolationState::LineComment => {
+                output.push(ch);
+                cursor = next;
+                if matches!(ch, '\n' | '\r') {
+                    states.pop();
+                }
+            }
+            InterpolationState::BlockComment => {
+                if ch == '*' && value[next..].starts_with('/') {
+                    output.push_str("*/");
+                    cursor = next + 1;
+                    states.pop();
+                    continue;
+                }
+                output.push(ch);
+                cursor = next;
+            }
+        }
+    }
+
+    output
+}
+
+fn interpolation_delimiter_replacement(state: InterpolationState) -> Option<&'static str> {
+    match state {
+        InterpolationState::Single { .. }
+        | InterpolationState::Double { .. }
+        | InterpolationState::Template { .. } => Some(r#"}\u007d"#),
+        InterpolationState::Regex { .. } => Some(r#"}\}"#),
+        InterpolationState::LineComment | InterpolationState::BlockComment => Some("} }"),
+        InterpolationState::Normal { .. } => None,
+    }
+}
+
+fn slash_starts_regex(input: &str, slash: usize) -> bool {
+    let before = input[..slash].trim_end();
+    if before.is_empty() {
+        return true;
+    }
+    let Some(prev) = before.chars().next_back() else {
+        return true;
+    };
+    if matches!(
+        prev,
+        '(' | '['
+            | '{'
+            | '='
+            | ':'
+            | ','
+            | '!'
+            | '?'
+            | ';'
+            | '+'
+            | '-'
+            | '*'
+            | '/'
+            | '%'
+            | '&'
+            | '|'
+            | '^'
+            | '~'
+            | '<'
+            | '>'
+    ) {
+        return true;
+    }
+    previous_word(before).is_some_and(|word| {
+        matches!(
+            word,
+            "return"
+                | "throw"
+                | "case"
+                | "delete"
+                | "void"
+                | "typeof"
+                | "in"
+                | "instanceof"
+                | "new"
+                | "yield"
+                | "await"
+        )
+    })
+}
+
+fn previous_word(input: &str) -> Option<&str> {
+    let end = input.len();
+    let start = input[..end]
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    (start < end).then_some(&input[start..end])
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }
 
 fn leading_condition_directive(attrs: &[VueAttr]) -> Option<(usize, &VueDirective)> {
