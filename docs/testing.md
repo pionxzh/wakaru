@@ -100,7 +100,13 @@ focused rule regression test as well.
    To accept a deliberate, reviewed output improvement into the reference, run
    `../wakaru-fixtures/run.sh --update` and commit the `outputs/` change.
 
-7. Final cleanliness checks:
+7. Docs freshness: if your change makes any statement in `docs/` or
+   `AGENTS.md` false (a renamed flag, a moved file, a new rule ordering, a
+   changed workflow), fix the doc in the same commit. Agents and new
+   contributors trust the docs as reality — a wrong doc is worse than a
+   missing one.
+
+8. Final cleanliness checks:
 
    ```bash
    git diff --check

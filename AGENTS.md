@@ -118,7 +118,8 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
    - Use the relevant package or `cargo clippy --workspace --all-targets -- -D warnings` when touching other crates or shared workspace code
 5. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
-6. `git status --short` — no stale `.snap.new` files or unrelated changes
+6. If your change makes any statement in `docs/` (or this file) false, fix the doc in the same commit — agents trust the docs, so a wrong doc is worse than a missing one
+7. `git status --short` — no stale `.snap.new` files or unrelated changes
 
 ## Important Rules
 
