@@ -654,24 +654,202 @@ fn strip_outer_parens(input: &str) -> String {
 }
 
 fn strip_callee_wrappers(input: &str, callee: &str) -> String {
-    let pattern = format!("{callee}(");
+    if callee.is_empty() {
+        return input.to_string();
+    }
+
     let mut output = String::new();
     let mut cursor = 0;
 
-    while let Some(relative_start) = input[cursor..].find(&pattern) {
-        let start = cursor + relative_start;
+    while let Some(start) = find_callee_call(input, callee, cursor) {
         output.push_str(&input[cursor..start]);
-        let open_paren = start + pattern.len() - 1;
+        let open_paren = start + callee.len();
         let Some(close_paren) = matching_paren(input, open_paren) else {
             output.push_str(&input[start..]);
             return output;
         };
-        output.push_str(&input[open_paren + 1..close_paren]);
+        let inner = &input[open_paren + 1..close_paren];
+        if should_parenthesize_unwrapped_call(input, start, close_paren, inner) {
+            output.push('(');
+            output.push_str(inner.trim());
+            output.push(')');
+        } else {
+            output.push_str(inner);
+        }
         cursor = close_paren + 1;
     }
 
     output.push_str(&input[cursor..]);
     output
+}
+
+fn find_callee_call(input: &str, callee: &str, from: usize) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+
+    for (relative, ch) in input[from..].char_indices() {
+        let index = from + relative;
+
+        if line_comment {
+            if ch == '\n' || ch == '\r' {
+                line_comment = false;
+            }
+            continue;
+        }
+        if block_comment {
+            if ch == '*' && input[index + ch.len_utf8()..].starts_with('/') {
+                block_comment = false;
+            }
+            continue;
+        }
+        if let Some(current_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' | '`' => {
+                quote = Some(ch);
+                continue;
+            }
+            '/' if input[index + ch.len_utf8()..].starts_with('/') => {
+                line_comment = true;
+                continue;
+            }
+            '/' if input[index + ch.len_utf8()..].starts_with('*') => {
+                block_comment = true;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !input[index..].starts_with(callee) {
+            continue;
+        }
+        let open_paren = index + callee.len();
+        if !input[open_paren..].starts_with('(') {
+            continue;
+        }
+        if !is_callee_boundary_before(input, index) {
+            continue;
+        }
+        return Some(index);
+    }
+
+    None
+}
+
+fn is_callee_boundary_before(input: &str, start: usize) -> bool {
+    !input[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| is_ident_continue(ch) || ch == '.')
+}
+
+fn should_parenthesize_unwrapped_call(
+    input: &str,
+    start: usize,
+    close_paren: usize,
+    inner: &str,
+) -> bool {
+    if input[..start].trim().is_empty() && input[close_paren + 1..].trim().is_empty() {
+        return false;
+    }
+    if !has_top_level_operator(inner) {
+        return false;
+    }
+
+    let prev = previous_non_ws(input, start);
+    let next = next_non_ws(input, close_paren + 1);
+    next.is_some_and(|ch| matches!(ch, '.' | '['))
+        || prev.is_some_and(is_expression_operator)
+        || next.is_some_and(is_expression_operator)
+}
+
+fn previous_non_ws(input: &str, start: usize) -> Option<char> {
+    input[..start].chars().rev().find(|ch| !ch.is_whitespace())
+}
+
+fn next_non_ws(input: &str, start: usize) -> Option<char> {
+    input[start..].chars().find(|ch| !ch.is_whitespace())
+}
+
+fn is_expression_operator(ch: char) -> bool {
+    matches!(
+        ch,
+        '!' | '~'
+            | '+'
+            | '-'
+            | '*'
+            | '/'
+            | '%'
+            | '<'
+            | '>'
+            | '='
+            | '&'
+            | '|'
+            | '^'
+            | '?'
+            | ':'
+            | ','
+    )
+}
+
+fn has_top_level_operator(input: &str) -> bool {
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if let Some(current_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            _ if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && is_expression_operator(ch) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    false
 }
 
 fn matching_paren(input: &str, open_paren: usize) -> Option<usize> {
@@ -775,4 +953,30 @@ pub(super) fn raw_expr(expr: impl Into<String>) -> VueNode {
 
 pub(super) fn unsupported_vnode_children_expr(expr: impl Into<String>) -> VueNode {
     VueNode::Unsupported(VueUnsupported::vnode_children(VueExpr::new(expr)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_callee_wrappers;
+
+    #[test]
+    fn strip_callee_wrappers_requires_identifier_boundary() {
+        assert_eq!(strip_callee_wrappers("format(x)", "t"), "format(x)");
+    }
+
+    #[test]
+    fn strip_callee_wrappers_ignores_string_literals() {
+        assert_eq!(
+            strip_callee_wrappers(r#"unref(value) + "unref(text)""#, "unref"),
+            r#"value + "unref(text)""#
+        );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_preserves_member_precedence() {
+        assert_eq!(
+            strip_callee_wrappers("unref(a || b).c", "unref"),
+            "(a || b).c"
+        );
+    }
 }

@@ -757,7 +757,21 @@ fn is_transpiler_runtime_helper_source(source: &str) -> bool {
 }
 
 fn is_vue_helper_candidate_source(source: &str) -> bool {
-    source.contains("vue") || source.contains("runtime-core") || source.contains("runtime-dom")
+    if source.contains("runtime-core") || source.contains("runtime-dom") {
+        return true;
+    }
+    if is_bare_import_source(source) {
+        return false;
+    }
+    source.contains("vue")
+}
+
+fn is_bare_import_source(source: &str) -> bool {
+    !source.starts_with('.')
+        && !source.starts_with('/')
+        && !source.starts_with("file:")
+        && !source.starts_with("http:")
+        && !source.starts_with("https:")
 }
 
 fn colliding_import_aliases(
@@ -3676,6 +3690,9 @@ fn computed_block_value_expr(
     if let Some(expr) = computed_array_push_expr(prior_stmts, expr, ctx)? {
         return Ok(Some(expr));
     }
+    if !computed_prior_stmts_are_inlineable(prior_stmts, ctx) {
+        return Ok(None);
+    }
     let local_exprs = computed_block_local_exprs(prior_stmts);
     let mutated_locals = computed_mutated_local_bindings(prior_stmts, &local_exprs);
     if computed_local_ref_counts(expr, &mutated_locals)
@@ -3697,6 +3714,26 @@ fn computed_block_value_expr(
         value: clean_expr(&print_expr(&expr, ctx)?, ctx),
         expr: Some(expr),
     }))
+}
+
+fn computed_prior_stmts_are_inlineable(stmts: &[Stmt], ctx: &VueRecoveryContext) -> bool {
+    stmts.iter().all(|stmt| match stmt {
+        Stmt::Decl(Decl::Var(var)) => {
+            if var.kind != VarDeclKind::Const || var.decls.is_empty() {
+                return false;
+            }
+            var.decls.iter().all(|decl| {
+                decl.init.is_some()
+                    && (matches!(decl.name, Pat::Ident(_))
+                        || matches!(decl.name, Pat::Object(_))
+                            && decl
+                                .init
+                                .as_deref()
+                                .is_some_and(|init| is_setup_props_alias(init, ctx)))
+            })
+        }
+        _ => false,
+    })
 }
 
 fn computed_array_push_expr(
@@ -4365,7 +4402,7 @@ fn computed_if_return_chain_expr(
                 continue;
             }
             Stmt::If(if_stmt) => {
-                let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
+                let Some(expr) = direct_return_expr_from_stmt(if_stmt.cons.as_ref()) else {
                     return Ok(None);
                 };
                 if if_stmt.alt.is_some() {
@@ -4412,6 +4449,24 @@ fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
     }
 }
 
+fn direct_return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => Some(expr.as_ref()),
+        Stmt::Block(block) => {
+            let [Stmt::Return(ReturnStmt {
+                arg: Some(expr), ..
+            })] = block.stmts.as_slice()
+            else {
+                return None;
+            };
+            Some(expr.as_ref())
+        }
+        _ => None,
+    }
+}
+
 fn format_conditional_expr(branches: &[(String, String)], fallback: String) -> String {
     branches
         .iter()
@@ -4443,4 +4498,23 @@ pub(super) fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> O
     call.args
         .first()
         .and_then(|arg| string_lit(arg.expr.as_ref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_vue_helper_candidate_source;
+
+    #[test]
+    fn vue_helper_candidates_exclude_adjacent_bare_packages() {
+        assert!(!is_vue_helper_candidate_source("vuex"));
+        assert!(!is_vue_helper_candidate_source("vue-router"));
+        assert!(!is_vue_helper_candidate_source("@vueuse/core"));
+    }
+
+    #[test]
+    fn vue_helper_candidates_keep_runtime_and_local_vue_chunks() {
+        assert!(is_vue_helper_candidate_source("@vue/runtime-core"));
+        assert!(is_vue_helper_candidate_source("@vue/runtime-dom"));
+        assert!(is_vue_helper_candidate_source("./vendor-vue.js"));
+    }
 }

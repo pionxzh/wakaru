@@ -6942,7 +6942,7 @@ export default defineComponent({
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst props = defineProps({\n    disabled: {\n        type: Boolean,\n        default: false\n    }\n});\nconst { disabled } = props;\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    let t;\n    if (!arrivedState.left) {\n        if (!((t = scrollContainer.value) === null || t === undefined)) {\n            t.scroll({\n                left: x - 200\n            });\n        }\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"disabled || arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
+            "<script setup>\nimport { ref } from \"vue\";\nimport { useScroll } from \"@vueuse/core\";\n\nconst props = defineProps({\n    disabled: {\n        type: Boolean,\n        default: false\n    }\n});\nconst { disabled } = props;\n\nconst scrollContainer = ref(null);\n\nconst { x, arrivedState } = useScroll(scrollContainer);\nconst scrollLeft = ()=>{\n    let t;\n    if (!arrivedState.left) {\n        if (!((t = scrollContainer.value) === null || t === undefined)) {\n            t.scroll({\n                left: x.value - 200\n            });\n        }\n    }\n};\n</script>\n\n<template>\n  <div ref=\"scrollContainer\">\n    <button :disabled=\"disabled || arrivedState.left\" @click=\"scrollLeft\">Left</button>\n  </div>\n</template>\n"
         );
     }
 
@@ -7924,6 +7924,94 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <section>\n    <FormInput v-model.trim=\"name\" v-model:filter.number.lazy=\"filter\" label=\"Name\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn preserves_custom_component_update_handlers() {
+        let input = r#"
+import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_FormInput = resolveComponent("FormInput");
+  return openBlock(), createElementBlock("section", null, [
+    createVNode(_component_FormInput, {
+      visible: _ctx.visible,
+      "onUpdate:visible": _ctx.closeAndLog
+    }, null, 8, ["visible", "onUpdate:visible"])
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <FormInput :visible=\"visible\" @update:visible=\"closeAndLog\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn keeps_vueuse_composable_calls_in_script_setup() {
+        let input = r#"
+import { defineComponent, openBlock, createElementBlock, toDisplayString } from "vue";
+import { useStorage } from "@vueuse/core";
+export default defineComponent({
+  setup() {
+    const token = useStorage("k", "");
+    return (_ctx, _cache) => (
+      openBlock(),
+      createElementBlock("div", null, toDisplayString(token.value), 1)
+    );
+  }
+});
+"#;
+
+        let recovered = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            recovered.contains(r#"import { useStorage } from "@vueuse/core";"#),
+            "expected original composable import to be preserved:\n{recovered}"
+        );
+        assert!(
+            recovered.contains(r#"const token = useStorage("k", "");"#),
+            "expected original composable call to be preserved:\n{recovered}"
+        );
+        assert!(
+            !recovered.contains(r#"ref("k", "")"#),
+            "composable call must not be rewritten into ref():\n{recovered}"
+        );
+    }
+
+    #[test]
+    fn computed_getter_with_nested_branch_stays_explicit() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock, toDisplayString } from "vue";
+export default defineComponent({
+  setup() {
+    const ready = true;
+    const deep = false;
+    const label = computed(() => {
+      if (ready) {
+        if (deep) {
+          return "deep";
+        }
+        return "ready";
+      }
+      return "idle";
+    });
+    return (_ctx, _cache) => (
+      openBlock(),
+      createElementBlock("div", null, toDisplayString(label.value), 1)
+    );
+  }
+});
+"#;
+
+        let recovered = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            recovered.contains("if (deep)"),
+            "nested branch should not be collapsed away:\n{recovered}"
+        );
+        assert!(
+            !recovered.contains(r#"ready ? "deep" : "idle""#),
+            "computed recovery must not drop the nested branch:\n{recovered}"
         );
     }
 

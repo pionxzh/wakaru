@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignOp, BinExpr, BinaryOp, BlockStmtOrExpr, CondExpr, Decl, Expr,
-    ExprOrSpread, Function, Lit, MemberExpr, MemberProp, ModuleItem, ObjectLit, Pat, Prop,
-    PropName, PropOrSpread, Stmt,
+    ArrayLit, ArrowExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CondExpr,
+    Decl, Expr, ExprOrSpread, Function, Lit, MemberExpr, MemberProp, ModuleItem, ObjectLit, Pat,
+    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -66,6 +66,7 @@ pub(super) fn recover_component_attrs(
     Ok(collapse_component_model_attrs(
         recover_attrs_for_owner(expr, ctx, AttrOwner::Component)?,
         &model_modifiers,
+        ctx,
     ))
 }
 
@@ -100,26 +101,36 @@ fn component_model_prop_from_modifier_attr(name: &str) -> Option<String> {
 fn collapse_component_model_attrs(
     attrs: Vec<VueAttr>,
     model_modifiers: &HashMap<String, Vec<String>>,
+    ctx: &VueRecoveryContext,
 ) -> Vec<VueAttr> {
     let bound_props = attrs
         .iter()
         .filter_map(|attr| match attr {
-            VueAttr::Bind { name, .. } => Some(name.clone()),
+            VueAttr::Bind { name, expr } => Some((name.clone(), expr.clone())),
             _ => None,
         })
-        .collect::<HashSet<_>>();
+        .collect::<HashMap<_, _>>();
     let update_events = attrs
         .iter()
         .filter_map(|attr| match attr {
-            VueAttr::On { name, .. } => name
-                .strip_prefix("update:")
-                .map(|prop_name| prop_name.to_string()),
+            VueAttr::On { name, .. } => {
+                name.strip_prefix("update:")
+                    .and_then(|prop_name| match attr {
+                        VueAttr::On { expr, .. } => Some((prop_name.to_string(), expr.clone())),
+                        _ => None,
+                    })
+            }
             _ => None,
         })
-        .collect::<HashSet<_>>();
+        .collect::<HashMap<_, _>>();
     let model_props = bound_props
-        .intersection(&update_events)
-        .cloned()
+        .iter()
+        .filter_map(|(prop_name, bound_expr)| {
+            update_events
+                .get(prop_name)
+                .filter(|handler| model_update_handler_matches(bound_expr, handler, ctx))
+                .map(|_| prop_name.clone())
+        })
         .collect::<HashSet<_>>();
     if model_props.is_empty() {
         return attrs;
@@ -150,6 +161,53 @@ fn collapse_component_model_attrs(
     }
 
     collapsed
+}
+
+fn model_update_handler_matches(
+    bound_expr: &VueExpr,
+    handler: &VueExpr,
+    ctx: &VueRecoveryContext,
+) -> bool {
+    let Some(Expr::Assign(assign)) = parse_printed_vue_expr(handler.as_str(), ctx) else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    if !matches!(assign.right.as_ref(), Expr::Ident(ident) if ident.sym.as_ref() == "$event") {
+        return false;
+    }
+    let Some(target) = printed_assign_target(&assign.left, ctx) else {
+        return false;
+    };
+    normalize_model_expr(&target) == normalize_model_expr(bound_expr.as_str())
+}
+
+fn parse_printed_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> Option<Expr> {
+    let module =
+        super::parse_module(&format!("const __wakaru_expr = {expr};"), ctx.cm.clone()).ok()?;
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = module.body.first()? else {
+        return None;
+    };
+    var.decls.first()?.init.as_deref().cloned()
+}
+
+fn printed_assign_target(target: &AssignTarget, ctx: &VueRecoveryContext) -> Option<String> {
+    let expr = match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => Expr::Ident(binding.id.clone()),
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => Expr::Member(member.clone()),
+        AssignTarget::Simple(SimpleAssignTarget::Paren(paren)) => *paren.expr.clone(),
+        _ => return None,
+    };
+    print_expr(&expr, ctx)
+        .ok()
+        .map(|expr| clean_attr_expr(&expr, ctx))
+}
+
+fn normalize_model_expr(expr: &str) -> String {
+    expr.chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
 }
 
 fn recover_attrs_from_object(
