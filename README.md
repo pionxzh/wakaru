@@ -4,17 +4,52 @@
 
 **Unpack. Unminify. Understand.**
 
-Fast JavaScript decompiler and bundle splitter for modern frontend.
+Wakaru turns production JavaScript — bundled, transpiled, minified — back into
+readable modules. It is the JS decompiler with receipts: the only one backed
+by a semantic-equivalence test suite.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/pionxzh/wakaru/rust-ci.yml?branch=main&label=CI)](https://github.com/pionxzh/wakaru/actions/workflows/rust-ci.yml)
 [![npm](https://img.shields.io/npm/v/@wakaru/cli?label=npm)](https://www.npmjs.com/package/@wakaru/cli)
 [![Telegram](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
 
-[Try the online playground](https://wakaru.vercel.app/playground)
+[**Try it in the playground**](https://wakaru.vercel.app/playground) — paste a bundle, get modules back.
 
 </div>
 
-## Quick Start
+## What it does
+
+Feed it this — minified Babel output, straight from a production bundle:
+
+```js
+"use strict";Object.defineProperty(exports,"__esModule",{value:!0}),exports.loadProfile=void 0;
+var _api=_interopRequireDefault(require("./api"));
+function _interopRequireDefault(e){return e&&e.__esModule?e:{default:e}}
+function _asyncToGenerator(e){return function(){var t=this,r=arguments;return new Promise(function(n,o){var a=e.apply(t,r);function i(e){c(a,n,o,i,u,"next",e)}function u(e){c(a,n,o,i,u,"throw",e)}i(void 0)})}}
+function c(e,t,r,n,o,a,i){try{var u=e[a](i),c=u.value}catch(e){return void r(e)}u.done?t(c):Promise.resolve(c).then(n,o)}
+var loadProfile=function(){var e=_asyncToGenerator(function*(e){var t=yield _api.default.fetchUser(e),r=null!=t.name?t.name:"anonymous";return{name:r,avatar:null==t.profile?void 0:t.profile.avatar}});return function(t){return e.apply(this,arguments)}}();exports.loadProfile=loadProfile;
+```
+
+and get this back:
+
+```js
+import _api from "./api";
+export const loadProfile = async (e)=>{
+    const t = await _api.fetchUser(e);
+    const name = t.name ?? "anonymous";
+    return {
+        name,
+        avatar: t.profile?.avatar
+    };
+};
+```
+
+That is real, unedited output: the runtime helpers are gone, `async`/`await`
+is recovered from the generator state machine, `??` and `?.` are restored,
+and the module is ESM again. (Mangled locals like `e` stay mangled unless a
+source map is available — Wakaru recovers structure deterministically and
+never invents names.)
+
+## Quick start
 
 ```bash
 npx @wakaru/cli input.js -o output.js               # decompile a file
@@ -22,25 +57,91 @@ npx @wakaru/cli bundle.js --unpack -o out/          # unpack and decompile a bun
 npx @wakaru/cli dist/ --unpack -o out/              # scan a bundle output directory
 ```
 
+Full flag reference: [docs/cli.md](./docs/cli.md).
 
-## Features
+## What it handles
 
-- ✅ Bundle splitting — webpack 4/5, esbuild, Bun, Browserify, SystemJS, AMD
-- ✅ Transpiler & minifier recovery — Terser, Babel, SWC, TypeScript
-- ✅ Source map support for better names & import deduplication
-- ✅ Rewrite levels: `minimal` | `standard` | `aggressive`
+- **Bundle splitting** — webpack 4/5 (including chunks and multi-file
+  entry+chunk sets), esbuild, Bun, Browserify, SystemJS, AMD/UMD, plus
+  heuristic splitting of scope-hoisted ESM output (Rollup, Vite).
+- **Transpiler recovery** — Babel, TypeScript/tslib, and SWC runtime helpers:
+  async/await from generator state machines, classes, spread/rest, enums,
+  JSX, template literals, optional chaining, nullish coalescing, default
+  parameters, `for...of`, and more (~60 restoration rules).
+- **Minifier recovery** — sequence expressions, flipped comparisons,
+  boolean/number/`void 0` encodings, IIFE flattening, alias inlining.
+- **Source maps** — original-name recovery and import deduplication when a
+  map is available; `wakaru extract` dumps embedded `sourcesContent` to disk.
+- **Three rewrite levels** — `minimal` (near-zero semantic change, for
+  auditing and diffing), `standard` (default), `aggressive` (maximum
+  readability). The semantic contract per level is documented in
+  [rewrite-assumptions.md](./docs/rewrite-assumptions.md).
 
+## Tested like a compiler
 
-## Why Wakaru?
+Claims in this space are cheap, so Wakaru ships its evidence:
 
-Production JavaScript is hard to read because multiple tools have transformed it:
+- **0 semantic failures across 41,000+ runnable Test262 round-trip cases.**
+  Each case runs the original source, a transformed/minified version, and
+  Wakaru's decompiled output through the same Test262 harness — all three
+  must pass. Covers 3 producer pipelines (Terser, SWC, esbuild) × 20 feature
+  slices, plus multi-file ESM module graphs. Cases blocked by upstream
+  parser/printer/transform issues are classified and tracked, never counted
+  as passes. See [test262-roundtrip.md](./docs/test262-roundtrip.md).
+- **97.7% pattern recovery across 1,545 transpiler × minifier shapes.**
+  Reproduction matrices compile known inputs through real Babel/TypeScript/
+  SWC/esbuild/Terser version combinations and verify Wakaru recovers the
+  original construct. Current rates per matrix:
+  [`scripts/repro/stats.json`](./scripts/repro/stats.json).
+- **Fast enough to not think about.** The engine is Rust on SWC with
+  parallel module decompilation — a 10 MB production bundle (4,500+ modules)
+  unpacks and decompiles in seconds on a laptop. The legacy TypeScript
+  implementation needed minutes and could run out of memory on bundles the
+  Rust engine handles routinely.
 
-- **Bundlers** collapse many modules into one file and inject runtime wrappers
-- **Transpilers** downgrade modern syntax and insert helper functions
-- **Minifiers** erase names, fold constants, and compress control flow
+## How it compares
 
-Wakaru handles all three in a single command — feed it a bundle, get back readable modules.
+| | **Wakaru** | [webcrack](https://github.com/j4k0xb/webcrack) | [humanify](https://github.com/jehna/humanify) |
+|---|---|---|---|
+| Focus | bundle splitting + transpiler/minifier decompilation | deobfuscation (obfuscator.io) + unbundling | LLM-based identifier renaming |
+| Bundle formats | webpack 4/5, esbuild, Bun, Browserify, SystemJS, AMD/UMD, scope-hoisted ESM | webpack, browserify | via webcrack |
+| Transpiler helper recovery | Babel, TypeScript/tslib, SWC (async/await, classes, JSX, enums, …) | partial | — |
+| Deobfuscation | ✗ — pair with webcrack (below) | ✓ its specialty | via webcrack |
+| Name recovery | source maps + heuristics | — | ✓ its specialty (LLM) |
+| Semantic test suite | ✓ Test262 round-trip, 0 failures | — | — |
+| Engine | Rust (SWC), parallel | TypeScript (Babel) | TypeScript + LLM |
 
+These tools compose rather than compete. Spot an error in this table? Open an
+issue — it should stay fair.
+
+**Obfuscated input?** Wakaru is deliberately not a deobfuscator — heavy
+obfuscation (string arrays, control-flow flattening, VM-based protectors) is
+a different arms race, and [webcrack](https://github.com/j4k0xb/webcrack) is
+the state of the art there. The pipeline that works:
+
+```bash
+npx webcrack obfuscated.js -o deobfuscated/   # 1. strip the obfuscation
+npx @wakaru/cli deobfuscated/ --unpack -o out/ # 2. recover readable modules
+```
+
+**Want better names?** Pair Wakaru's deterministic structure recovery with an
+LLM renamer like humanify, or use `--source-map` when a map exists.
+
+## Use cases
+
+- **Security review & bug bounty** — read what a site actually ships instead
+  of scrolling one 5 MB line. Split the bundle, find the first-party code,
+  audit it as modules.
+- **Incident response & malware triage** — unminify a suspicious script into
+  something a human can diff and reason about, at `minimal` level so the
+  semantics you review are the semantics that ran.
+- **Recovering lost source** — the vendor vanished, the laptop died, and all
+  that's left is `dist/`. Reconstruct a workable codebase from the bundle
+  (and `wakaru extract` recovers originals when source maps were shipped).
+- **Debugging third-party SDKs** — turn the vendored blob into readable
+  modules so the stack trace points at code you can actually understand.
+- **Supply-chain inspection** — see what's inside a dependency's shipped
+  bundle rather than trusting the repo it claims to be built from.
 
 ## Install
 
@@ -49,140 +150,7 @@ npm install -g @wakaru/cli@latest
 ```
 
 Or pre-built binaries from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).
-
-
-## CLI Reference
-
-### Decompile a single file
-
-```bash
-wakaru input.js -o output.js
-```
-
-Without `-o`, output goes to stdout. Stdin is also supported:
-
-```bash
-cat input.js | wakaru > output.js
-```
-
-### Unpack bundles and chunks
-
-```bash
-wakaru bundle.js --unpack -o out/
-wakaru bundle.js --unpack --raw -o out/       # raw split, no readability transforms
-wakaru bundle.js --unpack=strict -o out/      # structural detection only, no heuristic fallback
-wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
-wakaru dist/ --unpack -o out/                 # recursively scan a directory
-```
-
-Directory inputs are supported only with `--unpack`. Wakaru recursively scans
-`.js`, `.mjs`, and `.cjs` files, skips hidden files/directories and
-`node_modules`, and includes only files detected as bundles or chunks. Skipped
-files are not copied or decompiled. Explicit file inputs keep the normal
-fallback behavior when no bundle format is detected.
-
-### Formatter
-
-```bash
-wakaru input.js --formatter -o output.js
-wakaru bundle.js --unpack --formatter -o out/
-```
-
-`--formatter` runs a final formatting pass after decompilation. Off by default.
-
-### Source maps
-
-```bash
-wakaru input.js --source-map input.js.map -o output.js
-wakaru input.js --emit-source-map -o output.js    # emit output .map alongside decompiled file
-```
-
-Source maps enable identifier recovery and import deduplication. They are
-currently supported only with a single input file.
-
-`--emit-source-map` writes a `.map` file alongside each decompiled JavaScript
-output file, mapping the output back to the input. Vue SFC sidecars from
-`--vue-sfc` do not get source maps.
-
-### Vue SFC recovery
-
-```bash
-wakaru input.js --vue-sfc
-wakaru input.js --vue-sfc -o App.vue
-wakaru custom/target.min.mjs --vue-sfc -o out/renamed.mjs
-wakaru bundle.js --unpack --vue-sfc -o out/
-```
-
-`--vue-sfc` is an experimental, best-effort Vue 3 render recovery path. In
-single-file mode without `-o`, Wakaru prints a recovered `.vue` artifact when
-recovery succeeds and normal decompiled JavaScript otherwise.
-
-With `-o`, `.vue` paths are Vue-only: `-o App.vue` writes the recovered SFC and
-errors if recovery fails. Other output paths are JavaScript-primary: Wakaru
-writes normal decompiled JavaScript to the requested path and, when Vue
-recovery succeeds, also writes a sibling `.vue` sidecar named from the input
-filename. For example, `custom/target.min.mjs --vue-sfc -o out/renamed.mjs`
-writes `out/renamed.mjs` and `out/target.min.vue`.
-
-In unpack mode, `--vue-sfc` is additive: every module still gets JavaScript
-output, and recovered Vue render modules also get sibling `.vue` artifacts.
-See [docs/vue-decompile.md](docs/vue-decompile.md) for the supported recovery
-scope and [docs/vue-sfc-recovery-status.md](docs/vue-sfc-recovery-status.md)
-for current gaps and follow-up targets.
-
-### Extract original sources
-
-```bash
-wakaru extract input.js.map -o src/
-```
-
-Writes files embedded in the source map's `sourcesContent` to disk.
-
-### Rewrite level
-
-Wakaru offers three rewrite levels so you can choose the right tradeoff for your use case:
-
-| Level | When to use |
-|-------|-------------|
-| `minimal` | You need near-zero semantic changes — only safe, obvious transforms. Good for auditing or diffing where behavioral fidelity matters most. |
-| `standard` | Default. Balanced readability and correctness for most use cases. |
-| `aggressive` | You just want to read the code. Enables stronger intent-recovery heuristics that produce cleaner output but may alter edge-case behavior. |
-
-```bash
-wakaru input.js --level minimal
-wakaru input.js --level standard      # default
-wakaru input.js --level aggressive
-wakaru input.js --dce                 # remove all dead code (full reachability sweep)
-```
-
-By default, only transform-induced dead code is removed; pre-existing dead code
-in the input is preserved. `--dce` opts into a full reachability sweep.
-
-### JSON output
-
-```bash
-wakaru bundle.js --unpack --json -o out/    # machine-readable JSON to stdout
-echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
-```
-
-`--json` writes structured JSON to stdout instead of human-readable summaries.
-Warnings and errors are included in the JSON object. Useful for CI pipelines
-and tooling integration. In unpack mode, each module includes an artifact
-`kind` such as `javascript` or `vue_sfc` and a `status` such as `decompiled`,
-`recovered_vue_sfc`, or `vue_sfc_fallback_js` for likely-Vue modules that
-could not be recovered as SFC output.
-
-### Diagnostics and profiling
-
-```bash
-wakaru input.js --diagnostics                  # post-transform diagnostic checks to stderr
-wakaru input.js --profile trace.json           # Chrome trace (open with chrome://tracing)
-wakaru input.js --profile trace.json --profile-rules  # include per-rule spans
-```
-
-### Overwrite protection
-
-Wakaru refuses to overwrite existing files unless `--force` is passed.
+Full CLI documentation: [docs/cli.md](./docs/cli.md).
 
 ## Contributing
 
@@ -215,7 +183,7 @@ cargo clippy -- -D warnings
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/). Please mention the issue number in the commit message or PR description.
 
-Docs: [`architecture.md`](./docs/architecture.md) | [`testing.md`](./docs/testing.md) | [`helper-detection.md`](./docs/helper-detection.md)
+Docs: [`docs/README.md`](./docs/README.md) is the index; start with [`architecture.md`](./docs/architecture.md).
 
 </details>
 

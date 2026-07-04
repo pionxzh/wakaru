@@ -19,6 +19,7 @@ reading everything:
 | Cross-module / unpack behavior | `docs/fact-system.md` — the two-phase barrier and module facts |
 | Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |
 | Before proposing a redesign | `docs/learnings/` — approaches already built, measured, and reverted |
+| CLI flag or output changes | `docs/cli.md` — the user-facing CLI reference (keep it in sync) |
 | Cutting a release | `docs/releasing.md` |
 
 `docs/README.md` carries this same map for agents and tools that do not
