@@ -1004,6 +1004,35 @@ mod tests {
     }
 
     #[test]
+    fn escapes_text_mustache_markers() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(
+                VueElement::new("p")
+                    .with_children(vec![VueNode::Text("literal {{ value }}".into())]),
+            )],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <p>literal &#123;&#123; value }}</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn raw_static_html_cannot_close_template_block() {
+        let template = VueTemplate {
+            children: vec![VueNode::RawHtml(
+                "</template><script>alert(1)</script>".into(),
+            )],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  &lt;/template><script>alert(1)</script>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn escapes_text_attrs_and_comments() {
         let template = VueTemplate {
             children: vec![

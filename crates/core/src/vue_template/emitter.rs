@@ -96,7 +96,7 @@ impl TemplateEmitter {
             VueNode::RawHtml(html) => {
                 for line in html.lines() {
                     self.indent(depth);
-                    self.out.push_str(line);
+                    self.out.push_str(&escape_raw_html(line));
                     self.out.push('\n');
                 }
             }
@@ -517,6 +517,13 @@ fn escape_text(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace("{{", "&#123;&#123;")
+}
+
+fn escape_raw_html(value: &str) -> String {
+    value
+        .replace("</template", "&lt;/template")
+        .replace("</TEMPLATE", "&lt;/TEMPLATE")
 }
 
 fn escape_attr(value: &str) -> String {
