@@ -67,7 +67,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        # --all-targets matches the local Definition of Done gate: it also
+        # lints tests, which plain `cargo clippy` skips.
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
       - name: Doctests
