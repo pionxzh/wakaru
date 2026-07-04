@@ -250,3 +250,50 @@ System.register("entry", ["dep"], function (_export) {
         "entry should recover default and named exports:\n{entry}"
     );
 }
+
+#[test]
+fn mixed_invalid_system_register_preserves_whole_input() {
+    let source = r#"
+System.register("dep", [], function (_export) {
+  return {
+    execute: function () {
+      _export("value", 1);
+    }
+  };
+});
+System.register("odd", "not-an-array", function (_export) {
+  return {
+    execute: function () {
+      _export("value", 2);
+    }
+  };
+});
+"#;
+
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "system-bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should preserve invalid System.register input");
+
+    assert_eq!(
+        output.modules.len(),
+        1,
+        "invalid System.register must not emit a partial module set: {:?}",
+        output.modules
+    );
+    assert_eq!(output.modules[0].0, "module.js");
+    assert!(
+        output.modules[0].1.contains(r#"System.register("dep""#)
+            && output.modules[0].1.contains(r#"System.register("odd""#),
+        "fallback module should preserve both register calls:\n{}",
+        output.modules[0].1
+    );
+    assert!(
+        output.detected_formats.is_empty(),
+        "invalid mixed System.register input should not be reported as a successful split"
+    );
+}

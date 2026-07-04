@@ -23,12 +23,20 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
-        if let Some(register) = register_from_expr(expr.as_ref()) {
-            registers.push(register);
-            continue;
+        match register_from_expr(expr.as_ref()) {
+            RegisterParse::Register(register) => {
+                registers.push(register);
+                continue;
+            }
+            RegisterParse::Invalid => return None,
+            RegisterParse::NotRegister => {}
         }
-        if let Some(wrapped_registers) = registers_from_iife_expr(expr.as_ref()) {
-            registers.extend(wrapped_registers);
+        match registers_from_iife_expr(expr.as_ref()) {
+            IifeRegisterParse::Registers(wrapped_registers) => {
+                registers.extend(wrapped_registers);
+            }
+            IifeRegisterParse::Invalid => return None,
+            IifeRegisterParse::NotIife => {}
         }
     }
 
@@ -147,26 +155,44 @@ fn parse_register_call(call: &CallExpr) -> Option<SystemRegister> {
     })
 }
 
-fn register_from_expr(expr: &Expr) -> Option<SystemRegister> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if !is_system_register_call(call) {
-        return None;
-    }
-    parse_register_call(call)
+enum RegisterParse {
+    Register(SystemRegister),
+    Invalid,
+    NotRegister,
 }
 
-fn registers_from_iife_expr(expr: &Expr) -> Option<Vec<SystemRegister>> {
-    let body = iife_body(expr)?;
+fn register_from_expr(expr: &Expr) -> RegisterParse {
+    let Expr::Call(call) = expr else {
+        return RegisterParse::NotRegister;
+    };
+    if !is_system_register_call(call) {
+        return RegisterParse::NotRegister;
+    }
+    parse_register_call(call)
+        .map(RegisterParse::Register)
+        .unwrap_or(RegisterParse::Invalid)
+}
+
+enum IifeRegisterParse {
+    Registers(Vec<SystemRegister>),
+    Invalid,
+    NotIife,
+}
+
+fn registers_from_iife_expr(expr: &Expr) -> IifeRegisterParse {
+    let Some(body) = iife_body(expr) else {
+        return IifeRegisterParse::NotIife;
+    };
     let mut registers = Vec::new();
 
     for (idx, stmt) in body.stmts.iter().enumerate() {
         let Stmt::Expr(expr_stmt) = stmt else {
             continue;
         };
-        let Some(mut register) = register_from_expr(expr_stmt.expr.as_ref()) else {
-            continue;
+        let mut register = match register_from_expr(expr_stmt.expr.as_ref()) {
+            RegisterParse::Register(register) => register,
+            RegisterParse::Invalid => return IifeRegisterParse::Invalid,
+            RegisterParse::NotRegister => continue,
         };
         register.prelude = body.stmts[..idx]
             .iter()
@@ -178,11 +204,14 @@ fn registers_from_iife_expr(expr: &Expr) -> Option<Vec<SystemRegister>> {
         registers.push(register);
     }
 
-    Some(registers)
+    IifeRegisterParse::Registers(registers)
 }
 
 fn is_register_expr_stmt(expr: &ExprStmt) -> bool {
-    register_from_expr(expr.expr.as_ref()).is_some()
+    matches!(
+        register_from_expr(expr.expr.as_ref()),
+        RegisterParse::Register(_) | RegisterParse::Invalid
+    )
 }
 
 fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
