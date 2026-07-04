@@ -6586,7 +6586,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <button @click='addTodo(todo); _ctx.todo = \"\"'>Add</button>\n</template>\n"
+            "<template>\n  <button @click='addTodo(todo); todo = \"\"'>Add</button>\n</template>\n"
         );
     }
 
@@ -7930,8 +7930,8 @@ export function render(_ctx, _cache) {
     #[test]
     fn preserves_custom_component_update_handlers() {
         let input = r#"
-import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
-export function render(_ctx, _cache) {
+	import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
+	export function render(_ctx, _cache) {
   const _component_FormInput = resolveComponent("FormInput");
   return openBlock(), createElementBlock("section", null, [
     createVNode(_component_FormInput, {
@@ -7949,9 +7949,39 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn preserves_component_update_handlers_with_side_effects() {
+        let input = r#"
+	import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
+	export function render(_ctx, _cache) {
+	  const _component_FormInput = resolveComponent("FormInput");
+	  return openBlock(), createElementBlock("section", null, [
+	    createVNode(_component_FormInput, {
+	      visible: _ctx.visible,
+	      "onUpdate:visible": $event => {
+	        _ctx.visible = $event;
+	        _ctx.log($event);
+	      }
+	    }, null, 8, ["visible", "onUpdate:visible"])
+	  ]);
+	}
+	"#;
+
+        let recovered = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            !recovered.contains("v-model"),
+            "multi-statement update handlers must not collapse to v-model:\n{recovered}"
+        );
+        assert!(
+            recovered.contains(r#":visible="visible""#)
+                && recovered.contains(r#"@update:visible="visible = $event; log($event)""#),
+            "update handler side effect should be preserved:\n{recovered}"
+        );
+    }
+
+    #[test]
     fn keeps_vueuse_composable_calls_in_script_setup() {
         let input = r#"
-import { defineComponent, openBlock, createElementBlock, toDisplayString } from "vue";
+	import { defineComponent, openBlock, createElementBlock, toDisplayString } from "vue";
 import { useStorage } from "@vueuse/core";
 export default defineComponent({
   setup() {
@@ -7980,9 +8010,40 @@ export default defineComponent({
     }
 
     #[test]
+    fn keeps_relative_vueuse_composable_calls_in_script_setup() {
+        let input = r#"
+	import { defineComponent, openBlock, createElementBlock, toDisplayString } from "vue";
+	import { useStorage } from "./vueuse-core.js";
+	export default defineComponent({
+	  setup() {
+	    const token = useStorage("k", "");
+	    return (_ctx, _cache) => (
+	      openBlock(),
+	      createElementBlock("div", null, toDisplayString(token.value), 1)
+	    );
+	  }
+	});
+	"#;
+
+        let recovered = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            recovered.contains(r#"import { useStorage } from "./vueuse-core.js";"#),
+            "expected relative composable import to be preserved:\n{recovered}"
+        );
+        assert!(
+            recovered.contains(r#"const token = useStorage("k", "");"#),
+            "expected relative composable call to be preserved:\n{recovered}"
+        );
+        assert!(
+            !recovered.contains(r#"ref("k", "")"#),
+            "relative composable call must not be rewritten into ref():\n{recovered}"
+        );
+    }
+
+    #[test]
     fn computed_getter_with_nested_branch_stays_explicit() {
         let input = r#"
-import { defineComponent, computed, openBlock, createElementBlock, toDisplayString } from "vue";
+	import { defineComponent, computed, openBlock, createElementBlock, toDisplayString } from "vue";
 export default defineComponent({
   setup() {
     const ready = true;
@@ -8012,6 +8073,38 @@ export default defineComponent({
         assert!(
             !recovered.contains(r#"ready ? "deep" : "idle""#),
             "computed recovery must not drop the nested branch:\n{recovered}"
+        );
+    }
+
+    #[test]
+    fn computed_local_inliner_preserves_captured_names() {
+        let input = r#"
+	import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+	export default defineComponent({
+	  setup() {
+	    const current = source.value;
+	    const label = computed(() => {
+	      const suffix = current;
+	      return items.value.map((current) => suffix + current.name).join(",");
+	    });
+	    return (_ctx, _cache) => (
+	      openBlock(),
+	      createElementBlock("p", { title: label.value }, null, 8, ["title"])
+	    );
+	  }
+	});
+	"#;
+
+        let recovered = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(
+            recovered.contains("const label = computed(()=>{")
+                && recovered.contains("const suffix = current;"),
+            "computed block should stay explicit when inlining would capture names:\n{recovered}"
+        );
+        assert!(
+            recovered.contains("map((current)=>suffix + current.name)")
+                && !recovered.contains("map((current)=>current + current.name)"),
+            "inliner must not capture the outer current binding inside the callback:\n{recovered}"
         );
     }
 

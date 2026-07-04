@@ -405,6 +405,26 @@ impl<'a> ContextMemberCleaner<'a> {
 }
 
 impl VisitMut for ContextMemberCleaner<'_> {
+    fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
+        assign.visit_mut_children_with(self);
+
+        let replacement = match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
+                match &member.prop {
+                    MemberProp::Ident(prop) => Some(self.replacement_ident(prop)),
+                    MemberProp::Computed(_) | MemberProp::PrivateName(_) => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            assign.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: replacement,
+                type_ann: None,
+            }));
+        }
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -688,10 +708,17 @@ fn find_callee_call(input: &str, callee: &str, from: usize) -> Option<usize> {
     let mut escaped = false;
     let mut line_comment = false;
     let mut block_comment = false;
+    let mut regex = None;
 
     for (relative, ch) in input[from..].char_indices() {
         let index = from + relative;
 
+        if let Some(state) = regex.as_mut() {
+            if regex_is_closed(state, ch) {
+                regex = None;
+            }
+            continue;
+        }
         if line_comment {
             if ch == '\n' || ch == '\r' {
                 line_comment = false;
@@ -730,6 +757,10 @@ fn find_callee_call(input: &str, callee: &str, from: usize) -> Option<usize> {
             }
             '/' if input[index + ch.len_utf8()..].starts_with('*') => {
                 block_comment = true;
+                continue;
+            }
+            '/' if slash_starts_regex(input, index) => {
+                regex = Some(RegexScanState::default());
                 continue;
             }
             _ => {}
@@ -773,9 +804,12 @@ fn should_parenthesize_unwrapped_call(
 
     let prev = previous_non_ws(input, start);
     let next = next_non_ws(input, close_paren + 1);
-    next.is_some_and(|ch| matches!(ch, '.' | '['))
+    next.is_some_and(|ch| matches!(ch, '.' | '[' | '('))
         || prev.is_some_and(is_expression_operator)
         || next.is_some_and(is_expression_operator)
+        || previous_word(input, start).is_some_and(is_prefix_word_operator)
+        || previous_word(input, start).is_some_and(is_binary_word_operator)
+        || next_word(input, close_paren + 1).is_some_and(is_binary_word_operator)
 }
 
 fn previous_non_ws(input: &str, start: usize) -> Option<char> {
@@ -807,14 +841,127 @@ fn is_expression_operator(ch: char) -> bool {
     )
 }
 
+#[derive(Default)]
+struct RegexScanState {
+    escaped: bool,
+    char_class: bool,
+}
+
+fn regex_is_closed(state: &mut RegexScanState, ch: char) -> bool {
+    if state.escaped {
+        state.escaped = false;
+        return false;
+    }
+    match ch {
+        '\\' => state.escaped = true,
+        '[' => state.char_class = true,
+        ']' => state.char_class = false,
+        '/' if !state.char_class => return true,
+        _ => {}
+    }
+    false
+}
+
+fn slash_starts_regex(input: &str, slash: usize) -> bool {
+    let before = input[..slash].trim_end();
+    if before.is_empty() {
+        return true;
+    }
+    let Some(prev) = before.chars().next_back() else {
+        return true;
+    };
+    if matches!(
+        prev,
+        '(' | '['
+            | '{'
+            | '='
+            | ':'
+            | ','
+            | '!'
+            | '?'
+            | ';'
+            | '+'
+            | '-'
+            | '*'
+            | '/'
+            | '%'
+            | '&'
+            | '|'
+            | '^'
+            | '~'
+            | '<'
+            | '>'
+    ) {
+        return true;
+    }
+    previous_word(input, slash).is_some_and(|word| {
+        matches!(
+            word,
+            "return"
+                | "throw"
+                | "case"
+                | "delete"
+                | "void"
+                | "typeof"
+                | "in"
+                | "instanceof"
+                | "new"
+                | "yield"
+                | "await"
+        )
+    })
+}
+
+fn previous_word(input: &str, end: usize) -> Option<&str> {
+    let before = input[..end].trim_end();
+    let end = before.len();
+    let start = before
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    (start < end).then_some(&before[start..end])
+}
+
+fn next_word(input: &str, start: usize) -> Option<&str> {
+    let rest = input[start..].trim_start();
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if !is_ident_start(first) {
+        return None;
+    }
+    let end = chars
+        .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index))
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn is_prefix_word_operator(word: &str) -> bool {
+    matches!(
+        word,
+        "typeof" | "void" | "delete" | "await" | "yield" | "new"
+    )
+}
+
+fn is_binary_word_operator(word: &str) -> bool {
+    matches!(word, "in" | "instanceof")
+}
+
 fn has_top_level_operator(input: &str) -> bool {
     let mut paren_depth = 0usize;
     let mut bracket_depth = 0usize;
     let mut brace_depth = 0usize;
     let mut quote = None;
     let mut escaped = false;
+    let mut regex = None;
 
-    for ch in input.chars() {
+    for (index, ch) in input.char_indices() {
+        if let Some(state) = regex.as_mut() {
+            if regex_is_closed(state, ch) {
+                regex = None;
+            }
+            continue;
+        }
         if let Some(current_quote) = quote {
             if escaped {
                 escaped = false;
@@ -832,6 +979,9 @@ fn has_top_level_operator(input: &str) -> bool {
 
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            '/' if slash_starts_regex(input, index) => {
+                regex = Some(RegexScanState::default());
+            }
             '(' => paren_depth += 1,
             ')' => paren_depth = paren_depth.saturating_sub(1),
             '[' => bracket_depth += 1,
@@ -856,9 +1006,16 @@ fn matching_paren(input: &str, open_paren: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote = None;
     let mut escaped = false;
+    let mut regex = None;
 
     for (index, ch) in input[open_paren..].char_indices() {
         let index = open_paren + index;
+        if let Some(state) = regex.as_mut() {
+            if regex_is_closed(state, ch) {
+                regex = None;
+            }
+            continue;
+        }
         if let Some(current_quote) = quote {
             if escaped {
                 escaped = false;
@@ -876,6 +1033,9 @@ fn matching_paren(input: &str, open_paren: usize) -> Option<usize> {
 
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            '/' if slash_starts_regex(input, index) => {
+                regex = Some(RegexScanState::default());
+            }
             '(' => depth += 1,
             ')' => {
                 depth = depth.checked_sub(1)?;
@@ -894,9 +1054,16 @@ fn matching_brace(input: &str, open_brace: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote = None;
     let mut escaped = false;
+    let mut regex = None;
 
     for (index, ch) in input[open_brace..].char_indices() {
         let index = open_brace + index;
+        if let Some(state) = regex.as_mut() {
+            if regex_is_closed(state, ch) {
+                regex = None;
+            }
+            continue;
+        }
         if let Some(current_quote) = quote {
             if escaped {
                 escaped = false;
@@ -914,6 +1081,9 @@ fn matching_brace(input: &str, open_brace: usize) -> Option<usize> {
 
         match ch {
             '"' | '\'' | '`' => quote = Some(ch),
+            '/' if slash_starts_regex(input, index) => {
+                regex = Some(RegexScanState::default());
+            }
             '{' => depth += 1,
             '}' => {
                 depth = depth.checked_sub(1)?;
@@ -977,6 +1147,30 @@ mod tests {
         assert_eq!(
             strip_callee_wrappers("unref(a || b).c", "unref"),
             "(a || b).c"
+        );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_preserves_call_callee_precedence() {
+        assert_eq!(
+            strip_callee_wrappers("unref(a || b)(x)", "unref"),
+            "(a || b)(x)"
+        );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_preserves_word_operator_precedence() {
+        assert_eq!(
+            strip_callee_wrappers("typeof unref(a || b)", "unref"),
+            "typeof (a || b)"
+        );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_ignores_regex_literals() {
+        assert_eq!(
+            strip_callee_wrappers("/unref(x)?/.test(value)", "unref"),
+            "/unref(x)?/.test(value)"
         );
     }
 }

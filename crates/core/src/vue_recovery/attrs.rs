@@ -186,7 +186,7 @@ fn model_update_handler_matches(
 fn parse_printed_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> Option<Expr> {
     let module =
         super::parse_module(&format!("const __wakaru_expr = {expr};"), ctx.cm.clone()).ok()?;
-    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = module.body.first()? else {
+    let [ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))] = module.body.as_slice() else {
         return None;
     };
     var.decls.first()?.init.as_deref().cloned()

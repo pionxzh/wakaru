@@ -760,10 +760,18 @@ fn is_vue_helper_candidate_source(source: &str) -> bool {
     if source.contains("runtime-core") || source.contains("runtime-dom") {
         return true;
     }
+    if is_vue_adjacent_package_source(source) {
+        return false;
+    }
     if is_bare_import_source(source) {
         return false;
     }
     source.contains("vue")
+}
+
+fn is_vue_adjacent_package_source(source: &str) -> bool {
+    let source = source.to_ascii_lowercase();
+    source.contains("vueuse") || source.contains("vue-router") || source.contains("vuex")
 }
 
 fn is_bare_import_source(source: &str) -> bool {
@@ -3516,6 +3524,15 @@ pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
     collector.refs
 }
 
+fn expr_ident_refs(expr: &Expr) -> HashSet<Atom> {
+    let mut collector = IdentRefCollector {
+        scopes: ScopeStack::new(),
+        refs: HashSet::new(),
+    };
+    expr.visit_with(&mut collector);
+    collector.refs
+}
+
 struct IdentRefCollector {
     scopes: ScopeStack,
     refs: HashSet<Atom>,
@@ -4305,17 +4322,26 @@ impl Visit for ComputedLocalRefCounter {
 
 struct ComputedLocalInliner {
     bindings: Vec<(Atom, Expr)>,
+    replacement_refs: Vec<HashSet<Atom>>,
     shadow_depths: Vec<usize>,
+    capture_depths: Vec<usize>,
 }
 
 impl ComputedLocalInliner {
     fn new(mut bindings: HashMap<Atom, Expr>) -> Self {
         let mut bindings = bindings.drain().collect::<Vec<_>>();
         bindings.sort_by(|(left, _), (right, _)| left.as_ref().cmp(right.as_ref()));
+        let replacement_refs = bindings
+            .iter()
+            .map(|(_, expr)| expr_ident_refs(expr))
+            .collect::<Vec<_>>();
         let shadow_depths = vec![0; bindings.len()];
+        let capture_depths = vec![0; bindings.len()];
         Self {
             bindings,
+            replacement_refs,
             shadow_depths,
+            capture_depths,
         }
     }
 
@@ -4323,18 +4349,29 @@ impl ComputedLocalInliner {
         self.bindings
             .iter()
             .zip(self.shadow_depths.iter())
-            .position(|((binding, _), shadow_depth)| binding.as_ref() == name && *shadow_depth == 0)
+            .zip(self.capture_depths.iter())
+            .position(|(((binding, _), shadow_depth), capture_depth)| {
+                binding.as_ref() == name && *shadow_depth == 0 && *capture_depth == 0
+            })
     }
 
-    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
-        let mut param_bindings = HashSet::new();
-        for param in params {
-            collect_pat_bindings(param, &mut param_bindings);
-        }
+    fn shadowing_indices(&self, scope_bindings: &HashSet<Atom>) -> Vec<usize> {
         self.bindings
             .iter()
             .enumerate()
-            .filter_map(|(index, (binding, _))| param_bindings.contains(binding).then_some(index))
+            .filter_map(|(index, (binding, _))| scope_bindings.contains(binding).then_some(index))
+            .collect()
+    }
+
+    fn capture_indices(&self, scope_bindings: &HashSet<Atom>) -> Vec<usize> {
+        self.replacement_refs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, refs)| {
+                refs.iter()
+                    .any(|name| scope_bindings.contains(name))
+                    .then_some(index)
+            })
             .collect()
     }
 
@@ -4348,6 +4385,31 @@ impl ComputedLocalInliner {
         for index in indices {
             self.shadow_depths[*index] -= 1;
         }
+    }
+
+    fn enter_captured(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.capture_depths[*index] += 1;
+        }
+    }
+
+    fn exit_captured(&mut self, indices: &[usize]) {
+        for index in indices {
+            self.capture_depths[*index] -= 1;
+        }
+    }
+
+    fn enter_scope(&mut self, scope_bindings: &HashSet<Atom>) -> (Vec<usize>, Vec<usize>) {
+        let shadowed = self.shadowing_indices(scope_bindings);
+        let captured = self.capture_indices(scope_bindings);
+        self.enter_shadowed(&shadowed);
+        self.enter_captured(&captured);
+        (shadowed, captured)
+    }
+
+    fn exit_scope(&mut self, shadowed: &[usize], captured: &[usize]) {
+        self.exit_captured(captured);
+        self.exit_shadowed(shadowed);
     }
 }
 
@@ -4364,25 +4426,78 @@ impl VisitMut for ComputedLocalInliner {
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut swc_core::ecma::ast::ArrowExpr) {
-        let params = arrow.params.iter().collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
+        let scope_bindings = arrow_scope_bindings(arrow);
+        let (shadowed, captured) = self.enter_scope(&scope_bindings);
         arrow.body.visit_mut_with(self);
-        self.exit_shadowed(&shadowed);
+        self.exit_scope(&shadowed, &captured);
     }
 
     fn visit_mut_function(&mut self, function: &mut swc_core::ecma::ast::Function) {
-        let params = function
-            .params
-            .iter()
-            .map(|param| &param.pat)
-            .collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
+        let scope_bindings = function_scope_bindings(function);
+        let (shadowed, captured) = self.enter_scope(&scope_bindings);
         if let Some(body) = function.body.as_mut() {
             body.visit_mut_with(self);
         }
-        self.exit_shadowed(&shadowed);
+        self.exit_scope(&shadowed, &captured);
+    }
+}
+
+fn arrow_scope_bindings(arrow: &swc_core::ecma::ast::ArrowExpr) -> HashSet<Atom> {
+    let mut bindings = HashSet::new();
+    for param in &arrow.params {
+        collect_pat_bindings(param, &mut bindings);
+    }
+    collect_block_or_expr_scope_bindings(arrow.body.as_ref(), &mut bindings);
+    bindings
+}
+
+fn function_scope_bindings(function: &swc_core::ecma::ast::Function) -> HashSet<Atom> {
+    let mut bindings = HashSet::new();
+    for param in &function.params {
+        collect_pat_bindings(&param.pat, &mut bindings);
+    }
+    if let Some(body) = function.body.as_ref() {
+        collect_stmt_scope_bindings(&body.stmts, &mut bindings);
+    }
+    bindings
+}
+
+fn collect_block_or_expr_scope_bindings(body: &BlockStmtOrExpr, bindings: &mut HashSet<Atom>) {
+    if let BlockStmtOrExpr::BlockStmt(block) = body {
+        collect_stmt_scope_bindings(&block.stmts, bindings);
+    }
+}
+
+fn collect_stmt_scope_bindings(stmts: &[Stmt], bindings: &mut HashSet<Atom>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Decl(Decl::Var(var)) => {
+                for decl in &var.decls {
+                    collect_pat_bindings(&decl.name, bindings);
+                }
+            }
+            Stmt::Decl(Decl::Fn(function)) => {
+                bindings.insert(function.ident.sym.clone());
+            }
+            Stmt::Decl(Decl::Class(class)) => {
+                bindings.insert(class.ident.sym.clone());
+            }
+            Stmt::Block(block) => collect_stmt_scope_bindings(&block.stmts, bindings),
+            Stmt::If(if_stmt) => {
+                collect_stmt_scope_binding(if_stmt.cons.as_ref(), bindings);
+                if let Some(alt) = if_stmt.alt.as_ref() {
+                    collect_stmt_scope_binding(alt.as_ref(), bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_stmt_scope_binding(stmt: &Stmt, bindings: &mut HashSet<Atom>) {
+    match stmt {
+        Stmt::Block(block) => collect_stmt_scope_bindings(&block.stmts, bindings),
+        stmt => collect_stmt_scope_bindings(std::slice::from_ref(stmt), bindings),
     }
 }
 
@@ -4509,6 +4624,13 @@ mod tests {
         assert!(!is_vue_helper_candidate_source("vuex"));
         assert!(!is_vue_helper_candidate_source("vue-router"));
         assert!(!is_vue_helper_candidate_source("@vueuse/core"));
+    }
+
+    #[test]
+    fn vue_helper_candidates_exclude_adjacent_relative_chunks() {
+        assert!(!is_vue_helper_candidate_source("./vueuse-core.js"));
+        assert!(!is_vue_helper_candidate_source("./chunks/vue-router.js"));
+        assert!(!is_vue_helper_candidate_source("./chunks/vuex.js"));
     }
 
     #[test]
