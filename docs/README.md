@@ -19,7 +19,8 @@ the registry defines *what*.
 | Cross-module / unpack behavior | [fact-system.md](fact-system.md) — the two-phase barrier and module facts |
 | Correctness / semantics questions | [rewrite-assumptions.md](rewrite-assumptions.md); [test262-roundtrip.md](test262-roundtrip.md) — the semantic round-trip harness |
 | Before proposing a redesign | [learnings/](learnings/) — approaches already built, measured, and reverted |
-| CLI flag or output changes | [cli.md](cli.md) — the user-facing CLI reference (keep it in sync) |
+| CLI flag or output changes | [cli.md](cli.md) — the user-facing CLI reference; [../SKILL.md](../SKILL.md) — the agent skill (keep both in sync) |
+| Agent / tool integration | [../SKILL.md](../SKILL.md) — the CLI-based agent surface |
 | Cutting a release | [releasing.md](releasing.md) |
 
 ## Data directories

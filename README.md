@@ -143,6 +143,13 @@ LLM renamer like humanify, or use `--source-map` when a map exists.
 - **Supply-chain inspection** — see what's inside a dependency's shipped
   bundle rather than trusting the repo it claims to be built from.
 
+## Use it from an agent
+
+Coding agents hit unreadable minified JS constantly. Wakaru ships a generic
+[`SKILL.md`](./SKILL.md) — drop it into any skill-aware harness (Claude Code
+and others) and the agent knows when and how to unpack a bundle, read the
+manifest instead of drowning in 4,000 files, and pick the right rewrite level.
+
 ## Install
 
 ```bash
