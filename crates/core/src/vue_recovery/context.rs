@@ -4,14 +4,16 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, AssignTargetPat, BinaryOp,
-    BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl,
-    ExportSpecifier, Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier,
-    KeyValuePatProp, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
+    ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, KeyValueProp,
+    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat,
+    ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+mod scope;
 
 use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
 use super::helpers::{helper_name, VueHelper};
@@ -30,6 +32,7 @@ use super::{
     VueRenderSlotBinding,
 };
 use crate::js_names::is_valid_identifier_name;
+use scope::{visit_assign_expr_refs, ScopeStack};
 
 const MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN: usize = 80;
 
@@ -832,169 +835,6 @@ fn unique_script_import_alias(binding: &Atom, used_bindings: &mut HashSet<Atom>)
             return candidate;
         }
         index += 1;
-    }
-}
-
-struct ScopeStack(Vec<HashSet<Atom>>);
-
-impl ScopeStack {
-    fn new() -> Self {
-        Self(vec![HashSet::new()])
-    }
-
-    fn push_scope(&mut self) {
-        self.0.push(HashSet::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.0.pop();
-    }
-
-    fn depth(&self) -> usize {
-        self.0.len()
-    }
-
-    fn declare(&mut self, sym: &Atom) {
-        if let Some(scope) = self.0.last_mut() {
-            scope.insert(sym.clone());
-        }
-    }
-
-    fn declare_pat(&mut self, pat: &Pat) {
-        match pat {
-            Pat::Ident(binding) => self.declare(&binding.id.sym),
-            Pat::Array(array) => {
-                for elem in array.elems.iter().flatten() {
-                    self.declare_pat(elem);
-                }
-            }
-            Pat::Object(object) => {
-                for prop in &object.props {
-                    match prop {
-                        ObjectPatProp::KeyValue(key_value) => self.declare_pat(&key_value.value),
-                        ObjectPatProp::Assign(assign) => self.declare(&assign.key.sym),
-                        ObjectPatProp::Rest(rest) => self.declare_pat(&rest.arg),
-                    }
-                }
-            }
-            Pat::Rest(rest) => self.declare_pat(&rest.arg),
-            Pat::Assign(assign) => self.declare_pat(&assign.left),
-            Pat::Expr(_) | Pat::Invalid(_) => {}
-        }
-    }
-
-    fn is_shadowed(&self, sym: &Atom) -> bool {
-        self.0.iter().rev().any(|scope| scope.contains(sym))
-    }
-}
-
-fn visit_assign_expr_refs<V: Visit + ?Sized>(assign: &AssignExpr, visitor: &mut V) {
-    visit_assign_target_refs(&assign.left, visitor);
-    assign.right.visit_with(visitor);
-}
-
-fn visit_assign_target_refs<V: Visit + ?Sized>(target: &AssignTarget, visitor: &mut V) {
-    match target {
-        AssignTarget::Simple(target) => visit_simple_assign_target_refs(target, visitor),
-        AssignTarget::Pat(target) => visit_assign_target_pat_refs(target, visitor),
-    }
-}
-
-fn visit_simple_assign_target_refs<V: Visit + ?Sized>(
-    target: &SimpleAssignTarget,
-    visitor: &mut V,
-) {
-    match target {
-        SimpleAssignTarget::Ident(binding) => binding.id.visit_with(visitor),
-        SimpleAssignTarget::Member(member) => member.visit_with(visitor),
-        SimpleAssignTarget::Paren(paren) => paren.expr.visit_with(visitor),
-        SimpleAssignTarget::TsAs(ts_as) => {
-            ts_as.expr.visit_with(visitor);
-            ts_as.type_ann.visit_with(visitor);
-        }
-        SimpleAssignTarget::TsSatisfies(ts_satisfies) => {
-            ts_satisfies.expr.visit_with(visitor);
-            ts_satisfies.type_ann.visit_with(visitor);
-        }
-        SimpleAssignTarget::TsNonNull(ts_non_null) => {
-            ts_non_null.expr.visit_with(visitor);
-        }
-        SimpleAssignTarget::TsTypeAssertion(ts_assertion) => {
-            ts_assertion.expr.visit_with(visitor);
-            ts_assertion.type_ann.visit_with(visitor);
-        }
-        SimpleAssignTarget::TsInstantiation(ts_instantiation) => {
-            ts_instantiation.expr.visit_with(visitor);
-            ts_instantiation.type_args.visit_with(visitor);
-        }
-        _ => target.visit_children_with(visitor),
-    }
-}
-
-fn visit_assign_target_pat_refs<V: Visit + ?Sized>(target: &AssignTargetPat, visitor: &mut V) {
-    match target {
-        AssignTargetPat::Array(array) => {
-            for elem in array.elems.iter().flatten() {
-                visit_assignment_pat_refs(elem, visitor);
-            }
-        }
-        AssignTargetPat::Object(object) => {
-            for prop in &object.props {
-                match prop {
-                    ObjectPatProp::KeyValue(key_value) => {
-                        key_value.key.visit_with(visitor);
-                        visit_assignment_pat_refs(key_value.value.as_ref(), visitor);
-                    }
-                    ObjectPatProp::Assign(assign) => {
-                        assign.key.visit_with(visitor);
-                        if let Some(value) = &assign.value {
-                            value.visit_with(visitor);
-                        }
-                    }
-                    ObjectPatProp::Rest(rest) => {
-                        visit_assignment_pat_refs(rest.arg.as_ref(), visitor);
-                    }
-                }
-            }
-        }
-        AssignTargetPat::Invalid(_) => {}
-    }
-}
-
-fn visit_assignment_pat_refs<V: Visit + ?Sized>(pat: &Pat, visitor: &mut V) {
-    match pat {
-        Pat::Ident(binding) => binding.id.visit_with(visitor),
-        Pat::Array(array) => {
-            for elem in array.elems.iter().flatten() {
-                visit_assignment_pat_refs(elem, visitor);
-            }
-        }
-        Pat::Object(object) => {
-            for prop in &object.props {
-                match prop {
-                    ObjectPatProp::KeyValue(key_value) => {
-                        key_value.key.visit_with(visitor);
-                        visit_assignment_pat_refs(key_value.value.as_ref(), visitor);
-                    }
-                    ObjectPatProp::Assign(assign) => {
-                        assign.key.visit_with(visitor);
-                        if let Some(value) = &assign.value {
-                            value.visit_with(visitor);
-                        }
-                    }
-                    ObjectPatProp::Rest(rest) => {
-                        visit_assignment_pat_refs(rest.arg.as_ref(), visitor);
-                    }
-                }
-            }
-        }
-        Pat::Assign(assign) => {
-            visit_assignment_pat_refs(assign.left.as_ref(), visitor);
-            assign.right.visit_with(visitor);
-        }
-        Pat::Rest(rest) => visit_assignment_pat_refs(rest.arg.as_ref(), visitor),
-        Pat::Expr(expr) => expr.visit_with(visitor),
-        Pat::Invalid(_) => {}
     }
 }
 
@@ -4776,75 +4616,4 @@ pub(super) fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> O
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::VueRecoveryContext;
-    use super::{is_vue_helper_candidate_source, ImportAliasRenamer, SetupPropsRefRewriter};
-    use std::collections::HashMap;
-    use swc_core::atoms::Atom;
-    use swc_core::common::DUMMY_SP;
-    use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
-    use swc_core::ecma::visit::VisitMutWith;
-
-    #[test]
-    fn vue_helper_candidates_exclude_adjacent_bare_packages() {
-        assert!(!is_vue_helper_candidate_source("vuex"));
-        assert!(!is_vue_helper_candidate_source("vue-router"));
-        assert!(!is_vue_helper_candidate_source("@vueuse/core"));
-        assert!(!is_vue_helper_candidate_source("vue-i18n"));
-        assert!(!is_vue_helper_candidate_source("vue-demi"));
-        assert!(!is_vue_helper_candidate_source("@tanstack/vue-query"));
-    }
-
-    #[test]
-    fn vue_helper_candidates_exclude_adjacent_relative_chunks() {
-        assert!(!is_vue_helper_candidate_source("./vueuse-core.js"));
-        assert!(!is_vue_helper_candidate_source("./chunks/vue-router.js"));
-        assert!(!is_vue_helper_candidate_source("./chunks/vuex.js"));
-        assert!(!is_vue_helper_candidate_source("./chunks/vue-i18n.js"));
-        assert!(!is_vue_helper_candidate_source("./vue-demi.js"));
-        assert!(!is_vue_helper_candidate_source("./vendor-vue-query.js"));
-    }
-
-    #[test]
-    fn vue_helper_candidates_keep_runtime_and_local_vue_chunks() {
-        assert!(is_vue_helper_candidate_source("@vue/runtime-core"));
-        assert!(is_vue_helper_candidate_source("@vue/runtime-dom"));
-        assert!(is_vue_helper_candidate_source("./vendor-vue.js"));
-    }
-
-    #[test]
-    fn import_alias_renamer_expands_shorthand_property_keys() {
-        let mut prop = Prop::Shorthand(Ident::new(Atom::from("P"), DUMMY_SP, Default::default()));
-        let aliases = HashMap::from([(Atom::from("P"), Atom::from("Panel_1"))]);
-
-        prop.visit_mut_with(&mut ImportAliasRenamer::new(&aliases));
-
-        let Prop::KeyValue(key_value) = prop else {
-            panic!("shorthand property should be expanded when its value is aliased");
-        };
-        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "P"));
-        assert!(
-            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "Panel_1")
-        );
-    }
-
-    #[test]
-    fn setup_props_ref_rewriter_expands_shorthand_property_keys() {
-        let mut ctx = VueRecoveryContext {
-            setup_props_context: Some(Atom::from("p")),
-            ..Default::default()
-        };
-        ctx.setup_props_aliases.insert(Atom::from("propsAlias"));
-        let mut prop = Prop::Shorthand(Ident::new(Atom::from("p"), DUMMY_SP, Default::default()));
-
-        prop.visit_mut_with(&mut SetupPropsRefRewriter::new(&ctx, "props"));
-
-        let Prop::KeyValue(key_value) = prop else {
-            panic!("shorthand property should be expanded when its value is rewritten");
-        };
-        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "p"));
-        assert!(
-            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "props")
-        );
-    }
-}
+mod tests;

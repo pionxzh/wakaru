@@ -10,12 +10,11 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, decompile_vue_sfc_output_with_import_resolver, extract_source_entries,
-    format_trace_events, is_likely_vue_sfc_source, normalize, parse_sourcemap,
-    recover_vue_sfc_source_from_js_with_import_resolver,
-    recover_vue_sfcs_from_js_with_import_resolver, trace_rules, unpack, unpack_files,
-    unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
-    RewriteLevel, RuleTraceOptions, UnpackInput,
+    decompile, decompile_vue_sfc, extract_source_entries, format_trace_events,
+    is_likely_vue_sfc_source, normalize, parse_sourcemap, recover_vue_sfc_source_from_js,
+    recover_vue_sfcs_from_js, trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw,
+    BundleFormat, DceMode, DecompileOptions, NormalizeOptions, RewriteLevel, RuleTraceOptions,
+    UnpackInput, VueSfcDecompileOptions, VueSfcRecoveryOptions,
 };
 
 mod color;
@@ -348,9 +347,12 @@ fn run_default(cli: Cli) -> Result<()> {
                     let module_sources = module_sources
                         .as_ref()
                         .expect("vue sfc module source map is initialized");
-                    recover_vue_sfcs_from_js_with_import_resolver(&code, |specifier| {
-                        resolve_unpack_import_source(module_sources, &filename, specifier)
-                    })
+                    recover_vue_sfcs_from_js(
+                        &code,
+                        VueSfcRecoveryOptions::default().with_import_resolver(|specifier| {
+                            resolve_unpack_import_source(module_sources, &filename, specifier)
+                        }),
+                    )
                     .ok()
                     .unwrap_or_default()
                 } else {
@@ -551,10 +553,15 @@ fn run_default(cli: Cli) -> Result<()> {
             let recovered_vue_sfc = vue_sidecar.is_some();
             (output, vue_sidecar, recovered_vue_sfc)
         } else if cli.vue_sfc {
-            let output =
-                decompile_vue_sfc_output_with_import_resolver(&input, options, |specifier| {
-                    read_relative_import_source(&output_filename, specifier)
-                })?;
+            let output = decompile_vue_sfc(
+                &input,
+                VueSfcDecompileOptions {
+                    decompile: options,
+                    recovery: VueSfcRecoveryOptions::default().with_import_resolver(|specifier| {
+                        read_relative_import_source(&output_filename, specifier)
+                    }),
+                },
+            )?;
             (output.output, None, output.recovered_sfc)
         } else {
             (decompile(&input, options)?, None, false)
@@ -860,9 +867,12 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
 }
 
 fn recover_single_file_vue_sidecar(code: &str, output_filename: &str) -> Option<String> {
-    recover_vue_sfc_source_from_js_with_import_resolver(code, |specifier| {
-        read_relative_import_source(output_filename, specifier)
-    })
+    recover_vue_sfc_source_from_js(
+        code,
+        VueSfcRecoveryOptions::default().with_import_resolver(|specifier| {
+            read_relative_import_source(output_filename, specifier)
+        }),
+    )
     .ok()
     .flatten()
 }

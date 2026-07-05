@@ -892,13 +892,15 @@ fn json_unpack_total_counts_input_modules_not_artifacts() {
 
 #[test]
 fn single_file_vue_metadata_describes_recovered_sfc_output() {
-    let output = decompile_vue_sfc_output_with_import_resolver(
+    let output = decompile_vue_sfc(
         vue_render_module_source(),
-        DecompileOptions {
-            filename: "src/App.vue".to_string(),
-            ..Default::default()
+        VueSfcDecompileOptions {
+            decompile: DecompileOptions {
+                filename: "src/App.vue".to_string(),
+                ..Default::default()
+            },
+            recovery: VueSfcRecoveryOptions::default(),
         },
-        |_| None,
     )
     .expect("vue sfc decompile should succeed");
 
