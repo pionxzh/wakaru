@@ -3,14 +3,15 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
     Expr, ExprStmt, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::js_names::is_valid_identifier_name;
@@ -60,8 +61,26 @@ use selection::{setup_local_declarations, VueSetupSelectionContext};
 use syntax::{module_export_name, prop_name, string_lit, wtf8_to_string};
 use usage::VueTemplateUsage;
 
+/// Wrapper so `VueRecoveryContext` can keep deriving `Default` without invoking
+/// `Mark::new()` (which panics outside a `GLOBALS` scope). Defaults to the root
+/// mark; the real unresolved mark is installed by `collect_context` after the
+/// module has been run through `resolver()`.
+// TODO(#196 Phase 1): the mark becomes read once helper recognition is
+// mark-gated; drop the `allow(dead_code)` then.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+struct UnresolvedMark(Mark);
+
+impl Default for UnresolvedMark {
+    fn default() -> Self {
+        Self(Mark::root())
+    }
+}
+
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
+    #[allow(dead_code)]
+    unresolved_mark: UnresolvedMark,
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_namespaces: HashSet<Atom>,
     vue_helper_candidates: HashSet<Atom>,
@@ -325,21 +344,26 @@ pub fn recover_vue_sfcs_from_js(
 }
 
 pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let module = parse_module(source, cm.clone())?;
-    let mut ctx = collect_context(&module, cm, HashMap::new(), HashMap::new());
-    let Some(render) = find_render_source(&module, None) else {
-        return Ok(false);
-    };
-    ctx.render_context = render_context_param(render);
-    ctx.setup_props_context = setup_props_param(render);
-    ctx.setup_context = setup_context_param(render);
-    ctx.setup_emit_context = setup_emit_param(render);
-    infer_render_helpers(render, &mut ctx);
-    collect_setup_context(render, &mut ctx)?;
-    collect_render_context(render, &mut ctx);
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module(source, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let mut ctx = collect_context(&module, cm, unresolved_mark, HashMap::new(), HashMap::new());
+        let Some(render) = find_render_source(&module, None) else {
+            return Ok(false);
+        };
+        ctx.render_context = render_context_param(render);
+        ctx.setup_props_context = setup_props_param(render);
+        ctx.setup_context = setup_context_param(render);
+        ctx.setup_emit_context = setup_emit_param(render);
+        infer_render_helpers(render, &mut ctx);
+        collect_setup_context(render, &mut ctx)?;
+        collect_render_context(render, &mut ctx);
 
-    Ok(render_uses_vue_helper(render, &ctx))
+        Ok(render_uses_vue_helper(render, &ctx))
+    })
 }
 
 fn recover_vue_sfc_from_js_inner(
@@ -360,36 +384,42 @@ fn recover_vue_sfcs_from_js_inner(
     import_resolver: &mut Option<Box<VueImportResolver<'_>>>,
     preferred_component_name: Option<&str>,
 ) -> Result<Vec<RecoveredVueSfc>> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let module = parse_module(source, cm.clone())?;
-    let imported_metadata = if let Some(resolver) = import_resolver.as_deref_mut() {
-        collect_imported_vue_metadata(&module, resolver)?
-    } else {
-        ImportedVueMetadata::default()
-    };
-    let mut composable_ref_props = imported_metadata.composable_ref_props;
-    composable_ref_props.extend(imports::local_composable_ref_props_from_module(&module));
-    let mut ctx = collect_context(
-        &module,
-        cm,
-        imported_metadata.component_bindings,
-        composable_ref_props,
-    );
-    ctx.directive_bindings
-        .extend(imported_metadata.directive_bindings);
-    ctx.vue_helper_candidates
-        .extend(imported_metadata.vue_helper_candidates);
-    let renders = find_render_sources(&module, preferred_component_name);
-    let mut recovered = Vec::new();
-    for render in renders {
-        if let Some(sfc) = recover_vue_sfc_from_render(&module, &ctx, render)? {
-            recovered.push(RecoveredVueSfc {
-                name: component_name_from_render(render),
-                sfc,
-            });
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module(source, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let imported_metadata = if let Some(resolver) = import_resolver.as_deref_mut() {
+            collect_imported_vue_metadata(&module, resolver)?
+        } else {
+            ImportedVueMetadata::default()
+        };
+        let mut composable_ref_props = imported_metadata.composable_ref_props;
+        composable_ref_props.extend(imports::local_composable_ref_props_from_module(&module));
+        let mut ctx = collect_context(
+            &module,
+            cm,
+            unresolved_mark,
+            imported_metadata.component_bindings,
+            composable_ref_props,
+        );
+        ctx.directive_bindings
+            .extend(imported_metadata.directive_bindings);
+        ctx.vue_helper_candidates
+            .extend(imported_metadata.vue_helper_candidates);
+        let renders = find_render_sources(&module, preferred_component_name);
+        let mut recovered = Vec::new();
+        for render in renders {
+            if let Some(sfc) = recover_vue_sfc_from_render(&module, &ctx, render)? {
+                recovered.push(RecoveredVueSfc {
+                    name: component_name_from_render(render),
+                    sfc,
+                });
+            }
         }
-    }
-    Ok(recovered)
+        Ok(recovered)
+    })
 }
 
 fn recover_vue_sfc_from_render(

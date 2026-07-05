@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
@@ -28,8 +28,8 @@ use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
-    RenderSource, VueRecoveryContext, VueRenderChildListBinding, VueRenderChildListSource,
-    VueRenderSlotBinding,
+    RenderSource, UnresolvedMark, VueRecoveryContext, VueRenderChildListBinding,
+    VueRenderChildListSource, VueRenderSlotBinding,
 };
 use crate::js_names::is_valid_identifier_name;
 use scope::{visit_assign_expr_refs, ScopeStack};
@@ -46,11 +46,13 @@ struct SetupLocalCandidate {
 pub(super) fn collect_context(
     module: &Module,
     cm: Lrc<SourceMap>,
+    unresolved_mark: Mark,
     component_bindings: HashMap<Atom, String>,
     imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
 ) -> VueRecoveryContext {
     let default_exported_bindings = default_exported_bindings(module);
     let mut ctx = VueRecoveryContext {
+        unresolved_mark: UnresolvedMark(unresolved_mark),
         cm,
         component_bindings,
         imported_composable_ref_props,
