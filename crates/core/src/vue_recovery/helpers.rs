@@ -88,6 +88,7 @@ pub(super) fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         Expr::Ident(ident) => ctx
             .vue_helpers
             .get(&ident.sym)
+            .filter(|_| ctx.resolves_to_import(ident))
             .map(|helper| helper == &VueHelper::Fragment)
             .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
         _ => false,
@@ -96,7 +97,11 @@ pub(super) fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 
 fn helper_name_from_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueHelper> {
     match expr {
-        Expr::Ident(ident) => ctx.vue_helpers.get(&ident.sym).cloned(),
+        Expr::Ident(ident) => ctx
+            .vue_helpers
+            .get(&ident.sym)
+            .filter(|_| ctx.resolves_to_import(ident))
+            .cloned(),
         Expr::Member(member) => namespace_helper_name(member, ctx),
         _ => None,
     }
@@ -106,7 +111,7 @@ fn namespace_helper_name(member: &MemberExpr, ctx: &VueRecoveryContext) -> Optio
     let Expr::Ident(object) = member.obj.as_ref() else {
         return None;
     };
-    if !ctx.vue_namespaces.contains(&object.sym) {
+    if !ctx.vue_namespaces.contains(&object.sym) || !ctx.resolves_to_import(object) {
         return None;
     }
 

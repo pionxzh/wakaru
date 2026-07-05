@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, DUMMY_SP};
+use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
@@ -28,8 +28,8 @@ use super::syntax::{
     module_export_name, param_binding_ident, prop_name, string_lit, wtf8_to_string,
 };
 use super::{
-    RenderSource, UnresolvedMark, VueRecoveryContext, VueRenderChildListBinding,
-    VueRenderChildListSource, VueRenderSlotBinding,
+    RenderSource, VueRecoveryContext, VueRenderChildListBinding, VueRenderChildListSource,
+    VueRenderSlotBinding,
 };
 use crate::js_names::is_valid_identifier_name;
 use scope::{visit_assign_expr_refs, ScopeStack};
@@ -43,21 +43,41 @@ struct SetupLocalCandidate {
     setup_order: usize,
 }
 
+/// Record the resolved `SyntaxContext` of every top-level import binding's local
+/// name, so helper recognition can tell a genuine reference to an imported Vue
+/// helper apart from an inner-scope local that reuses the (minified) name.
+fn import_local_ctxts(module: &Module) -> HashMap<Atom, SyntaxContext> {
+    let mut ctxts = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            let local = match specifier {
+                ImportSpecifier::Named(named) => &named.local,
+                ImportSpecifier::Default(default) => &default.local,
+                ImportSpecifier::Namespace(namespace) => &namespace.local,
+            };
+            ctxts.insert(local.sym.clone(), local.ctxt);
+        }
+    }
+    ctxts
+}
+
 pub(super) fn collect_context(
     module: &Module,
     cm: Lrc<SourceMap>,
-    unresolved_mark: Mark,
     component_bindings: HashMap<Atom, String>,
     imported_composable_ref_props: HashMap<Atom, HashSet<Atom>>,
 ) -> VueRecoveryContext {
     let default_exported_bindings = default_exported_bindings(module);
     let mut ctx = VueRecoveryContext {
-        unresolved_mark: UnresolvedMark(unresolved_mark),
         cm,
         component_bindings,
         imported_composable_ref_props,
         ..Default::default()
     };
+    ctx.import_local_ctxts = import_local_ctxts(module);
     for item in &module.body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
@@ -1119,6 +1139,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
     let mut inference = HelperInference {
         candidates: &ctx.vue_helper_candidates,
         known_helpers: &ctx.vue_helpers,
+        import_ctxts: &ctx.import_local_ctxts,
         inferred: HashMap::new(),
         prop_value_depth: 0,
         vnode_child_depth: 0,
@@ -1140,9 +1161,27 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
 struct HelperInference<'a> {
     candidates: &'a std::collections::HashSet<Atom>,
     known_helpers: &'a HashMap<Atom, VueHelper>,
+    import_ctxts: &'a HashMap<Atom, SyntaxContext>,
     inferred: HashMap<Atom, VueHelper>,
     prop_value_depth: usize,
     vnode_child_depth: usize,
+}
+
+impl HelperInference<'_> {
+    /// True if `ident` refers to the imported binding of its name (matching the
+    /// import's resolved `SyntaxContext`), not an inner-scope local reusing the
+    /// name. Every helper candidate/known helper is an import, so recognition
+    /// requires this rather than falling back to name-only matching.
+    fn import_resolves(&self, ident: &Ident) -> bool {
+        self.import_ctxts
+            .get(&ident.sym)
+            .is_some_and(|ctxt| *ctxt == ident.ctxt)
+    }
+
+    /// A helper candidate reference that resolves to its import binding.
+    fn is_candidate(&self, ident: &Ident) -> bool {
+        self.candidates.contains(&ident.sym) && self.import_resolves(ident)
+    }
 }
 
 impl Visit for HelperInference<'_> {
@@ -1187,7 +1226,7 @@ impl Visit for HelperInference<'_> {
         }
 
         if let Some(callee) = call_callee_ident(call) {
-            if self.candidates.contains(&callee.sym) {
+            if self.is_candidate(callee) {
                 if let Some(helper) = infer_call_helper(call) {
                     self.inferred.entry(callee.sym.clone()).or_insert(helper);
                 }
@@ -1201,7 +1240,7 @@ impl Visit for HelperInference<'_> {
                 .args
                 .first()
                 .and_then(|arg| ident_expr(arg.expr.as_ref()))
-                .filter(|ident| self.candidates.contains(&ident.sym))
+                .filter(|&ident| self.is_candidate(ident))
             {
                 self.inferred
                     .entry(fragment.sym.clone())
@@ -1244,7 +1283,11 @@ impl HelperInference<'_> {
         call_callee_ident(call).and_then(|callee| {
             self.inferred
                 .get(&callee.sym)
-                .or_else(|| self.known_helpers.get(&callee.sym))
+                .or_else(|| {
+                    self.import_resolves(callee)
+                        .then(|| self.known_helpers.get(&callee.sym))
+                        .flatten()
+                })
                 .cloned()
         })
     }
@@ -1257,7 +1300,7 @@ impl HelperInference<'_> {
         &'a swc_core::ecma::ast::Ident,
     )> {
         let callee = call_callee_ident(call)?;
-        if !self.candidates.contains(&callee.sym) {
+        if !self.is_candidate(callee) {
             return None;
         }
         if !is_fragment_patch_flag(call.args.get(3).map(|arg| arg.expr.as_ref())) {
@@ -1315,7 +1358,7 @@ impl HelperInference<'_> {
         let Some(callee) = call_callee_ident(call) else {
             return;
         };
-        if !self.candidates.contains(&callee.sym) {
+        if !self.is_candidate(callee) {
             return;
         }
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
@@ -1379,7 +1422,7 @@ impl HelperInference<'_> {
         let Some(callee) = call_callee_ident(call) else {
             return;
         };
-        if !self.candidates.contains(&callee.sym) {
+        if !self.is_candidate(callee) {
             return;
         }
         self.inferred.insert(callee.sym.clone(), VueHelper::Unref);
@@ -1401,7 +1444,7 @@ impl HelperInference<'_> {
         let Some(callee) = call_callee_ident(call) else {
             return;
         };
-        if !self.candidates.contains(&callee.sym) {
+        if !self.is_candidate(callee) {
             return;
         }
         self.inferred
@@ -1421,7 +1464,7 @@ impl HelperInference<'_> {
             .args
             .first()
             .and_then(|arg| ident_expr(arg.expr.as_ref()))
-            .filter(|ident| self.candidates.contains(&ident.sym))
+            .filter(|&ident| self.is_candidate(ident))
         else {
             return;
         };
@@ -2797,7 +2840,7 @@ fn is_slot_call_wrapper(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
         && call.args[0].spread.is_none()
         && (helper_name(&call.callee, ctx).is_some()
             || call_callee_ident(call).is_some_and(|callee| {
-                ctx.vue_helper_candidates.contains(&callee.sym)
+                (ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee))
                     || ctx.slot_result_normalizers.contains(&callee.sym)
             }))
 }
@@ -2881,7 +2924,9 @@ fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => return true,
         _ => {}
     }
-    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+    call_callee_ident(call).is_some_and(|callee| {
+        ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+    })
 }
 
 fn should_emit_ref_script_setup_expr(
@@ -2898,8 +2943,9 @@ fn should_emit_ref_script_setup_expr(
         Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => return true,
         _ => {}
     }
-    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
-        && value_member_refs.contains(binding)
+    call_callee_ident(call).is_some_and(|callee| {
+        ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+    }) && value_member_refs.contains(binding)
 }
 
 fn is_ref_like_vue_helper(name: &str) -> bool {
@@ -2938,7 +2984,9 @@ fn ref_script_setup_helper(call: &CallExpr, ctx: &VueRecoveryContext) -> Option<
     match helper_name(&call.callee, ctx) {
         Some(VueHelper::Other(name)) if is_ref_like_vue_helper(&name) => Some(name),
         _ => call_callee_ident(call)
-            .filter(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+            .filter(|&callee| {
+                ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+            })
             .map(|_| "ref".to_string()),
     }
 }
@@ -2951,7 +2999,9 @@ pub(super) fn is_ref_object_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool 
         Some(VueHelper::Other(name)) if is_ref_object_helper(&name) => return true,
         _ => {}
     }
-    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+    call_callee_ident(call).is_some_and(|callee| {
+        ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+    })
 }
 
 pub(super) fn is_ref_object_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
@@ -3485,8 +3535,9 @@ fn is_computed_script_setup_call(call: &CallExpr, getter: &Expr, ctx: &VueRecove
         return false;
     }
     helper_name(&call.callee, ctx) == Some(VueHelper::Computed)
-        || call_callee_ident(call)
-            .is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+        || call_callee_ident(call).is_some_and(|callee| {
+            ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+        })
 }
 
 fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
@@ -3672,7 +3723,9 @@ fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
     if helper_name(&call.callee, ctx) == Some(VueHelper::Computed) {
         return true;
     }
-    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+    call_callee_ident(call).is_some_and(|callee| {
+        ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
+    })
 }
 
 fn computed_getter_expr(

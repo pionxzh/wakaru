@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, DUMMY_SP, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
     Expr, ExprStmt, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
@@ -61,26 +61,13 @@ use selection::{setup_local_declarations, VueSetupSelectionContext};
 use syntax::{module_export_name, prop_name, string_lit, wtf8_to_string};
 use usage::VueTemplateUsage;
 
-/// Wrapper so `VueRecoveryContext` can keep deriving `Default` without invoking
-/// `Mark::new()` (which panics outside a `GLOBALS` scope). Defaults to the root
-/// mark; the real unresolved mark is installed by `collect_context` after the
-/// module has been run through `resolver()`.
-// TODO(#196 Phase 1): the mark becomes read once helper recognition is
-// mark-gated; drop the `allow(dead_code)` then.
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-struct UnresolvedMark(Mark);
-
-impl Default for UnresolvedMark {
-    fn default() -> Self {
-        Self(Mark::root())
-    }
-}
-
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
-    #[allow(dead_code)]
-    unresolved_mark: UnresolvedMark,
+    /// `SyntaxContext` of each top-level import binding, recorded after the
+    /// module has been run through `resolver()`. Used to distinguish a real
+    /// reference to an imported Vue helper from an inner-scope local that
+    /// happens to reuse the (often minified) import name.
+    import_local_ctxts: HashMap<Atom, SyntaxContext>,
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_namespaces: HashSet<Atom>,
     vue_helper_candidates: HashSet<Atom>,
@@ -109,6 +96,21 @@ struct VueRecoveryContext {
     render_slot_bindings: HashMap<Atom, VueRenderSlotBinding>,
     slot_result_normalizers: HashSet<Atom>,
     cm: Lrc<SourceMap>,
+}
+
+impl VueRecoveryContext {
+    /// Whether `ident` refers to the imported binding of its name rather than an
+    /// inner-scope local that shadows it. For names that are imports, the
+    /// reference must carry the import binding's resolved `SyntaxContext`. Names
+    /// that are not imports (e.g. helper aliases inferred from render structure,
+    /// or an un-imported `Fragment` global) fall through to name-only matching,
+    /// preserving prior behavior.
+    fn resolves_to_import(&self, ident: &Ident) -> bool {
+        match self.import_local_ctxts.get(&ident.sym) {
+            Some(ctxt) => *ctxt == ident.ctxt,
+            None => true,
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -350,7 +352,7 @@ pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        let mut ctx = collect_context(&module, cm, unresolved_mark, HashMap::new(), HashMap::new());
+        let mut ctx = collect_context(&module, cm, HashMap::new(), HashMap::new());
         let Some(render) = find_render_source(&module, None) else {
             return Ok(false);
         };
@@ -400,7 +402,6 @@ fn recover_vue_sfcs_from_js_inner(
         let mut ctx = collect_context(
             &module,
             cm,
-            unresolved_mark,
             imported_metadata.component_bindings,
             composable_ref_props,
         );

@@ -754,6 +754,45 @@ export default _sfc_main;
 }
 
 #[test]
+fn recovers_aliased_block_helpers_when_not_shadowed() {
+    // Control for `does_not_recover_shadowed_block_helper`: the same minified
+    // aliases recover normally when nothing shadows them.
+    let input = r#"
+import { openBlock as o, createElementBlock as c } from "vue";
+export function render(_ctx) {
+  return o(), c("div", null, "hello");
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <div>hello</div>\n</template>\n"
+    );
+}
+
+#[test]
+fn does_not_recover_shadowed_block_helper() {
+    // A render-local reuses the minified alias of `createElementBlock`. The
+    // `c(...)` call resolves to the local, not the Vue import, so recovery must
+    // not treat it as a block helper and fabricate a `<div>`. Before Vue
+    // recovery was resolver-backed this was matched by name and mis-recovered.
+    let input = r#"
+import { openBlock as o, createElementBlock as c } from "vue";
+export function render(_ctx) {
+  const c = _ctx.pickTag;
+  return o(), c("div", null, "hello");
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default()).unwrap(),
+        None,
+    );
+}
+
+#[test]
 fn recovers_logical_assign_cached_static_vnode() {
     let input = r#"
 import { openBlock, createElementBlock, createElementVNode } from "vue";
