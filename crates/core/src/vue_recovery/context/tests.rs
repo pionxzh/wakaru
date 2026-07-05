@@ -1,8 +1,8 @@
 use super::super::VueRecoveryContext;
-use super::{is_vue_helper_candidate_source, ImportAliasRenamer, SetupPropsRefRewriter};
+use super::{binding_renames, is_vue_helper_candidate_source, SetupPropsRefRewriter};
 use std::collections::HashMap;
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
 use swc_core::ecma::visit::VisitMutWith;
 
@@ -34,19 +34,24 @@ fn vue_helper_candidates_keep_runtime_and_local_vue_chunks() {
 }
 
 #[test]
-fn import_alias_renamer_expands_shorthand_property_keys() {
-    let mut prop = Prop::Shorthand(Ident::new(Atom::from("P"), DUMMY_SP, Default::default()));
-    let aliases = HashMap::from([(Atom::from("P"), Atom::from("Panel_1"))]);
+fn binding_renames_key_on_recorded_top_level_context() {
+    // Alias renaming now flows through rename_utils::BindingRenamer, which is
+    // keyed on (name, SyntaxContext). `binding_renames` supplies that context
+    // from the recorded top-level bindings and skips names that are not
+    // top-level bindings (so the alias never touches an inner-scope local).
+    let ctxt = SyntaxContext::empty();
+    let mut ctx = VueRecoveryContext::default();
+    ctx.top_level_binding_ctxts.insert(Atom::from("P"), ctxt);
+    let aliases = HashMap::from([
+        (Atom::from("P"), Atom::from("Panel_1")),
+        (Atom::from("Absent"), Atom::from("Absent_1")),
+    ]);
 
-    prop.visit_mut_with(&mut ImportAliasRenamer::new(&aliases));
+    let renames = binding_renames(&aliases, &ctx);
 
-    let Prop::KeyValue(key_value) = prop else {
-        panic!("shorthand property should be expanded when its value is aliased");
-    };
-    assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "P"));
-    assert!(
-        matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "Panel_1")
-    );
+    assert_eq!(renames.len(), 1);
+    assert_eq!(renames[0].old, (Atom::from("P"), ctxt));
+    assert_eq!(renames[0].new, Atom::from("Panel_1"));
 }
 
 #[test]

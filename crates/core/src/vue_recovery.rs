@@ -63,11 +63,12 @@ use usage::VueTemplateUsage;
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
-    /// `SyntaxContext` of each top-level import binding, recorded after the
-    /// module has been run through `resolver()`. Used to distinguish a real
-    /// reference to an imported Vue helper from an inner-scope local that
-    /// happens to reuse the (often minified) import name.
-    import_local_ctxts: HashMap<Atom, SyntaxContext>,
+    /// `SyntaxContext` of each top-level binding (imports plus `var`/`fn`/`class`
+    /// declarations), recorded after the module has been run through
+    /// `resolver()`. Used to distinguish a real reference to an imported Vue
+    /// helper from an inner-scope local reusing the (often minified) name, and to
+    /// build `SyntaxContext`-keyed renames for alias resolution.
+    top_level_binding_ctxts: HashMap<Atom, SyntaxContext>,
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_namespaces: HashSet<Atom>,
     vue_helper_candidates: HashSet<Atom>,
@@ -106,7 +107,7 @@ impl VueRecoveryContext {
     /// or an un-imported `Fragment` global) fall through to name-only matching,
     /// preserving prior behavior.
     fn resolves_to_import(&self, ident: &Ident) -> bool {
-        match self.import_local_ctxts.get(&ident.sym) {
+        match self.top_level_binding_ctxts.get(&ident.sym) {
             Some(ctxt) => *ctxt == ident.ctxt,
             None => true,
         }

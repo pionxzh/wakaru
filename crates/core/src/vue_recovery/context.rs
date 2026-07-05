@@ -4,12 +4,12 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignPat, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportSpecifier, Expr,
-    ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValuePatProp, KeyValueProp,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat,
-    ObjectPatProp, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier,
+    Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValueProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
+    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
+    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -32,6 +32,7 @@ use super::{
     VueRenderSlotBinding,
 };
 use crate::js_names::is_valid_identifier_name;
+use crate::rules::rename_utils::{rename_bindings, BindingRename};
 use scope::{visit_assign_expr_refs, ScopeStack};
 
 const MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN: usize = 80;
@@ -43,25 +44,79 @@ struct SetupLocalCandidate {
     setup_order: usize,
 }
 
-/// Record the resolved `SyntaxContext` of every top-level import binding's local
-/// name, so helper recognition can tell a genuine reference to an imported Vue
-/// helper apart from an inner-scope local that reuses the (minified) name.
-fn import_local_ctxts(module: &Module) -> HashMap<Atom, SyntaxContext> {
+/// Record the resolved `SyntaxContext` of every top-level binding (imports plus
+/// `var`/`fn`/`class` declarations). Helper recognition uses it to tell a
+/// genuine reference to an imported Vue helper apart from an inner-scope local
+/// that reuses the (minified) name; alias renaming uses it to build
+/// `SyntaxContext`-keyed `BindingRename`s for `rename_utils::BindingRenamer`.
+fn top_level_binding_ctxts(module: &Module) -> HashMap<Atom, SyntaxContext> {
     let mut ctxts = HashMap::new();
     for item in &module.body {
-        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
-            continue;
-        };
-        for specifier in &import.specifiers {
-            let local = match specifier {
-                ImportSpecifier::Named(named) => &named.local,
-                ImportSpecifier::Default(default) => &default.local,
-                ImportSpecifier::Namespace(namespace) => &namespace.local,
-            };
-            ctxts.insert(local.sym.clone(), local.ctxt);
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                for specifier in &import.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    };
+                    ctxts.insert(local.sym.clone(), local.ctxt);
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(decl))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl { decl, .. })) => {
+                record_decl_binding_ctxts(decl, &mut ctxts);
+            }
+            _ => {}
         }
     }
     ctxts
+}
+
+fn record_decl_binding_ctxts(decl: &Decl, ctxts: &mut HashMap<Atom, SyntaxContext>) {
+    match decl {
+        Decl::Fn(function) => {
+            ctxts.insert(function.ident.sym.clone(), function.ident.ctxt);
+        }
+        Decl::Class(class) => {
+            ctxts.insert(class.ident.sym.clone(), class.ident.ctxt);
+        }
+        Decl::Var(var) => {
+            for declarator in &var.decls {
+                record_pat_binding_ctxts(&declarator.name, ctxts);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn record_pat_binding_ctxts(pat: &Pat, ctxts: &mut HashMap<Atom, SyntaxContext>) {
+    match pat {
+        Pat::Ident(binding) => {
+            ctxts.insert(binding.id.sym.clone(), binding.id.ctxt);
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                record_pat_binding_ctxts(elem, ctxts);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        record_pat_binding_ctxts(&key_value.value, ctxts)
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        ctxts.insert(assign.key.id.sym.clone(), assign.key.id.ctxt);
+                    }
+                    ObjectPatProp::Rest(rest) => record_pat_binding_ctxts(&rest.arg, ctxts),
+                }
+            }
+        }
+        Pat::Rest(rest) => record_pat_binding_ctxts(&rest.arg, ctxts),
+        Pat::Assign(assign) => record_pat_binding_ctxts(&assign.left, ctxts),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
 }
 
 pub(super) fn collect_context(
@@ -77,7 +132,7 @@ pub(super) fn collect_context(
         imported_composable_ref_props,
         ..Default::default()
     };
-    ctx.import_local_ctxts = import_local_ctxts(module);
+    ctx.top_level_binding_ctxts = top_level_binding_ctxts(module);
     for item in &module.body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
@@ -480,7 +535,7 @@ fn push_script_local_binding(
 
     let import_aliases = colliding_import_aliases(&stmt, ctx, reserved_bindings, used_bindings);
     if !import_aliases.is_empty() {
-        stmt.visit_mut_with(&mut ImportAliasRenamer::new(&import_aliases));
+        rename_bindings(&mut stmt, &binding_renames(&import_aliases, ctx));
         let cleaned_stmt = clean_setup_stmt(&stmt, ctx);
         source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
     }
@@ -511,8 +566,7 @@ pub(super) fn render_local_declaration_with_aliases(
 ) -> Result<VueSetupLocalBinding> {
     let mut stmt = declaration.stmt.clone();
     if declaration.module_scope && !aliases.is_empty() {
-        rename_top_level_decl_bindings(&mut stmt, aliases);
-        stmt.visit_mut_with(&mut ImportAliasRenamer::new(aliases));
+        rename_bindings(&mut stmt, &binding_renames(aliases, ctx));
     }
 
     let mut cleaned_stmt = clean_setup_stmt(&stmt, ctx);
@@ -713,81 +767,24 @@ fn decl_binds_atom(decl: &Decl, binding: &Atom) -> bool {
     bindings.contains(binding)
 }
 
-fn rename_top_level_decl_bindings(stmt: &mut Stmt, aliases: &HashMap<Atom, Atom>) {
-    let Stmt::Decl(decl) = stmt else {
-        return;
-    };
-
-    match decl {
-        Decl::Fn(function) => rename_binding_ident(&mut function.ident, aliases),
-        Decl::Class(class) => rename_binding_ident(&mut class.ident, aliases),
-        Decl::Var(var) => {
-            for declarator in &mut var.decls {
-                rename_pat_bindings(&mut declarator.name, aliases);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn rename_binding_ident(ident: &mut Ident, aliases: &HashMap<Atom, Atom>) {
-    if let Some(alias) = aliases.get(&ident.sym) {
-        ident.sym = alias.clone();
-    }
-}
-
-fn rename_binding_binding_ident(binding: &mut BindingIdent, aliases: &HashMap<Atom, Atom>) {
-    if let Some(alias) = aliases.get(&binding.id.sym) {
-        binding.id.sym = alias.clone();
-    }
-}
-
-fn rename_pat_bindings(pat: &mut Pat, aliases: &HashMap<Atom, Atom>) {
-    match pat {
-        Pat::Ident(binding) => rename_binding_binding_ident(binding, aliases),
-        Pat::Array(array) => {
-            for elem in array.elems.iter_mut().flatten() {
-                rename_pat_bindings(elem, aliases);
-            }
-        }
-        Pat::Object(object) => {
-            for prop in &mut object.props {
-                rename_object_pat_prop_bindings(prop, aliases);
-            }
-        }
-        Pat::Rest(rest) => rename_pat_bindings(rest.arg.as_mut(), aliases),
-        Pat::Assign(assign) => rename_pat_bindings(assign.left.as_mut(), aliases),
-        Pat::Expr(_) | Pat::Invalid(_) => {}
-    }
-}
-
-fn rename_object_pat_prop_bindings(prop: &mut ObjectPatProp, aliases: &HashMap<Atom, Atom>) {
-    match prop {
-        ObjectPatProp::KeyValue(key_value) => {
-            rename_pat_bindings(key_value.value.as_mut(), aliases)
-        }
-        ObjectPatProp::Assign(assign) => {
-            if let Some(alias) = aliases.get(&assign.key.id.sym) {
-                let key = PropName::Ident(assign.key.id.clone().into());
-                let mut binding = assign.key.clone();
-                binding.id.sym = alias.clone();
-                let value = if let Some(default) = assign.value.take() {
-                    Pat::Assign(AssignPat {
-                        span: binding.id.span,
-                        left: Box::new(Pat::Ident(binding)),
-                        right: default,
-                    })
-                } else {
-                    Pat::Ident(binding)
-                };
-                *prop = ObjectPatProp::KeyValue(KeyValuePatProp {
-                    key,
-                    value: Box::new(value),
-                });
-            }
-        }
-        ObjectPatProp::Rest(rest) => rename_pat_bindings(rest.arg.as_mut(), aliases),
-    }
+/// Convert a name-keyed alias map into `SyntaxContext`-keyed renames for
+/// `rename_utils::BindingRenamer`, which rewrites both the declaration and every
+/// resolved reference (and expands shorthand) without the hand-rolled scope
+/// tracking the old `ImportAliasRenamer`/`rename_top_level_decl_bindings` needed.
+/// Names without a recorded top-level context are skipped (they are not
+/// top-level bindings, so the alias would not apply).
+fn binding_renames(aliases: &HashMap<Atom, Atom>, ctx: &VueRecoveryContext) -> Vec<BindingRename> {
+    aliases
+        .iter()
+        .filter_map(|(old, new)| {
+            ctx.top_level_binding_ctxts
+                .get(old)
+                .map(|ctxt| BindingRename {
+                    old: (old.clone(), *ctxt),
+                    new: new.clone(),
+                })
+        })
+        .collect()
 }
 
 fn is_transpiler_runtime_helper_source(source: &str) -> bool {
@@ -857,100 +854,6 @@ fn unique_script_import_alias(binding: &Atom, used_bindings: &mut HashSet<Atom>)
             return candidate;
         }
         index += 1;
-    }
-}
-
-struct ImportAliasRenamer<'a> {
-    aliases: &'a HashMap<Atom, Atom>,
-    scopes: ScopeStack,
-}
-
-impl<'a> ImportAliasRenamer<'a> {
-    fn new(aliases: &'a HashMap<Atom, Atom>) -> Self {
-        Self {
-            aliases,
-            scopes: ScopeStack::new(),
-        }
-    }
-}
-
-impl VisitMut for ImportAliasRenamer<'_> {
-    fn visit_mut_ident(&mut self, ident: &mut Ident) {
-        if !self.scopes.is_shadowed(&ident.sym) {
-            if let Some(alias) = self.aliases.get(&ident.sym) {
-                ident.sym = alias.clone();
-            }
-        }
-    }
-
-    fn visit_mut_prop(&mut self, prop: &mut Prop) {
-        if let Prop::Shorthand(ident) = prop {
-            if !self.scopes.is_shadowed(&ident.sym) {
-                if let Some(alias) = self.aliases.get(&ident.sym) {
-                    let key = PropName::Ident(ident.clone().into());
-                    let value = Expr::Ident(Ident::new(alias.clone(), ident.span, ident.ctxt));
-                    *prop = Prop::KeyValue(KeyValueProp {
-                        key,
-                        value: Box::new(value),
-                    });
-                    return;
-                }
-            }
-        }
-        prop.visit_mut_children_with(self);
-    }
-
-    fn visit_mut_binding_ident(&mut self, ident: &mut BindingIdent) {
-        self.scopes.declare(&ident.id.sym);
-    }
-
-    fn visit_mut_prop_name(&mut self, prop: &mut PropName) {
-        if let PropName::Computed(computed) = prop {
-            computed.visit_mut_with(self);
-        }
-    }
-
-    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
-        if let MemberProp::Computed(computed) = prop {
-            computed.visit_mut_with(self);
-        }
-    }
-
-    fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
-        self.scopes.declare_pat(&declarator.name);
-        if let Some(init) = &mut declarator.init {
-            init.visit_mut_with(self);
-        }
-    }
-
-    fn visit_mut_fn_decl(&mut self, function: &mut FnDecl) {
-        self.scopes.declare(&function.ident.sym);
-        self.visit_mut_function(&mut function.function);
-    }
-
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &mut function.body {
-            body.visit_mut_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_mut_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_mut_class_decl(&mut self, class: &mut ClassDecl) {
-        self.scopes.declare(&class.ident.sym);
-        class.class.visit_mut_with(self);
     }
 }
 
@@ -1139,7 +1042,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
     let mut inference = HelperInference {
         candidates: &ctx.vue_helper_candidates,
         known_helpers: &ctx.vue_helpers,
-        import_ctxts: &ctx.import_local_ctxts,
+        import_ctxts: &ctx.top_level_binding_ctxts,
         inferred: HashMap::new(),
         prop_value_depth: 0,
         vnode_child_depth: 0,
