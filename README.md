@@ -161,9 +161,7 @@ Full CLI documentation: [docs/cli.md](./docs/cli.md).
 
 ## Contributing
 
-Every kind of contribution is welcome.
-
-Some areas where help is especially useful:
+Contributions are welcome, especially:
 
 - Share real-world bundles that Wakaru doesn't handle well
 - Report missing helper detection or false positives
@@ -171,28 +169,7 @@ Some areas where help is especially useful:
 
 When reporting a bug, please include: the input code, the command you ran, the current output, and what you expected instead.
 
-<details>
-<summary>Development setup</summary>
-
-1. Fork the repo and create your branch from `main`
-2. Install a stable Rust toolchain
-3. Run `cargo test` to verify everything passes
-4. Make your changes and add tests
-
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for full setup notes.
-
-Before submitting a PR:
-
-```bash
-cargo test
-cargo clippy -- -D warnings
-```
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/). Please mention the issue number in the commit message or PR description.
-
-Docs: [`docs/README.md`](./docs/README.md) is the index; start with [`architecture.md`](./docs/architecture.md).
-
-</details>
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for development setup and PR checks. Project docs start at [`docs/README.md`](./docs/README.md).
 
 ## License
 

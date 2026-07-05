@@ -33,12 +33,14 @@ uses stable Cargo.
 
 ## Checks
 
-Before submitting a PR, make sure all of the following pass:
+Before submitting a PR, run the relevant checklist in
+[docs/testing.md](docs/testing.md). For most changes, the local gate is:
 
 ```bash
 cargo fmt --check       # formatting
-cargo clippy -- -D warnings  # lints
-cargo test              # all tests
+cargo nextest run --workspace
+cargo test --workspace --doc
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 `.cargo/config.toml` sets `INSTA_UPDATE=new`, so a changed snapshot **fails**
