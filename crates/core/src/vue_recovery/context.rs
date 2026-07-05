@@ -786,7 +786,12 @@ fn is_vue_helper_candidate_source(source: &str) -> bool {
 
 fn is_vue_adjacent_package_source(source: &str) -> bool {
     let source = source.to_ascii_lowercase();
-    source.contains("vueuse") || source.contains("vue-router") || source.contains("vuex")
+    source.contains("vueuse")
+        || source.contains("vue-router")
+        || source.contains("vuex")
+        || source.contains("vue-i18n")
+        || source.contains("vue-demi")
+        || source.contains("vue-query")
 }
 
 fn is_bare_import_source(source: &str) -> bool {
@@ -4785,6 +4790,9 @@ mod tests {
         assert!(!is_vue_helper_candidate_source("vuex"));
         assert!(!is_vue_helper_candidate_source("vue-router"));
         assert!(!is_vue_helper_candidate_source("@vueuse/core"));
+        assert!(!is_vue_helper_candidate_source("vue-i18n"));
+        assert!(!is_vue_helper_candidate_source("vue-demi"));
+        assert!(!is_vue_helper_candidate_source("@tanstack/vue-query"));
     }
 
     #[test]
@@ -4792,6 +4800,9 @@ mod tests {
         assert!(!is_vue_helper_candidate_source("./vueuse-core.js"));
         assert!(!is_vue_helper_candidate_source("./chunks/vue-router.js"));
         assert!(!is_vue_helper_candidate_source("./chunks/vuex.js"));
+        assert!(!is_vue_helper_candidate_source("./chunks/vue-i18n.js"));
+        assert!(!is_vue_helper_candidate_source("./vue-demi.js"));
+        assert!(!is_vue_helper_candidate_source("./vendor-vue-query.js"));
     }
 
     #[test]

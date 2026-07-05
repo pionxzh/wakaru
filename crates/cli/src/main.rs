@@ -339,6 +339,7 @@ fn run_default(cli: Cli) -> Result<()> {
             .vue_sfc
             .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
         let modules = output.modules;
+        let total_modules = modules.len();
         let artifacts: Vec<CliOutputArtifact> = modules
             .into_par_iter()
             .flat_map(|(filename, code)| {
@@ -372,7 +373,7 @@ fn run_default(cli: Cli) -> Result<()> {
                     } else {
                         JsonModuleStatus::Decompiled
                     },
-                    source_filename: (cli.vue_sfc && likely_vue_sfc).then(|| filename.clone()),
+                    source_filename: (cli.vue_sfc && recovered_vue_sfc).then(|| filename.clone()),
                     source_map_filename: Some(filename.clone()),
                 });
 
@@ -458,18 +459,14 @@ fn run_default(cli: Cli) -> Result<()> {
         }
 
         if cli.json {
-            let json = JsonUnpackOutput {
-                detected_formats: output
-                    .detected_formats
-                    .iter()
-                    .map(|f| f.as_str().to_string())
-                    .collect(),
-                modules: artifacts.iter().map(json_module_for_artifact).collect(),
-                warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
-                total: resolved.len(),
-                failed: error_modules.len(),
-                elapsed_ms: elapsed.as_millis() as u64,
-            };
+            let json = json_unpack_output_for_artifacts(
+                &output.detected_formats,
+                &artifacts,
+                &output.warnings,
+                total_modules,
+                error_modules.len(),
+                elapsed,
+            );
             println!(
                 "{}",
                 serde_json::to_string(&json).expect("JSON serialization")
@@ -495,7 +492,7 @@ fn run_default(cli: Cli) -> Result<()> {
             };
             eprintln!(
                 "total: {} module(s){fail_info} in {}",
-                styled.bold(&resolved.len().to_string()),
+                styled.bold(&total_modules.to_string()),
                 format_elapsed(elapsed),
             );
         }
@@ -585,34 +582,14 @@ fn run_default(cli: Cli) -> Result<()> {
         if vue_file_output && !recovered_vue_sfc {
             bail!("--vue-sfc did not recover a Vue SFC; cannot write Vue-only output");
         }
-        let vue_metadata = if cli.vue_sfc {
-            let likely_vue_sfc =
-                recovered_vue_sfc || is_likely_vue_sfc_source(&output.code).unwrap_or(false);
-            Some(SingleFileVueMetadata {
-                kind: if recovered_vue_sfc && !js_primary_vue_output {
-                    JsonModuleKind::VueSfc
-                } else {
-                    JsonModuleKind::JavaScript
-                },
-                status: if recovered_vue_sfc {
-                    if js_primary_vue_output {
-                        JsonModuleStatus::VueSfcSourceJs
-                    } else {
-                        JsonModuleStatus::RecoveredVueSfc
-                    }
-                } else if likely_vue_sfc {
-                    JsonModuleStatus::VueSfcFallbackJs
-                } else {
-                    JsonModuleStatus::Decompiled
-                },
-                source_filename: likely_vue_sfc.then(|| output_filename.clone()),
-                vue_sidecar_filename: vue_sidecar_path
-                    .as_ref()
-                    .map(|path| path.to_string_lossy().into_owned()),
-            })
-        } else {
-            None
-        };
+        let vue_metadata = single_file_vue_metadata(
+            cli.vue_sfc,
+            recovered_vue_sfc,
+            js_primary_vue_output,
+            &output.code,
+            &output_filename,
+            vue_sidecar_path.as_deref(),
+        );
         let formatter =
             selected_formatter(cli.formatter && (!recovered_vue_sfc || js_primary_vue_output));
         let code = format_cli_output(output.code, &output_filename, formatter);
@@ -915,6 +892,27 @@ fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
     }
 }
 
+fn json_unpack_output_for_artifacts(
+    detected_formats: &[BundleFormat],
+    artifacts: &[CliOutputArtifact],
+    warnings: &[wakaru_core::UnpackWarning],
+    total_modules: usize,
+    failed: usize,
+    elapsed: Duration,
+) -> JsonUnpackOutput {
+    JsonUnpackOutput {
+        detected_formats: detected_formats
+            .iter()
+            .map(|format| format.as_str().to_string())
+            .collect(),
+        modules: artifacts.iter().map(json_module_for_artifact).collect(),
+        warnings: warnings.iter().map(JsonWarning::from_core).collect(),
+        total: total_modules,
+        failed,
+        elapsed_ms: elapsed.as_millis() as u64,
+    }
+}
+
 fn vue_sfc_js_artifact_status(recovered_vue_sfc: bool, likely_vue_sfc: bool) -> JsonModuleStatus {
     if recovered_vue_sfc {
         JsonModuleStatus::VueSfcSourceJs
@@ -923,6 +921,42 @@ fn vue_sfc_js_artifact_status(recovered_vue_sfc: bool, likely_vue_sfc: bool) -> 
     } else {
         JsonModuleStatus::Decompiled
     }
+}
+
+fn single_file_vue_metadata(
+    vue_sfc: bool,
+    recovered_vue_sfc: bool,
+    js_primary_vue_output: bool,
+    output_code: &str,
+    output_filename: &str,
+    vue_sidecar_path: Option<&Path>,
+) -> Option<SingleFileVueMetadata> {
+    if !vue_sfc {
+        return None;
+    }
+
+    let likely_vue_sfc =
+        recovered_vue_sfc || is_likely_vue_sfc_source(output_code).unwrap_or(false);
+    Some(SingleFileVueMetadata {
+        kind: if recovered_vue_sfc && !js_primary_vue_output {
+            JsonModuleKind::VueSfc
+        } else {
+            JsonModuleKind::JavaScript
+        },
+        status: if recovered_vue_sfc {
+            if js_primary_vue_output {
+                JsonModuleStatus::VueSfcSourceJs
+            } else {
+                JsonModuleStatus::RecoveredVueSfc
+            }
+        } else if likely_vue_sfc {
+            JsonModuleStatus::VueSfcFallbackJs
+        } else {
+            JsonModuleStatus::Decompiled
+        },
+        source_filename: likely_vue_sfc.then(|| output_filename.to_string()),
+        vue_sidecar_filename: vue_sidecar_path.map(|path| path.to_string_lossy().into_owned()),
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

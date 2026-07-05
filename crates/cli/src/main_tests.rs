@@ -827,7 +827,7 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             code: "export {};".to_string(),
             kind: JsonModuleKind::JavaScript,
             status: JsonModuleStatus::VueSfcFallbackJs,
-            source_filename: Some("src/Broken.vue".to_string()),
+            source_filename: None,
             source_map_filename: Some("src/Broken.vue".to_string()),
         }),
     ];
@@ -855,37 +855,147 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             {
                 "filename": "src/Broken.vue.js",
                 "kind": "javascript",
-                "status": "vue_sfc_fallback_js",
-                "source_filename": "src/Broken.vue"
+                "status": "vue_sfc_fallback_js"
             }
         ])
     );
 }
 
 #[test]
-fn json_decompile_describes_single_file_vue_sidecar() {
-    let json = JsonDecompileOutput {
-        code: None,
-        source_map: None,
-        kind: Some(JsonModuleKind::JavaScript),
-        status: Some(JsonModuleStatus::VueSfcSourceJs),
-        source_filename: Some("src/App.vue".to_string()),
-        vue_sidecar_filename: Some("dist/App.vue".to_string()),
-        warnings: Vec::new(),
-        elapsed_ms: 12,
-    };
+fn json_unpack_total_counts_input_modules_not_artifacts() {
+    let artifacts = vec![
+        CliOutputArtifact {
+            filename: "src/App.vue.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::VueSfcSourceJs,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: Some("src/App.vue".to_string()),
+        },
+        CliOutputArtifact {
+            filename: "src/App.vue".to_string(),
+            code: "<template />".to_string(),
+            kind: JsonModuleKind::VueSfc,
+            status: JsonModuleStatus::RecoveredVueSfc,
+            source_filename: Some("src/App.vue".to_string()),
+            source_map_filename: None,
+        },
+    ];
 
+    let json =
+        json_unpack_output_for_artifacts(&[], &artifacts, &[], 1, 0, Duration::from_millis(12));
+
+    assert_eq!(json.total, 1);
+    assert_eq!(json.modules.len(), 2);
+    assert_eq!(json.elapsed_ms, 12);
+}
+
+#[test]
+fn single_file_vue_metadata_describes_recovered_sfc_output() {
+    let output = decompile_vue_sfc_output_with_import_resolver(
+        vue_render_module_source(),
+        DecompileOptions {
+            filename: "src/App.vue".to_string(),
+            ..Default::default()
+        },
+        |_| None,
+    )
+    .expect("vue sfc decompile should succeed");
+
+    let metadata = single_file_vue_metadata(
+        true,
+        output.recovered_sfc,
+        false,
+        &output.output.code,
+        "src/App.vue",
+        None,
+    )
+    .expect("vue metadata should be emitted");
+
+    assert!(output.recovered_sfc);
+    assert_eq!(metadata.kind, JsonModuleKind::VueSfc);
+    assert_eq!(metadata.status, JsonModuleStatus::RecoveredVueSfc);
+    assert_eq!(metadata.source_filename.as_deref(), Some("src/App.vue"));
+    assert_eq!(metadata.vue_sidecar_filename, None);
+}
+
+#[test]
+fn single_file_vue_metadata_describes_js_primary_sidecar_output() {
+    let output = decompile(
+        vue_render_module_source(),
+        DecompileOptions {
+            filename: "src/App.vue".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let sidecar = recover_single_file_vue_sidecar(&output.code, "src/App.vue");
+    let sidecar_path = PathBuf::from("dist/App.vue");
+
+    let metadata = single_file_vue_metadata(
+        true,
+        sidecar.is_some(),
+        true,
+        &output.code,
+        "src/App.vue",
+        Some(&sidecar_path),
+    )
+    .expect("vue metadata should be emitted");
+
+    assert!(sidecar.is_some());
+    assert_eq!(metadata.kind, JsonModuleKind::JavaScript);
+    assert_eq!(metadata.status, JsonModuleStatus::VueSfcSourceJs);
+    assert_eq!(metadata.source_filename.as_deref(), Some("src/App.vue"));
     assert_eq!(
-        serde_json::to_value(json).expect("serialize decompile json"),
-        serde_json::json!({
-            "kind": "javascript",
-            "status": "vue_sfc_source_js",
-            "source_filename": "src/App.vue",
-            "vue_sidecar_filename": "dist/App.vue",
-            "warnings": [],
-            "elapsed_ms": 12
-        })
+        metadata.vue_sidecar_filename.as_deref(),
+        Some("dist/App.vue")
     );
+}
+
+#[test]
+fn single_file_vue_metadata_describes_plain_js_output() {
+    let output = decompile(
+        "export const value = 1;",
+        DecompileOptions {
+            filename: "src/plain.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+
+    let metadata = single_file_vue_metadata(true, false, false, &output.code, "src/plain.js", None)
+        .expect("vue metadata should be emitted under --vue-sfc");
+
+    assert_eq!(metadata.kind, JsonModuleKind::JavaScript);
+    assert_eq!(metadata.status, JsonModuleStatus::Decompiled);
+    assert_eq!(metadata.source_filename, None);
+    assert_eq!(metadata.vue_sidecar_filename, None);
+}
+
+#[test]
+fn single_file_vue_metadata_describes_likely_vue_fallback_output() {
+    let output = decompile(
+        r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("div", null, "Hi");
+}
+"#,
+        DecompileOptions {
+            filename: "src/Broken.vue".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+
+    let metadata =
+        single_file_vue_metadata(true, false, false, &output.code, "src/Broken.vue", None)
+            .expect("vue metadata should be emitted under --vue-sfc");
+
+    assert_eq!(metadata.kind, JsonModuleKind::JavaScript);
+    assert_eq!(metadata.status, JsonModuleStatus::VueSfcFallbackJs);
+    assert_eq!(metadata.source_filename.as_deref(), Some("src/Broken.vue"));
+    assert_eq!(metadata.vue_sidecar_filename, None);
 }
 
 #[test]

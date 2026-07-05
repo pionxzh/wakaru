@@ -854,7 +854,9 @@ fn should_parenthesize_unwrapped_call(
 
     let prev = previous_non_ws(input, start);
     let next = next_non_ws(input, close_paren + 1);
-    if next.is_some_and(|ch| matches!(ch, '.' | '[' | '(')) && postfix_base_needs_parens(inner) {
+    if next.is_some_and(|ch| matches!(ch, '.' | '[' | '(' | '`'))
+        && postfix_base_needs_parens(inner)
+    {
         return true;
     }
 
@@ -862,7 +864,7 @@ fn should_parenthesize_unwrapped_call(
         return false;
     }
 
-    next.is_some_and(|ch| matches!(ch, '.' | '[' | '('))
+    next.is_some_and(|ch| matches!(ch, '.' | '[' | '(' | '`'))
         || prev.is_some_and(is_expression_operator)
         || next.is_some_and(is_expression_operator)
         || previous_word(input, start).is_some_and(is_prefix_word_operator)
@@ -1242,6 +1244,15 @@ mod tests {
             strip_callee_wrappers("unref(a || b)(x)", "unref"),
             "(a || b)(x)"
         );
+    }
+
+    #[test]
+    fn strip_callee_wrappers_preserves_tagged_template_precedence() {
+        assert_eq!(
+            strip_callee_wrappers("unref(a || b)`x`", "unref"),
+            "(a || b)`x`"
+        );
+        assert_eq!(strip_callee_wrappers("unref(tag)`x`", "unref"), "tag`x`");
     }
 
     #[test]
