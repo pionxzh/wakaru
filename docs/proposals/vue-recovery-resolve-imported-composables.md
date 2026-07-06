@@ -85,4 +85,5 @@ if a shadow bug surfaces in imported composable ref detection, or as part of a
   `crates/core/src/vue_recovery/context.rs`.
 - The separate, unrelated cleanup: Phase 4 —
   [vue-recovery-ast-ir.md](vue-recovery-ast-ir.md).
-- issue #196 sequencing plan.
+- Redesign history: issue #196 and the `#196` commit history
+  (`git log --grep '#196'`).

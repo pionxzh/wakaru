@@ -70,7 +70,12 @@ carried AST cannot faithfully back ref-collection or renaming.
   populates `Some(cleaned_expr.clone())` from the now-fully-AST `print_expr`.
 - Move template ref-collection (`vue_recovery/usage.rs`) and shadow analysis onto
   the carried AST (a scope-aware free-variable walk replaces the `js_refs`
-  string scan).
+  string scan). **Reuse the existing pattern:** `declared_binding_idents` +
+  `IdentRefCollector` in `vue_recovery/context.rs` already do exactly this for the
+  script side. Gotcha carried over from Phase 2b: key the declared-binding set on
+  the `(name, ctxt)` **pair, not `ctxt` alone** — `resolver()` assigns one context
+  per *scope*, so sibling bindings share a context; keying on ctxt alone silently
+  drops cross-binding references (it caused 8 snapshot failures in 2b).
 - Move `replace_prefix` (`vue_template.rs`) onto the carried AST via a
   `BindingRenamer`-style ctxt rename, then re-print.
 - Delete `js_refs.rs`, `rename_code_segment` + its scanners, and the re-parse
@@ -145,7 +150,8 @@ is written up separately in
 
 ## References
 
-- Sequencing history and per-phase notes: the resolver-redesign plan (issue #196).
+- Sequencing history and per-phase rationale: issue #196 and the `#196` commit
+  history (`git log --grep '#196'` — Phases 0–3, 2a, 2b, with per-commit notes).
 - Binding-identity precedent: `crates/core/src/rules/rename_utils.rs`
   (`BindingRenamer`, keyed on `(Atom, SyntaxContext)`).
 - Prior art for carrying an AST beside a string: `VueSetupValueBinding`
