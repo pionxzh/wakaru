@@ -209,16 +209,18 @@ Without this guard, a rule matching `e` (a webpack param name) would also rename
 
 **Known deviation: Vue SFC recovery (being retired).** The experimental
 `--vue-sfc` recovery path (`crates/core/src/vue_recovery.rs` and
-`crates/core/src/vue_recovery/`) re-parses printed JavaScript and now runs
-`resolver()` over it, so helper recognition and the top-level import/decl
-renamers already gate on `SyntaxContext` like the main pipeline. What remains as
-implementation debt: a few recovery-only collectors still use local `ScopeStack`
-tracking and string-level expression lexers instead of ctxt gates, because they
-run on *cleaned* ASTs whose contexts the setup cleaners currently reset. Removing
-that parallel scope/string machinery is in progress (the resolver redesign,
-issue #196; see the sequencing plan). Treat the remaining string/scope passes as
-debt of the experimental Vue subsystem, not a precedent for new rules in the main
-decompile pipeline.
+`crates/core/src/vue_recovery/`) re-parses printed JavaScript and runs
+`resolver()` over it. Identifier matching is now `SyntaxContext`-gated like the
+main pipeline: helper recognition, alias/props renaming (via
+`rename_utils::BindingRenamer`), and the reference collectors all key on
+`(name, ctxt)`; the hand-rolled `ScopeStack` is gone. What remains as
+implementation debt: the IR (`VueExpr`) still carries printed *strings*, so
+template-expression reference collection and prefix renaming go through
+string-level lexers (`vue_recovery/js_refs.rs`, `rename_code_segment`) rather than
+the AST. Removing that string machinery by carrying the resolved AST in the IR is
+the last step of the resolver redesign (issue #196; see the sequencing plan).
+Treat the remaining string passes as debt of the experimental Vue subsystem, not
+a precedent for new rules in the main decompile pipeline.
 
 > **Why not use SWC's built-in `rename()`?**
 > `swc_ecma_transforms_base::rename::rename(map: &FxHashMap<Id, Atom>)` exists and is
