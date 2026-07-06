@@ -207,15 +207,18 @@ Without this guard, a rule matching `e` (a webpack param name) would also rename
 
 **Pattern to follow when adding new visitors:** always take `unresolved_mark: Mark` and gate identifier matches on `id.ctxt.outer() == self.unresolved_mark`.
 
-**Known deviation: Vue SFC recovery.** The experimental `--vue-sfc` recovery
-path (`crates/core/src/vue_recovery.rs` and `crates/core/src/vue_recovery/`)
-re-parses printed JavaScript fragments and template expressions outside the
-normal resolver-backed rule pipeline. It therefore uses local `ScopeStack`
-tracking and string-level expression lexers instead of `SyntaxContext` gates in
-several recovery-only passes. Treat this as an implementation debt of the
-experimental Vue subsystem, not a precedent for new rules in the main decompile
-pipeline; the long-term direction is to run Vue recovery on resolver-backed
-ASTs and remove the parallel scope/string tracking.
+**Known deviation: Vue SFC recovery (being retired).** The experimental
+`--vue-sfc` recovery path (`crates/core/src/vue_recovery.rs` and
+`crates/core/src/vue_recovery/`) re-parses printed JavaScript and now runs
+`resolver()` over it, so helper recognition and the top-level import/decl
+renamers already gate on `SyntaxContext` like the main pipeline. What remains as
+implementation debt: a few recovery-only collectors still use local `ScopeStack`
+tracking and string-level expression lexers instead of ctxt gates, because they
+run on *cleaned* ASTs whose contexts the setup cleaners currently reset. Removing
+that parallel scope/string machinery is in progress (the resolver redesign,
+issue #196; see the sequencing plan). Treat the remaining string/scope passes as
+debt of the experimental Vue subsystem, not a precedent for new rules in the main
+decompile pipeline.
 
 > **Why not use SWC's built-in `rename()`?**
 > `swc_ecma_transforms_base::rename::rename(map: &FxHashMap<Id, Atom>)` exists and is
