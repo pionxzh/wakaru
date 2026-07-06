@@ -68,6 +68,63 @@ function runMatrix(name) {
   }
 }
 
+function comparableStats(stats) {
+  return { aggregate: stats.aggregate, matrices: stats.matrices };
+}
+
+function formatMatrix(matrix) {
+  if (!matrix) return "<missing>";
+  return `${matrix.yes}/${matrix.total} (${matrix.pct}%), no=${matrix.no}, error=${matrix.error ?? 0}`;
+}
+
+function formatValue(value) {
+  return value === undefined ? "<missing>" : JSON.stringify(value);
+}
+
+function printStatsDiff(recorded, measured) {
+  console.error("  matrix diffs:");
+
+  let printed = false;
+  const recordedMatrices = new Map((recorded.matrices ?? []).map((matrix) => [matrix.name, matrix]));
+  const measuredMatrices = new Map((measured.matrices ?? []).map((matrix) => [matrix.name, matrix]));
+  const names = [
+    ...matrices,
+    ...[...recordedMatrices.keys()].filter((name) => !matrices.includes(name)),
+    ...[...measuredMatrices.keys()].filter((name) => !matrices.includes(name) && !recordedMatrices.has(name)),
+  ];
+
+  const aggregateFields = ["yes", "total", "pct"];
+  const aggregateDiffs = aggregateFields
+    .filter((field) => recorded.aggregate?.[field] !== measured.aggregate?.[field])
+    .map((field) => `${field}: ${formatValue(recorded.aggregate?.[field])} -> ${formatValue(measured.aggregate?.[field])}`);
+  if (aggregateDiffs.length > 0) {
+    printed = true;
+    console.error(`    aggregate: ${aggregateDiffs.join(", ")}`);
+  }
+
+  for (const name of names) {
+    const before = recordedMatrices.get(name);
+    const after = measuredMatrices.get(name);
+    if (!before || !after) {
+      printed = true;
+      console.error(`    ${name}: recorded ${formatMatrix(before)}; measured ${formatMatrix(after)}`);
+      continue;
+    }
+
+    const diffs = ["yes", "no", "error", "total", "pct"]
+      .filter((field) => (before[field] ?? 0) !== (after[field] ?? 0))
+      .map((field) => `${field}: ${formatValue(before[field] ?? 0)} -> ${formatValue(after[field] ?? 0)}`);
+    if (diffs.length > 0) {
+      printed = true;
+      console.error(`    ${name}: recorded ${formatMatrix(before)}; measured ${formatMatrix(after)}; ${diffs.join(", ")}`);
+    }
+  }
+
+  if (!printed) {
+    console.error("    no scalar field differences found; compare stats.json ordering or extra fields");
+  }
+}
+
 const checkMode = process.argv.includes("--check");
 
 console.log("Running reproduction matrices...");
@@ -76,7 +133,8 @@ for (const name of matrices) {
   process.stdout.write(`  ${name}...`);
   const result = runMatrix(name);
   if (result) {
-    console.log(` ${result.yes}/${result.total} (${result.pct}%)`);
+    const errorSuffix = result.error ? ` / ${result.error} error` : "";
+    console.log(` ${result.yes}/${result.total}${errorSuffix} (${result.pct}%)`);
     results.push(result);
   }
 }
@@ -106,11 +164,12 @@ if (checkMode) {
   // provenance: they change on every commit and every day, so including
   // them would make --check permanently stale anywhere but the machine
   // that just regenerated the file (e.g. always-failing in CI).
-  const measured = (s) => JSON.stringify({ aggregate: s.aggregate, matrices: s.matrices }, null, 2);
+  const measured = (s) => JSON.stringify(comparableStats(s), null, 2);
   if (measured(existing) !== measured(stats)) {
     console.error("\nstats.json is stale. Run `node scripts/repro/collect-stats.mjs` to update.");
     console.error(`  recorded:  ${existing.aggregate?.yes}/${existing.aggregate?.total} (${existing.aggregate?.pct}%)`);
     console.error(`  measured:  ${yes}/${total} (${pct}%)`);
+    printStatsDiff(comparableStats(existing), comparableStats(stats));
     process.exit(1);
   }
   console.log(`\nstats.json is up to date: ${yes}/${total} (${pct}%)`);
