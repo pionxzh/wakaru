@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
     IdentName, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
@@ -232,6 +232,7 @@ struct ContextMemberCleaner<'a> {
     prefixes: Vec<&'a str>,
     prop_bindings: &'a HashMap<Atom, Atom>,
     shadow_depths: Vec<usize>,
+    unresolved_ctxt: SyntaxContext,
 }
 
 impl<'a> ContextMemberCleaner<'a> {
@@ -253,6 +254,7 @@ impl<'a> ContextMemberCleaner<'a> {
             prefixes,
             prop_bindings: &ctx.bindings.props,
             shadow_depths,
+            unresolved_ctxt: ctx.unresolved_ctxt,
         }
     }
 
@@ -317,7 +319,10 @@ impl<'a> ContextMemberCleaner<'a> {
             .get(&prop.sym)
             .cloned()
             .unwrap_or_else(|| prop.sym.clone());
-        Ident::new(sym, prop.span, Default::default())
+        // The collapsed member access (`_ctx.foo` -> `foo`) is a free reference to
+        // a template-scope binding; stamp the resolver's unresolved context so the
+        // cleaned AST carries a consistent (non-colliding) context.
+        Ident::new(sym, prop.span, self.unresolved_ctxt)
     }
 }
 

@@ -69,6 +69,13 @@ struct VueRecoveryContext {
     /// helper from an inner-scope local reusing the (often minified) name, and to
     /// build `SyntaxContext`-keyed renames for alias resolution.
     top_level_binding_ctxts: HashMap<Atom, SyntaxContext>,
+    /// The `SyntaxContext` `resolver()` assigns to unresolved (free/global)
+    /// references — `SyntaxContext::empty().apply_mark(unresolved_mark)`. Used to
+    /// stamp idents that recovery synthesizes as free references (e.g.
+    /// `ContextMemberCleaner` collapsing `_ctx.foo` to a bare `foo`), so cleaned
+    /// ASTs carry a consistent context instead of a colliding empty one. Defaults
+    /// to `empty()` for test-constructed contexts that never run `resolver()`.
+    unresolved_ctxt: SyntaxContext,
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_namespaces: HashSet<Atom>,
     vue_helper_candidates: HashSet<Atom>,
@@ -352,6 +359,7 @@ pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         let mut ctx = collect_context(&module, cm, HashMap::new(), HashMap::new());
+        ctx.unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
         let Some(render) = find_render_source(&module, None) else {
             return Ok(false);
         };
@@ -405,6 +413,7 @@ fn recover_vue_sfcs_from_js_inner(
             imported_metadata.component_bindings,
             composable_ref_props,
         );
+        ctx.unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
         ctx.directive_bindings
             .extend(imported_metadata.directive_bindings);
         ctx.vue_helper_candidates

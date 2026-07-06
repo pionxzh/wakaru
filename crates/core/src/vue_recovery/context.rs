@@ -4,16 +4,14 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, BlockStmtOrExpr,
-    CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread,
+    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmtOrExpr, CallExpr, Callee,
+    CatchClause, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread,
     FnDecl, Function, Ident, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName,
-    PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, Param, ParenExpr, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
-
-mod scope;
 
 use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
 use super::helpers::{helper_name, VueHelper};
@@ -33,7 +31,6 @@ use super::{
 };
 use crate::js_names::is_valid_identifier_name;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
-use scope::{visit_assign_expr_refs, ScopeStack};
 
 const MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN: usize = 80;
 
@@ -2121,8 +2118,9 @@ impl Visit for TemplateRefAliasCollector {
 }
 
 fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
+    let declared = declared_binding_idents(render);
     let mut collector = IdentRefCollector {
-        scopes: ScopeStack::new(),
+        declared: &declared,
         refs: HashSet::new(),
     };
     render.visit_with(&mut collector);
@@ -3227,9 +3225,10 @@ fn is_computed_script_setup_call(call: &CallExpr, getter: &Expr, ctx: &VueRecove
 }
 
 fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
+    let declared = declared_binding_idents(expr);
     let mut collector = ScriptImportRefCollector {
         imports,
-        scopes: ScopeStack::new(),
+        declared: &declared,
         refs: HashSet::new(),
     };
     expr.visit_with(&mut collector);
@@ -3237,9 +3236,10 @@ fn script_import_refs(expr: &Expr, imports: &HashMap<Atom, VueScriptImport>) -> 
 }
 
 fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> HashSet<Atom> {
+    let declared = declared_binding_idents(stmt);
     let mut collector = ScriptImportRefCollector {
         imports,
-        scopes: ScopeStack::new(),
+        declared: &declared,
         refs: HashSet::new(),
     };
     stmt.visit_with(&mut collector);
@@ -3247,8 +3247,9 @@ fn stmt_import_refs(stmt: &Stmt, imports: &HashMap<Atom, VueScriptImport>) -> Ha
 }
 
 pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
+    let declared = declared_binding_idents(stmt);
     let mut collector = IdentRefCollector {
-        scopes: ScopeStack::new(),
+        declared: &declared,
         refs: HashSet::new(),
     };
     stmt.visit_with(&mut collector);
@@ -3256,32 +3257,101 @@ pub(super) fn stmt_ident_refs(stmt: &Stmt) -> HashSet<Atom> {
 }
 
 fn expr_ident_refs(expr: &Expr) -> HashSet<Atom> {
+    let declared = declared_binding_idents(expr);
     let mut collector = IdentRefCollector {
-        scopes: ScopeStack::new(),
+        declared: &declared,
         refs: HashSet::new(),
     };
     expr.visit_with(&mut collector);
     collector.refs
 }
 
-struct IdentRefCollector {
-    scopes: ScopeStack,
+/// Collect the `(name, SyntaxContext)` of every binding *declared* within a
+/// subtree: `var`/`let`/`const` names, function/arrow/method params, catch
+/// params, and `fn`/`class` declaration names. Assignment targets (`x = ...`) are
+/// references to existing bindings, not declarations, and are deliberately
+/// excluded — the old `ScopeStack` collectors special-cased this via
+/// `visit_assign_expr_refs`; under resolver it is free because the target and its
+/// declaration share one binding identity.
+///
+/// The key is the `(name, ctxt)` pair, not `ctxt` alone: `resolver()` assigns one
+/// context per *scope*, so every binding declared in the same scope shares a
+/// context. Keying on the pair distinguishes sibling bindings — the same binding
+/// identity used elsewhere in recovery.
+fn declared_binding_idents<N>(node: &N) -> HashSet<(Atom, SyntaxContext)>
+where
+    N: VisitWith<DeclaredBindingIdents>,
+{
+    let mut collector = DeclaredBindingIdents {
+        idents: HashSet::new(),
+    };
+    node.visit_with(&mut collector);
+    collector.idents
+}
+
+struct DeclaredBindingIdents {
+    idents: HashSet<(Atom, SyntaxContext)>,
+}
+
+impl DeclaredBindingIdents {
+    fn record_pat(&mut self, pat: &Pat) {
+        collect_pat_binding_idents(pat, &mut self.idents);
+    }
+}
+
+impl Visit for DeclaredBindingIdents {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.record_pat(&declarator.name);
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_param(&mut self, param: &Param) {
+        self.record_pat(&param.pat);
+        param.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        for param in &arrow.params {
+            self.record_pat(param);
+        }
+        arrow.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, catch: &CatchClause) {
+        if let Some(param) = &catch.param {
+            self.record_pat(param);
+        }
+        catch.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.idents
+            .insert((function.ident.sym.clone(), function.ident.ctxt));
+        function.visit_children_with(self);
+    }
+
+    fn visit_class_decl(&mut self, class: &ClassDecl) {
+        self.idents
+            .insert((class.ident.sym.clone(), class.ident.ctxt));
+        class.visit_children_with(self);
+    }
+}
+
+/// Collects identifier references that are *free* in the walked subtree — those
+/// whose `(name, ctxt)` binding identity is not among [`declared_binding_idents`].
+/// Runs on resolver-processed ASTs, so this is exactly the shadow-safe reference
+/// set the old `ScopeStack` collector computed, without the declare-as-you-go
+/// bookkeeping.
+struct IdentRefCollector<'a> {
+    declared: &'a HashSet<(Atom, SyntaxContext)>,
     refs: HashSet<Atom>,
 }
 
-impl Visit for IdentRefCollector {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        visit_assign_expr_refs(assign, self);
-    }
-
+impl Visit for IdentRefCollector<'_> {
     fn visit_ident(&mut self, ident: &Ident) {
-        if !self.scopes.is_shadowed(&ident.sym) {
+        if !self.declared.contains(&(ident.sym.clone(), ident.ctxt)) {
             self.refs.insert(ident.sym.clone());
         }
-    }
-
-    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_prop_name(&mut self, prop: &PropName) {
@@ -3295,64 +3365,23 @@ impl Visit for IdentRefCollector {
             computed.visit_with(self);
         }
     }
-
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.scopes.declare_pat(&declarator.name);
-        if let Some(init) = &declarator.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.scopes.declare(&function.ident.sym);
-        self.visit_function(&function.function);
-    }
-
-    fn visit_function(&mut self, function: &Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &function.body {
-            body.visit_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.scopes.declare(&class.ident.sym);
-        class.class.visit_with(self);
-    }
 }
 
+/// Like [`IdentRefCollector`] but limited to references that resolve to a script
+/// import binding.
 struct ScriptImportRefCollector<'a> {
     imports: &'a HashMap<Atom, VueScriptImport>,
-    scopes: ScopeStack,
+    declared: &'a HashSet<(Atom, SyntaxContext)>,
     refs: HashSet<Atom>,
 }
 
 impl Visit for ScriptImportRefCollector<'_> {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        visit_assign_expr_refs(assign, self);
-    }
-
     fn visit_ident(&mut self, ident: &Ident) {
-        if self.imports.contains_key(&ident.sym) && !self.scopes.is_shadowed(&ident.sym) {
+        if self.imports.contains_key(&ident.sym)
+            && !self.declared.contains(&(ident.sym.clone(), ident.ctxt))
+        {
             self.refs.insert(ident.sym.clone());
         }
-    }
-
-    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.scopes.declare(&ident.id.sym);
     }
 
     fn visit_prop_name(&mut self, prop: &PropName) {
@@ -3365,43 +3394,6 @@ impl Visit for ScriptImportRefCollector<'_> {
         if let MemberProp::Computed(computed) = prop {
             computed.visit_with(self);
         }
-    }
-
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        self.scopes.declare_pat(&declarator.name);
-        if let Some(init) = &declarator.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.scopes.declare(&function.ident.sym);
-        self.visit_function(&function.function);
-    }
-
-    fn visit_function(&mut self, function: &Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &function.body {
-            body.visit_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.scopes.declare(&class.ident.sym);
-        class.class.visit_with(self);
     }
 }
 

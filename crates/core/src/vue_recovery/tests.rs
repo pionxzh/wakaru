@@ -10,6 +10,53 @@ fn test_stmt(source: &str) -> Stmt {
     }
 }
 
+/// Parse `source` and run `resolver()` over it (mirroring the recovery entry
+/// points) so statements carry real `SyntaxContext`s, then return the top-level
+/// statements.
+fn resolved_stmts(source: &str) -> Vec<Stmt> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module(source, cm).unwrap();
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        module
+            .body
+            .into_iter()
+            .filter_map(|item| match item {
+                ModuleItem::Stmt(stmt) => Some(stmt),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+#[test]
+fn stmt_ident_refs_reports_sibling_scope_free_references() {
+    // `resolver()` assigns one context per scope, so `sibling` and `handler`
+    // (both top level) share a context. The declared-binding set must key on
+    // (name, ctxt), not ctxt alone — otherwise `handler` treats the sibling
+    // reference as one of its own declarations and the dependency is dropped.
+    let stmts = resolved_stmts("const sibling = 1; function handler() { return sibling; }");
+    let handler = stmts.into_iter().nth(1).expect("handler statement");
+    let refs = stmt_ident_refs(&handler);
+    assert!(refs.contains(&Atom::from("sibling")));
+    assert!(!refs.contains(&Atom::from("handler")));
+}
+
+#[test]
+fn stmt_ident_refs_excludes_shadowing_locals() {
+    // A nested arrow param `outer` shadows any outer binding of that name; its
+    // uses must not be reported as free references, while a genuine free
+    // reference (`external`) still is. Guards the ScopeStack -> (name, ctxt)
+    // conversion of the cleaned-AST reference collectors.
+    let stmts = resolved_stmts("const f = (outer) => outer.method(external);");
+    let refs = stmt_ident_refs(&stmts[0]);
+    assert!(refs.contains(&Atom::from("external")));
+    assert!(!refs.contains(&Atom::from("outer")));
+    assert!(!refs.contains(&Atom::from("f")));
+}
+
 fn test_atoms(names: &[&str]) -> Vec<Atom> {
     names.iter().map(|name| Atom::from(*name)).collect()
 }
