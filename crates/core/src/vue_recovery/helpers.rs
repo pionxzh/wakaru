@@ -90,7 +90,9 @@ pub(super) fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
             .get(&ident.sym)
             .filter(|_| ctx.resolves_to_import(ident))
             .map(|helper| helper == &VueHelper::Fragment)
-            .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
+            .unwrap_or_else(|| {
+                ident.sym.as_ref() == "Fragment" && ident.ctxt == ctx.unresolved_ctxt
+            }),
         _ => false,
     }
 }

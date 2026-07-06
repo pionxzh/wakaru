@@ -840,6 +840,25 @@ export function render(_ctx) {
 }
 
 #[test]
+fn does_not_recover_render_local_fragment_as_vue_fragment() {
+    // The `Fragment` binding is render-local, not Vue's imported Fragment helper.
+    // Fragment block inference must respect resolver contexts instead of treating
+    // the conventional helper name as proof.
+    let input = r#"
+import { openBlock as o, createElementBlock as c } from "vue";
+export function render(_ctx) {
+  const Fragment = _ctx.pick;
+  return o(), c(Fragment, null, "hello", 64);
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default()).unwrap(),
+        None,
+    );
+}
+
+#[test]
 fn recovers_logical_assign_cached_static_vnode() {
     let input = r#"
 import { openBlock, createElementBlock, createElementVNode } from "vue";

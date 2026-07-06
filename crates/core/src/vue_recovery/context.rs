@@ -957,6 +957,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
         candidates: &ctx.vue_helper_candidates,
         known_helpers: &ctx.vue_helpers,
         import_ctxts: &ctx.top_level_binding_ctxts,
+        unresolved_ctxt: ctx.unresolved_ctxt,
         inferred: HashMap::new(),
         prop_value_depth: 0,
         vnode_child_depth: 0,
@@ -979,6 +980,7 @@ struct HelperInference<'a> {
     candidates: &'a std::collections::HashSet<Atom>,
     known_helpers: &'a HashMap<Atom, VueHelper>,
     import_ctxts: &'a HashMap<Atom, SyntaxContext>,
+    unresolved_ctxt: SyntaxContext,
     inferred: HashMap<Atom, VueHelper>,
     prop_value_depth: usize,
     vnode_child_depth: usize,
@@ -1029,11 +1031,13 @@ impl Visit for HelperInference<'_> {
             self.infer_unref_expr(callee.as_ref());
         }
 
-        if let Some((callee, fragment)) = self.fragment_block_call(call) {
+        if let Some((callee, inferred_fragment)) = self.fragment_block_call(call) {
             self.inferred
                 .insert(callee.sym.clone(), VueHelper::CreateElementBlock);
-            self.inferred
-                .insert(fragment.sym.clone(), VueHelper::Fragment);
+            if let Some(fragment) = inferred_fragment {
+                self.inferred
+                    .insert(fragment.sym.clone(), VueHelper::Fragment);
+            }
         }
 
         if let Some(callee) = self.with_directives_call(call) {
@@ -1114,7 +1118,7 @@ impl HelperInference<'_> {
         call: &'a CallExpr,
     ) -> Option<(
         &'a swc_core::ecma::ast::Ident,
-        &'a swc_core::ecma::ast::Ident,
+        Option<&'a swc_core::ecma::ast::Ident>,
     )> {
         let callee = call_callee_ident(call)?;
         if !self.is_candidate(callee) {
@@ -1127,7 +1131,17 @@ impl HelperInference<'_> {
             .args
             .first()
             .and_then(|arg| ident_expr(arg.expr.as_ref()))?;
-        Some((callee, fragment))
+        if self.is_candidate(fragment) || self.import_resolves(fragment) {
+            return Some((callee, Some(fragment)));
+        }
+        if self.is_unresolved_fragment_name(fragment) {
+            return Some((callee, None));
+        }
+        None
+    }
+
+    fn is_unresolved_fragment_name(&self, ident: &Ident) -> bool {
+        ident.sym.as_ref() == "Fragment" && ident.ctxt == self.unresolved_ctxt
     }
 
     fn with_directives_call<'a>(
