@@ -21,10 +21,6 @@ impl ScopeStack {
         self.0.pop();
     }
 
-    pub(super) fn depth(&self) -> usize {
-        self.0.len()
-    }
-
     pub(super) fn declare(&mut self, sym: &Atom) {
         if let Some(scope) = self.0.last_mut() {
             scope.insert(sym.clone());

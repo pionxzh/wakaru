@@ -119,6 +119,39 @@ fn record_pat_binding_ctxts(pat: &Pat, ctxts: &mut HashMap<Atom, SyntaxContext>)
     }
 }
 
+/// Collect each pattern-bound ident as a `(name, SyntaxContext)` pair. Mirrors
+/// [`record_pat_binding_ctxts`] but keeps distinct contexts for the same name so
+/// candidate sets can be matched against a resolved reference's own binding
+/// identity rather than by name alone.
+fn collect_pat_binding_idents(pat: &Pat, bindings: &mut HashSet<(Atom, SyntaxContext)>) {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_idents(elem, bindings);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_pat_binding_idents(&key_value.value, bindings)
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        bindings.insert((assign.key.id.sym.clone(), assign.key.id.ctxt));
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_binding_idents(&rest.arg, bindings),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_idents(&rest.arg, bindings),
+        Pat::Assign(assign) => collect_pat_binding_idents(&assign.left, bindings),
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
+}
+
 pub(super) fn collect_context(
     module: &Module,
     cm: Lrc<SourceMap>,
@@ -1832,7 +1865,8 @@ pub(super) fn collect_setup_context(
                                     }
                                     let is_ref_object_alias_source = is_ref_object
                                         && setup_ref_object_alias_refs.contains(&binding.id.sym);
-                                    if setup_value_member_refs.contains(&binding.id.sym)
+                                    if setup_value_member_refs
+                                        .contains(&(binding.id.sym.clone(), binding.id.ctxt))
                                         && is_ref_member_extraction_expr(
                                             init,
                                             ctx,
@@ -1851,7 +1885,9 @@ pub(super) fn collect_setup_context(
                                         }
                                     }
                                     if let Some(value) = computed_value_expr(init, ctx)? {
-                                        if setup_value_member_refs.contains(&binding.id.sym) {
+                                        if setup_value_member_refs
+                                            .contains(&(binding.id.sym.clone(), binding.id.ctxt))
+                                        {
                                             collect_setup_value_template_tuple_refs(
                                                 &value,
                                                 &setup_tuple_value_candidates,
@@ -1882,13 +1918,14 @@ pub(super) fn collect_setup_context(
                                     } else if (!is_ref_object_alias_source
                                         || setup_template_ref_alias_sources
                                             .contains(&binding.id.sym))
-                                        && !setup_non_value_member_refs.contains(&binding.id.sym)
+                                        && !setup_non_value_member_refs
+                                            .contains(&(binding.id.sym.clone(), binding.id.ctxt))
                                         && (setup_template_ref_alias_sources
                                             .contains(&binding.id.sym)
                                             || should_emit_ref_script_setup_expr(
                                                 init,
                                                 ctx,
-                                                &binding.id.sym,
+                                                &binding.id,
                                                 &setup_value_member_refs,
                                             ))
                                     {
@@ -2084,9 +2121,8 @@ fn setup_ref_object_alias_refs(stmts: &[Stmt]) -> HashSet<Atom> {
     refs
 }
 
-fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<Atom> {
+fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<(Atom, SyntaxContext)> {
     let mut collector = NonValueMemberRefCollector {
-        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     for stmt in stmts {
@@ -2095,9 +2131,11 @@ fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<Atom> {
     collector.refs
 }
 
-fn setup_value_member_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<Atom> {
+fn setup_value_member_refs(
+    render: &ArrowExpr,
+    setup_stmts: &[Stmt],
+) -> HashSet<(Atom, SyntaxContext)> {
     let mut collector = ValueMemberIdentRefCollector {
-        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     for stmt in setup_stmts {
@@ -2107,154 +2145,41 @@ fn setup_value_member_refs(render: &ArrowExpr, setup_stmts: &[Stmt]) -> HashSet<
     collector.refs
 }
 
+/// Collects `(name, ctxt)` of every `<ident>.value` member base. Runs on the
+/// pristine resolver-processed render/setup AST, so shadow safety comes from
+/// `SyntaxContext` identity — a nested local reusing a setup binding's name
+/// carries a different context and never matches the recorded binding. No
+/// hand-rolled scope tracking is needed.
 struct ValueMemberIdentRefCollector {
-    scopes: ScopeStack,
-    refs: HashSet<Atom>,
-}
-
-impl ValueMemberIdentRefCollector {
-    fn declare_if_nested(&mut self, sym: &Atom) {
-        if self.scopes.depth() > 1 {
-            self.scopes.declare(sym);
-        }
-    }
+    refs: HashSet<(Atom, SyntaxContext)>,
 }
 
 impl Visit for ValueMemberIdentRefCollector {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        visit_assign_expr_refs(assign, self);
-    }
-
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
-                if !self.scopes.is_shadowed(&object.sym) {
-                    self.refs.insert(object.sym.clone());
-                }
+                self.refs.insert((object.sym.clone(), object.ctxt));
             }
         }
         member.visit_children_with(self);
     }
-
-    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare_if_nested(&ident.id.sym);
-    }
-
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if self.scopes.depth() > 1 {
-            self.scopes.declare_pat(&declarator.name);
-        }
-        if let Some(init) = &declarator.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare_if_nested(&function.ident.sym);
-        self.scopes.push_scope();
-        for param in &function.function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        function.function.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_function(&mut self, function: &Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &function.body {
-            body.visit_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare_if_nested(&class.ident.sym);
-        class.class.visit_with(self);
-    }
 }
 
+/// Collects `(name, ctxt)` of every non-`.value` member base
+/// (`<ident>.<prop>`). Ctxt-keyed for the same reason as
+/// [`ValueMemberIdentRefCollector`].
 struct NonValueMemberRefCollector {
-    scopes: ScopeStack,
-    refs: HashSet<Atom>,
-}
-
-impl NonValueMemberRefCollector {
-    fn declare_if_nested(&mut self, sym: &Atom) {
-        if self.scopes.depth() > 1 {
-            self.scopes.declare(sym);
-        }
-    }
+    refs: HashSet<(Atom, SyntaxContext)>,
 }
 
 impl Visit for NonValueMemberRefCollector {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        visit_assign_expr_refs(assign, self);
-    }
-
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") {
             if let Expr::Ident(object) = member.obj.as_ref() {
-                if !self.scopes.is_shadowed(&object.sym) {
-                    self.refs.insert(object.sym.clone());
-                }
+                self.refs.insert((object.sym.clone(), object.ctxt));
             }
         }
         member.visit_children_with(self);
-    }
-
-    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.declare_if_nested(&ident.id.sym);
-    }
-
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if self.scopes.depth() > 1 {
-            self.scopes.declare_pat(&declarator.name);
-        }
-        if let Some(init) = &declarator.init {
-            init.visit_with(self);
-        }
-    }
-
-    fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.declare_if_nested(&function.ident.sym);
-        self.visit_function(&function.function);
-    }
-
-    fn visit_function(&mut self, function: &Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &function.body {
-            body.visit_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.declare_if_nested(&class.ident.sym);
-        class.class.visit_with(self);
     }
 }
 
@@ -2314,7 +2239,7 @@ fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
     collector.refs
 }
 
-fn setup_tuple_value_candidates(setup_stmts: &[Stmt]) -> HashSet<Atom> {
+fn setup_tuple_value_candidates(setup_stmts: &[Stmt]) -> HashSet<(Atom, SyntaxContext)> {
     let mut tuple_value_candidates = HashSet::new();
     for stmt in setup_stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -2325,9 +2250,11 @@ fn setup_tuple_value_candidates(setup_stmts: &[Stmt]) -> HashSet<Atom> {
                 continue;
             };
             match &decl.name {
-                Pat::Array(_) => collect_pat_bindings(&decl.name, &mut tuple_value_candidates),
+                Pat::Array(_) => {
+                    collect_pat_binding_idents(&decl.name, &mut tuple_value_candidates)
+                }
                 Pat::Ident(binding) if is_tuple_element_expr(init) => {
-                    tuple_value_candidates.insert(binding.id.sym.clone());
+                    tuple_value_candidates.insert((binding.id.sym.clone(), binding.id.ctxt));
                 }
                 _ => {}
             }
@@ -2340,7 +2267,7 @@ fn setup_render_template_ref_refs(
     render: &ArrowExpr,
     setup_stmts: &[Stmt],
     ctx: &VueRecoveryContext,
-    tuple_value_candidates: &HashSet<Atom>,
+    tuple_value_candidates: &HashSet<(Atom, SyntaxContext)>,
 ) -> HashSet<Atom> {
     let mut object_value_candidates = HashSet::new();
     let mut unref_candidates = HashSet::new();
@@ -2353,8 +2280,8 @@ fn setup_render_template_ref_refs(
                 continue;
             };
             if matches!(decl.name, Pat::Object(_)) {
-                collect_pat_bindings(&decl.name, &mut object_value_candidates);
-                collect_pat_bindings(&decl.name, &mut unref_candidates);
+                collect_pat_binding_idents(&decl.name, &mut object_value_candidates);
+                collect_pat_binding_idents(&decl.name, &mut unref_candidates);
             }
         }
     }
@@ -2369,7 +2296,6 @@ fn setup_render_template_ref_refs(
         object_value_candidates: &object_value_candidates,
         unref_candidates: &unref_candidates,
         ctx,
-        scopes: ScopeStack::new(),
         tuple_value_refs: HashSet::new(),
         object_value_refs: HashSet::new(),
         unref_refs: HashSet::new(),
@@ -2387,7 +2313,7 @@ fn setup_render_template_ref_refs(
 
 fn collect_setup_value_template_tuple_refs(
     value: &VueSetupValueBinding,
-    tuple_value_candidates: &HashSet<Atom>,
+    tuple_value_candidates: &HashSet<(Atom, SyntaxContext)>,
     ctx: &mut VueRecoveryContext,
 ) {
     if tuple_value_candidates.is_empty() {
@@ -2396,16 +2322,15 @@ fn collect_setup_value_template_tuple_refs(
     let Some(expr) = value.expr.as_ref() else {
         return;
     };
-    for ref_name in value_member_refs_in_expr(expr) {
-        if tuple_value_candidates.contains(&ref_name) {
-            ctx.bindings.template_refs.insert(ref_name);
+    for ref_ident in value_member_refs_in_expr(expr) {
+        if tuple_value_candidates.contains(&ref_ident) {
+            ctx.bindings.template_refs.insert(ref_ident.0);
         }
     }
 }
 
-fn value_member_refs_in_expr(expr: &Expr) -> HashSet<Atom> {
+fn value_member_refs_in_expr(expr: &Expr) -> HashSet<(Atom, SyntaxContext)> {
     let mut collector = ValueMemberIdentRefCollector {
-        scopes: ScopeStack::new(),
         refs: HashSet::new(),
     };
     expr.visit_with(&mut collector);
@@ -2413,11 +2338,10 @@ fn value_member_refs_in_expr(expr: &Expr) -> HashSet<Atom> {
 }
 
 struct RenderTemplateRefCollector<'a> {
-    tuple_value_candidates: &'a HashSet<Atom>,
-    object_value_candidates: &'a HashSet<Atom>,
-    unref_candidates: &'a HashSet<Atom>,
+    tuple_value_candidates: &'a HashSet<(Atom, SyntaxContext)>,
+    object_value_candidates: &'a HashSet<(Atom, SyntaxContext)>,
+    unref_candidates: &'a HashSet<(Atom, SyntaxContext)>,
     ctx: &'a VueRecoveryContext,
-    scopes: ScopeStack,
     tuple_value_refs: HashSet<Atom>,
     object_value_refs: HashSet<Atom>,
     unref_refs: HashSet<Atom>,
@@ -2431,13 +2355,14 @@ impl RenderTemplateRefCollector<'_> {
         let Expr::Ident(object) = member.obj.as_ref() else {
             return;
         };
-        if self.scopes.is_shadowed(&object.sym) {
-            return;
-        }
-        if self.tuple_value_candidates.contains(&object.sym) {
+        // Candidate sets are keyed on the setup binding's `(name, ctxt)`, so a
+        // nested local reusing the name carries a different context and never
+        // matches — no scope stack required.
+        let key = (object.sym.clone(), object.ctxt);
+        if self.tuple_value_candidates.contains(&key) {
             self.tuple_value_refs.insert(object.sym.clone());
         }
-        if self.object_value_candidates.contains(&object.sym) {
+        if self.object_value_candidates.contains(&key) {
             self.object_value_refs.insert(object.sym.clone());
         }
     }
@@ -2452,17 +2377,16 @@ impl RenderTemplateRefCollector<'_> {
         let Expr::Ident(object) = unwrap_paren_expr(arg.expr.as_ref()) else {
             return;
         };
-        if self.unref_candidates.contains(&object.sym) && !self.scopes.is_shadowed(&object.sym) {
+        if self
+            .unref_candidates
+            .contains(&(object.sym.clone(), object.ctxt))
+        {
             self.unref_refs.insert(object.sym.clone());
         }
     }
 }
 
 impl Visit for RenderTemplateRefCollector<'_> {
-    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-        visit_assign_expr_refs(assign, self);
-    }
-
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
         if let Expr::Member(member) = update.arg.as_ref() {
             self.collect_value_member(member);
@@ -2480,10 +2404,6 @@ impl Visit for RenderTemplateRefCollector<'_> {
         call.visit_children_with(self);
     }
 
-    fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.scopes.declare(&ident.id.sym);
-    }
-
     fn visit_prop_name(&mut self, prop: &PropName) {
         if let PropName::Computed(computed) = prop {
             computed.visit_with(self);
@@ -2494,43 +2414,6 @@ impl Visit for RenderTemplateRefCollector<'_> {
         if let MemberProp::Computed(computed) = prop {
             computed.visit_with(self);
         }
-    }
-
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if let Some(init) = &declarator.init {
-            init.visit_with(self);
-        }
-        self.scopes.declare_pat(&declarator.name);
-    }
-
-    fn visit_fn_decl(&mut self, function: &FnDecl) {
-        self.scopes.declare(&function.ident.sym);
-        self.visit_function(&function.function);
-    }
-
-    fn visit_function(&mut self, function: &Function) {
-        self.scopes.push_scope();
-        for param in &function.params {
-            self.scopes.declare_pat(&param.pat);
-        }
-        if let Some(body) = &function.body {
-            body.visit_with(self);
-        }
-        self.scopes.pop_scope();
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        self.scopes.push_scope();
-        for param in &arrow.params {
-            self.scopes.declare_pat(param);
-        }
-        arrow.body.visit_with(self);
-        self.scopes.pop_scope();
-    }
-
-    fn visit_class_decl(&mut self, class: &ClassDecl) {
-        self.scopes.declare(&class.ident.sym);
-        class.class.visit_with(self);
     }
 }
 
@@ -2835,8 +2718,8 @@ fn is_ref_like_value_expr(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
 fn should_emit_ref_script_setup_expr(
     expr: &Expr,
     ctx: &VueRecoveryContext,
-    binding: &Atom,
-    value_member_refs: &HashSet<Atom>,
+    binding: &Ident,
+    value_member_refs: &HashSet<(Atom, SyntaxContext)>,
 ) -> bool {
     let Expr::Call(call) = unwrap_paren_expr(expr) else {
         return false;
@@ -2848,7 +2731,7 @@ fn should_emit_ref_script_setup_expr(
     }
     call_callee_ident(call).is_some_and(|callee| {
         ctx.vue_helper_candidates.contains(&callee.sym) && ctx.resolves_to_import(callee)
-    }) && value_member_refs.contains(binding)
+    }) && value_member_refs.contains(&(binding.sym.clone(), binding.ctxt))
 }
 
 fn is_ref_like_vue_helper(name: &str) -> bool {

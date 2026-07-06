@@ -2672,6 +2672,35 @@ export default defineComponent({
 }
 
 #[test]
+fn keeps_setup_ref_when_nested_local_reuses_its_name() {
+    // A nested arrow param `count` reads `count.text` (a non-`.value` member).
+    // Under resolver that param carries a different SyntaxContext than the setup
+    // ref `count`, so it must not be mistaken for a non-value member access on
+    // the ref. Ref classification is keyed on (name, ctxt), not name alone; if
+    // shadow safety regressed, the outer `count` would stop being emitted as
+    // `ref(0)`.
+    let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  setup(props) {
+    const count = ref(0);
+    const format = (count) => count.text;
+    return () => (
+      openBlock(), createElementBlock("button", { title: count.value }, "More", 8, ["title"])
+    );
+  }
+});
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<script setup>\nimport { ref } from \"vue\";\n\nconst count = ref(0);\n</script>\n\n<template>\n  <button :title=\"count\">More</button>\n</template>\n"
+    );
+}
+
+#[test]
 fn does_not_emit_ref_for_candidate_without_value_usage() {
     let input = r#"
 import { d as dc, x as useSlots, _ as unref, q as ob, X as ce } from "./vendor-vue.js";
