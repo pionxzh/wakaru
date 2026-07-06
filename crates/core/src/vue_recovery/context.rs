@@ -820,6 +820,28 @@ fn binding_renames(aliases: &HashMap<Atom, Atom>, ctx: &VueRecoveryContext) -> V
         .collect()
 }
 
+/// Renames for the setup-scope aliases in `ctx.bindings.aliases`, keyed on the
+/// recorded `(name, ctxt)` of each alias source so `BindingRenamer` rewrites only
+/// the aliased binding's references and never an inner-scope local of the same
+/// name. Replaces the former bespoke `SetupAliasCleaner` visitor. Falls back to a
+/// top-level binding context for aliases that originate at module scope.
+pub(super) fn setup_alias_renames(ctx: &VueRecoveryContext) -> Vec<BindingRename> {
+    ctx.bindings
+        .aliases
+        .iter()
+        .filter_map(|(from, to)| {
+            ctx.bindings
+                .alias_ctxts
+                .get(from)
+                .or_else(|| ctx.top_level_binding_ctxts.get(from))
+                .map(|ctxt| BindingRename {
+                    old: (from.clone(), *ctxt),
+                    new: to.clone(),
+                })
+        })
+        .collect()
+}
+
 fn is_transpiler_runtime_helper_source(source: &str) -> bool {
     source.contains("suspendedStart")
         && source.contains("_invoke")
@@ -1794,7 +1816,7 @@ pub(super) fn collect_setup_context(
     let setup_template_ref_aliases = setup_render_template_ref_aliases(render);
     let setup_template_ref_alias_sources = setup_template_ref_aliases
         .iter()
-        .map(|(from, _)| from.clone())
+        .map(|(from, _, _)| from.clone())
         .collect::<HashSet<_>>();
     let setup_ref_object_alias_refs = setup_ref_object_alias_refs(setup_stmts);
     let setup_non_value_member_refs = setup_non_value_member_refs(setup_stmts);
@@ -1843,6 +1865,9 @@ pub(super) fn collect_setup_context(
                                     ctx.bindings
                                         .aliases
                                         .insert(binding.id.sym.clone(), alias.sym.clone());
+                                    ctx.bindings
+                                        .alias_ctxts
+                                        .insert(binding.id.sym.clone(), binding.id.ctxt);
                                     true
                                 } else {
                                     if let Some(ref_props) =
@@ -2065,12 +2090,13 @@ pub(super) fn collect_setup_context(
         }
     }
 
-    for (from, to) in setup_template_ref_aliases {
+    for (from, from_ctxt, to) in setup_template_ref_aliases {
         if ctx
             .setup_ref_script_bindings
             .iter()
             .any(|binding| binding.binding == from)
         {
+            ctx.bindings.alias_ctxts.insert(from.clone(), from_ctxt);
             ctx.bindings.aliases.insert(from, to);
         }
     }
@@ -2183,7 +2209,7 @@ impl Visit for NonValueMemberRefCollector {
     }
 }
 
-fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, Atom)> {
+fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, SyntaxContext, Atom)> {
     let mut collector = TemplateRefAliasCollector {
         aliases: Vec::new(),
     };
@@ -2192,7 +2218,7 @@ fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, Atom)> {
 }
 
 struct TemplateRefAliasCollector {
-    aliases: Vec<(Atom, Atom)>,
+    aliases: Vec<(Atom, SyntaxContext, Atom)>,
 }
 
 impl Visit for TemplateRefAliasCollector {
@@ -2215,15 +2241,15 @@ impl Visit for TemplateRefAliasCollector {
                 }
                 Some("ref") => {
                     if let Expr::Ident(ident) = unwrap_paren_expr(key_value.value.as_ref()) {
-                        ref_binding = Some(ident.sym.clone());
+                        ref_binding = Some((ident.sym.clone(), ident.ctxt));
                     }
                 }
                 _ => {}
             }
         }
 
-        if let (Some(from), Some(to)) = (ref_binding, ref_key) {
-            self.aliases.push((from, to));
+        if let (Some((from, from_ctxt)), Some(to)) = (ref_binding, ref_key) {
+            self.aliases.push((from, from_ctxt, to));
         }
 
         object.visit_children_with(self);

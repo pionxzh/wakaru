@@ -4,21 +4,22 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
-    IdentName, KeyValueProp, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, Prop, PropName,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    IdentName, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helpers::VueHelper;
 use super::VueRecoveryContext;
+use crate::rules::rename_utils::rename_bindings;
 use crate::rules::UnObjectSpread;
 use crate::vue_template::{VueExpr, VueNode, VueUnsupported};
 
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let mut expr = expr.clone();
     expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
-    expr.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
+    rename_bindings(&mut expr, &super::setup_alias_renames(ctx));
     expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, true));
 
     let mut module = Module {
@@ -93,7 +94,7 @@ pub(super) fn print_clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> R
 pub(super) fn clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Stmt {
     let mut stmt = stmt.clone();
     stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
-    stmt.visit_mut_with(&mut SetupAliasCleaner::new(ctx));
+    rename_bindings(&mut stmt, &super::setup_alias_renames(ctx));
     stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
     stmt
 }
@@ -158,108 +159,6 @@ impl<'a> SetupRefValueCleaner<'a> {
         for index in indices {
             self.shadow_depths[*index] -= 1;
         }
-    }
-}
-
-struct SetupAliasCleaner<'a> {
-    aliases: Vec<(&'a str, &'a Atom)>,
-    shadow_depths: Vec<usize>,
-}
-
-impl<'a> SetupAliasCleaner<'a> {
-    fn new(ctx: &'a VueRecoveryContext) -> Self {
-        let aliases = ctx.bindings.sorted_aliases();
-        let shadow_depths = vec![0; aliases.len()];
-        Self {
-            aliases,
-            shadow_depths,
-        }
-    }
-
-    fn active_alias(&self, name: &str) -> Option<&Atom> {
-        self.aliases
-            .iter()
-            .zip(self.shadow_depths.iter())
-            .find_map(|((from, to), shadow_depth)| {
-                (*from == name && *shadow_depth == 0).then_some(*to)
-            })
-    }
-
-    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
-        self.aliases
-            .iter()
-            .enumerate()
-            .filter_map(|(index, (alias, _))| {
-                params
-                    .iter()
-                    .any(|pat| pat_binds_name(pat, alias))
-                    .then_some(index)
-            })
-            .collect()
-    }
-
-    fn enter_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] += 1;
-        }
-    }
-
-    fn exit_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] -= 1;
-        }
-    }
-}
-
-impl VisitMut for SetupAliasCleaner<'_> {
-    fn visit_mut_prop(&mut self, prop: &mut Prop) {
-        if let Prop::Shorthand(ident) = prop {
-            if let Some(replacement) = self.active_alias(ident.sym.as_ref()).cloned() {
-                *prop = Prop::KeyValue(KeyValueProp {
-                    key: PropName::Ident(ident.clone().into()),
-                    value: Box::new(Expr::Ident(Ident::new(
-                        replacement,
-                        DUMMY_SP,
-                        Default::default(),
-                    ))),
-                });
-                return;
-            }
-        }
-
-        prop.visit_mut_children_with(self);
-    }
-
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        expr.visit_mut_children_with(self);
-
-        let replacement = match expr {
-            Expr::Ident(ident) => self.active_alias(ident.sym.as_ref()).cloned(),
-            _ => None,
-        };
-        if let Some(replacement) = replacement {
-            *expr = Expr::Ident(Ident::new(replacement, DUMMY_SP, Default::default()));
-        }
-    }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        let params = arrow.params.iter().collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        arrow.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        let params = function
-            .params
-            .iter()
-            .map(|param| &param.pat)
-            .collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        function.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
     }
 }
 
@@ -1202,12 +1101,7 @@ pub(super) fn unsupported_vnode_children_expr(expr: impl Into<String>) -> VueNod
 
 #[cfg(test)]
 mod tests {
-    use super::super::VueRecoveryContext;
-    use super::{strip_callee_wrappers, SetupAliasCleaner};
-    use swc_core::atoms::Atom;
-    use swc_core::common::DUMMY_SP;
-    use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
-    use swc_core::ecma::visit::VisitMutWith;
+    use super::strip_callee_wrappers;
 
     #[test]
     fn strip_callee_wrappers_requires_identifier_boundary() {
@@ -1268,25 +1162,6 @@ mod tests {
         assert_eq!(
             strip_callee_wrappers("/unref(x)?/.test(value)", "unref"),
             "/unref(x)?/.test(value)"
-        );
-    }
-
-    #[test]
-    fn setup_alias_cleaner_expands_shorthand_property_keys() {
-        let mut ctx = VueRecoveryContext::default();
-        ctx.bindings
-            .aliases
-            .insert(Atom::from("p"), Atom::from("props"));
-        let mut prop = Prop::Shorthand(Ident::new(Atom::from("p"), DUMMY_SP, Default::default()));
-
-        prop.visit_mut_with(&mut SetupAliasCleaner::new(&ctx));
-
-        let Prop::KeyValue(key_value) = prop else {
-            panic!("shorthand property should be expanded when its value is aliased");
-        };
-        assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "p"));
-        assert!(
-            matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "props")
         );
     }
 }

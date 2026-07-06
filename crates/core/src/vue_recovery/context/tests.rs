@@ -1,5 +1,7 @@
 use super::super::VueRecoveryContext;
-use super::{binding_renames, is_vue_helper_candidate_source, SetupPropsRefRewriter};
+use super::{
+    binding_renames, is_vue_helper_candidate_source, setup_alias_renames, SetupPropsRefRewriter,
+};
 use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
@@ -52,6 +54,29 @@ fn binding_renames_key_on_recorded_top_level_context() {
     assert_eq!(renames.len(), 1);
     assert_eq!(renames[0].old, (Atom::from("P"), ctxt));
     assert_eq!(renames[0].new, Atom::from("Panel_1"));
+}
+
+#[test]
+fn setup_alias_renames_key_on_recorded_alias_context() {
+    // Setup-scope alias rewriting now flows through rename_utils::BindingRenamer.
+    // `setup_alias_renames` supplies each alias source's recorded SyntaxContext so
+    // only the aliased binding's references are renamed, and skips aliases whose
+    // context was never recorded (and are not top-level bindings).
+    let ctxt = SyntaxContext::empty();
+    let mut ctx = VueRecoveryContext::default();
+    ctx.bindings
+        .aliases
+        .insert(Atom::from("p"), Atom::from("props"));
+    ctx.bindings.alias_ctxts.insert(Atom::from("p"), ctxt);
+    ctx.bindings
+        .aliases
+        .insert(Atom::from("q"), Atom::from("other"));
+
+    let renames = setup_alias_renames(&ctx);
+
+    assert_eq!(renames.len(), 1);
+    assert_eq!(renames[0].old, (Atom::from("p"), ctxt));
+    assert_eq!(renames[0].new, Atom::from("props"));
 }
 
 #[test]

@@ -43,8 +43,8 @@ use context::{
     call_callee_ident, collect_context, collect_render_context, collect_script_local_context,
     collect_setup_context, component_name_from_init, component_name_from_options,
     component_options_from_init, infer_render_helpers, render_context_param,
-    render_local_declaration_with_aliases, setup_context_param, setup_emit_param,
-    setup_props_param, stmt_ident_refs,
+    render_local_declaration_with_aliases, setup_alias_renames, setup_context_param,
+    setup_emit_param, setup_props_param, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -119,6 +119,10 @@ struct VueBindingTable {
     values: HashMap<Atom, VueSetupValueBinding>,
     props: HashMap<Atom, Atom>,
     aliases: HashMap<Atom, Atom>,
+    /// `SyntaxContext` of each alias source (the `from` key of `aliases`),
+    /// recorded so alias rewriting can go through `rename_utils::BindingRenamer`
+    /// keyed on `(name, ctxt)` instead of a bespoke name-matching visitor.
+    alias_ctxts: HashMap<Atom, SyntaxContext>,
     refs: HashSet<Atom>,
     composable_refs: HashSet<Atom>,
     template_refs: HashSet<Atom>,
@@ -126,17 +130,6 @@ struct VueBindingTable {
 }
 
 impl VueBindingTable {
-    fn sorted_aliases(&self) -> Vec<(&str, &Atom)> {
-        let mut aliases = self
-            .aliases
-            .iter()
-            .map(|(from, to)| (from.as_ref(), to))
-            .collect::<Vec<_>>();
-        aliases.sort_by_key(|(from, _)| *from);
-        aliases.dedup_by(|(left, _), (right, _)| left == right);
-        aliases
-    }
-
     fn ref_value_cleanup_bindings(&self, clean_assign_targets: bool) -> Vec<&str> {
         let mut bindings = self
             .refs
