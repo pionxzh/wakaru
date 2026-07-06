@@ -44,7 +44,7 @@ use context::{
     collect_setup_context, component_name_from_init, component_name_from_options,
     component_options_from_init, infer_render_helpers, render_context_param,
     render_local_declaration_with_aliases, setup_alias_renames, setup_context_param,
-    setup_emit_param, setup_props_param, stmt_ident_refs,
+    setup_emit_param, setup_props_param, setup_props_param_ctxt, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -88,7 +88,12 @@ struct VueRecoveryContext {
     setup_component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     setup_props_context: Option<Atom>,
+    /// `SyntaxContext` of the setup `props` parameter (`setup_props_context`),
+    /// recorded so props-ref rewriting can go through `BindingRenamer`.
+    setup_props_context_ctxt: Option<SyntaxContext>,
     setup_props_aliases: HashSet<Atom>,
+    /// `SyntaxContext` of each `setup_props_aliases` source, for the same reason.
+    setup_props_alias_ctxts: HashMap<Atom, SyntaxContext>,
     setup_context: Option<Atom>,
     setup_emit_context: Option<Atom>,
     setup_emit_aliases: HashSet<Atom>,
@@ -352,6 +357,7 @@ pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
         };
         ctx.render_context = render_context_param(render);
         ctx.setup_props_context = setup_props_param(render);
+        ctx.setup_props_context_ctxt = setup_props_param_ctxt(render);
         ctx.setup_context = setup_context_param(render);
         ctx.setup_emit_context = setup_emit_param(render);
         infer_render_helpers(render, &mut ctx);
@@ -428,6 +434,7 @@ fn recover_vue_sfc_from_render(
     }
     ctx.render_context = render_context_param(render);
     ctx.setup_props_context = setup_props_param(render);
+    ctx.setup_props_context_ctxt = setup_props_param_ctxt(render);
     ctx.setup_context = setup_context_param(render);
     ctx.setup_emit_context = setup_emit_param(render);
     infer_render_helpers(render, &mut ctx);

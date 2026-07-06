@@ -4,12 +4,12 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier,
-    Expr, ExprOrSpread, FnDecl, Function, Ident, IfStmt, ImportSpecifier, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp,
-    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
-    UpdateExpr, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, BlockStmtOrExpr,
+    CallExpr, Callee, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread,
+    FnDecl, Function, Ident, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, ParenExpr, Pat, Prop, PropName,
+    PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -605,7 +605,7 @@ pub(super) fn render_local_declaration_with_aliases(
     let mut cleaned_stmt = clean_setup_stmt(&stmt, ctx);
     if !declaration.module_scope {
         if let Some(props_binding) = props_binding {
-            rewrite_setup_props_refs(&mut cleaned_stmt, ctx, props_binding);
+            rename_bindings(&mut cleaned_stmt, &setup_props_renames(ctx, props_binding));
         }
     }
     let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
@@ -638,166 +638,28 @@ pub(super) fn render_local_declaration_with_aliases(
     })
 }
 
-fn rewrite_setup_props_refs(stmt: &mut Stmt, ctx: &VueRecoveryContext, props_binding: &str) {
-    let mut rewriter = SetupPropsRefRewriter::new(ctx, props_binding);
-    if !rewriter.is_empty() {
-        stmt.visit_mut_with(&mut rewriter);
+/// Renames for the setup `props` sources — the setup parameter
+/// (`setup_props_context`) and every `setup_props_aliases` entry — onto the
+/// emitted `props_binding`, keyed on each source's recorded `(name, ctxt)`.
+/// Replaces the former bespoke `SetupPropsRefRewriter` visitor; `BindingRenamer`
+/// preserves context and expands `Prop::Shorthand`, and matches only the
+/// resolved props binding, never an inner-scope local of the same name.
+fn setup_props_renames(ctx: &VueRecoveryContext, props_binding: &str) -> Vec<BindingRename> {
+    let new = Atom::from(props_binding.to_string());
+    let mut renames = Vec::new();
+    if let (Some(name), Some(ctxt)) = (&ctx.setup_props_context, ctx.setup_props_context_ctxt) {
+        renames.push(BindingRename {
+            old: (name.clone(), ctxt),
+            new: new.clone(),
+        });
     }
-}
-
-struct SetupPropsRefRewriter {
-    sources: Vec<Atom>,
-    replacement: Atom,
-    shadow_depths: Vec<usize>,
-}
-
-impl SetupPropsRefRewriter {
-    fn new(ctx: &VueRecoveryContext, props_binding: &str) -> Self {
-        let mut sources = Vec::new();
-        if let Some(binding) = &ctx.setup_props_context {
-            sources.push(binding.clone());
-        }
-        sources.extend(ctx.setup_props_aliases.iter().cloned());
-        sources.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
-        sources.dedup();
-        let shadow_depths = vec![0; sources.len()];
-        Self {
-            sources,
-            replacement: Atom::from(props_binding.to_string()),
-            shadow_depths,
-        }
+    for (alias, ctxt) in &ctx.setup_props_alias_ctxts {
+        renames.push(BindingRename {
+            old: (alias.clone(), *ctxt),
+            new: new.clone(),
+        });
     }
-
-    fn is_empty(&self) -> bool {
-        self.sources.is_empty()
-    }
-
-    fn active_source(&self, name: &Atom) -> bool {
-        self.sources
-            .iter()
-            .zip(self.shadow_depths.iter())
-            .any(|(source, shadow_depth)| source == name && *shadow_depth == 0)
-    }
-
-    fn replacement_ident(&self, ident: &Ident) -> Option<Ident> {
-        self.active_source(&ident.sym)
-            .then(|| Ident::new(self.replacement.clone(), ident.span, Default::default()))
-    }
-
-    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
-        self.sources
-            .iter()
-            .enumerate()
-            .filter_map(|(index, source)| {
-                params
-                    .iter()
-                    .any(|pat| pat_binds_atom(pat, source))
-                    .then_some(index)
-            })
-            .collect()
-    }
-
-    fn decl_shadowing_indices(&self, decl: &Decl) -> Vec<usize> {
-        self.sources
-            .iter()
-            .enumerate()
-            .filter_map(|(index, source)| decl_binds_atom(decl, source).then_some(index))
-            .collect()
-    }
-
-    fn block_shadowing_indices(&self, block: &BlockStmt) -> Vec<usize> {
-        let mut indices = block
-            .stmts
-            .iter()
-            .filter_map(|stmt| match stmt {
-                Stmt::Decl(decl) => Some(decl),
-                _ => None,
-            })
-            .flat_map(|decl| self.decl_shadowing_indices(decl))
-            .collect::<Vec<_>>();
-        indices.sort_unstable();
-        indices.dedup();
-        indices
-    }
-
-    fn enter_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] += 1;
-        }
-    }
-
-    fn exit_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] -= 1;
-        }
-    }
-}
-
-impl VisitMut for SetupPropsRefRewriter {
-    fn visit_mut_prop(&mut self, prop: &mut Prop) {
-        if let Prop::Shorthand(ident) = prop {
-            if let Some(replacement) = self.replacement_ident(ident) {
-                *prop = Prop::KeyValue(KeyValueProp {
-                    key: PropName::Ident(ident.clone().into()),
-                    value: Box::new(Expr::Ident(replacement)),
-                });
-                return;
-            }
-        }
-
-        prop.visit_mut_children_with(self);
-    }
-
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        expr.visit_mut_children_with(self);
-
-        let replacement = match expr {
-            Expr::Ident(ident) => self.replacement_ident(ident),
-            _ => None,
-        };
-        if let Some(replacement) = replacement {
-            *expr = Expr::Ident(replacement);
-        }
-    }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        let params = arrow.params.iter().collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        arrow.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        let params = function
-            .params
-            .iter()
-            .map(|param| &param.pat)
-            .collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        function.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-        let shadowed = self.block_shadowing_indices(block);
-        self.enter_shadowed(&shadowed);
-        block.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-}
-
-fn pat_binds_atom(pat: &Pat, binding: &Atom) -> bool {
-    let mut bindings = HashSet::new();
-    collect_pat_bindings(pat, &mut bindings);
-    bindings.contains(binding)
-}
-
-fn decl_binds_atom(decl: &Decl, binding: &Atom) -> bool {
-    let mut bindings = HashSet::new();
-    collect_decl_bindings(decl, &mut bindings);
-    bindings.contains(binding)
+    renames
 }
 
 /// Convert a name-keyed alias map into `SyntaxContext`-keyed renames for
@@ -1854,6 +1716,8 @@ pub(super) fn collect_setup_context(
                             Pat::Ident(binding) => {
                                 if is_setup_props_alias(init, ctx) {
                                     ctx.setup_props_aliases.insert(binding.id.sym.clone());
+                                    ctx.setup_props_alias_ctxts
+                                        .insert(binding.id.sym.clone(), binding.id.ctxt);
                                     true
                                 } else if is_setup_emit_alias(init, ctx) {
                                     ctx.setup_emit_aliases.insert(binding.id.sym.clone());
@@ -3171,6 +3035,16 @@ pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
             setup_props: Some(setup_props),
             ..
         } => Some(setup_props.sym.clone()),
+        _ => None,
+    }
+}
+
+pub(super) fn setup_props_param_ctxt(render: RenderSource<'_>) -> Option<SyntaxContext> {
+    match render {
+        RenderSource::SetupArrow {
+            setup_props: Some(setup_props),
+            ..
+        } => Some(setup_props.ctxt),
         _ => None,
     }
 }

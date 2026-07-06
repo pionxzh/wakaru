@@ -1,12 +1,10 @@
 use super::super::VueRecoveryContext;
 use super::{
-    binding_renames, is_vue_helper_candidate_source, setup_alias_renames, SetupPropsRefRewriter,
+    binding_renames, is_vue_helper_candidate_source, setup_alias_renames, setup_props_renames,
 };
 use std::collections::HashMap;
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
-use swc_core::ecma::ast::{Expr, Ident, Prop, PropName};
-use swc_core::ecma::visit::VisitMutWith;
+use swc_core::common::SyntaxContext;
 
 #[test]
 fn vue_helper_candidates_exclude_adjacent_bare_packages() {
@@ -80,21 +78,29 @@ fn setup_alias_renames_key_on_recorded_alias_context() {
 }
 
 #[test]
-fn setup_props_ref_rewriter_expands_shorthand_property_keys() {
+fn setup_props_renames_key_on_recorded_props_source_contexts() {
+    // Props-ref rewriting flows through rename_utils::BindingRenamer.
+    // `setup_props_renames` maps the setup props parameter and every props alias
+    // onto the emitted props binding, keyed on each source's recorded context so
+    // an inner-scope local of the same name is never rewritten.
+    let param_ctxt = SyntaxContext::empty();
     let mut ctx = VueRecoveryContext {
         setup_props_context: Some(Atom::from("p")),
+        setup_props_context_ctxt: Some(param_ctxt),
         ..Default::default()
     };
     ctx.setup_props_aliases.insert(Atom::from("propsAlias"));
-    let mut prop = Prop::Shorthand(Ident::new(Atom::from("p"), DUMMY_SP, Default::default()));
+    ctx.setup_props_alias_ctxts
+        .insert(Atom::from("propsAlias"), param_ctxt);
 
-    prop.visit_mut_with(&mut SetupPropsRefRewriter::new(&ctx, "props"));
+    let renames = setup_props_renames(&ctx, "props");
 
-    let Prop::KeyValue(key_value) = prop else {
-        panic!("shorthand property should be expanded when its value is rewritten");
-    };
-    assert!(matches!(&key_value.key, PropName::Ident(key) if key.sym.as_ref() == "p"));
-    assert!(
-        matches!(key_value.value.as_ref(), Expr::Ident(value) if value.sym.as_ref() == "props")
-    );
+    assert_eq!(renames.len(), 2);
+    assert!(renames.iter().all(|rename| rename.new == "props"));
+    assert!(renames
+        .iter()
+        .any(|rename| rename.old == (Atom::from("p"), param_ctxt)));
+    assert!(renames
+        .iter()
+        .any(|rename| rename.old == (Atom::from("propsAlias"), param_ctxt)));
 }
