@@ -100,9 +100,9 @@ const babelProfiles = [
     modes: ["standard", "optimizeConstEnums"],
   },
   {
-    name: "babel-8-rc",
-    core: "8.0.0-rc.6",
-    plugin: ["@babel/plugin-transform-typescript", "8.0.0-rc.6"],
+    name: "babel-8",
+    core: "8.0.1",
+    plugin: ["@babel/plugin-transform-typescript", "8.0.1"],
     modes: ["standard", "optimizeConstEnums"],
   },
 ];

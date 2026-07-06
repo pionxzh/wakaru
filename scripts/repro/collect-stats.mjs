@@ -54,7 +54,7 @@ function runMatrix(name) {
   }
   try {
     const data = JSON.parse(result.stdout);
-    return {
+    const matrix = {
       name,
       yes: data.summary.yes,
       no: data.summary.no,
@@ -62,6 +62,17 @@ function runMatrix(name) {
       total: data.summary.yes + data.summary.no,
       pct: data.summary.pct,
     };
+    const errorSamples = (data.rows ?? [])
+      .filter((row) => row.status !== "yes" && row.status !== "no")
+      .slice(0, 3)
+      .map((row) => ({
+        snippet: row.snippet,
+        tools: row.tools,
+        status: row.status,
+        notes: row.notes,
+      }));
+    Object.defineProperty(matrix, "errorSamples", { value: errorSamples });
+    return matrix;
   } catch {
     console.error(`  ${name}: invalid JSON output`);
     return null;
@@ -79,6 +90,12 @@ function formatMatrix(matrix) {
 
 function formatValue(value) {
   return value === undefined ? "<missing>" : JSON.stringify(value);
+}
+
+function formatErrorSample(sample) {
+  const tools = Array.isArray(sample.tools) ? sample.tools.join(", ") : "<unknown tool>";
+  const note = String(sample.notes ?? "").replace(/\s+/g, " ").trim();
+  return `${sample.snippet ?? "<unknown snippet>"} / ${tools} / ${sample.status}: ${note}`;
 }
 
 function printStatsDiff(recorded, measured) {
@@ -117,6 +134,9 @@ function printStatsDiff(recorded, measured) {
     if (diffs.length > 0) {
       printed = true;
       console.error(`    ${name}: recorded ${formatMatrix(before)}; measured ${formatMatrix(after)}; ${diffs.join(", ")}`);
+      for (const sample of after.errorSamples ?? []) {
+        console.error(`      measured error sample: ${formatErrorSample(sample)}`);
+      }
     }
   }
 

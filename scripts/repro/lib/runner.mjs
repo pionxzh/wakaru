@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 // the (synchronous) comparison loop so each shape's wakaru run is amortized.
 const decompileCache = new Map();
 const decompileKey = (level, source, wakaruArgs = []) => `${level}\0${wakaruArgs.join("\0")}\0${source}`;
+const refreshedNodeTools = new Set();
 
 export function readOption(name, fallback) {
   const equalsArg = process.argv.find((arg) => arg.startsWith(`${name}=`));
@@ -624,9 +625,14 @@ export function ensureNodeTool(name, packages) {
   const dir = join(toolRoot, name);
   const marker = join(dir, ".installed");
   const markerText = packages.join("\n");
-  if (existsSync(marker)) {
+  const refresh = process.env.WAKARU_REPRO_REFRESH_TOOLS === "1" && !refreshedNodeTools.has(dir);
+  if (!refresh && existsSync(marker) && readFileSync(marker, "utf8") === markerText) {
     return dir;
   }
+  if (refresh) {
+    refreshedNodeTools.add(dir);
+  }
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
   runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...packages], { cwd: dir });

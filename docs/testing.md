@@ -303,6 +303,9 @@ node scripts/repro/collect-stats.mjs --check
 # Run a single matrix with details
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
 
+# Force a clean reinstall of matrix npm tools when investigating registry drift
+WAKARU_REPRO_REFRESH_TOOLS=1 node scripts/repro/array-spread-rest-matrix/matrix.mjs --json
+
 # Dump one shape for debugging
 node scripts/repro/parameters-matrix/matrix.mjs --dump nested-default babel-7.8-loose
 ```
