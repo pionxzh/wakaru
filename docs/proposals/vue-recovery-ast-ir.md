@@ -135,29 +135,13 @@ Re-evaluate if any of these fire:
 - A deliberate push to **promote `--vue-sfc` out of experimental**, where
   removing the last parallel front-end is part of the hardening bar.
 
-## Related deferred cleanup: resolve imported composable ASTs
+## Related but independent cleanup
 
-Every recovery collector now keys on `(name, ctxt)` **except** those that run on
-*imported* composable sources: `composable_ref_props_from_source`
-(`vue_recovery/imports.rs`) parses imported module text with `parse_module`
-**without** running SWC's `resolver()`, so those ASTs carry empty contexts. As a
-result:
-
-- `StrongValueMemberCollector` (imports.rs) keeps its own hand-rolled shadow
-  stack, and `RefLocalCollector` matches by name. On resolver-processed ASTs
-  these could be `(name, ctxt)` like the render-side collectors, but on the
-  un-resolved imported ASTs `(name, ctxt)` degenerates to name-matching and the
-  shadow stack is genuinely load-bearing (a nested `subscribe(x => x.value…)`
-  callback param must not be conflated with a top-level `x`). An attempt to
-  convert it was reverted for exactly this reason — see the regression test
-  `preserves_imported_composable_shadowed_callback_value_members`.
-
-To make imported composable analysis ctxt-safe (and let those collectors drop
-their shadow stacks), run `resolver()` on the imported ASTs at parse time in
-`composable_ref_props_from_source` (inside a `GLOBALS.set`, mirroring the main
-entry points), then convert the collectors. This is a self-contained follow-up,
-smaller than Phase 4 but not zero — it touches the import-resolver-callback path,
-so it carries its own regression surface. Low priority: the shadow stack works.
+`imports.rs` `StrongValueMemberCollector` still hand-rolls its own shadow stack
+because imported composable ASTs are parsed without `resolver()`. That cleanup is
+**independent of this proposal** (different code path, no ordering constraint) and
+is written up separately in
+[vue-recovery-resolve-imported-composables.md](vue-recovery-resolve-imported-composables.md).
 
 ## References
 
