@@ -110,7 +110,7 @@ fn run_un_object_spread(
     module_facts: Option<&ModuleFactsMap>,
     current_filename: Option<&str>,
 ) {
-    let esbuild_aliases = collect_esbuild_object_builtin_aliases(module);
+    let esbuild_aliases = collect_esbuild_object_builtin_aliases(module, unresolved_mark);
     let esbuild_define_normal_prop_helpers = if esbuild_aliases.has_spread_values_signals() {
         collect_esbuild_define_normal_prop_helpers(module, &esbuild_aliases)
     } else {
@@ -393,7 +393,10 @@ fn collect_mangled_esbuild_object_spread_helpers(
     helpers
 }
 
-fn collect_esbuild_object_builtin_aliases(module: &Module) -> EsbuildObjectBuiltinAliases {
+fn collect_esbuild_object_builtin_aliases(
+    module: &Module,
+    unresolved_mark: Option<Mark>,
+) -> EsbuildObjectBuiltinAliases {
     let mut aliases = EsbuildObjectBuiltinAliases::default();
 
     for item in &module.body {
@@ -407,7 +410,7 @@ fn collect_esbuild_object_builtin_aliases(module: &Module) -> EsbuildObjectBuilt
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            match object_builtin_alias_kind(init) {
+            match object_builtin_alias_kind(init, unresolved_mark) {
                 Some("defineProperty") => {
                     aliases.define_property.insert(key);
                 }
@@ -434,12 +437,15 @@ fn collect_esbuild_object_builtin_aliases(module: &Module) -> EsbuildObjectBuilt
     aliases
 }
 
-fn object_builtin_alias_kind(expr: &Expr) -> Option<&'static str> {
+fn object_builtin_alias_kind(expr: &Expr, unresolved_mark: Option<Mark>) -> Option<&'static str> {
+    let is_global_object = |obj: &Ident| {
+        obj.sym.as_ref() == "Object" && unresolved_mark.is_none_or(|mark| obj.ctxt.outer() == mark)
+    };
     let Expr::Member(member) = strip_parens(expr) else {
         return None;
     };
     if let Expr::Ident(obj) = member.obj.as_ref() {
-        if obj.sym.as_ref() == "Object" {
+        if is_global_object(obj) {
             match static_member_prop_name(&member.prop) {
                 Some("defineProperty") => return Some("defineProperty"),
                 Some("defineProperties") => return Some("defineProperties"),
@@ -456,7 +462,7 @@ fn object_builtin_alias_kind(expr: &Expr) -> Option<&'static str> {
     let Expr::Ident(obj) = proto_member.obj.as_ref() else {
         return None;
     };
-    if obj.sym.as_ref() != "Object" || !member_prop_name(&proto_member.prop, "prototype") {
+    if !is_global_object(obj) || !member_prop_name(&proto_member.prop, "prototype") {
         return None;
     }
     match static_member_prop_name(&member.prop) {

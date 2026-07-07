@@ -739,6 +739,18 @@ use(out);
 }
 
 #[test]
+fn ignores_esbuild_aliases_of_shadowed_object_binding() {
+    let input = r#"
+const Object = fake();
+var __defProps = Object.defineProperties, __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var copyDescs = (a, b) => __defProps(a, __getOwnPropDescs(b));
+use(copyDescs({}, source));
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn detects_terser_inlined_esbuild_spread_values() {
     let input = r#"
 var __defProp = Object.defineProperty;
