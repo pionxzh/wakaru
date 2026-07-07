@@ -313,6 +313,12 @@ runner!(
     run_un_variable_merging_decls_only,
     UnVariableMergingDeclsOnly
 );
+fn run_un_builtin_aliases(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let mut rule = UnBuiltinAliases::new(ctx.unresolved_mark);
+    if rule.run(module) {
+        ctx.invalidate_local_helpers();
+    }
+}
 runner!(run_un_variable_merging, UnVariableMerging);
 runner!(run_un_nullish_coalescing, |ctx| UnNullishCoalescing::new(
     ctx.unresolved_mark,
@@ -537,6 +543,9 @@ define_rule_registry! {
     ]),
     ("UnVariableMergingDeclsOnly", Helpers, run_un_variable_merging_decls_only, always_enabled, requires: [
         "UnAssignmentMerging"
+    ]),
+    ("UnBuiltinAliases", Helpers, run_un_builtin_aliases, standard_or_above, requires: [
+        "UnVariableMergingDeclsOnly"
     ]),
     ("UnWebpackInterop", Helpers, run_un_webpack_interop, always_enabled, requires: [
         "UnBracketNotation",

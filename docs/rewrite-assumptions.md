@@ -132,7 +132,8 @@ throw new TypeError("x"); // reads TypeError after patchTypeError()
 That is usually acceptable for generated production bundles, but it is not a
 semantic guarantee from the AST alone.
 
-Affects: `SmartInline` (builtin/global alias inlining).
+Affects: `UnBuiltinAliases` and `SmartInline` (builtin/global alias
+inlining).
 
 Level: `standard` and above. `minimal` preserves captured builtin aliases.
 

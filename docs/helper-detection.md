@@ -198,8 +198,10 @@ anchors, making it reliably detectable even when mangled. The loose variant
 has no global anchors — it's detected only by the `slice(0)` + `.raw =`
 combination on the two params. The esbuild variant aliases `Object.freeze` and
 `Object.defineProperty` into local variables, which breaks global-anchored
-matching; it is handled by the esbuild-specific stateful matcher in
-`un_template_literal.rs` rather than the central body-shape scanner.
+matching in raw minified output. `UnBuiltinAliases` runs after early
+declaration splitting and before helper-dependent structural recovery, so
+module-scope builtin aliases are normalized back to global member reads before
+the central body-shape scanner sees the helper.
 
 ## Handling version drift
 

@@ -152,6 +152,14 @@ rationale, or level gating appear.
   so CJS imports classify); the full pass stays later because its for-loop
   initializer extraction interacts with var→let/const conversion and loop
   scoping.
+- **UnBuiltinAliases** — runs after `UnVariableMergingDeclsOnly` so minifier
+  aliases such as `var e = Object.freeze, r = Object.defineProperty` have
+  already been split into single-declarator statements. Runs before later
+  helper-dependent recovery so helper body scanners see canonical
+  `Object.freeze(...)` / `Object.defineProperty(...)` calls. `standard+`
+  only: relies on `stable_builtins`, rejects `var` aliases with use-before-init,
+  writes, or dynamic-scope constructs instead of proving full var→const
+  convertibility.
 - **UnArgumentSpread** — `standard+`. Pattern subtleties:
   `fn.apply(null, args)` and `obj.fn.apply(obj, args)` are safe;
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to

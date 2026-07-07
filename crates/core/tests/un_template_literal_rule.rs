@@ -467,6 +467,19 @@ var out = css.div`line\n${value}`;
 }
 
 #[test]
+fn restores_esbuild_terser_mangled_member_tagged_template() {
+    // Produced by esbuild ES5 output minified with Terser compress+mangle.
+    let input = r#"
+var e=Object.freeze,r=Object.defineProperty,c=function(c,o){return e(r(c,"raw",{value:e(o||c.slice())}))},o,a=css.div(o||(o=c(["color: ","; margin: ","px;"])),color,space);use(a);
+"#;
+    let expected = r#"
+const a = css.div`color: ${color}; margin: ${space}px;`;
+use(a);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn restores_mangled_babel_loose_tagged_template() {
     // babel-7.8-loose-terser-compress-mangle: the helper body is
     // `n.raw = r` with a `.slice(0)` copy — no Object.freeze.

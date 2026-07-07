@@ -160,7 +160,8 @@ Stage 2: Transpiler helper unwrapping + module-system reconstruction
   UnObjectSpread, UnObjectRest, UnSlicedToArray,
   UnClassCallCheck, UnPossibleConstructorReturn,
   UnTypeofPolyfill, UnCurlyBraces, UnEsmoduleFlag, UnUseStrict,
-  UnAssignmentMerging, UnVariableMergingDeclsOnly, UnWebpackInterop, UnEsm
+  UnAssignmentMerging, UnVariableMergingDeclsOnly, UnBuiltinAliases,
+  UnWebpackInterop, UnEsm
 
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
