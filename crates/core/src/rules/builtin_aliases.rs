@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use swc_core::common::{Mark, Span};
 use swc_core::ecma::ast::{
     CallExpr, Decl, Expr, Ident, MemberExpr, MemberProp, Module, ModuleItem, Pat, PropName, Stmt,
-    VarDeclKind, WithStmt,
+    UnaryExpr, UnaryOp, UpdateExpr, VarDeclKind, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -13,6 +13,7 @@ use super::helper_matcher::{
     BindingKey,
 };
 use crate::js_names::is_stable_builtin_alias_root;
+use crate::utils::paren::strip_parens;
 
 #[derive(Clone, Copy)]
 pub(crate) struct BuiltinAliasInlineOptions {
@@ -152,6 +153,7 @@ fn collect_module_candidates(
     options: BuiltinAliasInlineOptions,
 ) -> HashMap<BindingKey, BuiltinAliasCandidate> {
     let mut candidates = HashMap::new();
+    let mut seen_single_decl_keys = HashSet::new();
     let mut duplicate_keys = HashSet::new();
 
     for (def_index, item) in module.body.iter().enumerate() {
@@ -164,6 +166,7 @@ fn collect_module_candidates(
             unresolved_mark,
             options,
             &mut candidates,
+            &mut seen_single_decl_keys,
             &mut duplicate_keys,
         );
     }
@@ -180,6 +183,7 @@ fn collect_stmt_candidates(
     options: BuiltinAliasInlineOptions,
 ) -> HashMap<BindingKey, BuiltinAliasCandidate> {
     let mut candidates = HashMap::new();
+    let mut seen_single_decl_keys = HashSet::new();
     let mut duplicate_keys = HashSet::new();
 
     for (def_index, stmt) in stmts.iter().enumerate() {
@@ -189,6 +193,7 @@ fn collect_stmt_candidates(
             unresolved_mark,
             options,
             &mut candidates,
+            &mut seen_single_decl_keys,
             &mut duplicate_keys,
         );
     }
@@ -205,6 +210,7 @@ fn collect_candidate_from_stmt(
     unresolved_mark: Option<Mark>,
     options: BuiltinAliasInlineOptions,
     candidates: &mut HashMap<BindingKey, BuiltinAliasCandidate>,
+    seen_single_decl_keys: &mut HashSet<BindingKey>,
     duplicate_keys: &mut HashSet<BindingKey>,
 ) {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -213,14 +219,23 @@ fn collect_candidate_from_stmt(
     if var.decls.len() != 1 {
         return;
     }
-    if var.kind != VarDeclKind::Const && !(options.allow_var && var.kind == VarDeclKind::Var) {
-        return;
-    }
 
     let decl = &var.decls[0];
     let Pat::Ident(binding) = &decl.name else {
         return;
     };
+    let key = binding_key(&binding.id);
+    // Any same-key single-declarator var — alias-shaped or not — blocks the
+    // candidate: the definition matcher and declarator removal both match by
+    // binding key alone, so a var redeclaration would be skipped during usage
+    // counting and deleted along with the alias.
+    if !seen_single_decl_keys.insert(key.clone()) {
+        duplicate_keys.insert(key.clone());
+    }
+
+    if var.kind != VarDeclKind::Const && !(options.allow_var && var.kind == VarDeclKind::Var) {
+        return;
+    }
     let Some(init) = &decl.init else {
         return;
     };
@@ -228,20 +243,14 @@ fn collect_candidate_from_stmt(
         return;
     }
 
-    let key = binding_key(&binding.id);
-    if candidates
-        .insert(
-            key.clone(),
-            BuiltinAliasCandidate {
-                init: init.clone(),
-                decl_kind: var.kind,
-                def_index,
-            },
-        )
-        .is_some()
-    {
-        duplicate_keys.insert(key);
-    }
+    candidates.insert(
+        key,
+        BuiltinAliasCandidate {
+            init: init.clone(),
+            decl_kind: var.kind,
+            def_index,
+        },
+    );
 }
 
 fn is_builtin_alias_expr(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
@@ -369,6 +378,30 @@ impl Visit for BuiltinAliasUsageCounter<'_> {
         if let Some(stats) = self.stats.get_mut(&(id.sym.clone(), id.ctxt)) {
             stats.blocked_uses += 1;
         }
+    }
+
+    // `e++` / `--e` / `delete e` mutate the binding but reach the counter as
+    // plain `Expr::Ident` args, which `visit_expr` would count as replaceable.
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if let Expr::Ident(id) = strip_parens(&update.arg) {
+            if let Some(stats) = self.stats.get_mut(&(id.sym.clone(), id.ctxt)) {
+                stats.blocked_uses += 1;
+                return;
+            }
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete {
+            if let Expr::Ident(id) = strip_parens(&unary.arg) {
+                if let Some(stats) = self.stats.get_mut(&(id.sym.clone(), id.ctxt)) {
+                    stats.blocked_uses += 1;
+                    return;
+                }
+            }
+        }
+        unary.visit_children_with(self);
     }
 
     fn visit_member_prop(&mut self, prop: &MemberProp) {

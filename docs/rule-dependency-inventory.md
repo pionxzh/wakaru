@@ -158,8 +158,8 @@ rationale, or level gating appear.
   helper-dependent recovery so helper body scanners see canonical
   `Object.freeze(...)` / `Object.defineProperty(...)` calls. `standard+`
   only: relies on `stable_builtins`, rejects `var` aliases with use-before-init,
-  writes, or dynamic-scope constructs instead of proving full var→const
-  convertibility.
+  writes (including `++`/`delete`), redeclarations, or dynamic-scope constructs
+  instead of proving full var→const convertibility.
 - **UnArgumentSpread** — `standard+`. Pattern subtleties:
   `fn.apply(null, args)` and `obj.fn.apply(obj, args)` are safe;
   `obj.fn.apply(null, args)` is *intentionally skipped* — rewriting it to

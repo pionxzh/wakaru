@@ -79,3 +79,49 @@ use(e(value));
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn preserves_var_alias_redeclared_with_non_alias_init() {
+    let input = r#"
+var e = Object.freeze;
+use(e(value));
+var e = getPolyfill();
+use2(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_var_alias_redeclaring_non_alias_binding() {
+    let input = r#"
+var e = getPolyfill();
+use(e);
+var e = Object.freeze;
+use2(e(value));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_var_alias_mutated_by_update_expression() {
+    let input = r#"
+var e = Object.freeze;
+e++;
+use(e(value));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_var_alias_removed_with_delete() {
+    let input = r#"
+var e = Object.freeze;
+use(delete e);
+use2(e(value));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
