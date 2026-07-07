@@ -17,7 +17,8 @@ use super::cross_module_helper_refs::{
     cross_module_member_helper_kind, cross_module_ts_member_helper,
 };
 use super::helper_matcher::{
-    binding_key, member_prop_name, static_member_prop_name, var_declarator_binding_key,
+    binding_key, member_prop_name, remaining_refs_outside_declarations, remove_fn_decls_by_binding,
+    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
 };
 use super::transpiler_helper_utils::{
     tslib_member_helper_kind, BindingKey, LocalHelperContext, TranspilerHelperKind,
@@ -109,6 +110,12 @@ fn run_un_object_spread(
     module_facts: Option<&ModuleFactsMap>,
     current_filename: Option<&str>,
 ) {
+    let esbuild_aliases = collect_esbuild_object_builtin_aliases(module);
+    let esbuild_define_normal_prop_helpers = if esbuild_aliases.has_spread_values_signals() {
+        collect_esbuild_define_normal_prop_helpers(module, &esbuild_aliases)
+    } else {
+        HashSet::new()
+    };
     let mut local_helpers: HashMap<BindingKey, TranspilerHelperKind> = local_helper_context
         .helpers()
         .iter()
@@ -120,8 +127,14 @@ fn run_un_object_spread(
         })
         .map(|(key, kind)| (key.clone(), *kind))
         .collect();
-    local_helpers.extend(collect_uninitialized_object_spread_stubs(module));
-    local_helpers.extend(collect_mangled_esbuild_object_spread_helpers(module));
+    let uninitialized_object_spread_stubs = collect_uninitialized_object_spread_stubs(module);
+    let mangled_esbuild_helpers = collect_mangled_esbuild_object_spread_helpers(
+        module,
+        &esbuild_aliases,
+        &esbuild_define_normal_prop_helpers,
+    );
+    local_helpers.extend(uninitialized_object_spread_stubs.clone());
+    local_helpers.extend(mangled_esbuild_helpers.clone());
     let mut helpers = local_helpers.clone();
     if let Some(module_facts) = module_facts {
         helpers.extend(collect_cross_module_object_spread_helpers(
@@ -165,7 +178,11 @@ fn run_un_object_spread(
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
     let tslib_namespaces = local_helper_context.tslib_namespaces();
-    let has_inline_object_spread_call = has_inline_object_spread_call(module);
+    let has_inline_object_spread_call = has_inline_object_spread_call(
+        module,
+        &esbuild_aliases,
+        &esbuild_define_normal_prop_helpers,
+    );
     if helpers.is_empty()
         && cross_module_ts_assign_refs.namespaces.is_empty()
         && swc_numeric_helper_namespaces.is_empty()
@@ -181,6 +198,8 @@ fn run_un_object_spread(
         cross_module_ts_assign_namespaces: &cross_module_ts_assign_refs.namespaces,
         swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
         tslib_namespaces,
+        esbuild_aliases: &esbuild_aliases,
+        esbuild_define_normal_prop_helpers: &esbuild_define_normal_prop_helpers,
     };
     module.visit_mut_with(&mut replacer);
     remove_unused_numeric_helper_namespace_decls(module, &swc_numeric_helper_namespaces);
@@ -197,21 +216,18 @@ fn run_un_object_spread(
         })
         .map(|(key, kind)| (key.clone(), *kind))
         .collect();
-    let import_bindings = super::helper_matcher::collect_import_binding_keys(module);
-    let standalone_dependencies: HashMap<BindingKey, TranspilerHelperKind> = local_helpers
-        .into_iter()
-        .filter(|(key, kind)| {
-            matches!(
-                kind,
-                TranspilerHelperKind::DefineProperty | TranspilerHelperKind::HelperDependency
-            ) && !import_bindings.contains(key)
-        })
-        .collect();
-    let all_roots = local_root_helpers
-        .into_iter()
-        .chain(standalone_dependencies)
-        .collect();
-    local_helper_context.remove_helpers_with_dependencies(module, all_roots);
+    let mut helper_dependency_cleanup_candidates: HashSet<_> =
+        uninitialized_object_spread_stubs.keys().cloned().collect();
+    helper_dependency_cleanup_candidates.extend(
+        mangled_esbuild_helpers
+            .iter()
+            .filter(|(_, kind)| **kind == TranspilerHelperKind::HelperDependency)
+            .map(|(key, _)| key.clone()),
+    );
+    helper_dependency_cleanup_candidates.extend(esbuild_define_normal_prop_helpers.iter().cloned());
+    local_helper_context.remove_helpers_with_dependencies(module, local_root_helpers);
+    remove_unused_helper_dependency_decls(module, &helper_dependency_cleanup_candidates);
+    remove_unused_esbuild_object_builtin_aliases(module, &esbuild_aliases);
 }
 
 impl Default for UnObjectSpread<'_> {
@@ -269,12 +285,15 @@ struct EsbuildObjectBuiltinAliases {
 }
 
 impl EsbuildObjectBuiltinAliases {
-    fn has_spread_signals(&self) -> bool {
+    fn has_spread_values_signals(&self) -> bool {
         !self.define_property.is_empty()
-            && !self.define_properties.is_empty()
-            && !self.get_own_property_descriptors.is_empty()
+            && !self.get_own_property_symbols.is_empty()
             && !self.has_own_property.is_empty()
             && !self.property_is_enumerable.is_empty()
+    }
+
+    fn has_spread_props_signals(&self) -> bool {
+        !self.define_properties.is_empty() && !self.get_own_property_descriptors.is_empty()
     }
 
     fn dependency_keys(&self) -> impl Iterator<Item = BindingKey> + '_ {
@@ -289,16 +308,47 @@ impl EsbuildObjectBuiltinAliases {
     }
 }
 
+fn remove_unused_esbuild_object_builtin_aliases(
+    module: &mut Module,
+    aliases: &EsbuildObjectBuiltinAliases,
+) {
+    let candidates: HashSet<_> = aliases.dependency_keys().collect();
+    if candidates.is_empty() {
+        return;
+    }
+    let remaining = remaining_refs_outside_declarations(module, &candidates, &candidates);
+    let removable: HashSet<_> = candidates
+        .into_iter()
+        .filter(|key| !remaining.contains(key))
+        .collect();
+    if !removable.is_empty() {
+        remove_var_declarators_by_binding(&mut module.body, &removable);
+    }
+}
+
+fn remove_unused_helper_dependency_decls(module: &mut Module, candidates: &HashSet<BindingKey>) {
+    if candidates.is_empty() {
+        return;
+    }
+    let remaining = remaining_refs_outside_declarations(module, candidates, candidates);
+    let removable: HashSet<_> = candidates
+        .iter()
+        .filter(|key| !remaining.contains(*key))
+        .cloned()
+        .collect();
+    if removable.is_empty() {
+        return;
+    }
+    remove_fn_decls_by_binding(module, &removable);
+    remove_var_declarators_by_binding(&mut module.body, &removable);
+}
+
 fn collect_mangled_esbuild_object_spread_helpers(
     module: &Module,
+    aliases: &EsbuildObjectBuiltinAliases,
+    define_normal_prop_helpers: &HashSet<BindingKey>,
 ) -> HashMap<BindingKey, TranspilerHelperKind> {
-    let aliases = collect_esbuild_object_builtin_aliases(module);
-    if !aliases.has_spread_signals() {
-        return HashMap::new();
-    }
-
-    let define_normal_prop_helpers = collect_esbuild_define_normal_prop_helpers(module, &aliases);
-    if define_normal_prop_helpers.is_empty() {
+    if !aliases.has_spread_values_signals() && !aliases.has_spread_props_signals() {
         return HashMap::new();
     }
 
@@ -314,8 +364,11 @@ fn collect_mangled_esbuild_object_spread_helpers(
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if esbuild_spread_values_helper_matches(init, &define_normal_prop_helpers, &aliases)
-                || esbuild_spread_props_helper_matches(init, &aliases)
+            if (aliases.has_spread_values_signals()
+                && !define_normal_prop_helpers.is_empty()
+                && esbuild_spread_values_helper_matches(init, define_normal_prop_helpers, aliases))
+                || (aliases.has_spread_props_signals()
+                    && esbuild_spread_props_helper_matches(init, aliases))
             {
                 helpers.insert(key, TranspilerHelperKind::ObjectSpread);
             }
@@ -333,7 +386,8 @@ fn collect_mangled_esbuild_object_spread_helpers(
     );
     helpers.extend(
         define_normal_prop_helpers
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|key| (key, TranspilerHelperKind::HelperDependency)),
     );
     helpers
@@ -965,6 +1019,8 @@ struct SpreadReplacer<'a> {
     cross_module_ts_assign_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
     swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
     tslib_namespaces: &'a HashSet<BindingKey>,
+    esbuild_aliases: &'a EsbuildObjectBuiltinAliases,
+    esbuild_define_normal_prop_helpers: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for SpreadReplacer<'_> {
@@ -975,14 +1031,7 @@ impl VisitMut for SpreadReplacer<'_> {
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
-        if !is_object_spread_callee(
-            callee,
-            self.helpers,
-            self.cross_module_helper_namespaces,
-            self.cross_module_ts_assign_namespaces,
-            self.swc_numeric_helper_namespaces,
-            self.tslib_namespaces,
-        ) {
+        if !self.is_object_spread_callee(callee) {
             return;
         }
 
@@ -1034,33 +1083,35 @@ impl VisitMut for SpreadReplacer<'_> {
     }
 }
 
-fn is_object_spread_callee(
-    callee: &Expr,
-    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
-    cross_module_helper_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
-    cross_module_ts_assign_namespaces: &HashMap<BindingKey, HashSet<String>>,
-    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
-    tslib_namespaces: &HashSet<BindingKey>,
-) -> bool {
-    match strip_parens(callee) {
-        Expr::Ident(id) => {
-            let key = (id.sym.clone(), id.ctxt);
-            matches!(
-                helpers.get(&key),
-                Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
-            )
+impl SpreadReplacer<'_> {
+    fn is_object_spread_callee(&self, callee: &Expr) -> bool {
+        match strip_parens(callee) {
+            Expr::Ident(id) => {
+                let key = (id.sym.clone(), id.ctxt);
+                matches!(
+                    self.helpers.get(&key),
+                    Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
+                )
+            }
+            Expr::Member(_) => {
+                matches!(
+                    tslib_member_helper_kind(callee, self.tslib_namespaces),
+                    Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
+                ) || matches!(
+                    cross_module_member_helper_kind(callee, self.cross_module_helper_namespaces),
+                    Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
+                ) || cross_module_ts_member_helper(callee, self.cross_module_ts_assign_namespaces)
+                    || is_swc_numeric_object_spread_member(
+                        callee,
+                        self.swc_numeric_helper_namespaces,
+                    )
+            }
+            expr => is_inline_object_spread_helper(
+                expr,
+                self.esbuild_aliases,
+                self.esbuild_define_normal_prop_helpers,
+            ),
         }
-        Expr::Member(_) => {
-            matches!(
-                tslib_member_helper_kind(callee, tslib_namespaces),
-                Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
-            ) || matches!(
-                cross_module_member_helper_kind(callee, cross_module_helper_namespaces),
-                Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
-            ) || cross_module_ts_member_helper(callee, cross_module_ts_assign_namespaces)
-                || is_swc_numeric_object_spread_member(callee, swc_numeric_helper_namespaces)
-        }
-        expr => is_inline_object_spread_helper(expr),
     }
 }
 
@@ -1074,18 +1125,28 @@ fn is_swc_numeric_object_spread_member(expr: &Expr, namespaces: &HashSet<Binding
     namespaces.contains(&binding_key(obj)) && static_member_prop_name(&member.prop) == Some("pi")
 }
 
-fn has_inline_object_spread_call(module: &Module) -> bool {
-    struct Finder {
+fn has_inline_object_spread_call(
+    module: &Module,
+    esbuild_aliases: &EsbuildObjectBuiltinAliases,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
+    struct Finder<'a> {
+        esbuild_aliases: &'a EsbuildObjectBuiltinAliases,
+        esbuild_define_normal_prop_helpers: &'a HashSet<BindingKey>,
         found: bool,
     }
 
-    impl Visit for Finder {
+    impl Visit for Finder<'_> {
         fn visit_call_expr(&mut self, call: &CallExpr) {
             if self.found {
                 return;
             }
             if let Callee::Expr(callee) = &call.callee {
-                if is_inline_object_spread_helper(callee.as_ref()) {
+                if is_inline_object_spread_helper(
+                    callee.as_ref(),
+                    self.esbuild_aliases,
+                    self.esbuild_define_normal_prop_helpers,
+                ) {
                     self.found = true;
                     return;
                 }
@@ -1094,16 +1155,27 @@ fn has_inline_object_spread_call(module: &Module) -> bool {
         }
     }
 
-    let mut finder = Finder { found: false };
+    let mut finder = Finder {
+        esbuild_aliases,
+        esbuild_define_normal_prop_helpers,
+        found: false,
+    };
     module.visit_with(&mut finder);
     finder.found
 }
 
-fn is_inline_object_spread_helper(expr: &Expr) -> bool {
+fn is_inline_object_spread_helper(
+    expr: &Expr,
+    esbuild_aliases: &EsbuildObjectBuiltinAliases,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
     match strip_parens(expr) {
         Expr::Fn(fn_expr) => {
-            function_matches_inline_object_spread(&fn_expr.function)
-                || function_matches_arguments_object_spread(&fn_expr.function)
+            function_matches_inline_object_spread(
+                &fn_expr.function,
+                esbuild_aliases,
+                esbuild_define_normal_prop_helpers,
+            ) || function_matches_arguments_object_spread(&fn_expr.function)
         }
         Expr::Arrow(arrow) => {
             let Some((target, source)) = arrow_param_pair(&arrow.params) else {
@@ -1111,18 +1183,33 @@ fn is_inline_object_spread_helper(expr: &Expr) -> bool {
             };
             match arrow.body.as_ref() {
                 BlockStmtOrExpr::BlockStmt(block) => {
-                    block_matches_inline_object_spread(&block.stmts, target, source)
+                    block_matches_inline_object_spread(
+                        &block.stmts,
+                        target,
+                        source,
+                        esbuild_define_normal_prop_helpers,
+                    ) || block_single_return_expr(&block.stmts).is_some_and(|expr| {
+                        spread_props_expr_matches(expr, target, source, esbuild_aliases)
+                    })
                 }
-                BlockStmtOrExpr::Expr(expr) => {
-                    expr_matches_inline_object_spread(expr, target, source)
-                }
+                BlockStmtOrExpr::Expr(expr) => expr_matches_inline_object_spread(
+                    expr,
+                    target,
+                    source,
+                    esbuild_aliases,
+                    esbuild_define_normal_prop_helpers,
+                ),
             }
         }
         _ => false,
     }
 }
 
-fn function_matches_inline_object_spread(function: &Function) -> bool {
+fn function_matches_inline_object_spread(
+    function: &Function,
+    esbuild_aliases: &EsbuildObjectBuiltinAliases,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
     let Some(body) = &function.body else {
         return false;
     };
@@ -1130,7 +1217,20 @@ fn function_matches_inline_object_spread(function: &Function) -> bool {
     let Some((target, source)) = pat_pair(&params) else {
         return false;
     };
-    block_matches_inline_object_spread(&body.stmts, target, source)
+    block_matches_inline_object_spread(
+        &body.stmts,
+        target,
+        source,
+        esbuild_define_normal_prop_helpers,
+    ) || block_single_return_expr(&body.stmts)
+        .is_some_and(|expr| spread_props_expr_matches(expr, target, source, esbuild_aliases))
+}
+
+fn block_single_return_expr(stmts: &[Stmt]) -> Option<&Expr> {
+    let [Stmt::Return(ReturnStmt { arg: Some(arg), .. })] = stmts else {
+        return None;
+    };
+    Some(arg)
 }
 
 fn function_matches_arguments_object_spread(function: &Function) -> bool {
@@ -1242,7 +1342,12 @@ impl Visit for ArgumentsSpreadMarker<'_> {
     }
 }
 
-fn block_matches_inline_object_spread(stmts: &[Stmt], target: &Ident, source: &Ident) -> bool {
+fn block_matches_inline_object_spread(
+    stmts: &[Stmt],
+    target: &Ident,
+    source: &Ident,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
     if !matches!(
         stmts.last(),
         Some(Stmt::Return(ret)) if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, target))
@@ -1250,15 +1355,21 @@ fn block_matches_inline_object_spread(stmts: &[Stmt], target: &Ident, source: &I
         return false;
     }
 
-    let mut marker = InlineSpreadMarker::new(target, source);
+    let mut marker = InlineSpreadMarker::new(target, source, esbuild_define_normal_prop_helpers);
     stmts.visit_with(&mut marker);
     marker.is_match()
 }
 
-fn expr_matches_inline_object_spread(expr: &Expr, target: &Ident, source: &Ident) -> bool {
-    let mut marker = InlineSpreadMarker::new(target, source);
+fn expr_matches_inline_object_spread(
+    expr: &Expr,
+    target: &Ident,
+    source: &Ident,
+    esbuild_aliases: &EsbuildObjectBuiltinAliases,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
+    let mut marker = InlineSpreadMarker::new(target, source, esbuild_define_normal_prop_helpers);
     expr.visit_with(&mut marker);
-    marker.is_match()
+    marker.is_match() || spread_props_expr_matches(expr, target, source, esbuild_aliases)
 }
 
 fn arrow_param_pair(params: &[Pat]) -> Option<(&Ident, &Ident)> {
@@ -1276,16 +1387,22 @@ fn pat_pair<'a>(params: &[&'a Pat]) -> Option<(&'a Ident, &'a Ident)> {
 struct InlineSpreadMarker<'a> {
     target: &'a Ident,
     source: &'a Ident,
+    esbuild_define_normal_prop_helpers: &'a HashSet<BindingKey>,
     saw_generated_spread_helper: bool,
     saw_target_helper_arg: bool,
     saw_source_ref: bool,
 }
 
 impl<'a> InlineSpreadMarker<'a> {
-    fn new(target: &'a Ident, source: &'a Ident) -> Self {
+    fn new(
+        target: &'a Ident,
+        source: &'a Ident,
+        esbuild_define_normal_prop_helpers: &'a HashSet<BindingKey>,
+    ) -> Self {
         Self {
             target,
             source,
+            esbuild_define_normal_prop_helpers,
             saw_generated_spread_helper: false,
             saw_target_helper_arg: false,
             saw_source_ref: false,
@@ -1305,7 +1422,8 @@ impl Visit for InlineSpreadMarker<'_> {
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        if is_generated_spread_helper_callee(&call.callee) {
+        if is_generated_spread_helper_callee(&call.callee, self.esbuild_define_normal_prop_helpers)
+        {
             self.saw_generated_spread_helper = true;
             if call
                 .args
@@ -1320,12 +1438,18 @@ impl Visit for InlineSpreadMarker<'_> {
     }
 }
 
-fn is_generated_spread_helper_callee(callee: &Callee) -> bool {
+fn is_generated_spread_helper_callee(
+    callee: &Callee,
+    esbuild_define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
     let Callee::Expr(expr) = callee else {
         return false;
     };
     match strip_parens(expr) {
-        Expr::Ident(id) => matches!(id.sym.as_ref(), "__defNormalProp" | "__defProps"),
+        Expr::Ident(id) => {
+            matches!(id.sym.as_ref(), "__defNormalProp" | "__defProps")
+                || esbuild_define_normal_prop_helpers.contains(&binding_key(id))
+        }
         Expr::Member(member) => match &member.prop {
             swc_core::ecma::ast::MemberProp::Ident(prop) => {
                 matches!(prop.sym.as_ref(), "defineProperty" | "defineProperties")

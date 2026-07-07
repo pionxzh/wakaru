@@ -1200,6 +1200,19 @@ use(name, version, rest_info);
 }
 
 #[test]
+fn named_owp_helper_mangled_esbuild_rest_helper() {
+    // Produced by esbuild ES2017 output minified with Terser compress+mangle.
+    let input = r#"
+var e=Object.getOwnPropertySymbols,r=Object.prototype.hasOwnProperty,o=Object.prototype.propertyIsEnumerable,t=(t,n)=>{var a={};for(var p in t)r.call(t,p)&&n.indexOf(p)<0&&(a[p]=t[p]);if(null!=t&&e)for(var p of e(t))n.indexOf(p)<0&&o.call(t,p)&&(a[p]=t[p]);return a};const n=app_info,{name:a}=n,p=t(n,["name"]);use(a,p);
+"#;
+    let expected = r#"
+const { name, ...rest } = app_info;
+use(name, rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn reattaches_terser_elided_swc_rest_binding_from_later_spread() {
     let input = r#"
 function _object_without_properties(source, excluded) {

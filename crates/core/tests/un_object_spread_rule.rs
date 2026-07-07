@@ -762,6 +762,19 @@ use(out);
 }
 
 #[test]
+fn detects_terser_mangled_inlined_esbuild_spread_values() {
+    // Produced by esbuild ES2017 output minified with Terser compress+mangle.
+    let input = r#"
+var e=Object.defineProperty,r=Object.getOwnPropertySymbols,t=Object.prototype.hasOwnProperty,o=Object.prototype.propertyIsEnumerable,a=(r,t,o)=>t in r?e(r,t,{enumerable:!0,configurable:!0,writable:!0,value:o}):r[t]=o,p;const n=((e,p)=>{for(var n in p||(p={}))t.call(p,n)&&a(e,n,p[n]);if(r)for(var n of r(p))o.call(p,n)&&a(e,n,p[n]);return e})({id:app_id},app_info);use(n);
+"#;
+    let expected = r#"
+const n = { id: app_id, ...app_info };
+use(n);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn detects_terser_inlined_esbuild_spread_props() {
     let input = r#"
 var __defProp = Object.defineProperty;
@@ -809,6 +822,19 @@ use(out);
     let expected = r#"
 const out = { ...rest, session };
 use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn detects_terser_mangled_esbuild_spread_values_and_props_from_matrix() {
+    // Produced by esbuild ES2017 output minified with Terser compress+mangle.
+    let input = r#"
+var e=Object.defineProperty,r=Object.defineProperties,t=Object.getOwnPropertyDescriptors,o=Object.getOwnPropertySymbols,a=Object.prototype.hasOwnProperty,n=Object.prototype.propertyIsEnumerable,p=(r,t,o)=>t in r?e(r,t,{enumerable:!0,configurable:!0,writable:!0,value:o}):r[t]=o,b=(e,r)=>{for(var t in r||(r={}))a.call(r,t)&&p(e,t,r[t]);if(o)for(var t of o(r))n.call(r,t)&&p(e,t,r[t]);return e},c;const i=b(((e,o)=>r(e,t(o)))(b({},app_info),{name:value}),base_info);use(i);
+"#;
+    let expected = r#"
+const i = { ...app_info, name: value, ...base_info };
+use(i);
 "#;
     assert_eq_normalized(&render(input), expected);
 }

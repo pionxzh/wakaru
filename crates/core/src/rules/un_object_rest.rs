@@ -20,6 +20,10 @@ use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
     cross_module_member_helper_kind,
 };
+use super::helper_matcher::{
+    binding_key, member_prop_name, remaining_refs_outside_declarations,
+    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
+};
 use super::transpiler_helper_utils::{
     tslib_member_helper_kind, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
@@ -137,8 +141,13 @@ fn run_un_object_rest(
     current_filename: Option<&str>,
 ) {
     // Collect named OWP helpers (function declarations detected by transpiler_helper_utils)
-    let local_named_helpers =
+    let mut local_named_helpers =
         local_helpers.helpers_of_kind(TranspilerHelperKind::ObjectWithoutProperties);
+    let esbuild_rest_aliases = collect_esbuild_object_rest_builtin_aliases(module, unresolved_mark);
+    local_named_helpers.extend(collect_mangled_esbuild_object_rest_helpers(
+        module,
+        &esbuild_rest_aliases,
+    ));
     let mut named_helpers = local_named_helpers.clone();
     let mut cross_module_helpers = module_facts
         .map(|facts| {
@@ -346,6 +355,316 @@ fn run_un_object_rest(
             .chain(define_property_helpers)
             .collect::<HashMap<_, _>>();
         local_helpers.remove_helpers_with_dependencies(module, root_helpers);
+        remove_unused_esbuild_object_rest_builtin_aliases(module, &esbuild_rest_aliases);
+    }
+}
+
+#[derive(Default)]
+struct EsbuildObjectRestBuiltinAliases {
+    get_own_property_symbols: HashSet<BindingKey>,
+    has_own_property: HashSet<BindingKey>,
+    property_is_enumerable: HashSet<BindingKey>,
+}
+
+impl EsbuildObjectRestBuiltinAliases {
+    fn has_required_signals(&self) -> bool {
+        !self.has_own_property.is_empty()
+    }
+
+    fn dependency_keys(&self) -> impl Iterator<Item = BindingKey> + '_ {
+        self.get_own_property_symbols
+            .iter()
+            .chain(&self.has_own_property)
+            .chain(&self.property_is_enumerable)
+            .cloned()
+    }
+}
+
+fn collect_esbuild_object_rest_builtin_aliases(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> EsbuildObjectRestBuiltinAliases {
+    let mut aliases = EsbuildObjectRestBuiltinAliases::default();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Some(key) = var_declarator_binding_key(decl) else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            match object_rest_builtin_alias_kind(init, unresolved_mark) {
+                Some("getOwnPropertySymbols") => {
+                    aliases.get_own_property_symbols.insert(key);
+                }
+                Some("hasOwnProperty") => {
+                    aliases.has_own_property.insert(key);
+                }
+                Some("propertyIsEnumerable") => {
+                    aliases.property_is_enumerable.insert(key);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    aliases
+}
+
+fn object_rest_builtin_alias_kind(expr: &Expr, unresolved_mark: Mark) -> Option<&'static str> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let is_global_object = matches!(member.obj.as_ref(), Expr::Ident(obj) if obj.sym.as_ref() == "Object" && obj.ctxt.outer() == unresolved_mark);
+    if is_global_object && static_member_prop_name(&member.prop) == Some("getOwnPropertySymbols") {
+        return Some("getOwnPropertySymbols");
+    }
+
+    let Expr::Member(proto_member) = member.obj.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj) = proto_member.obj.as_ref() else {
+        return None;
+    };
+    if obj.sym.as_ref() != "Object"
+        || obj.ctxt.outer() != unresolved_mark
+        || !member_prop_name(&proto_member.prop, "prototype")
+    {
+        return None;
+    }
+    match static_member_prop_name(&member.prop) {
+        Some("hasOwnProperty") => Some("hasOwnProperty"),
+        Some("propertyIsEnumerable") => Some("propertyIsEnumerable"),
+        _ => None,
+    }
+}
+
+fn collect_mangled_esbuild_object_rest_helpers(
+    module: &Module,
+    aliases: &EsbuildObjectRestBuiltinAliases,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
+    if !aliases.has_required_signals() {
+        return HashMap::new();
+    }
+
+    let mut helpers = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Some(key) = var_declarator_binding_key(decl) else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if esbuild_object_rest_helper_matches(init, aliases) {
+                helpers.insert(key, TranspilerHelperKind::ObjectWithoutProperties);
+            }
+        }
+    }
+    helpers
+}
+
+fn esbuild_object_rest_helper_matches(
+    expr: &Expr,
+    aliases: &EsbuildObjectRestBuiltinAliases,
+) -> bool {
+    let Some((source, excluded, body)) = object_rest_helper_two_param_block(expr) else {
+        return false;
+    };
+    let Some(target) = find_empty_object_accumulator_ident(&body.stmts) else {
+        return false;
+    };
+    if !block_returns_binding(body, &target) {
+        return false;
+    }
+
+    let mut marker = EsbuildObjectRestMarker {
+        source,
+        excluded,
+        target: &target,
+        aliases,
+        saw_for_in_source: false,
+        saw_has_own_call: false,
+        saw_exclusion_check: false,
+        saw_copy: false,
+    };
+    body.visit_with(&mut marker);
+    marker.saw_for_in_source
+        && marker.saw_has_own_call
+        && marker.saw_exclusion_check
+        && marker.saw_copy
+}
+
+fn object_rest_helper_two_param_block(
+    expr: &Expr,
+) -> Option<(&Ident, &Ident, &swc_core::ecma::ast::BlockStmt)> {
+    match strip_parens(expr) {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 2 {
+                return None;
+            }
+            let source = pat_ident(&arrow.params[0])?;
+            let excluded = pat_ident(&arrow.params[1])?;
+            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+                return None;
+            };
+            Some((source, excluded, block))
+        }
+        Expr::Fn(fn_expr) => {
+            if fn_expr.function.params.len() != 2 {
+                return None;
+            }
+            let source = pat_ident(&fn_expr.function.params[0].pat)?;
+            let excluded = pat_ident(&fn_expr.function.params[1].pat)?;
+            Some((source, excluded, fn_expr.function.body.as_ref()?))
+        }
+        _ => None,
+    }
+}
+
+fn pat_ident(pat: &Pat) -> Option<&Ident> {
+    let Pat::Ident(binding) = pat else {
+        return None;
+    };
+    Some(&binding.id)
+}
+
+fn find_empty_object_accumulator_ident(stmts: &[Stmt]) -> Option<Ident> {
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if matches!(
+                decl.init.as_deref(),
+                Some(Expr::Object(obj)) if obj.props.is_empty()
+            ) {
+                return Some(binding.id.clone());
+            }
+        }
+    }
+    None
+}
+
+fn block_returns_binding(block: &swc_core::ecma::ast::BlockStmt, binding: &Ident) -> bool {
+    matches!(
+        block.stmts.last(),
+        Some(Stmt::Return(ret))
+            if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, binding))
+    )
+}
+
+struct EsbuildObjectRestMarker<'a> {
+    source: &'a Ident,
+    excluded: &'a Ident,
+    target: &'a Ident,
+    aliases: &'a EsbuildObjectRestBuiltinAliases,
+    saw_for_in_source: bool,
+    saw_has_own_call: bool,
+    saw_exclusion_check: bool,
+    saw_copy: bool,
+}
+
+impl Visit for EsbuildObjectRestMarker<'_> {
+    fn visit_for_in_stmt(&mut self, for_in: &swc_core::ecma::ast::ForInStmt) {
+        if is_binding_ref(&for_in.right, self.source) {
+            self.saw_for_in_source = true;
+        }
+        for_in.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if call.args.len() >= 2
+            && call.args[0].spread.is_none()
+            && call.args[1].spread.is_none()
+            && is_binding_ref(&call.args[0].expr, self.source)
+            && callee_is_alias_call_method(&call.callee, &self.aliases.has_own_property)
+        {
+            self.saw_has_own_call = true;
+        }
+        if call.args.first().is_some_and(|arg| arg.spread.is_none())
+            && callee_is_index_of_on_binding(&call.callee, self.excluded)
+        {
+            self.saw_exclusion_check = true;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if assign.op == AssignOp::Assign
+            && assign_target_obj_is_binding(&assign.left, self.target)
+            && matches!(
+                strip_parens(&assign.right),
+                Expr::Member(member) if member_obj_is_binding(member, self.source)
+            )
+        {
+            self.saw_copy = true;
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+fn callee_is_alias_call_method(callee: &Callee, aliases: &HashSet<BindingKey>) -> bool {
+    let Callee::Expr(expr) = callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    member_prop_name(&member.prop, "call")
+        && matches!(member.obj.as_ref(), Expr::Ident(id) if aliases.contains(&binding_key(id)))
+}
+
+fn callee_is_index_of_on_binding(callee: &Callee, binding: &Ident) -> bool {
+    let Callee::Expr(expr) = callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    member_prop_name(&member.prop, "indexOf") && member_obj_is_binding(member, binding)
+}
+
+fn assign_target_obj_is_binding(target: &AssignTarget, binding: &Ident) -> bool {
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+        return false;
+    };
+    member_obj_is_binding(member, binding)
+}
+
+fn member_obj_is_binding(member: &MemberExpr, binding: &Ident) -> bool {
+    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym == binding.sym && id.ctxt == binding.ctxt)
+}
+
+fn is_binding_ref(expr: &Expr, binding: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if id.sym == binding.sym && id.ctxt == binding.ctxt)
+}
+
+fn remove_unused_esbuild_object_rest_builtin_aliases(
+    module: &mut Module,
+    aliases: &EsbuildObjectRestBuiltinAliases,
+) {
+    let candidates: HashSet<_> = aliases.dependency_keys().collect();
+    if candidates.is_empty() {
+        return;
+    }
+    let remaining = remaining_refs_outside_declarations(module, &candidates, &candidates);
+    let removable: HashSet<_> = candidates
+        .into_iter()
+        .filter(|key| !remaining.contains(key))
+        .collect();
+    if !removable.is_empty() {
+        remove_var_declarators_by_binding(&mut module.body, &removable);
     }
 }
 
