@@ -1,10 +1,10 @@
 {
-  "commit": "4d573cc1",
-  "date": "2026-07-04",
+  "commit": "538ec3ae",
+  "date": "2026-07-07",
   "aggregate": {
-    "yes": 1510,
+    "yes": 1521,
     "total": 1545,
-    "pct": 97.7
+    "pct": 98.4
   },
   "matrices": [
     {
@@ -41,19 +41,19 @@
     },
     {
       "name": "for-of-iteration",
-      "yes": 66,
-      "no": 3,
+      "yes": 69,
+      "no": 0,
       "error": 0,
       "total": 69,
-      "pct": 95.7
+      "pct": 100
     },
     {
       "name": "object-rest-spread",
-      "yes": 151,
-      "no": 7,
+      "yes": 158,
+      "no": 0,
       "error": 0,
       "total": 158,
-      "pct": 95.6
+      "pct": 100
     },
     {
       "name": "optional-nullish",
@@ -81,11 +81,11 @@
     },
     {
       "name": "template-literal",
-      "yes": 134,
-      "no": 1,
+      "yes": 135,
+      "no": 0,
       "error": 0,
       "total": 135,
-      "pct": 99.3
+      "pct": 100
     }
   ]
 }
