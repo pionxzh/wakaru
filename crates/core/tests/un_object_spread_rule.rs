@@ -739,6 +739,20 @@ use(out);
 }
 
 #[test]
+fn ignores_descriptor_copy_utility_without_esbuild_values_preamble() {
+    // Same shape as esbuild's __spreadProps, but with no __spreadValues alias
+    // preamble this is a user descriptor-copy utility; object spread would
+    // drop accessor semantics.
+    let input = r#"
+var __defProps = Object.defineProperties, __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var copyDescs = (a, b) => __defProps(a, __getOwnPropDescs(b));
+use(copyDescs({}, source));
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn ignores_esbuild_aliases_of_shadowed_object_binding() {
     let input = r#"
 const Object = fake();

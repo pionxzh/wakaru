@@ -652,6 +652,14 @@ fn spread_props_expr_matches(
     source: &Ident,
     aliases: &EsbuildObjectBuiltinAliases,
 ) -> bool {
+    // esbuild only ever emits `__spreadProps` wrapping a `__spreadValues`
+    // result, so the values-family aliases are always in the preamble. Without
+    // that corroboration the bare two-alias shape is just as likely a
+    // user-written descriptor-copy utility, whose defineProperties semantics
+    // (mutates target, preserves accessors) object spread would break.
+    if !aliases.has_spread_values_signals() {
+        return false;
+    }
     let Expr::Call(call) = strip_parens(expr) else {
         return false;
     };
