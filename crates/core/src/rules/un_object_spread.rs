@@ -227,7 +227,15 @@ fn run_un_object_spread(
     helper_dependency_cleanup_candidates.extend(esbuild_define_normal_prop_helpers.iter().cloned());
     local_helper_context.remove_helpers_with_dependencies(module, local_root_helpers);
     remove_unused_helper_dependency_decls(module, &helper_dependency_cleanup_candidates);
-    remove_unused_esbuild_object_builtin_aliases(module, &esbuild_aliases);
+    // The collected alias sets cover any unused Object alias in the module, so
+    // only sweep them when esbuild helper machinery was actually recognized;
+    // a recovered Babel/SWC helper alone says nothing about stray aliases.
+    if !mangled_esbuild_helpers.is_empty()
+        || !esbuild_define_normal_prop_helpers.is_empty()
+        || has_inline_object_spread_call
+    {
+        remove_unused_esbuild_object_builtin_aliases(module, &esbuild_aliases);
+    }
 }
 
 impl Default for UnObjectSpread<'_> {
@@ -368,7 +376,11 @@ fn collect_mangled_esbuild_object_spread_helpers(
                 && !define_normal_prop_helpers.is_empty()
                 && esbuild_spread_values_helper_matches(init, define_normal_prop_helpers, aliases))
                 || (aliases.has_spread_props_signals()
-                    && esbuild_spread_props_helper_matches(init, aliases))
+                    && esbuild_spread_props_helper_matches(
+                        init,
+                        aliases,
+                        define_normal_prop_helpers,
+                    ))
             {
                 helpers.insert(key, TranspilerHelperKind::ObjectSpread);
             }
@@ -540,11 +552,15 @@ fn esbuild_spread_values_helper_matches(
     marker.saw_for_in_source && marker.saw_has_own_call && marker.saw_define_normal_prop_call
 }
 
-fn esbuild_spread_props_helper_matches(expr: &Expr, aliases: &EsbuildObjectBuiltinAliases) -> bool {
+fn esbuild_spread_props_helper_matches(
+    expr: &Expr,
+    aliases: &EsbuildObjectBuiltinAliases,
+    define_normal_prop_helpers: &HashSet<BindingKey>,
+) -> bool {
     let Some((target, source, body)) = helper_two_param_body(expr) else {
         return false;
     };
-    spread_props_expr_matches(body, target, source, aliases)
+    spread_props_expr_matches(body, target, source, aliases, define_normal_prop_helpers)
 }
 
 fn helper_three_param_body(expr: &Expr) -> Option<(&Ident, &Ident, &Ident, &Expr)> {
@@ -651,13 +667,15 @@ fn spread_props_expr_matches(
     target: &Ident,
     source: &Ident,
     aliases: &EsbuildObjectBuiltinAliases,
+    define_normal_prop_helpers: &HashSet<BindingKey>,
 ) -> bool {
-    // esbuild only ever emits `__spreadProps` wrapping a `__spreadValues`
-    // result, so the values-family aliases are always in the preamble. Without
-    // that corroboration the bare two-alias shape is just as likely a
-    // user-written descriptor-copy utility, whose defineProperties semantics
-    // (mutates target, preserves accessors) object spread would break.
-    if !aliases.has_spread_values_signals() {
+    // esbuild only ever emits `__spreadProps` alongside `__spreadValues`, whose
+    // body calls a `__defNormalProp` helper that survives minification. Demand
+    // that matched helper — not merely the alias preamble — as corroboration:
+    // the bare two-param defineProperties shape is just as likely a
+    // user-written descriptor-copy utility, whose semantics (mutates target,
+    // preserves accessors) object spread would break.
+    if define_normal_prop_helpers.is_empty() {
         return false;
     }
     let Expr::Call(call) = strip_parens(expr) else {
@@ -1203,7 +1221,13 @@ fn is_inline_object_spread_helper(
                         source,
                         esbuild_define_normal_prop_helpers,
                     ) || block_single_return_expr(&block.stmts).is_some_and(|expr| {
-                        spread_props_expr_matches(expr, target, source, esbuild_aliases)
+                        spread_props_expr_matches(
+                            expr,
+                            target,
+                            source,
+                            esbuild_aliases,
+                            esbuild_define_normal_prop_helpers,
+                        )
                     })
                 }
                 BlockStmtOrExpr::Expr(expr) => expr_matches_inline_object_spread(
@@ -1236,8 +1260,15 @@ fn function_matches_inline_object_spread(
         target,
         source,
         esbuild_define_normal_prop_helpers,
-    ) || block_single_return_expr(&body.stmts)
-        .is_some_and(|expr| spread_props_expr_matches(expr, target, source, esbuild_aliases))
+    ) || block_single_return_expr(&body.stmts).is_some_and(|expr| {
+        spread_props_expr_matches(
+            expr,
+            target,
+            source,
+            esbuild_aliases,
+            esbuild_define_normal_prop_helpers,
+        )
+    })
 }
 
 fn block_single_return_expr(stmts: &[Stmt]) -> Option<&Expr> {
@@ -1383,7 +1414,14 @@ fn expr_matches_inline_object_spread(
 ) -> bool {
     let mut marker = InlineSpreadMarker::new(target, source, esbuild_define_normal_prop_helpers);
     expr.visit_with(&mut marker);
-    marker.is_match() || spread_props_expr_matches(expr, target, source, esbuild_aliases)
+    marker.is_match()
+        || spread_props_expr_matches(
+            expr,
+            target,
+            source,
+            esbuild_aliases,
+            esbuild_define_normal_prop_helpers,
+        )
 }
 
 fn arrow_param_pair(params: &[Pat]) -> Option<(&Ident, &Ident)> {

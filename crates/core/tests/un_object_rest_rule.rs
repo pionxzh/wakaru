@@ -734,6 +734,36 @@ use(name, rest_info);
 }
 
 #[test]
+fn preserves_unrelated_object_alias_when_babel_owp_helper_fires() {
+    // The recovered helper is a Babel loose form; the unused
+    // Object.prototype.hasOwnProperty alias is not part of any esbuild
+    // preamble and must survive the esbuild alias cleanup.
+    let input = r#"
+var unusedHasOwn = Object.prototype.hasOwnProperty;
+function _objectWithoutPropertiesLoose(r, e) {
+    if (null == r) return {};
+    var t = {};
+    for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+        if (-1 !== e.indexOf(n)) continue;
+        t[n] = r[n];
+    }
+    return t;
+}
+const { name } = app_info, rest_info = _objectWithoutPropertiesLoose(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("unusedHasOwn"),
+        "unrelated Object alias must not be swept by esbuild cleanup:\n{output}"
+    );
+    assert!(
+        output.contains("...rest_info"),
+        "rest helper call should still be recovered:\n{output}"
+    );
+}
+
+#[test]
 fn named_owp_helper_babel_spec_wrapper_form() {
     let input = r#"
 function _objectWithoutProperties(e, t) {

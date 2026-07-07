@@ -144,10 +144,9 @@ fn run_un_object_rest(
     let mut local_named_helpers =
         local_helpers.helpers_of_kind(TranspilerHelperKind::ObjectWithoutProperties);
     let esbuild_rest_aliases = collect_esbuild_object_rest_builtin_aliases(module, unresolved_mark);
-    local_named_helpers.extend(collect_mangled_esbuild_object_rest_helpers(
-        module,
-        &esbuild_rest_aliases,
-    ));
+    let mangled_esbuild_rest_helpers =
+        collect_mangled_esbuild_object_rest_helpers(module, &esbuild_rest_aliases);
+    local_named_helpers.extend(mangled_esbuild_rest_helpers.clone());
     let mut named_helpers = local_named_helpers.clone();
     let mut cross_module_helpers = module_facts
         .map(|facts| {
@@ -355,7 +354,12 @@ fn run_un_object_rest(
             .chain(define_property_helpers)
             .collect::<HashMap<_, _>>();
         local_helpers.remove_helpers_with_dependencies(module, root_helpers);
-        remove_unused_esbuild_object_rest_builtin_aliases(module, &esbuild_rest_aliases);
+        // Only sweep the collected Object aliases when a mangled esbuild rest
+        // helper was actually matched; a recovered Babel helper alone must not
+        // trigger removal of unrelated unused aliases.
+        if !mangled_esbuild_rest_helpers.is_empty() {
+            remove_unused_esbuild_object_rest_builtin_aliases(module, &esbuild_rest_aliases);
+        }
     }
 }
 

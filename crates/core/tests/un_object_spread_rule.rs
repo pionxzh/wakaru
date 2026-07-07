@@ -753,6 +753,56 @@ use(copyDescs({}, source));
 }
 
 #[test]
+fn ignores_descriptor_copy_utility_with_alias_preamble_but_no_values_helper() {
+    // Full esbuild-style alias preamble but no __spreadValues/__defNormalProp
+    // helper: the two-param defineProperties shape must still be treated as a
+    // user descriptor-copy utility, not __spreadProps.
+    let input = r#"
+var __defProp = Object.defineProperty;
+var __defProps = Object.defineProperties;
+var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var copyDescs = (a, b) => __defProps(a, __getOwnPropDescs(b));
+use(copyDescs({}, source));
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_unrelated_object_alias_when_non_esbuild_helper_fires() {
+    // The recovered helper is a minified Babel _extends; the unused
+    // Object.defineProperties alias is not part of any esbuild preamble and
+    // must survive the esbuild alias cleanup.
+    let input = r#"
+var unusedDefineProps = Object.defineProperties;
+function n() {
+    return n = Object.assign || function(e) {
+        for (var t = 1; t < arguments.length; t++) {
+            var r = arguments[t];
+            for (var o in r)
+                Object.prototype.hasOwnProperty.call(r, o) && (e[o] = r[o]);
+        }
+        return e;
+    }, n.apply(this, arguments);
+}
+var x = n({}, a, b);
+use(x);
+"#;
+    let output = render_rule(input, UnObjectSpread::new_with_mark);
+    assert!(
+        output.contains("unusedDefineProps"),
+        "unrelated Object alias must not be swept by esbuild cleanup:\n{output}"
+    );
+    assert!(
+        output.contains("...a"),
+        "extends helper call should still be recovered:\n{output}"
+    );
+}
+
+#[test]
 fn ignores_esbuild_aliases_of_shadowed_object_binding() {
     let input = r#"
 const Object = fake();
