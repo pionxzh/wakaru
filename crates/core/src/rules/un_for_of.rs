@@ -100,6 +100,7 @@ impl<'a> UnForOf<'a> {
         let previous = std::mem::replace(&mut self.helper_context, helper_context);
         module.visit_mut_children_with(self);
         self.helper_context = previous;
+        local_helpers.remove_unused_inline_ts_helpers(module, &[TsHelperKind::Values]);
     }
 }
 

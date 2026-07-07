@@ -392,6 +392,22 @@ for (const item of items) {
 }
 
 #[test]
+fn removes_consumed_mangled_inline_ts_values_helper() {
+    // Produced by TypeScript ES5 downlevelIteration, then Terser compress+mangle.
+    let input = r#"
+var r=this&&this.__values||function(r){var e="function"==typeof Symbol&&Symbol.iterator,t=e&&r[e],n=0;if(t)return t.call(r);if(r&&"number"==typeof r.length)return{next:function(){return r&&n>=r.length&&(r=void 0),{value:r&&r[n++],done:!r}}};throw new TypeError(e?"Object is not iterable.":"Symbol.iterator is not defined.")};export function f(e){var t,n;try{for(var o=r(e),i=o.next();!i.done;i=o.next()){var l=i.value;use(l)}}catch(r){t={error:r}}finally{try{i&&!i.done&&(n=o.return)&&n.call(o)}finally{if(t)throw t.error}}}
+"#;
+    let expected = r#"
+export function f(e) {
+  for (const l of e) {
+    use(l);
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn for_of_preserves_unproven_ts_values_member() {
     let input = r#"
 function run(tslib, items) {
