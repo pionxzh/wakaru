@@ -6,8 +6,8 @@ use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, Callee, CatchClause,
     ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
     JSXElementName, JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ModuleItem,
-    ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
-    VarDeclarator,
+    ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -54,6 +54,10 @@ impl BindingUseIndex {
 
     pub(crate) fn collect_module_items(items: &[ModuleItem]) -> Self {
         Self::collect_node(items)
+    }
+
+    pub(crate) fn collect_stmts(stmts: &[Stmt]) -> Self {
+        Self::collect_node(stmts)
     }
 
     fn collect_node<T>(node: &T) -> Self
@@ -108,6 +112,14 @@ impl BindingUseIndex {
             .get(binding)
             .map(|info| info.uses.len())
             .unwrap_or(0)
+    }
+
+    pub(crate) fn has_direct_write(&self, binding: &BindingId) -> bool {
+        self.bindings.get(binding).is_some_and(|info| {
+            info.uses
+                .iter()
+                .any(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+        })
     }
 
     #[cfg(test)]
@@ -633,6 +645,7 @@ mod tests {
                 UseKind::DeleteTarget,
             ]
         );
+        assert!(!index.has_direct_write(&obj));
     }
 
     #[test]
@@ -645,6 +658,7 @@ mod tests {
             index.use_kinds(&tmp),
             vec![UseKind::Write, UseKind::ReadWrite]
         );
+        assert!(index.has_direct_write(&tmp));
     }
 
     #[test]

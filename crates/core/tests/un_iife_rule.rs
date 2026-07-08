@@ -84,6 +84,52 @@ fn iife_literal_args_extracted_to_const_when_no_arguments_usage() {
 }
 
 #[test]
+fn iife_mutated_literal_arg_extracts_to_let() {
+    let input = r#"
+(function (a, b) {
+    for (let i = 0; i < 12; i++) {
+        a += " ";
+    };
+
+    console.log("a length: ", a.length);
+})(" ", 4);
+"#;
+    let expected = r#"
+(() => {
+  let a = " ";
+  const b = 4;
+  for (let i = 0; i < 12; i++) {
+    a += " ";
+  }
+  ;
+  console.log("a length: ", a.length);
+})();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_literal_arg_rewrite_marks_written_param_as_let() {
+    let input = r#"
+((a, b) => {
+  a++;
+  return a + b;
+})(1, 2);
+"#;
+    let expected = r#"
+(() => {
+  let a = 1;
+  const b = 2;
+  a++;
+  return a + b;
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn iife_param_with_longer_name_not_touched() {
     let input = r#"
 ((win, s, a) => {

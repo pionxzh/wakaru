@@ -10,6 +10,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
+
 use super::RewriteLevel;
 
 pub struct UnIife {
@@ -201,9 +203,9 @@ fn process_params_and_args(
 
     apply_body_rewrites(body, &plan);
 
-    // Process const_inserts: collect indices to remove, then drop params/args
+    // Process literal inserts: collect indices to remove, then drop params/args
     // in reverse-index order.
-    let mut to_remove: Vec<usize> = plan.const_inserts.iter().map(|(i, ..)| *i).collect();
+    let mut to_remove: Vec<usize> = plan.literal_inserts.iter().map(|(i, ..)| *i).collect();
     to_remove.sort();
     to_remove.dedup();
     to_remove.reverse();
@@ -212,7 +214,7 @@ fn process_params_and_args(
         args.remove(i);
     }
 
-    prepend_const_decls(body, &plan.const_inserts);
+    prepend_literal_decls(body, &plan.literal_inserts);
 }
 
 fn process_arrow_params_and_args(
@@ -233,7 +235,7 @@ fn process_arrow_params_and_args(
 
     apply_body_rewrites(body, &plan);
 
-    let mut to_remove: Vec<usize> = plan.const_inserts.iter().map(|(i, ..)| *i).collect();
+    let mut to_remove: Vec<usize> = plan.literal_inserts.iter().map(|(i, ..)| *i).collect();
     to_remove.sort();
     to_remove.dedup();
     to_remove.reverse();
@@ -242,7 +244,7 @@ fn process_arrow_params_and_args(
         args.remove(i);
     }
 
-    prepend_const_decls(body, &plan.const_inserts);
+    prepend_literal_decls(body, &plan.literal_inserts);
 }
 
 fn pat_ident(pat: &Pat) -> Option<&Ident> {
@@ -260,8 +262,9 @@ fn pat_ident(pat: &Pat) -> Option<&Ident> {
 struct RewritePlan {
     /// (idx, old_sym, new_sym, param_ctxt): keep the param, change its sym.
     renames: Vec<(usize, Atom, Atom, SyntaxContext)>,
-    /// (idx, sym, ctxt, lit): drop the param + arg and prepend `const sym = lit`.
-    const_inserts: Vec<(usize, Atom, SyntaxContext, Lit)>,
+    /// (idx, sym, ctxt, lit, kind): drop the param + arg and prepend
+    /// `const sym = lit` or `let sym = lit` when the param is mutated.
+    literal_inserts: Vec<(usize, Atom, SyntaxContext, Lit, VarDeclKind)>,
 }
 
 fn plan_param_rewrites<F>(
@@ -285,7 +288,7 @@ where
             taken_for_suffix.insert(sym);
         }
     }
-
+    let binding_uses = BindingUseIndex::collect_stmts(&body.stmts);
     for (i, arg) in args.iter().enumerate().take(param_count) {
         let Some((param_sym, param_ctxt)) = param_at(i) else {
             continue;
@@ -313,8 +316,13 @@ where
                 plan.renames.push((i, param_sym, new_sym, param_ctxt));
             }
             Expr::Lit(lit) if !preserve_arg_list => {
-                plan.const_inserts
-                    .push((i, param_sym, param_ctxt, lit.clone()));
+                let kind = if binding_uses.has_direct_write(&(param_sym.clone(), param_ctxt)) {
+                    VarDeclKind::Let
+                } else {
+                    VarDeclKind::Const
+                };
+                plan.literal_inserts
+                    .push((i, param_sym, param_ctxt, lit.clone(), kind));
             }
             _ => {}
         }
@@ -335,19 +343,23 @@ fn apply_body_rewrites(body: &mut BlockStmt, plan: &RewritePlan) {
     }
 }
 
-fn prepend_const_decls(body: &mut BlockStmt, const_inserts: &[(usize, Atom, SyntaxContext, Lit)]) {
-    if const_inserts.is_empty() {
+fn prepend_literal_decls(
+    body: &mut BlockStmt,
+    literal_inserts: &[(usize, Atom, SyntaxContext, Lit, VarDeclKind)],
+) {
+    if literal_inserts.is_empty() {
         return;
     }
     // Sort by ascending original index to preserve declaration order.
-    let mut sorted: Vec<&(usize, Atom, SyntaxContext, Lit)> = const_inserts.iter().collect();
+    let mut sorted: Vec<&(usize, Atom, SyntaxContext, Lit, VarDeclKind)> =
+        literal_inserts.iter().collect();
     sorted.sort_by_key(|t| t.0);
-    let const_stmts: Vec<Stmt> = sorted
+    let literal_stmts: Vec<Stmt> = sorted
         .into_iter()
-        .map(|(_, sym, ctxt, lit)| make_const_decl(sym.clone(), *ctxt, lit.clone()))
+        .map(|(_, sym, ctxt, lit, kind)| make_literal_decl(sym.clone(), *ctxt, lit.clone(), *kind))
         .collect();
     let old_body = std::mem::take(&mut body.stmts);
-    body.stmts = const_stmts;
+    body.stmts = literal_stmts;
     body.stmts.extend(old_body);
 }
 
@@ -450,11 +462,11 @@ fn collect_all_binding_names(body: &BlockStmt) -> HashSet<Atom> {
     c.names
 }
 
-fn make_const_decl(name: Atom, binding_ctxt: SyntaxContext, lit: Lit) -> Stmt {
+fn make_literal_decl(name: Atom, binding_ctxt: SyntaxContext, lit: Lit, kind: VarDeclKind) -> Stmt {
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        kind: VarDeclKind::Const,
+        kind,
         declare: false,
         decls: vec![VarDeclarator {
             span: DUMMY_SP,
