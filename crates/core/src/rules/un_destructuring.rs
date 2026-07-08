@@ -1015,7 +1015,9 @@ fn try_reconstruct_ref_group(
         }
     }
 
-    let stmt = build_destructuring_stmt(&ref_decl, collected.accesses)?;
+    let pat = build_pat_from_accesses(collected.accesses)?;
+    let kind = declaration_kind_for_pattern_bindings(&pat, &stmts[start + 1..i], ref_decl.kind);
+    let stmt = build_var_stmt(&ref_decl, pat, kind);
     Some(ReconstructedGroup {
         stmt,
         consumed: i - start,
@@ -1141,8 +1143,16 @@ fn try_reconstruct_direct_array_group(
         }
     }
 
-    let stmt =
-        build_direct_array_destructuring_stmt(group, accesses, Box::new(Expr::Ident(source)))?;
+    let pat = build_array_pat(accesses)?;
+    let kind = declaration_kind_for_pattern_bindings(&pat, &stmts[start..i], group.kind);
+    let stmt = build_var_stmt_from_parts(
+        group.span,
+        group.ctxt,
+        kind,
+        group.declare,
+        pat,
+        Box::new(Expr::Ident(source)),
+    );
     Some(ReconstructedGroup {
         stmt,
         consumed: i - start,
@@ -1811,11 +1821,6 @@ fn is_ident_expr(expr: &Expr, ident: &Ident) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == ident.sym && id.ctxt == ident.ctxt)
 }
 
-fn build_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option<Stmt> {
-    let pat = build_pat_from_accesses(accesses)?;
-    Some(build_var_stmt(ref_decl, pat))
-}
-
 fn build_pat_from_accesses(accesses: Vec<Access>) -> Option<Pat> {
     if accesses
         .iter()
@@ -1830,22 +1835,6 @@ fn build_pat_from_accesses(accesses: Vec<Access>) -> Option<Pat> {
     } else {
         None
     }
-}
-
-fn build_direct_array_destructuring_stmt(
-    group: DeclGroup,
-    accesses: Vec<Access>,
-    init: Box<Expr>,
-) -> Option<Stmt> {
-    let pat = build_array_pat(accesses)?;
-    Some(build_var_stmt_from_parts(
-        group.span,
-        group.ctxt,
-        group.kind,
-        group.declare,
-        pat,
-        init,
-    ))
 }
 
 fn build_assignment_destructuring_stmt(
@@ -2006,11 +1995,85 @@ fn prop_name(key: PropKey) -> PropName {
     }
 }
 
-fn build_var_stmt(ref_decl: &RefDecl, pat: Pat) -> Stmt {
+fn declaration_kind_for_pattern_bindings(
+    pat: &Pat,
+    stmts: &[Stmt],
+    fallback: VarDeclKind,
+) -> VarDeclKind {
+    let mut bindings = HashSet::new();
+    collect_pat_binding_keys(pat, &mut bindings);
+    if bindings.is_empty() {
+        return fallback;
+    }
+
+    let mut kind = None;
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            if pat_binds_any_key(&decl.name, &bindings) {
+                kind = Some(match kind {
+                    Some(current) => widest_var_decl_kind(current, var.kind),
+                    None => var.kind,
+                });
+            }
+        }
+    }
+
+    kind.unwrap_or(fallback)
+}
+
+fn widest_var_decl_kind(left: VarDeclKind, right: VarDeclKind) -> VarDeclKind {
+    match (left, right) {
+        (VarDeclKind::Var, _) | (_, VarDeclKind::Var) => VarDeclKind::Var,
+        (VarDeclKind::Let, _) | (_, VarDeclKind::Let) => VarDeclKind::Let,
+        _ => left,
+    }
+}
+
+fn pat_binds_any_key(pat: &Pat, targets: &HashSet<BindingKey>) -> bool {
+    let mut bindings = HashSet::new();
+    collect_pat_binding_keys(pat, &mut bindings);
+    bindings.iter().any(|key| targets.contains(key))
+}
+
+fn collect_pat_binding_keys(pat: &Pat, bindings: &mut HashSet<BindingKey>) {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.insert(binding_key(&binding.id));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_keys(elem, bindings);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => {
+                        collect_pat_binding_keys(&kv.value, bindings);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        bindings.insert(binding_key(&assign.key));
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        collect_pat_binding_keys(&rest.arg, bindings);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_keys(&rest.arg, bindings),
+        Pat::Assign(assign) => collect_pat_binding_keys(&assign.left, bindings),
+        _ => {}
+    }
+}
+
+fn build_var_stmt(ref_decl: &RefDecl, pat: Pat, kind: VarDeclKind) -> Stmt {
     build_var_stmt_from_parts(
         ref_decl.span,
         ref_decl.ctxt,
-        ref_decl.kind,
+        kind,
         ref_decl.declare,
         pat,
         ref_decl.init.clone(),

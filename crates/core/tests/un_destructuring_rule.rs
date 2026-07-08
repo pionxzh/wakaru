@@ -402,6 +402,26 @@ use(first, second, rest_items);
 }
 
 #[test]
+fn destructuring_default_uses_let_when_consumed_binding_is_reassigned() {
+    let input = r#"
+var arr = ["a", "b"];
+
+var b = arr[1],
+    c = b === undefined ? "" : b;
+
+c = c.toLowerCase();
+"#;
+    let expected = r#"
+let [, c = ""] = ["a", "b"];
+c = c.toLowerCase();
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
 fn standard_preserves_potential_object_slice_semantics() {
     let input = r#"
 var first = source[0], rest = source.slice(1);
