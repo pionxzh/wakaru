@@ -120,6 +120,14 @@ Rules still own domain-specific shape recognition. For example:
   so moving this in would couple the scanner to esbuild internals. This is the
   documented "deliberate exception" the unification proposal anticipated; see
   [learnings/helper-detection-pattern-engine.md](learnings/helper-detection-pattern-engine.md).
+- `un_for_of.rs` recognizes Closure Compiler's `$jscomp.makeIterator` call
+  locally. It does not freeze the helper function body, which is versioned
+  runtime code outside the loop being recovered. Instead it requires the exact
+  member name on either an unresolved `$jscomp` runtime or the canonical
+  `var $jscomp = $jscomp || {}` namespace bootstrap, then verifies the complete
+  adjacent `.next()` loop and whole-module binding non-escape conditions. This remains
+  rule-local because the proof is the namespace-plus-consumer shape and no
+  helper declaration is removed.
 
 This is deliberate. A helper matcher should encode the smallest semantic shape
 that proves the transform is safe, while shared utilities handle binding

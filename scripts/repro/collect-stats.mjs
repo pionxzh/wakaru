@@ -21,6 +21,7 @@ const statsPath = join(scriptDir, "stats.json");
 const matrices = [
   "array-spread-rest",
   "async-await",
+  "closure-compiler",
   "conditional-switch",
   "enum",
   "for-of-iteration",

@@ -279,11 +279,25 @@ rationale, or level gating appear.
   expressions, bindings later used with `new`): arrows lack `prototype`,
   cannot be constructed, and differ for `new.target`, so broad conversion is
   not a `minimal`-safe transform.
-- **UnForOf** — `standard+`. Helper recovery is conservative: it requires the
-  full emitted cleanup wrapper before removing iterator/error temporaries.
+- **UnForOf** — `standard+`. TypeScript/Babel/SWC helper recovery is
+  conservative: it requires the full emitted cleanup wrapper before removing
+  iterator/error temporaries. Closure Compiler is a separate exact producer
+  shape: an adjacent `$jscomp.makeIterator(iterable)` assignment plus the
+  canonical `.next()` loop. It requires either the unresolved Closure runtime
+  namespace or the canonical `var $jscomp = $jscomp || {}` bootstrap, and it
+  compares candidate-local uses with the module-wide binding index so it bails
+  if the iterator/result bindings escape any enclosing block or the iterator is
+  used in the loop body.
 - **UnUndefinedInit** — needs RemoveVoid; feeds VarDeclToLetConst.
-- **UnPrototypeClass** — needs `const`/`let` declarations (VarDeclToLetConst)
-  and method shorthand (ObjMethodShorthand) to detect class candidates.
+- **UnPrototypeClass** — runs before ArrowFunction so Closure Compiler's
+  single-declarator anonymous function initializers remain available for class
+  recovery. It also accepts ordinary function declarations. Nested candidates
+  must have reached `const` through VarDeclToLetConst; module-level Closure
+  variables are handled in place. Function-variable candidates with exact-binding
+  pre-references (including references captured by earlier closures), multiple
+  declarators, or named function expressions are preserved because converting
+  them would change binding or recursion semantics. ObjMethodShorthand remains
+  an upstream normalizer for method bodies.
 
 ### Cleanup and renaming
 

@@ -1,6 +1,6 @@
 mod common;
 
-use common::assert_eq_normalized;
+use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
 use swc_core::common::GLOBALS;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::rules::UnPrototypeClass;
@@ -42,6 +42,10 @@ fn apply(input: &str) -> String {
         }
         String::from_utf8(output).expect("utf-8")
     })
+}
+
+fn apply_resolved(input: &str) -> String {
+    render_rule(input, |_| UnPrototypeClass)
 }
 
 // ============================================================
@@ -232,6 +236,152 @@ class Child extends Parent {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn test_closure_function_expression_classes() {
+    // Shape reaching this rule after VarDeclToLetConst normalizes Closure
+    // Compiler's safe single-declarator `var` bindings.
+    let input = r#"
+const Base = function() {};
+Base.prototype.greet = function() { return "hi"; };
+const Child = function(name) {
+    Base.call(this);
+    this.name = name;
+};
+$jscomp.inherits(Child, Base);
+Child.prototype.label = function() {
+    return this.greet() + " " + this.name;
+};
+"#;
+    let expected = r#"
+class Base {
+    greet() { return "hi"; }
+}
+class Child extends Base {
+    constructor(name) {
+        super();
+        this.name = name;
+    }
+    label() {
+        return this.greet() + " " + this.name;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_closure_function_expression_classes_in_pipeline() {
+    let input = r#"
+var Base = function() {};
+Base.prototype.greet = function() { return "hi"; };
+var Child = function(name) {
+    Base.call(this);
+    this.name = name;
+};
+$jscomp.inherits(Child, Base);
+Child.prototype.label = function() { return this.name; };
+window.Child = Child;
+"#;
+    let expected = r#"
+class Base {
+    greet() { return "hi"; }
+}
+class Child extends Base {
+    constructor(name) {
+        super();
+        this.name = name;
+    }
+    label() { return this.name; }
+}
+window.Child = Child;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn test_function_expression_class_skips_multiple_declarators() {
+    let input = r#"
+var Foo = function() {}, unrelated = sideEffect();
+Foo.prototype.run = function() { return true; };
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn test_function_expression_class_skips_pre_reference() {
+    let input = r#"
+use(Foo);
+const Foo = function() { this.value = 1; };
+Foo.prototype.run = function() { return this.value; };
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn function_expression_class_preserves_block_escaping_var() {
+    let input = r#"
+function demo(flag) {
+    if (flag) {
+        var Foo = function() {};
+        Foo.prototype.run = function() { return true; };
+    }
+    return Foo;
+}
+"#;
+    let before = render_pipeline_until(input, "ObjMethodShorthand");
+    let after = render_pipeline_until(input, "UnPrototypeClass");
+    assert_eq_normalized(&after, &before);
+}
+
+#[test]
+fn function_expression_class_preserves_var_observed_by_earlier_closure() {
+    let input = r#"
+function readFoo() { return Foo; }
+consume(readFoo());
+var Foo = function() {};
+Foo.prototype.run = function() { return true; };
+"#;
+    let before = render_pipeline_until(input, "ObjMethodShorthand");
+    let after = render_pipeline_until(input, "UnPrototypeClass");
+    assert_eq_normalized(&after, &before);
+}
+
+#[test]
+fn function_expression_class_ignores_shadowed_pre_reference() {
+    let input = r#"
+function unrelated(Foo) { return Foo; }
+const Foo = function() {};
+Foo.prototype.run = function() { return true; };
+"#;
+    let expected = r#"
+function unrelated(Foo) { return Foo; }
+class Foo {
+    run() { return true; }
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn function_expression_class_preserves_unrecognized_interleaved_inheritance() {
+    let input = r#"
+const Base = function() {};
+Base.prototype.base = function() { return true; };
+const Child = function() {};
+runtime.attachBase(Child, Base);
+Child.prototype.run = function() { return this.base(); };
+"#;
+    let expected = r#"
+class Base {
+    base() { return true; }
+}
+const Child = function() {};
+runtime.attachBase(Child, Base);
+Child.prototype.run = function() { return this.base(); };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
 // ============================================================
 // No-op: function without prototype methods
 // ============================================================
@@ -416,7 +566,7 @@ module.exports = Foo;
 fn test_pre_ref_esbuild_commonjs_param() {
     let input = r#"
 fn4.exports = Foo;
-Foo.className = "ReflectionObject";
+Foo.className = "SyntheticType";
 function Foo(x) { this.x = x; }
 Foo.prototype.getX = function() { return this.x; };
 "#;
@@ -426,7 +576,7 @@ class Foo {
     getX() { return this.x; }
 }
 fn4.exports = Foo;
-Foo.className = "ReflectionObject";
+Foo.className = "SyntheticType";
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -454,7 +604,7 @@ fn test_pre_ref_with_gap() {
     // fn decl much later. Safe patterns are relocated regardless of distance.
     let input = r#"
 fn4.exports = Foo;
-Foo.className = "ReflectionObject";
+Foo.className = "SyntheticType";
 const x = 1;
 const y = 2;
 function Foo(x) { this.x = x; }
@@ -468,7 +618,7 @@ class Foo {
     getX() { return this.x; }
 }
 fn4.exports = Foo;
-Foo.className = "ReflectionObject";
+Foo.className = "SyntheticType";
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

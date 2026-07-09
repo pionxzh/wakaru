@@ -4,13 +4,14 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
-    CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget,
-    Stmt, TryStmt, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr,
-    VarDeclarator,
+    CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, ForHead, ForOfStmt, Ident,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPatProp,
+    Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr, UnaryOp, UpdateExpr, UpdateOp, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
@@ -109,6 +110,8 @@ struct ForOfHelperContext {
     values_helpers: HashSet<BindingKey>,
     tslib_namespaces: HashSet<BindingKey>,
     cross_module_values_namespaces: HashMap<BindingKey, HashSet<String>>,
+    closure_jscomp_namespaces: HashSet<BindingKey>,
+    binding_uses: BindingUseIndex,
     unresolved_mark: Option<Mark>,
 }
 
@@ -129,6 +132,8 @@ impl ForOfHelperContext {
             values_helpers,
             tslib_namespaces: local_helpers.tslib_namespaces().clone(),
             cross_module_values_namespaces: cross_module_values.namespaces,
+            closure_jscomp_namespaces: collect_closure_jscomp_namespaces(module),
+            binding_uses: BindingUseIndex::collect(module),
             unresolved_mark,
         }
     }
@@ -153,6 +158,90 @@ impl ForOfHelperContext {
             _ => false,
         }
     }
+
+    fn is_closure_make_iterator_callee(&self, callee: &Callee) -> bool {
+        let Callee::Expr(callee) = callee else {
+            return false;
+        };
+        let callee = strip_closure_indirect_call(callee);
+        let Expr::Member(member) = callee else {
+            return false;
+        };
+        if static_member_prop_name(&member.prop) != Some("makeIterator") {
+            return false;
+        }
+        let Expr::Ident(namespace) = strip_parens(&member.obj) else {
+            return false;
+        };
+        if namespace.sym.as_ref() != "$jscomp" {
+            return false;
+        }
+
+        self.closure_jscomp_namespaces
+            .contains(&binding_key(namespace))
+            || self
+                .unresolved_mark
+                .is_some_and(|mark| namespace.ctxt.outer() == mark)
+    }
+
+    fn binding_is_used_outside(&self, stmts: &[Stmt], ident: &Ident) -> bool {
+        let binding = binding_key(ident);
+        BindingUseIndex::collect_stmts(stmts).use_count(&binding)
+            != self.binding_uses.use_count(&binding)
+    }
+}
+
+fn strip_closure_indirect_call(expr: &Expr) -> &Expr {
+    let expr = strip_parens(expr);
+    let Expr::Seq(sequence) = expr else {
+        return expr;
+    };
+    let [first, callee] = sequence.exprs.as_slice() else {
+        return expr;
+    };
+    if matches!(strip_parens(first), Expr::Lit(Lit::Num(number)) if number.value == 0.0) {
+        strip_parens(callee)
+    } else {
+        expr
+    }
+}
+
+fn collect_closure_jscomp_namespaces(module: &Module) -> HashSet<BindingKey> {
+    struct Collector {
+        namespaces: HashSet<BindingKey>,
+    }
+
+    impl Visit for Collector {
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            let Pat::Ident(binding) = &decl.name else {
+                decl.visit_children_with(self);
+                return;
+            };
+            if binding.id.sym.as_ref() != "$jscomp" {
+                decl.visit_children_with(self);
+                return;
+            }
+            let Some(Expr::Bin(bootstrap)) = decl.init.as_deref().map(strip_parens) else {
+                decl.visit_children_with(self);
+                return;
+            };
+            if bootstrap.op != BinaryOp::LogicalOr
+                || !is_ident_key(strip_parens(&bootstrap.left), &binding.id)
+                || !matches!(strip_parens(&bootstrap.right), Expr::Object(object) if object.props.is_empty())
+            {
+                decl.visit_children_with(self);
+                return;
+            }
+            self.namespaces.insert(binding_key(&binding.id));
+            decl.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        namespaces: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.namespaces
 }
 
 #[derive(Default)]
@@ -447,6 +536,18 @@ fn process_stmt_vec(stmts: &mut Vec<Stmt>, helper_context: &ForOfHelperContext) 
     let old = std::mem::take(stmts);
     let mut i = 0;
     while i < old.len() {
+        if let Some(rewrite) = try_convert_closure_iterator_for_stmt(&old[i..], helper_context) {
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
+        if let Some(rewrite) = try_convert_closure_iterator_sequence(&old[i..], helper_context) {
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
         if let Some(rewrite) = try_convert_ts_values_sequence(&old[i..], helper_context) {
             stmts.push(Stmt::ForOf(rewrite.for_of));
             i += rewrite.consumed_stmts;
@@ -486,6 +587,176 @@ struct SequenceRewrite {
     consumed_stmts: usize,
     preserved_stmts: Vec<Stmt>,
     for_of: ForOfStmt,
+}
+
+struct ClosureIteratorInit {
+    iterator_ident: Ident,
+    iterable: Box<Expr>,
+}
+
+fn try_convert_closure_iterator_sequence(
+    stmts: &[Stmt],
+    helper_context: &ForOfHelperContext,
+) -> Option<SequenceRewrite> {
+    let init = extract_closure_iterator_init(stmts.first()?, helper_context)?;
+    let Stmt::For(for_stmt) = stmts.get(1)? else {
+        return None;
+    };
+    let Some(VarDeclOrExpr::VarDecl(loop_init)) = &for_stmt.init else {
+        return None;
+    };
+    let [result_decl] = loop_init.decls.as_slice() else {
+        return None;
+    };
+    let result_ident = pat_as_ident(&result_decl.name)?.id.clone();
+    let consumed_stmts = &stmts[..2];
+    if helper_context.binding_is_used_outside(consumed_stmts, &init.iterator_ident)
+        || helper_context.binding_is_used_outside(consumed_stmts, &result_ident)
+    {
+        return None;
+    }
+    let for_of = build_closure_iterator_for_of(
+        for_stmt,
+        &init.iterator_ident,
+        &result_ident,
+        result_decl.init.as_deref()?,
+        init.iterable,
+        stmts[0].span(),
+    )?;
+    Some(SequenceRewrite {
+        consumed_stmts: 2,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+fn try_convert_closure_iterator_for_stmt(
+    stmts: &[Stmt],
+    helper_context: &ForOfHelperContext,
+) -> Option<SequenceRewrite> {
+    let Stmt::For(for_stmt) = stmts.first()? else {
+        return None;
+    };
+    let Some(VarDeclOrExpr::VarDecl(loop_init)) = &for_stmt.init else {
+        return None;
+    };
+    let [iterator_decl, result_decl] = loop_init.decls.as_slice() else {
+        return None;
+    };
+    let iterator_ident = pat_as_ident(&iterator_decl.name)?.id.clone();
+    let result_ident = pat_as_ident(&result_decl.name)?.id.clone();
+    let iterable =
+        extract_closure_make_iterator_arg(iterator_decl.init.as_deref()?, helper_context)?;
+    let consumed_stmts = &stmts[..1];
+    if helper_context.binding_is_used_outside(consumed_stmts, &iterator_ident)
+        || helper_context.binding_is_used_outside(consumed_stmts, &result_ident)
+    {
+        return None;
+    }
+    let for_of = build_closure_iterator_for_of(
+        for_stmt,
+        &iterator_ident,
+        &result_ident,
+        result_decl.init.as_deref()?,
+        iterable,
+        stmts[0].span(),
+    )?;
+    Some(SequenceRewrite {
+        consumed_stmts: 1,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_closure_iterator_for_of(
+    for_stmt: &swc_core::ecma::ast::ForStmt,
+    iterator_ident: &Ident,
+    result_ident: &Ident,
+    result_init: &Expr,
+    iterable: Box<Expr>,
+    span: Span,
+) -> Option<ForOfStmt> {
+    if !is_iterator_next_call(result_init, iterator_ident)
+        || !is_not_done_test(for_stmt.test.as_deref()?, result_ident)
+        || !for_stmt
+            .update
+            .as_deref()
+            .is_some_and(|update| is_iterator_next_update(update, result_ident, iterator_ident))
+    {
+        return None;
+    }
+
+    // Removing the iterator temporary is only safe when neither the iterator
+    // nor its result object is observable outside the canonical loop machinery.
+    if stmt_uses_ident_key(&for_stmt.body, iterator_ident) {
+        return None;
+    }
+
+    let loop_body = match &*for_stmt.body {
+        Stmt::Block(block) => block.clone(),
+        body => BlockStmt {
+            span: body.span(),
+            ctxt: Default::default(),
+            stmts: vec![body.clone()],
+        },
+    };
+    build_helper_for_of(loop_body, iterable, result_ident.clone(), span)
+}
+
+fn extract_closure_iterator_init(
+    stmt: &Stmt,
+    helper_context: &ForOfHelperContext,
+) -> Option<ClosureIteratorInit> {
+    let (iterator_ident, init) = match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            let Expr::Assign(assign) = expr.as_ref() else {
+                return None;
+            };
+            if assign.op != AssignOp::Assign {
+                return None;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+                return None;
+            };
+            (binding.id.clone(), assign.right.as_ref())
+        }
+        Stmt::Decl(Decl::Var(var_decl)) => {
+            let [declarator] = var_decl.decls.as_slice() else {
+                return None;
+            };
+            (
+                pat_as_ident(&declarator.name)?.id.clone(),
+                declarator.init.as_deref()?,
+            )
+        }
+        _ => return None,
+    };
+
+    let iterable = extract_closure_make_iterator_arg(init, helper_context)?;
+    Some(ClosureIteratorInit {
+        iterator_ident,
+        iterable,
+    })
+}
+
+fn extract_closure_make_iterator_arg(
+    init: &Expr,
+    helper_context: &ForOfHelperContext,
+) -> Option<Box<Expr>> {
+    let Expr::Call(call) = strip_parens(init) else {
+        return None;
+    };
+    if !helper_context.is_closure_make_iterator_callee(&call.callee) {
+        return None;
+    }
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    Some(arg.expr.clone())
 }
 
 fn try_convert_iterator_helper_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {

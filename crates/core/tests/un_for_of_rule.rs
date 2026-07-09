@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
 use wakaru_core::facts::{
     ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
@@ -8,6 +8,147 @@ use wakaru_core::{rules::UnForOf, RewriteLevel};
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |mark| UnForOf::new_with_mark(mark, level))
+}
+
+#[test]
+fn for_of_from_closure_make_iterator() {
+    // Produced by Closure Compiler v20260629 with SIMPLE optimizations and
+    // language_out=ECMASCRIPT5. The compiler reuses the parameter as its
+    // iterator temporary when the original iterable does not escape.
+    let input = r#"
+function total(items) {
+  var sum = 0;
+  items = $jscomp.makeIterator(items);
+  for (var step = items.next(); !step.done; step = items.next()) {
+    sum += step.value;
+  }
+  return sum;
+}
+"#;
+    let expected = r#"
+function total(items) {
+  var sum = 0;
+  for (const step of items) {
+    sum += step;
+  }
+  return sum;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn for_of_from_closure_make_iterator_in_loop_initializer() {
+    // Closure keeps a distinct iterator when the original iterable is used
+    // after the loop.
+    let input = r#"
+function count(items) {
+  for (var iterator = $jscomp.makeIterator(items), step = iterator.next(); !step.done; step = iterator.next()) {
+    use(step.value);
+  }
+  return items.length;
+}
+"#;
+    let expected = r#"
+function count(items) {
+  for (const step of items) {
+    use(step);
+  }
+  return items.length;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn minimal_preserves_closure_make_iterator() {
+    let input = r#"
+function total(items) {
+  items = $jscomp.makeIterator(items);
+  for (var step = items.next(); !step.done; step = items.next()) {
+    use(step.value);
+  }
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
+fn for_of_from_locally_bootstrapped_closure_namespace() {
+    let input = r#"
+var $jscomp = $jscomp || {};
+$jscomp.makeIterator = function(value) { return makeIterator(value); };
+function total(items) {
+  var sum = 0;
+  items = $jscomp.makeIterator(items);
+  for (var step = items.next(); !step.done; step = items.next()) {
+    sum += step.value;
+  }
+  return sum;
+}
+"#;
+    let expected = r#"
+var $jscomp = $jscomp || {};
+$jscomp.makeIterator = function(value) { return makeIterator(value); };
+function total(items) {
+  var sum = 0;
+  for (const step of items) {
+    sum += step;
+  }
+  return sum;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn closure_make_iterator_requires_namespace_provenance() {
+    let input = r#"
+function total($jscomp, items) {
+  var sum = 0;
+  items = $jscomp.makeIterator(items);
+  for (var step = items.next(); !step.done; step = items.next()) {
+    sum += step.value;
+  }
+  return sum;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_make_iterator_preserves_escaping_iterator_binding() {
+    let input = r#"
+function total(items) {
+  var sum = 0;
+  items = $jscomp.makeIterator(items);
+  for (var step = items.next(); !step.done; step = items.next()) {
+    sum += step.value;
+  }
+  consumeIterator(items);
+  return sum;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn closure_make_iterator_preserves_iterator_escaping_enclosing_block() {
+    let input = r#"
+var $jscomp = $jscomp || {};
+function demo(flag, items) {
+  if (flag) {
+    var iterator = $jscomp.makeIterator(items);
+    for (var step = iterator.next(); !step.done; step = iterator.next()) {
+      consume(step.value);
+    }
+  }
+  return iterator;
+}
+"#;
+    let before = render_pipeline_until(input, "ArrowReturn");
+    let after = render_pipeline_until(input, "UnForOf");
+    assert_eq_normalized(&after, &before);
 }
 
 #[test]
