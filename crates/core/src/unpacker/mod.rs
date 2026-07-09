@@ -1,5 +1,6 @@
 pub mod amd;
 pub mod browserify;
+pub mod closure_module_manager;
 pub mod esbuild;
 pub mod scope_hoist;
 pub mod systemjs;
@@ -143,6 +144,7 @@ pub enum BundleFormat {
     Webpack5,
     Webpack4,
     Browserify,
+    ClosureModuleManager,
     SystemJs,
     Esbuild,
     Amd,
@@ -155,6 +157,7 @@ impl BundleFormat {
             Self::Webpack5 => "webpack5",
             Self::Webpack4 => "webpack4",
             Self::Browserify => "browserify",
+            Self::ClosureModuleManager => "closure-module-manager",
             Self::SystemJs => "systemjs",
             Self::Esbuild => "esbuild",
             Self::Amd => "amd",
@@ -413,6 +416,15 @@ fn detect_bundle_candidate(
     };
     if result.is_some() {
         return result;
+    }
+
+    let result = {
+        let span = tracing::info_span!("detect_closure_module_manager");
+        let _enter = span.enter();
+        closure_module_manager::detect_from_module(module, cm.clone(), source)
+    };
+    if result.is_some() {
+        return result.map(DetectedBundle::from_result);
     }
 
     let result = {

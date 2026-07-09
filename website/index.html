@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wakaru — JavaScript Decompiler &amp; Bundle Unpacker</title>
-  <meta name="description" content="Unminify JavaScript and unpack webpack, esbuild, and Browserify bundles into readable modules. Free, open-source decompiler — CLI and in-browser playground.">
+  <meta name="description" content="Unminify JavaScript and unpack webpack, esbuild, Browserify, Closure ModuleManager, and other bundles into readable modules. Free, open-source decompiler.">
   <meta property="og:title" content="Wakaru — The JavaScript decompiler">
   <meta property="og:site_name" content="Wakaru">
   <meta property="og:description" content="Turn production JavaScript — bundled, transpiled, minified — back into readable modules. Free, open source, runs in your browser.">
@@ -97,8 +97,9 @@
       <div class="cols-3">
         <div class="col">
           <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>bundlers</h3>
-          <p>webpack 4/5, esbuild, Bun, Browserify, SystemJS, AMD/UMD, scope-hoisted
-             ESM output (Rollup, Vite).</p>
+          <p>webpack 4/5 (including Vercel ncc), esbuild, Bun, Browserify (including
+             Cocos Creator 2.x), Closure ModuleManager, SystemJS, AMD/UMD, and
+             scope-hoisted ESM output (Rollup, Vite).</p>
         </div>
         <div class="col">
           <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>transpilers</h3>
@@ -262,8 +263,9 @@
       <details>
         <summary>How do I decompile a webpack bundle and extract its modules?</summary>
         <p>Run <code>npx @wakaru/cli bundle.js --unpack -o out/</code>. Wakaru detects webpack 4/5,
-           esbuild, Bun, Browserify, SystemJS, and AMD/UMD, splits the bundle into individual
-           modules, and decompiles each one.</p>
+           esbuild, Bun, Browserify and Cocos Creator 2.x, Closure ModuleManager, SystemJS,
+           AMD/UMD, and scope-hoisted Rollup/Vite output, then splits the bundle into individual
+           modules and decompiles each one.</p>
       </details>
       <details>
         <summary>Can Wakaru deobfuscate JavaScript?</summary>

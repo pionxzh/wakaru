@@ -19,7 +19,9 @@ wakaru input.js -o output.js
 
 ## What It Does
 
-- Splits bundles from webpack 4/5, esbuild, Bun, Browserify, SystemJS, and AMD.
+- Splits webpack 4/5 bundles (including supported Vercel ncc output), esbuild,
+  Bun, Browserify (including Cocos Creator 2.x), Closure ModuleManager,
+  SystemJS, and AMD/UMD, plus scope-hoisted Rollup/Vite output.
 - Recovers readable JavaScript from transpiler and minifier output.
 - Supports source maps for name recovery and output mappings.
 - Offers `minimal`, `standard`, and `aggressive` rewrite levels.

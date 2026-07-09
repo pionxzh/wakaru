@@ -51,8 +51,17 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 4. **browserify family** — numeric-keyed
    `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`,
    including Cocos Creator 2.x's string-keyed `window.__require` variant
-5. **SystemJS** — top-level `System.register(...)` modules
-6. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
+5. **Closure ModuleManager** — Google/Closure shared-namespace module segments,
+   usually guarded by loader `try/catch` blocks and optionally labeled by
+   `/*_M:id*/`. Consecutive labels are retained as empty logical modules, and
+   proven enclosing top-level and leading wrapper bootstrap code is preserved
+   in each output. An unguarded statement in a direct response or after wrapper
+   segment extraction begins rejects the shape rather than guessing placement.
+   The `_ModuleManager_initialize(...)` graph is decoded to validate module
+   identities and response ordering, but its loader dependencies are not
+   fabricated as ESM imports.
+6. **SystemJS** — top-level `System.register(...)` modules
+7. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
    Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
    bundles from Bun are detected and split by this unpacker.
@@ -377,6 +386,7 @@ crates/
         webpack4.rs                 — webpack4 splitter + normalization
         webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
         browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)
+        closure_module_manager.rs   — Closure ModuleManager/gstatic splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
         esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
         amd.rs                      — AMD define() bundle splitter
@@ -389,8 +399,8 @@ crates/
       *_rule.rs                     — per-rule unit tests
       *_unpack.rs                   — per-bundler unpack/pipeline snapshot tests
                                       (webpack4 + raw, webpack5 chunk, bundle_unpack
-                                      = webpack5 + browserify, esbuild, systemjs,
-                                      amd, rollup, bun, multi-file)
+                                      = webpack5 + browserify, Closure ModuleManager,
+                                      esbuild, systemjs, amd, rollup, bun, multi-file)
       webpack_fixtures.rs           — generated webpack4/5 + ncc fixture coverage
       cocos_creator_unpack.rs       — Cocos 2.x detection + dependency-map coverage
       noop_pipeline.rs              — stability tests

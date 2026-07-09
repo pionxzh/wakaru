@@ -32,13 +32,13 @@ files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
 
 Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
-with an IIFE webpack bootstrap), Browserify, SystemJS, esbuild/Bun helper-based
-bundles, and AMD/UMD wrappers. Scope-hoisted Rollup/Vite-style output is handled
-by the default heuristic fallback. For supported ncc output, Wakaru extracts
-the webpack module table and preserves its inline startup as `entry.js`;
-separately emitted asset files remain external to the recovered JavaScript
-modules. ncc `.mjs` output uses a top-level runtime and is not structurally
-split.
+with an IIFE webpack bootstrap), Browserify, Closure ModuleManager, SystemJS,
+esbuild/Bun helper-based bundles, and AMD/UMD wrappers. Scope-hoisted
+Rollup/Vite-style output is handled by the default heuristic fallback. For
+supported ncc output, Wakaru extracts the webpack module table and preserves
+its inline startup as `entry.js`; separately emitted asset files remain
+external to the recovered JavaScript modules. ncc `.mjs` output uses a
+top-level runtime and is not structurally split.
 
 Cocos Creator 2.x project-script bundles using `window.__require` are handled
 as Browserify-family output. String-keyed factories are emitted as named
@@ -46,6 +46,15 @@ modules, local dependency-map targets are rewritten to those filenames, and
 `cc._RF.push/pop` registration calls are preserved, including when production
 compression combines them into comma sequences. Dependencies delegated to
 another previously loaded Cocos bundle remain unresolved in single-file mode.
+
+Closure Library ModuleManager responses are split at guarded module segments,
+using `/*_M:id*/` annotations and `_ModuleManager_initialize(...)` metadata to
+validate identities and served order. The outputs remain shared-namespace
+fragments: Wakaru preserves the shared top-level/wrapper bootstrap and loader
+calls but does not fabricate ESM imports from ModuleManager dependency edges.
+If an unguarded statement cannot be placed without guessing, structural
+detection leaves the response unsplit; explicit-file fallback preserves the
+input intact.
 
 ## Formatter
 
