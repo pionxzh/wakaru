@@ -25,8 +25,14 @@ import {
 import { pathToFileURL, fileURLToPath } from "node:url";
 import vm from "node:vm";
 
+import {
+  assertPinnedTest262Corpus,
+  defaultManagedTest262Root,
+  readTest262Revision,
+} from "./test262-corpus.mjs";
+
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-const defaultTest262Root = resolve(repoRoot, "..", "test262");
+const defaultTest262Root = defaultManagedTest262Root;
 const defaultToolRoot = join(repoRoot, "target", "correctness-tools", "test262-roundtrip");
 const defaultKnownBlockersPath = join(repoRoot, "scripts", "correctness", "test262-known-blockers.json");
 const defaultRewriteLevel = "minimal";
@@ -267,7 +273,7 @@ export function usage() {
   node scripts/correctness/test262-roundtrip.mjs [options]
 
 Options:
-  --test262 <dir>       Test262 checkout. Default: ../test262
+  --test262 <dir>       Test262 checkout. Default: managed pinned checkout
   --path <path>         Test file or directory relative to Test262 root. Repeatable.
   --preset <name>       Named path set: ${Object.keys(pathPresets).join(" | ")}
   --limit <n|all>       Maximum runnable tests to execute. Default: 25
@@ -661,6 +667,10 @@ function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
 }
 
 export async function runRoundTrip(options) {
+  if (resolve(options.test262Root) === resolve(defaultManagedTest262Root)) {
+    assertPinnedTest262Corpus({ root: options.test262Root });
+  }
+  const test262Revision = readTest262Revision(options.test262Root) ?? "unmanaged";
   const tests = options.rerunFrom
     ? discoverTestsFromReport(options.test262Root, options.rerunFrom, options.rerunStatuses)
     : discoverTests(options.test262Root, options.paths);
@@ -670,6 +680,7 @@ export async function runRoundTrip(options) {
     complete: false,
     options: {
       test262Root: options.test262Root,
+      test262Revision,
       paths: options.paths,
       limit: Number.isFinite(options.limit) ? options.limit : "all",
       pipeline: resolvePipelineName(options),
@@ -1601,6 +1612,7 @@ export function formatMarkdownSummary(report) {
     "## Options",
     "",
     `- complete: ${report.complete}`,
+    `- test262Revision: ${report.options.test262Revision ?? "unmanaged"}`,
     `- paths: ${report.options.paths.join(", ")}`,
     `- limit: ${report.options.limit}`,
     `- pipeline: ${report.options.pipeline}`,

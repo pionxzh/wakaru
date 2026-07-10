@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "test262": {
+    "url": "https://github.com/tc39/test262.git",
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  }
+}

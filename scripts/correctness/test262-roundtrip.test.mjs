@@ -730,6 +730,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
 
   assert.match(summary, /# Test262 Round-Trip Summary/);
   assert.match(summary, /- complete: false/);
+  assert.match(summary, /- test262Revision: unmanaged/);
   assert.match(summary, /- caseTimeoutMs: 5000/);
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
   assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);

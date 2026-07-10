@@ -9,6 +9,30 @@ imports/re-exports, writes a temporary ESM graph, and runs that graph in Node.
 The runner is intentionally feature-scoped. Prefer `--preset` or focused
 `--path` values over running the whole Test262 repository.
 
+## Corpus setup
+
+The default Test262 corpus is a managed, shallow checkout pinned by
+`scripts/correctness/test262-upstreams.json`. It is stored under the ignored
+`target/correctness-tools/test262/vendor/` directory rather than as a git
+submodule.
+
+```powershell
+node scripts\correctness\test262-corpus.mjs setup
+node scripts\correctness\test262-corpus.mjs status
+node scripts\correctness\test262-corpus.mjs setup --offline
+```
+
+Setup refuses to modify a dirty checkout. `--force` explicitly replaces dirty
+or mismatched fixture state. Updating the tracked revision is separate and does
+not regenerate or classify baselines:
+
+```powershell
+node scripts\correctness\test262-corpus.mjs update --revision <full-commit-sha>
+```
+
+`--test262 <dir>` remains available for focused work with another checkout;
+reports identify such a non-git fixture as `unmanaged`.
+
 ## Commands
 
 ```powershell
