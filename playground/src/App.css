@@ -255,6 +255,14 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.controls-experimental {
+  color: var(--warning-text);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+}
+
 @media (max-width: 640px) {
   .header {
     padding: 0 10px;
@@ -304,6 +312,75 @@ body {
   padding: 6px 16px;
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border);
+}
+
+.editor-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 29px;
+  padding: 0 10px 0 8px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.output-tabs {
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.output-tab {
+  position: relative;
+  border: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.output-tab:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.output-tab[aria-selected="true"] {
+  color: var(--text-primary);
+}
+
+.output-tab[aria-selected="true"]::after {
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  background: var(--accent-hover);
+  content: "";
+}
+
+.output-tab:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.output-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.output-status {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.output-status-success {
+  color: var(--warning-text);
 }
 
 /* Warnings panel */

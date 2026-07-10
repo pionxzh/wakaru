@@ -44,7 +44,12 @@ export class WasmBridge {
         const pending = this.pendingRequests.get(msg.id);
         if (pending) {
           this.pendingRequests.delete(msg.id);
-          pending.resolve({ code: msg.code, sourceMap: msg.sourceMap, warnings: msg.warnings });
+          pending.resolve({
+            code: msg.code,
+            sourceMap: msg.sourceMap,
+            vueSfc: msg.vueSfc,
+            warnings: msg.warnings,
+          });
         }
         break;
       }
@@ -68,7 +73,8 @@ export class WasmBridge {
     level: string,
     formatter: boolean,
     diagnostics = true,
-    emitSourceMap = false
+    emitSourceMap = false,
+    vueSfc = false
   ): Promise<DecompileResult> {
     await this.initPromise;
     const id = this.nextId++;
@@ -82,6 +88,7 @@ export class WasmBridge {
         formatter,
         diagnostics,
         emitSourceMap,
+        vueSfc,
       } satisfies WorkerRequest);
     });
   }

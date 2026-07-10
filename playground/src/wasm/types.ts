@@ -8,6 +8,7 @@ export type WorkerRequest =
       formatter: boolean;
       diagnostics: boolean;
       emitSourceMap: boolean;
+      vueSfc: boolean;
     };
 
 export type WorkerResponse =
@@ -18,6 +19,7 @@ export type WorkerResponse =
       id: number;
       code: string;
       sourceMap?: string;
+      vueSfc?: string;
       warnings: WakaruWarning[];
     }
   | { type: "decompile-error"; id: number; error: string };
@@ -31,5 +33,6 @@ export interface WakaruWarning {
 export interface DecompileResult {
   code: string;
   sourceMap?: string;
+  vueSfc?: string;
   warnings: WakaruWarning[];
 }

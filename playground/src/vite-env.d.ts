@@ -20,7 +20,8 @@ declare module "wakaru-wasm" {
     sourcemap?: Uint8Array | null,
     diagnostics?: boolean | null,
     formatter?: boolean | null,
-    emitSourceMap?: boolean | null
+    emitSourceMap?: boolean | null,
+    vueSfc?: boolean | null
   ): WakaruDecompileResult;
 
   export function unpack(
@@ -37,6 +38,7 @@ declare module "wakaru-wasm" {
   export interface WakaruDecompileResult {
     code: string;
     source_map?: string;
+    vue_sfc?: string;
     warnings: WakaruWarning[];
   }
 

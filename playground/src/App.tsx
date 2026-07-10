@@ -5,6 +5,7 @@ import { Controls } from "./components/Controls";
 import { Editor } from "./components/Editor";
 import type { EditorDecoration } from "./components/Editor";
 import { OutputViewer } from "./components/OutputViewer";
+import type { OutputView } from "./components/OutputViewer";
 import { SplitLayout } from "./components/SplitLayout";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { WasmBridge } from "./wasm/bridge";
@@ -36,6 +37,13 @@ function getAutoRunDelay(elapsed: number) {
 export function App() {
   const [source, setSource] = useState(INITIAL_SHARE_STATE?.source ?? DEFAULT_EXAMPLE);
   const [output, setOutput] = useState("");
+  const [vueSfc, setVueSfc] = useState<string | null>(null);
+  const [vueSfcEnabled, setVueSfcEnabled] = useState(
+    INITIAL_SHARE_STATE?.vueSfc ?? false
+  );
+  const [outputView, setOutputView] = useState<OutputView>(
+    INITIAL_SHARE_STATE?.vueSfc ? "vue" : "javascript"
+  );
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
   const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
   const [formatter, setFormatter] = useState(
@@ -60,7 +68,12 @@ export function App() {
   const activeRunRef = useRef(false);
   const autoRunDelayRef = useRef(INITIAL_AUTO_RUN_DELAY_MS);
   const inputVersionRef = useRef(0);
-  const latestInputRef = useRef({ source, level, formatter: formatterEnabled });
+  const latestInputRef = useRef({
+    source,
+    level,
+    formatter: formatterEnabled,
+    vueSfc: vueSfcEnabled,
+  });
   const shareStatusTimeoutRef = useRef<number | null>(null);
 
   const runDecompile = useCallback(async () => {
@@ -77,12 +90,14 @@ export function App() {
         input.level,
         input.formatter,
         true,
-        true
+        true,
+        input.vueSfc
       );
       if (inputVersion !== inputVersionRef.current) return;
       const duration = performance.now() - start;
       autoRunDelayRef.current = getAutoRunDelay(duration);
       setOutput(result.code);
+      setVueSfc(result.vueSfc ?? null);
       setSourceMapJson(result.sourceMap);
       setWarnings(result.warnings);
       setElapsed(duration);
@@ -91,6 +106,7 @@ export function App() {
       autoRunDelayRef.current = getAutoRunDelay(performance.now() - start);
       setError(e instanceof Error ? e.message : String(e));
       setOutput("");
+      setVueSfc(null);
       setWarnings([]);
     } finally {
       activeRunRef.current = false;
@@ -123,9 +139,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    latestInputRef.current = { source, level, formatter: formatterEnabled };
+    latestInputRef.current = {
+      source,
+      level,
+      formatter: formatterEnabled,
+      vueSfc: vueSfcEnabled,
+    };
     inputVersionRef.current += 1;
-  }, [source, level, formatterEnabled]);
+    if (vueSfcEnabled) {
+      setVueSfc(null);
+    }
+  }, [source, level, formatterEnabled, vueSfcEnabled]);
 
   useEffect(() => {
     if (!wasmReady) return;
@@ -134,7 +158,7 @@ export function App() {
       void runDecompile();
     }, autoRunDelayRef.current);
     return () => window.clearTimeout(timeoutId);
-  }, [source, level, formatterEnabled, wasmReady, runDecompile]);
+  }, [source, level, formatterEnabled, vueSfcEnabled, wasmReady, runDecompile]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -166,6 +190,7 @@ export function App() {
         source,
         level,
         formatter: formatterEnabled,
+        vueSfc: vueSfcEnabled,
         version: VERSION_LABEL,
       });
     } catch (e) {
@@ -184,7 +209,13 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [formatterEnabled, level, showShareStatus, source]);
+  }, [formatterEnabled, level, showShareStatus, source, vueSfcEnabled]);
+
+  const handleVueSfcChange = useCallback((enabled: boolean) => {
+    setVueSfcEnabled(enabled);
+    setVueSfc(null);
+    setOutputView(enabled ? "vue" : "javascript");
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -203,19 +234,24 @@ export function App() {
     }
   }, [sourceMapJson, output]);
 
+  const activeOutputView: OutputView = outputView === "vue" && vueSfc
+    ? "vue"
+    : "javascript";
+  const mappingActive = mappingEnabled && activeOutputView === "javascript";
+
   // Determine which output line is "active" (hovered directly, or via input hover)
   const activeOutputLine = useMemo(() => {
-    if (!mappingEnabled || !mappingData) return null;
+    if (!mappingActive || !mappingData) return null;
     if (hoveredOutputLine !== null) return hoveredOutputLine;
     if (hoveredInputLine !== null) {
       const region = mappingData.regions.find(r => r.srcLine === hoveredInputLine);
       return region ? region.genLine : null;
     }
     return null;
-  }, [mappingEnabled, mappingData, hoveredOutputLine, hoveredInputLine]);
+  }, [mappingActive, mappingData, hoveredOutputLine, hoveredInputLine]);
 
   const outputDecorations: EditorDecoration[] = useMemo(() => {
-    if (!mappingEnabled || !mappingData) return [];
+    if (!mappingActive || !mappingData) return [];
     // One whole-line decoration per output line that has any mapping tokens.
     const seen = new Map<number, number>();
     for (const r of mappingData.regions) {
@@ -230,10 +266,10 @@ export function App() {
         : lineColorClass(colorIndex),
       wholeLine: true,
     }));
-  }, [mappingEnabled, mappingData, activeOutputLine]);
+  }, [mappingActive, mappingData, activeOutputLine]);
 
   const inputDecorations: EditorDecoration[] = useMemo(() => {
-    if (!mappingEnabled || !mappingData) return [];
+    if (!mappingActive || !mappingData) return [];
     return mappingData.regions.map((r) => ({
       line: r.srcLine,
       startCol: r.srcStartCol,
@@ -242,12 +278,12 @@ export function App() {
         ? lineColorActiveClass(r.colorIndex)
         : lineColorClass(r.colorIndex),
     }));
-  }, [mappingEnabled, mappingData, activeOutputLine]);
+  }, [mappingActive, mappingData, activeOutputLine]);
 
   const hoverClearTimer = useRef<number | null>(null);
 
   const handleOutputHover = useCallback((line: number | null) => {
-    if (!mappingEnabled) return;
+    if (!mappingActive) return;
     if (hoverClearTimer.current !== null) {
       window.clearTimeout(hoverClearTimer.current);
       hoverClearTimer.current = null;
@@ -261,10 +297,10 @@ export function App() {
         hoverClearTimer.current = null;
       }, 60);
     }
-  }, [mappingEnabled]);
+  }, [mappingActive]);
 
   const handleInputHover = useCallback((line: number | null) => {
-    if (!mappingEnabled) return;
+    if (!mappingActive) return;
     if (hoverClearTimer.current !== null) {
       window.clearTimeout(hoverClearTimer.current);
       hoverClearTimer.current = null;
@@ -278,7 +314,7 @@ export function App() {
         hoverClearTimer.current = null;
       }, 60);
     }
-  }, [mappingEnabled]);
+  }, [mappingActive]);
 
   // Find the source line for the active output line (for arrow drawing)
   const activeSrcLine = useMemo(() => {
@@ -305,7 +341,7 @@ export function App() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (activeOutputLine === null || activeSrcLine === null || !inputEd || !outputEd || !mappingData) return;
+    if (!mappingActive || activeOutputLine === null || activeSrcLine === null || !inputEd || !outputEd || !mappingData) return;
 
     const region = mappingData.regions.find(r => r.genLine === activeOutputLine);
     if (!region) return;
@@ -358,7 +394,7 @@ export function App() {
     ctx.arc(genX, genY, 3, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${color},0.7)`;
     ctx.fill();
-  }, [activeOutputLine, activeSrcLine, mappingData]);
+  }, [activeOutputLine, activeSrcLine, mappingActive, mappingData]);
 
   return (
     <div className="app">
@@ -371,9 +407,11 @@ export function App() {
         formatter={formatterEnabled}
         formatterDisabled={mappingEnabled}
         mapping={mappingEnabled}
+        vueSfc={vueSfcEnabled}
         onLevelChange={setLevel}
         onFormatterChange={setFormatter}
         onMappingChange={setMappingEnabled}
+        onVueSfcChange={handleVueSfcChange}
         onShare={handleShare}
         isLoading={showRunningStatus}
         wasmReady={wasmReady}
@@ -395,7 +433,12 @@ export function App() {
             onEditorReady={(ed) => { inputEditorRef.current = ed; }}
           />
           <OutputViewer
-            value={output}
+            javascriptValue={output}
+            vueSfcEnabled={vueSfcEnabled}
+            vueSfc={vueSfc}
+            view={outputView}
+            onViewChange={setOutputView}
+            isLoading={isLoading}
             decorations={outputDecorations}
             onHoverLine={handleOutputHover}
             onEditorReady={(ed) => { outputEditorRef.current = ed; }}

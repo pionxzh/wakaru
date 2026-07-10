@@ -39,6 +39,8 @@ struct WakaruDecompileResult {
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_map: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vue_sfc: Option<String>,
     warnings: Vec<WakaruWarning>,
 }
 
@@ -50,6 +52,7 @@ pub fn decompile(
     diagnostics: Option<bool>,
     formatter: Option<bool>,
     emit_source_map: Option<bool>,
+    vue_sfc: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let formatter = parse_formatter(formatter);
@@ -64,10 +67,13 @@ pub fn decompile(
     };
     let output =
         wakaru_core::decompile(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let vue_sfc = recover_vue_sfc_preview(&output.code, vue_sfc.unwrap_or(false))
+        .map_err(|e| JsValue::from_str(&e))?;
     let formatted = format_code(output.code, "input.js", formatter);
     let result = WakaruDecompileResult {
         code: formatted.code,
         source_map: output.source_map,
+        vue_sfc,
         warnings: collect_warnings(output.warnings, formatted.warning),
     };
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -137,6 +143,15 @@ fn parse_formatter(formatter: Option<bool>) -> CodeFormatter {
     }
 }
 
+fn recover_vue_sfc_preview(source: &str, enabled: bool) -> Result<Option<String>, String> {
+    if !enabled {
+        return Ok(None);
+    }
+
+    wakaru_core::recover_vue_sfc_source_from_js(source, Default::default())
+        .map_err(|error| error.to_string())
+}
+
 fn collect_warnings(
     warnings: Vec<wakaru_core::UnpackWarning>,
     format_warnings: impl IntoIterator<Item = wakaru_formatter::FormatWarning>,
@@ -170,6 +185,7 @@ export interface WakaruModule {
 export interface WakaruDecompileResult {
     code: string;
     source_map?: string;
+    vue_sfc?: string;
     warnings: WakaruWarning[];
 }
 
@@ -180,6 +196,7 @@ export function decompile(
     diagnostics?: boolean,
     formatter?: boolean,
     emitSourceMap?: boolean,
+    vueSfc?: boolean,
 ): WakaruDecompileResult;
 
 export interface WakaruSourceMap {
@@ -218,3 +235,33 @@ export function unpack(
 
 export function ruleNames(): string[];
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::recover_vue_sfc_preview;
+
+    const VUE_RENDER_MODULE: &str = r#"
+        import { createElementVNode as _createElementVNode } from "vue";
+        export function render(_ctx, _cache) {
+            return _createElementVNode("div", { class: "card" }, "Hello");
+        }
+    "#;
+
+    #[test]
+    fn vue_sfc_preview_is_opt_in() {
+        assert_eq!(
+            recover_vue_sfc_preview(VUE_RENDER_MODULE, false).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn vue_sfc_preview_recovers_generated_render_module() {
+        let recovered = recover_vue_sfc_preview(VUE_RENDER_MODULE, true)
+            .unwrap()
+            .expect("Vue render module should recover");
+
+        assert!(recovered.contains("<template>"));
+        assert!(recovered.contains("<div class=\"card\">Hello</div>"));
+    }
+}

@@ -36,13 +36,15 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         undefined,
         msg.diagnostics,
         msg.formatter,
-        msg.emitSourceMap
+        msg.emitSourceMap,
+        msg.vueSfc
       );
       self.postMessage({
         type: "decompile-result",
         id: msg.id,
         code: result.code,
         sourceMap: result.source_map,
+        vueSfc: result.vue_sfc,
         warnings: result.warnings,
       } satisfies WorkerResponse);
     } catch (e) {

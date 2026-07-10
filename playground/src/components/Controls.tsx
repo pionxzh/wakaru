@@ -17,9 +17,11 @@ interface ControlsProps {
   formatter: boolean;
   formatterDisabled: boolean;
   mapping: boolean;
+  vueSfc: boolean;
   onLevelChange: (level: Level) => void;
   onFormatterChange: (formatter: boolean) => void;
   onMappingChange: (mapping: boolean) => void;
+  onVueSfcChange: (vueSfc: boolean) => void;
   onShare: () => void;
   isLoading: boolean;
   wasmReady: boolean;
@@ -33,9 +35,11 @@ export function Controls({
   formatter,
   formatterDisabled,
   mapping,
+  vueSfc,
   onLevelChange,
   onFormatterChange,
   onMappingChange,
+  onVueSfcChange,
   onShare,
   isLoading,
   wasmReady,
@@ -81,6 +85,22 @@ export function Controls({
             role="switch"
             aria-checked={mapping}
             onClick={() => onMappingChange(!mapping)}
+          >
+            <span className="controls-switch-thumb" />
+          </button>
+        </label>
+        <label
+          className="controls-label"
+          title="Best-effort Vue 3 SFC recovery from generated render JavaScript"
+        >
+          Vue SFC
+          <span className="controls-experimental">Experimental</span>
+          <button
+            className="controls-switch"
+            type="button"
+            role="switch"
+            aria-checked={vueSfc}
+            onClick={() => onVueSfcChange(!vueSfc)}
           >
             <span className="controls-switch-thumb" />
           </button>

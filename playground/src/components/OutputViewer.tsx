@@ -4,17 +4,37 @@ import type { editor as MonacoEditorNS } from "monaco-editor";
 import type { EditorDecoration } from "./Editor";
 
 interface OutputViewerProps {
-  value: string;
+  javascriptValue: string;
+  vueSfcEnabled: boolean;
+  vueSfc: string | null;
+  view: OutputView;
+  onViewChange: (view: OutputView) => void;
+  isLoading: boolean;
   decorations?: EditorDecoration[];
   onHoverLine?: (line: number | null) => void;
   onEditorReady?: (editor: MonacoEditorNS.IStandaloneCodeEditor) => void;
 }
 
-export function OutputViewer({ value, decorations, onHoverLine, onEditorReady }: OutputViewerProps) {
+export type OutputView = "javascript" | "vue";
+
+export function OutputViewer({
+  javascriptValue,
+  vueSfcEnabled,
+  vueSfc,
+  view,
+  onViewChange,
+  isLoading,
+  decorations,
+  onHoverLine,
+  onEditorReady,
+}: OutputViewerProps) {
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const decorationIds = useRef<string[]>([]);
   const hoverRef = useRef(onHoverLine);
   hoverRef.current = onHoverLine;
+  const activeView = view === "vue" && vueSfc ? "vue" : "javascript";
+  const activeDecorations = activeView === "javascript" ? decorations : [];
+  const value = activeView === "vue" ? vueSfc ?? "" : javascriptValue;
 
   const handleMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
@@ -29,11 +49,11 @@ export function OutputViewer({ value, decorations, onHoverLine, onEditorReady }:
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    if (!decorations || decorations.length === 0) {
+    if (!activeDecorations || activeDecorations.length === 0) {
       decorationIds.current = editor.deltaDecorations(decorationIds.current, []);
       return;
     }
-    const monacoDecorations: MonacoEditorNS.IModelDeltaDecoration[] = decorations.map((d) => ({
+    const monacoDecorations: MonacoEditorNS.IModelDeltaDecoration[] = activeDecorations.map((d) => ({
       range: {
         startLineNumber: d.line + 1,
         startColumn: d.startCol + 1,
@@ -45,13 +65,42 @@ export function OutputViewer({ value, decorations, onHoverLine, onEditorReady }:
         : { inlineClassName: d.className },
     }));
     decorationIds.current = editor.deltaDecorations(decorationIds.current, monacoDecorations);
-  }, [decorations]);
+  }, [activeDecorations]);
 
   return (
     <div className="editor-pane">
-      <div className="editor-pane-label">Output</div>
+      <div className="editor-pane-header">
+        <div className="output-tabs" role="tablist" aria-label="Output format">
+          <button
+            className="output-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeView === "javascript"}
+            onClick={() => onViewChange("javascript")}
+          >
+            JavaScript
+          </button>
+          {vueSfcEnabled && (
+            <button
+              className="output-tab"
+              type="button"
+              role="tab"
+              aria-selected={activeView === "vue"}
+              disabled={!vueSfc}
+              onClick={() => onViewChange("vue")}
+            >
+              Vue SFC
+            </button>
+          )}
+        </div>
+        {vueSfcEnabled && (
+          <span className={`output-status${vueSfc ? " output-status-success" : ""}`}>
+            {vueSfc ? "Experimental" : isLoading ? "Checking…" : "Not recovered"}
+          </span>
+        )}
+      </div>
       <MonacoEditor
-        language="javascript"
+        language={activeView === "vue" ? "html" : "javascript"}
         theme="vs-dark"
         value={value}
         onMount={handleMount}
