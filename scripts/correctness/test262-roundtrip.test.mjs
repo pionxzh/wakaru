@@ -58,7 +58,10 @@ negative:
 ---*/
 `;
 
-  assert.equal(parseTestMetadata(source).negative, true);
+  assert.deepEqual(parseTestMetadata(source).negative, {
+    phase: "parse",
+    type: "SyntaxError",
+  });
 });
 
 test("runnableVariants follows Test262 strict mode flags", () => {
@@ -742,7 +745,10 @@ test("runRoundTrip reports baseline failures as unsupported inputs", async () =>
   try {
     const testDir = join(root, "test", "language", "sample");
     mkdirSync(testDir, { recursive: true });
-    writeFileSync(join(testDir, "baseline-fails.js"), "throw new Error('host gap');\n");
+    writeFileSync(
+      join(testDir, "baseline-fails.js"),
+      "/*---\n---*/\nthrow new Error('host gap');\n",
+    );
 
     const report = await runRoundTrip({
       test262Root: root,
@@ -766,13 +772,47 @@ test("runRoundTrip reports baseline failures as unsupported inputs", async () =>
   }
 });
 
+test("runRoundTrip reports malformed metadata without aborting the corpus", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "bad.js"), "/*---\nflags: [futureFlag]\n---*/\nvoid 0;\n");
+    writeFileSync(join(testDir, "dep_FIXTURE.js"), "export const value = 1;\n");
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: 1,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 1000,
+    });
+
+    assert.equal(report.totals.failed, 1);
+    assert.equal(report.totals.skipped, 1);
+    assert.equal(report.results[0].phase, "harness-configuration");
+    assert.match(report.results[0].error, /unknown Test262 flag/);
+    assert.equal(report.results[1].reason, "fixture");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runRoundTrip writes incremental JSON and final completion state", async () => {
   const root = makeTempTest262();
   try {
     const testDir = join(root, "test", "language", "sample");
     const reportPath = join(root, "report.json");
     mkdirSync(testDir, { recursive: true });
-    writeFileSync(join(testDir, "baseline-fails.js"), "throw new Error('host gap');\n");
+    writeFileSync(
+      join(testDir, "baseline-fails.js"),
+      "/*---\n---*/\nthrow new Error('host gap');\n",
+    );
 
     await runRoundTrip({
       test262Root: root,

@@ -30,6 +30,12 @@ import {
   defaultManagedTest262Root,
   readTest262Revision,
 } from "./test262-corpus.mjs";
+import {
+  parseTestMetadata,
+  runnableVariants,
+} from "./test262-metadata.mjs";
+
+export { parseTestMetadata, runnableVariants } from "./test262-metadata.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const defaultTest262Root = defaultManagedTest262Root;
@@ -292,60 +298,10 @@ Options:
 `;
 }
 
-export function parseTestMetadata(source) {
-  const match = source.match(/\/\*---([\s\S]*?)---\*\//);
-  if (!match) {
-    return {
-      flags: [],
-      includes: [],
-      features: [],
-      negative: null,
-      raw: "",
-    };
-  }
-
-  const raw = match[1];
-  return {
-    flags: readYamlList(raw, "flags"),
-    includes: readYamlList(raw, "includes"),
-    features: readYamlList(raw, "features"),
-    negative: readYamlBlock(raw, "negative"),
-    raw,
-  };
-}
-
-export function runnableVariants(metadata) {
-  if (metadata.flags.includes("raw")) {
-    return [];
-  }
-  if (metadata.flags.includes("module")) {
-    return [{ name: "module", strict: true, module: true }];
-  }
-  if (metadata.flags.includes("async")) {
-    return [];
-  }
-  if (metadata.negative) {
-    return [];
-  }
-  if (metadata.flags.includes("onlyStrict")) {
-    return [{ name: "strict", strict: true }];
-  }
-  if (metadata.flags.includes("noStrict")) {
-    return [{ name: "sloppy", strict: false }];
-  }
-  return [
-    { name: "sloppy", strict: false },
-    { name: "strict", strict: true },
-  ];
-}
-
 export function classifyTest(filePath, source, metadata) {
-  const normalized = filePath.split(sep).join("/");
-  if (normalized.includes("_FIXTURE")) {
-    return { runnable: false, reason: "fixture" };
-  }
-  if (normalized.includes("/intl402/")) {
-    return { runnable: false, reason: "intl402" };
+  const pathClassification = classifyTestPath(filePath);
+  if (!pathClassification.runnable) {
+    return pathClassification;
   }
   if (metadata.negative) {
     return { runnable: false, reason: "negative" };
@@ -360,6 +316,17 @@ export function classifyTest(filePath, source, metadata) {
   }
   if (source.includes("$DONE") || source.includes("print(")) {
     return { runnable: false, reason: "async-or-print" };
+  }
+  return { runnable: true, reason: null };
+}
+
+export function classifyTestPath(filePath) {
+  const normalized = filePath.split(sep).join("/");
+  if (normalized.includes("_FIXTURE")) {
+    return { runnable: false, reason: "fixture" };
+  }
+  if (normalized.includes("/intl402/")) {
+    return { runnable: false, reason: "intl402" };
   }
   return { runnable: true, reason: null };
 }
@@ -713,9 +680,34 @@ export async function runRoundTrip(options) {
 
     for (const filePath of tests) {
       const source = readFileSync(filePath, "utf8");
-      const metadata = parseTestMetadata(source);
-      const classification = classifyTest(filePath, source, metadata);
       const relativePath = relative(options.test262Root, filePath).split(sep).join("/");
+      const pathClassification = classifyTestPath(filePath);
+
+      if (!pathClassification.runnable) {
+        report.totals.skipped += 1;
+        report.results.push({
+          path: relativePath,
+          status: "skipped",
+          reason: pathClassification.reason,
+        });
+        report.totals.processed += 1;
+        writeReportOutputs(report, options);
+        continue;
+      }
+
+      let metadata;
+      try {
+        metadata = parseTestMetadata(source);
+      } catch (error) {
+        report.totals.runnable += 1;
+        recordResult(
+          report,
+          failure(relativePath, "harness-configuration", error),
+          options,
+        );
+        continue;
+      }
+      const classification = classifyTest(filePath, source, metadata);
 
       if (!classification.runnable) {
         report.totals.skipped += 1;
@@ -1538,30 +1530,6 @@ function collectJsFiles(path, files) {
   }
 }
 
-function readYamlList(raw, key) {
-  const inline = raw.match(new RegExp(`^${escapeRegExp(key)}:\\s*\\[([^\\]]*)\\]`, "m"));
-  if (inline) {
-    return inline[1]
-      .split(",")
-      .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
-      .filter(Boolean);
-  }
-
-  const block = raw.match(new RegExp(`^${escapeRegExp(key)}:\\s*\\n((?:\\s*-\\s*[^\\n]+\\n?)+)`, "m"));
-  if (!block) {
-    return [];
-  }
-  return block[1]
-    .split(/\r?\n/)
-    .map((line) => line.match(/^\s*-\s*(.+)$/)?.[1]?.trim().replace(/^['"]|['"]$/g, ""))
-    .filter(Boolean);
-}
-
-function readYamlBlock(raw, key) {
-  const match = raw.match(new RegExp(`^${escapeRegExp(key)}:\\s*(?:\\n|$)`, "m"));
-  return match ? true : null;
-}
-
 function runChecked(command, args, options = {}) {
   const result = spawnForPlatform(command, args, {
     cwd: options.cwd ?? repoRoot,
@@ -1863,10 +1831,6 @@ function parsePositiveInteger(value, option) {
     throw new Error(`${option} must be a positive integer`);
   }
   return parsed;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isMain() {

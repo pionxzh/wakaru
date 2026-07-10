@@ -9,6 +9,12 @@ imports/re-exports, writes a temporary ESM graph, and runs that graph in Node.
 The runner is intentionally feature-scoped. Prefer `--preset` or focused
 `--path` values over running the whole Test262 repository.
 
+Test262 frontmatter is parsed strictly. Unknown flags, unknown negative phases,
+conflicting strictness flags, missing frontmatter, and malformed relevant fields
+are reported as `harness-configuration` failures rather than silently defaulted
+or skipped. Ordinary scripts receive sloppy and strict variants; `onlyStrict`,
+`noStrict`, `module`, and `raw` select the corresponding Test262 variant.
+
 ## Corpus setup
 
 The default Test262 corpus is a managed, shallow checkout pinned by
