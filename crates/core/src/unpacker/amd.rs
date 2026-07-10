@@ -455,6 +455,13 @@ fn dependency_specifier(
     module_id: &str,
     id_to_filename: &HashMap<String, String>,
 ) -> String {
+    // Bare AMD IDs are package/external specifiers unless another named define
+    // in this bundle proves that the dependency is internal. Turning an
+    // unknown bare ID into `./<id>.js` changes package resolution semantics.
+    if !dep.starts_with('.') && !id_to_filename.contains_key(dep) {
+        return dep.to_string();
+    }
+
     let target = id_to_filename
         .get(dep)
         .cloned()

@@ -25,6 +25,49 @@ const snippets = [
     source: "export function f(entries) { for (const [key, value] of entries) { use(key, value); } }\n",
     expected: ["for (const [key, value] of entries)", "use(key, value)"],
   },
+  {
+    name: "destructuring-control-flow",
+    source:
+      "export function f(entries) { for (const [key, value] of entries) { if (value == null) continue; if (key === \"stop\") break; use(key, value); } }\n",
+    expected: [
+      "for (const [key, value] of entries)",
+      "if (value == null)",
+      "continue",
+      'if (key === "stop")',
+      "break",
+      "use(key, value)",
+    ],
+    expectedAny: [
+      [
+        "for (const [key, value] of entries)",
+        "if (value == null)",
+        "continue",
+        'if (key === "stop")',
+        "break",
+        "use(key, value)",
+      ],
+      [
+        "for (const [key, value] of entries)",
+        "if (value != null)",
+        'if (key === "stop")',
+        "break",
+        "use(key, value)",
+      ],
+      ["for (const [", "!= null", "break", "use("],
+    ],
+    acceptForms: [
+      `
+export function f(entries) {
+  for (const [key, value] of entries) {
+    if (value != null) {
+      if (key === "stop") break;
+      use(key, value);
+    }
+  }
+}
+`,
+    ],
+  },
 ];
 
 const allSources = snippets.map((s) => s.source);

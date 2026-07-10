@@ -42,6 +42,12 @@ const snippets = [
     expected: ['"app-id": app_id', "name", "...rest_info"],
   },
   {
+    name: "rest-computed-key",
+    source:
+      "const property_key = get_key();\nconst { [property_key]: picked, ...rest_info } = app_info;\nuse(picked, rest_info);\n",
+    expected: ["[property_key]: picked", "...rest_info", "use(picked, rest_info)"],
+  },
+  {
     name: "spread-rest-combined",
     source:
       "const { name, ...rest_info } = app_info;\nconst out = { ...rest_info, name };\nuse(out);\n",

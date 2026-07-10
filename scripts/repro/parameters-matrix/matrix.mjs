@@ -64,6 +64,18 @@ function nested({ outer: { value = fallbackValue } = {} } = {}) {
 `,
     expected: ["function nested({ outer: { value = fallbackValue } = {} } = {})", "return use(value)"],
   },
+  {
+    name: "computed-destructured-default",
+    source: `
+function pick(property_key, { [property_key]: value = fallback } = {}) {
+  return use(value);
+}
+`,
+    expected: [
+      "function pick(property_key, { [property_key]: value = fallback } = {})",
+      "return use(value)",
+    ],
+  },
 ];
 
 const babelProfiles = [

@@ -105,6 +105,36 @@ define(["./dep"], function(dep) {
 }
 
 #[test]
+fn anonymous_amd_external_dependency_preserves_bare_specifier() {
+    // Rollup AMD output for an external package dependency. A bare AMD module
+    // ID that is not another define in the bundle must stay bare; rewriting it
+    // to `./math-lib.js` changes package resolution semantics.
+    let source = r#"
+define(["exports", "math-lib"], function(exports, mathLib) {
+  const total = mathLib.add(1, 2);
+  exports.total = total;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].0, "module.js");
+    assert!(
+        raw[0].1.contains(r#"const mathLib = require("math-lib");"#),
+        "external AMD dependency should remain bare:\n{}",
+        raw[0].1
+    );
+
+    let decompiled = pairs(source);
+    assert_eq!(decompiled.len(), 1);
+    assert!(
+        decompiled[0].1.contains(r#"from "math-lib""#),
+        "decompiled import should preserve the external package specifier:\n{}",
+        decompiled[0].1
+    );
+}
+
+#[test]
 fn object_literal_amd_define_unpack() {
     let source = r#"
 define("config", {

@@ -154,6 +154,90 @@ const out = cache ??= make();
 }
 
 #[test]
+fn transforms_temp_backed_computed_member_nullish_assignment_at_minimal() {
+    let input = r#"
+var _obj, _key;
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[_key] = make());
+"#;
+    let expected = r#"
+var out = getObj()[getKey()] ??= make();
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn pipeline_recovers_computed_member_nullish_assignment_lowering() {
+    // Reproduced by Babel, TypeScript, SWC, and esbuild when lowering:
+    // `const out = getObj()[getKey()] ??= make();`
+    let input = r#"
+var _value, _obj, _key;
+var out = (_value = (_obj = getObj())[_key = getKey()]) !== null &&
+    _value !== void 0
+    ? _value
+    : _obj[_key] = make();
+use(out);
+"#;
+    let expected = r#"
+const out = getObj()[getKey()] ??= make();
+use(out);
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_temp_backed_computed_member_when_object_temp_escapes() {
+    let input = r#"
+var _obj, _key;
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[_key] = make());
+use(_obj);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_transform_temp_backed_computed_member_when_key_temp_escapes() {
+    let input = r#"
+var _obj, _key;
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[_key] = make());
+use(_key);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_transform_temp_backed_computed_member_with_mismatched_key() {
+    let input = r#"
+var _obj, _key;
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[other] = make());
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_transform_temp_backed_computed_member_without_temp_declarations() {
+    let input = r#"
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[_key] = make());
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_transform_temp_backed_computed_member_with_initialized_temp() {
+    let input = r#"
+var _obj = previous, _key;
+var out = (_obj = getObj())[_key = getKey()] ?? (_obj[_key] = make());
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn transforms_not_null_and_not_undefined_ternary() {
     let input = r#"foo !== null && foo !== void 0 ? foo : "bar""#;
     let expected = r#"foo ?? "bar""#;

@@ -114,6 +114,33 @@ defineProps({
     expected: ["<PanelHeader :title=\"title\" />", "<slot name=\"body\">Empty</slot>"],
   },
   {
+    name: "scoped-slots-with-destructuring",
+    source: `
+<script setup>
+import DataList from "./DataList.vue"
+defineProps({ items: Array })
+function select(item) {
+  return item.id
+}
+</script>
+<template>
+  <DataList :items="items">
+    <template #default="{ item, index }">
+      <button :data-index="index" @click="select(item)">{{ item.name }}</button>
+    </template>
+    <template #empty>No items</template>
+  </DataList>
+</template>
+`,
+    expected: [
+      "v-slot:default=\"{ item, index }\"",
+      ":data-index=\"index\"",
+      "@click=\"select(item)\"",
+      "{{ item.name }}",
+      "v-slot:empty",
+    ],
+  },
+  {
     name: "model-and-directive",
     source: `
 <script setup>

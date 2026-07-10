@@ -299,6 +299,20 @@ const snippets = [
     ],
   },
   {
+    name: "async-for-await-break-finally",
+    source:
+      "async function consume_stream(stream) {\n  const output = [];\n  try {\n    for await (const item of stream) {\n      if (item.done) break;\n      output.push(await normalize_item(item));\n    }\n  } finally {\n    await close_stream(stream);\n  }\n  return output;\n}\n",
+    expected: [
+      "async function consume_stream(stream)",
+      "for await (const item of stream)",
+      "break",
+      "await normalize_item(item)",
+      "finally",
+      "await close_stream(stream)",
+      "return output",
+    ],
+  },
+  {
     name: "async-arrow-object-rest",
     source:
       "const load_user = async (config) => {\n  const source = config == null ? await load_config() : config;\n  const { id, token, ...options } = source;\n  const session = await open_session(token);\n  return await fetch_user(id, { ...options, session });\n};\nuse(load_user);\n",

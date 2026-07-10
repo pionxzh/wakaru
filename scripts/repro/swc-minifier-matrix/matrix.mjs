@@ -3,6 +3,7 @@
 import {
   runMatrix, batchRunner, ensureNodeTool,
 } from "../lib/runner.mjs";
+import { mangleValidator } from "../lib/compare.mjs";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -352,27 +353,9 @@ for (const snippet of snippets) {
   }));
 }
 
-// Custom expectedNeedles supporting expectedAny.
-// The runner checks that ALL returned needles are present. For expectedAny, the original
-// semantics is "pass if ANY group is fully present". We approximate this by returning
-// the intersection of all groups (needles common to every alternative).
-function expectedNeedles(snippet) {
-  if (snippet.expectedAny) {
-    const first = new Set(snippet.expectedAny[0]);
-    for (let i = 1; i < snippet.expectedAny.length; i++) {
-      const group = new Set(snippet.expectedAny[i]);
-      for (const needle of first) {
-        if (!group.has(needle)) first.delete(needle);
-      }
-    }
-    return [...first];
-  }
-  return Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected];
-}
-
 runMatrix({
   name: "swc-minifier",
   snippets,
   transformers: [],
-  expectedNeedles,
+  ...mangleValidator(),
 });

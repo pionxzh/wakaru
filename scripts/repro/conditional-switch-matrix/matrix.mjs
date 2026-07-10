@@ -4,6 +4,7 @@ import {
   runMatrix, batchRunner, swcBatch, esbuildBatch,
   terserBatch, withTerserVariants,
 } from "../lib/runner.mjs";
+import { mangleValidator } from "../lib/compare.mjs";
 
 const snippets = [
   {
@@ -17,6 +18,12 @@ const snippets = [
     source:
       'export function f(kind) { kind === "bar" ? bar() : kind === "baz" ? baz() : kind === "qux" ? qux() : quux(); }\n',
     expected: ["switch(", 'case "bar"', 'case "baz"', 'case "qux"', "default:"],
+  },
+  {
+    name: "numeric-negative-return-chain",
+    source:
+      "export function f(code) { return code === -1 ? negative() : code === 0 ? zero() : code === 2 ? two() : other(); }\n",
+    expected: ["switch(", "case -1", "case 0", "case 2", "default:"],
   },
   {
     name: "preserved-switch-return",
@@ -58,4 +65,5 @@ runMatrix({
   name: "conditional-switch",
   snippets,
   transformers,
+  ...mangleValidator(),
 });

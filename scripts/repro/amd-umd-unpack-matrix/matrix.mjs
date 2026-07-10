@@ -37,6 +37,17 @@ const cases = [
     rejectedNeedles: [{ file: "math-lib.js", text: "define(" }],
   },
   {
+    name: "rollup-amd-anonymous-external",
+    tool: "rollup",
+    build: buildRollupAnonymousExternal,
+    expectedFiles: ["module.js"],
+    expectedNeedles: [
+      { file: "module.js", text: 'from "math-lib"' },
+      { file: "module.js", text: "console.log(total);" },
+    ],
+    rejectedNeedles: [{ file: "module.js", text: "define(" }],
+  },
+  {
     name: "rollup-umd-wrapper",
     tool: "rollup",
     build: (dir) => buildRollup(dir, "umd"),
@@ -180,6 +191,36 @@ export { add };
     "--name",
     "MathLib",
     "--amd.id",
+    "math-lib",
+    "--file",
+    out,
+    "--silent",
+  ]);
+  return out;
+}
+
+function buildRollupAnonymousExternal(dir) {
+  const toolDir = ensureNodeTool("rollup-4", ["rollup@4"]);
+  const sourceRoot = join(dir, "src");
+  mkdirSync(sourceRoot, { recursive: true });
+  writeFileSync(
+    join(sourceRoot, "main.js"),
+    `
+import { add } from "math-lib";
+
+const total = add(1, 2);
+console.log(total);
+export { total };
+`,
+  );
+
+  const out = join(dir, "rollup-amd-anonymous-external.js");
+  runChecked("node", [
+    join(toolDir, "node_modules", "rollup", "dist", "bin", "rollup"),
+    join(sourceRoot, "main.js"),
+    "--format",
+    "amd",
+    "--external",
     "math-lib",
     "--file",
     out,

@@ -67,6 +67,11 @@ use(out);
     expected: ["tag`line\\n${value}\\u{1f600}`"],
   },
   {
+    name: "tagged-invalid-escape",
+    source: "var out = tag`\\unicode${value}`;\nuse(out);\n",
+    expected: ["tag`\\unicode${value}`"],
+  },
+  {
     name: "tagged-member",
     source: "var out = css.div`color: ${color}; margin: ${space}px;`;\nuse(out);\n",
     expected: ["css.div`color: ${color}; margin: ${space}px;`"],

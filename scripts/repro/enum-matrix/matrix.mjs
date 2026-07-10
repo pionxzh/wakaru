@@ -3,6 +3,7 @@
 import {
   runMatrix, batchRunner, withTerserVariants, ensureNodeTool, standardLowerers,
 } from "../lib/runner.mjs";
+import { mangleValidator } from "../lib/compare.mjs";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -33,6 +34,24 @@ enum Flag {
 use(Flag.None, Flag.ReadWrite);
 `,
     expected: ["None: 0", "Read: 4", "Write: 8", "ReadWrite: 12", "12: \"ReadWrite\""],
+  },
+  {
+    name: "numeric-alias-auto-increment",
+    source: `
+enum Alias {
+  First = 1,
+  AlsoFirst = First,
+  Next,
+}
+use(Alias.First, Alias.AlsoFirst, Alias.Next, Alias[1], Alias[2]);
+`,
+    expected: [
+      "First: 1",
+      "AlsoFirst: 1",
+      "Next: 2",
+      "1: \"AlsoFirst\"",
+      "2: \"Next\"",
+    ],
   },
   {
     name: "string-basic",
@@ -262,4 +281,5 @@ runMatrix({
   name: "enum",
   snippets,
   transformers,
+  ...mangleValidator(),
 });

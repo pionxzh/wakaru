@@ -99,6 +99,13 @@ const snippets = [
     rejected: ARRAY_HELPER_REJECTED,
   },
   {
+    name: "array-rest-nested-pattern",
+    source:
+      "const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;\nuse(first, nested, inner_rest, outer_rest);\n",
+    expected: ["[nested, ...inner_rest] = []", "...outer_rest", "use(first, nested, inner_rest, outer_rest)"],
+    rejected: ARRAY_HELPER_REJECTED,
+  },
+  {
     name: "array-destructure-tuple",
     source:
       'import { useState } from "react";\nconst [current, setCurrent] = useState(value);\nuse(current, setCurrent);\n',

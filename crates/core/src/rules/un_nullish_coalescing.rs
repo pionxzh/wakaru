@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit,
-    MemberExpr, MemberProp, Module, SimpleAssignTarget,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, ComputedPropName, CondExpr, Expr,
+    Ident, Lit, MemberExpr, MemberProp, Module, SimpleAssignTarget,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -78,6 +78,20 @@ fn try_nullish_coalescing(
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
+    // Temp-backed computed member shape:
+    // `(_obj = getObj())[_key = getKey()] ?? (_obj[_key] = fallback)`
+    // → `getObj()[getKey()] ??= fallback`.
+    //
+    // The isolated compiler temps preserve the single evaluation of both the
+    // object and key, so this recovery is safe at every rewrite level.
+    if let Some(result) = try_temp_backed_computed_member_nullish_assignment(
+        expr,
+        uninitialized_bindings,
+        binding_references,
+    ) {
+        return Some(result);
+    }
+
     // Native logical assignment shape: `target ?? (target = fallback)` → `target ??= fallback`.
     if let Some(result) = try_nullish_assignment(expr, unresolved_mark, policy) {
         return Some(result);
@@ -133,6 +147,86 @@ fn try_nullish_coalescing(
     }
 
     None
+}
+
+fn try_temp_backed_computed_member_nullish_assignment(
+    expr: &Expr,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::NullishCoalescing,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+
+    let Expr::Member(read_member) = strip_parens(left) else {
+        return None;
+    };
+    let (object_sym, object_ctxt, object) = extract_assign_parts(&read_member.obj)?;
+    let MemberProp::Computed(read_prop) = &read_member.prop else {
+        return None;
+    };
+    let (key_sym, key_ctxt, key) = extract_assign_parts(&read_prop.expr)?;
+
+    let Expr::Assign(write) = strip_parens(right) else {
+        return None;
+    };
+    if write.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(write_member)) = &write.left else {
+        return None;
+    };
+    if !expr_is_ident_binding(&write_member.obj, &object_sym, object_ctxt) {
+        return None;
+    }
+    let MemberProp::Computed(write_prop) = &write_member.prop else {
+        return None;
+    };
+    if !expr_is_ident_binding(&write_prop.expr, &key_sym, key_ctxt) {
+        return None;
+    }
+
+    // Each temp must occur only in its declaration and the two positions in
+    // this pattern (the read-side assignment and write-side identifier).
+    if !is_safe_temp_with_total_refs(
+        &object_sym,
+        object_ctxt,
+        uninitialized_bindings,
+        binding_references,
+        3,
+    ) || !is_safe_temp_with_total_refs(
+        &key_sym,
+        key_ctxt,
+        uninitialized_bindings,
+        binding_references,
+        3,
+    ) {
+        return None;
+    }
+
+    Some(Expr::Assign(AssignExpr {
+        span: expr.span(),
+        op: AssignOp::NullishAssign,
+        left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+            span: read_member.span,
+            obj: object.clone(),
+            prop: MemberProp::Computed(ComputedPropName {
+                span: read_prop.span,
+                expr: key.clone(),
+            }),
+        })),
+        right: write.right.clone(),
+    }))
+}
+
+fn expr_is_ident_binding(expr: &Expr, sym: &swc_core::atoms::Atom, ctxt: SyntaxContext) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(ident) if ident.sym == *sym && ident.ctxt == ctxt)
 }
 
 fn try_nullish_assignment(
