@@ -2,12 +2,16 @@ use std::collections::HashSet;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function,
-    Ident, KeyValueProp, MemberProp, Module, Pat, SimpleAssignTarget, ThisExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Expr,
+    FnExpr, Function, Ident, KeyValueProp, MemberProp, Module, Pat, SimpleAssignTarget, ThisExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+
+use super::decl_utils::has_duplicate_param_names;
+use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
 
 pub struct ArrowFunction;
 
@@ -147,8 +151,21 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
         return None;
     }
 
+    // Arrow parameter lists reject duplicate names as an early error; a
+    // sloppy-mode function may carry them.
+    if has_duplicate_param_names(&func.params) {
+        return None;
+    }
+
     // Must have a body
     let body = func.body.as_ref()?;
+
+    // Direct eval can observe function-only bindings (`this`, `arguments`,
+    // `new.target`) that are not visible to an AST walk of the containing
+    // function. Keep the function shape rather than guessing from source text.
+    if body_has_arrow_sensitive_direct_eval(body) {
+        return None;
+    }
 
     // Check for this or arguments usage (don't recurse into nested functions)
     let mut checker = HasThisOrArguments(false);
@@ -230,6 +247,19 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
         return None;
     }
 
+    // Arrow parameter lists reject duplicate names as an early error.
+    if has_duplicate_param_names(&func.params) {
+        return None;
+    }
+
+    if func
+        .body
+        .as_ref()
+        .is_some_and(body_has_arrow_sensitive_direct_eval)
+    {
+        return None;
+    }
+
     // Reject functions that use `arguments` (arrows have no own `arguments`)
     let mut has_args = HasArguments(false);
     if let Some(body) = &func.body {
@@ -251,6 +281,24 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
         is_generator: false,
         type_params: func.type_params.clone(),
         return_type: func.return_type.clone(),
+    })
+}
+
+fn body_has_arrow_sensitive_direct_eval(body: &BlockStmt) -> bool {
+    let mut analyzer = DirectEvalAnalyzer::default();
+    body.visit_with(&mut analyzer);
+    if analyzer.unknown_direct_eval {
+        return true;
+    }
+
+    // `new` is deliberately broader than the exact `new.target` spelling so
+    // whitespace/comments in evaluated source cannot evade the guard.
+    let sensitive_names: [swc_core::atoms::Atom; 3] =
+        ["this".into(), "arguments".into(), "new".into()];
+    analyzer.known_direct_eval_sources.iter().any(|source| {
+        sensitive_names
+            .iter()
+            .any(|name| js_source_mentions_binding(source, name))
     })
 }
 

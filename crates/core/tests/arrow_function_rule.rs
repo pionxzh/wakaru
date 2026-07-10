@@ -12,6 +12,83 @@ fn apply_pipeline(input: &str) -> String {
 }
 
 #[test]
+fn duplicate_params_stay_function() {
+    // Arrow parameter lists reject duplicate names as an early error, so a
+    // sloppy-mode function with duplicate params must keep its shape.
+    let input = r#"
+(function (a, a) {
+  use(a);
+})(1, 2);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn duplicate_params_stay_function_for_bind_this() {
+    let input = r#"
+register(function (a, a) {
+  use(a);
+}.bind(this));
+"#;
+    // The fixer normalizes parens around the callee; the function itself
+    // must keep its shape and `.bind(this)`.
+    let expected = r#"
+register((function (a, a) {
+  use(a);
+}).bind(this));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn direct_eval_stays_function() {
+    let input = r#"
+const run = function (value) {
+  eval(code);
+  return value;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn direct_eval_stays_function_for_bind_this() {
+    let input = r#"
+register(function (value) {
+  eval("arguments[0]");
+  return value;
+}.bind(this));
+"#;
+    let expected = r#"
+register((function (value) {
+  eval("arguments[0]");
+  return value;
+}).bind(this));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn direct_eval_without_function_sensitive_names_can_be_arrow() {
+    let input = r#"
+const load = function () {
+  return eval("require('crypto')");
+};
+"#;
+    let expected = r#"
+const load = () => {
+  return eval("require('crypto')");
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn single_return_becomes_arrow_expression() {
     let input = r#"
 const double = [1, 2, 3].map(function(x) { return x * 2; });

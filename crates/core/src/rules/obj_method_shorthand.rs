@@ -1,6 +1,8 @@
 use swc_core::ecma::ast::{Expr, MethodProp, Prop, PropName};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::decl_utils::has_duplicate_param_names;
+
 pub struct ObjMethodShorthand;
 
 impl VisitMut for ObjMethodShorthand {
@@ -36,6 +38,12 @@ impl VisitMut for ObjMethodShorthand {
 
         // Don't convert async functions (keep safe for now)
         if fn_expr.function.is_async {
+            return;
+        }
+
+        // Method parameter lists require unique names; a sloppy-mode function
+        // expression may carry duplicates.
+        if has_duplicate_param_names(&fn_expr.function.params) {
             return;
         }
 

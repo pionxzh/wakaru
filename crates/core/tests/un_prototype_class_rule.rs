@@ -49,6 +49,32 @@ fn apply(input: &str) -> String {
 // ============================================================
 
 #[test]
+fn duplicate_constructor_params_preserve_prototype_shape() {
+    let input = r#"
+function Foo(a, a) {
+    this.value = a;
+}
+Foo.prototype.run = function() {
+    return this.value;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn duplicate_method_params_preserve_prototype_shape() {
+    let input = r#"
+function Foo(value) {
+    this.value = value;
+}
+Foo.prototype.pick = function(a, a) {
+    return a;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn test_basic_prototype_class() {
     let input = r#"
 function Foo(name) {
@@ -306,6 +332,17 @@ class Foo {
 }
 
 #[test]
+fn duplicate_getter_params_preserve_define_property_shape() {
+    let input = r#"
+function Foo(val) { this._val = val; }
+Object.defineProperty(Foo.prototype, "value", {
+    get: function(a, a) { return this._val; }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn test_define_property_value_function_method() {
     let input = r#"
 function Foo(val) { this._val = val; }
@@ -323,6 +360,20 @@ class Foo {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn duplicate_value_method_params_preserve_define_property_shape() {
+    let input = r#"
+function Foo(val) { this._val = val; }
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: function value(a, a) { return a; }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

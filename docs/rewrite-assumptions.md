@@ -164,13 +164,25 @@ system from becoming a mechanism to skip safety checks.
 
 ## Dynamic Scope Limits
 
-wakaru does not model `eval`, `with`, or host-level observation of generated
-temporaries (e.g. top-level script `var` bindings leaking to `globalThis`).
+wakaru does not fully model `eval`, `with`, or host-level observation of
+generated temporaries (e.g. top-level script `var` bindings leaking to
+`globalThis`).
 
 Rules should still perform binding/reference analysis within the containing
 function or module scope. They do not need to bail out of otherwise valid
 recovery because dynamic code could theoretically observe an isolated compiler
 temp.
+
+Original bindings are different from compiler temps: a rule that renames,
+removes, or re-kinds a binding the input program declared (params, vars) can
+break code a direct `eval` evaluates. Binding-oriented rules guard
+conservatively via `rules/eval_utils.rs`: `DirectEvalAnalyzer` classifies
+direct/indirect eval calls and their sources, and
+`js_source_mentions_binding` scopes the bail-out to bindings a known source
+string mentions (an unknown source blocks all). `VarDeclToLetConst`,
+`DeadDecls`, and `UnIife` follow this pattern. `ArrowFunction` preserves the
+function shape for unknown direct-eval sources, or when a known source mentions
+function-only bindings such as `this`, `arguments`, and `new.target`.
 
 This limitation should be documented for users, especially for `minimal`.
 

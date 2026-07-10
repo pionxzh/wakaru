@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 
+use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
 use super::RewriteLevel;
 
 pub struct UnIife {
@@ -190,7 +191,7 @@ fn process_params_and_args(
     body: &mut BlockStmt,
     preserve_arg_list: bool,
 ) {
-    let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, |i| {
+    let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, true, |i| {
         pat_ident(&params[i].pat).map(|id| (id.sym.clone(), id.ctxt))
     });
 
@@ -223,7 +224,7 @@ fn process_arrow_params_and_args(
     body: &mut BlockStmt,
     preserve_arg_list: bool,
 ) {
-    let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, |i| {
+    let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, false, |i| {
         pat_ident(&params[i]).map(|id| (id.sym.clone(), id.ctxt))
     });
 
@@ -272,12 +273,43 @@ fn plan_param_rewrites<F>(
     args: &[ExprOrSpread],
     body: &BlockStmt,
     preserve_arg_list: bool,
+    params_map_arguments: bool,
     param_at: F,
 ) -> RewritePlan
 where
     F: Fn(usize) -> Option<(Atom, SyntaxContext)>,
 {
     let mut plan = RewritePlan::default();
+    // Direct eval can read or write any binding in scope by name, including
+    // from nested functions that close over the params. Renaming a param or
+    // replacing it with a lexical declaration changes what the evaluated
+    // source observes, so params mentioned by a known eval source keep their
+    // shape — and an unknown source blocks every param.
+    let mut eval_analyzer = DirectEvalAnalyzer::default();
+    for stmt in &body.stmts {
+        stmt.visit_with(&mut eval_analyzer);
+    }
+    if eval_analyzer.unknown_direct_eval {
+        return plan;
+    }
+    let direct_eval_sources = eval_analyzer.known_direct_eval_sources;
+    let arguments_name: Atom = "arguments".into();
+    let eval_observes_mapped_arguments = params_map_arguments
+        && direct_eval_sources
+            .iter()
+            .any(|source| js_source_mentions_binding(source, &arguments_name));
+    // Duplicate parameter names (legal in sloppy-mode functions) share one
+    // binding that holds the value of the last duplicate. Per-index renames
+    // rebind body uses to the first occurrence, and literal extraction emits
+    // colliding lexical declarations.
+    let mut seen_params = HashSet::new();
+    for i in 0..param_count {
+        if let Some(binding) = param_at(i) {
+            if !seen_params.insert(binding) {
+                return plan;
+            }
+        }
+    }
     // Printed JavaScript has no `SyntaxContext`, so every new name we introduce
     // must avoid bindings anywhere in the IIFE body. This is conservative for
     // suffix renames, but avoids producing a param name that is shadowed at a
@@ -297,6 +329,12 @@ where
             continue;
         }
         let param_binding = (param_sym.clone(), param_ctxt);
+        if direct_eval_sources
+            .iter()
+            .any(|source| js_source_mentions_binding(source, &param_sym))
+        {
+            continue;
+        }
 
         match arg.expr.as_ref() {
             Expr::Ident(ident) => {
@@ -312,6 +350,12 @@ where
                 let mut taken = taken_for_suffix.clone();
                 taken.insert(ident.sym.clone());
                 let new_sym = pick_non_conflicting_name(&ident.sym, &taken);
+                if direct_eval_sources
+                    .iter()
+                    .any(|source| js_source_mentions_binding(source, &new_sym))
+                {
+                    continue;
+                }
                 taken_for_suffix.remove(&param_sym);
                 taken_for_suffix.insert(new_sym.clone());
                 plan.renames.push((i, param_sym, new_sym, param_ctxt));
@@ -321,7 +365,9 @@ where
             // and inserting a lexical declaration would either create an early
             // error or change the redeclaration semantics.
             Expr::Lit(lit)
-                if !preserve_arg_list && !binding_uses.has_declaration(&param_binding) =>
+                if !preserve_arg_list
+                    && !eval_observes_mapped_arguments
+                    && !binding_uses.has_declaration(&param_binding) =>
             {
                 let kind = if binding_uses.has_direct_write(&param_binding) {
                     VarDeclKind::Let

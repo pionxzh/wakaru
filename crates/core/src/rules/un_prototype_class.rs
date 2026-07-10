@@ -12,6 +12,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::utils::paren::strip_parens;
 
+use super::decl_utils::has_duplicate_param_names;
+
 pub struct UnPrototypeClass;
 
 impl VisitMut for UnPrototypeClass {
@@ -175,7 +177,9 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
     for i in 0..len {
         let Some(stmt) = get_stmt(i) else { continue };
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            if has_this_reference(&fn_decl.function) || is_empty_body(&fn_decl.function) {
+            if !has_duplicate_param_names(&fn_decl.function.params)
+                && (has_this_reference(&fn_decl.function) || is_empty_body(&fn_decl.function))
+            {
                 fn_decls.push((i, &fn_decl.ident.sym));
             }
         }
@@ -652,6 +656,9 @@ fn extract_method_assignment<'a>(
     let Expr::Fn(fn_expr) = assign.right.as_ref() else {
         return None;
     };
+    if has_duplicate_param_names(&fn_expr.function.params) {
+        return None;
+    }
 
     // Case 1: Foo.prototype.method = function() {}
     if let Expr::Member(obj_member) = lhs.obj.as_ref() {
@@ -878,6 +885,9 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
 
     let mut methods = Vec::new();
     let value_fn = descriptor_value_method_fn(obj);
+    if value_fn.is_some_and(|fn_expr| has_duplicate_param_names(&fn_expr.function.params)) {
+        return None;
+    }
 
     for prop in &obj.props {
         let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
@@ -899,6 +909,9 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
         let Expr::Fn(fn_expr) = kv.value.as_ref() else {
             continue;
         };
+        if has_duplicate_param_names(&fn_expr.function.params) {
+            return None;
+        }
         let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
         methods.push(build_class_method_from_fn(method_key, fn_expr, false));
         // Update kind

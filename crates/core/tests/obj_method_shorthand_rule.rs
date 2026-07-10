@@ -28,6 +28,21 @@ const obj = {
 }
 
 #[test]
+fn duplicate_params_stay_key_value_function() {
+    // Method parameter lists require unique names (UniqueFormalParameters);
+    // a sloppy-mode function expression may carry duplicates.
+    let input = r#"
+const obj = {
+    pick: function (a, a) {
+        return a;
+    }
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn multiple_methods_converted() {
     let input = r#"
 const obj = {

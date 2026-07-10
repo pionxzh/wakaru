@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{BindingIdent, Decl, Id, Ident, Pat, Stmt, VarDecl, VarDeclKind};
+use swc_core::ecma::ast::{BindingIdent, Decl, Id, Ident, Param, Pat, Stmt, VarDecl, VarDeclKind};
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -18,6 +18,18 @@ pub fn ident_matches_binding(ident: &Ident, binding: &BindingId) -> bool {
 
 pub fn same_ident(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt
+}
+
+/// Whether a parameter list declares the same name twice. Arrow, method, and
+/// class-method parameter lists reject duplicates as an early error, so
+/// converting a sloppy-mode function that carries them must be skipped.
+/// Duplicates are only legal in a simple (all-identifier) parameter list, so
+/// checking `Pat::Ident` syms is exhaustive.
+pub fn has_duplicate_param_names(params: &[Param]) -> bool {
+    let mut seen = HashSet::new();
+    params.iter().any(
+        |param| matches!(&param.pat, Pat::Ident(binding) if !seen.insert(binding.id.sym.clone())),
+    )
 }
 
 /// Collect all binding names declared by a `Decl` (top-level only, does not

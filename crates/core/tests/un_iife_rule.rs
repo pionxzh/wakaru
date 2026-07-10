@@ -292,6 +292,160 @@ fn iife_literal_arg_with_same_binding_function_redeclaration_is_preserved() {
 }
 
 #[test]
+fn iife_duplicate_params_with_literal_args_are_preserved() {
+    let input = r#"
+(function (a, a) {
+  use(a);
+})(1, 2);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn iife_duplicate_params_with_ident_args_are_not_renamed() {
+    let input = r#"
+(function (a, a) {
+  use(a);
+})(first, second);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn iife_direct_eval_mentioning_param_blocks_rewrites() {
+    let input = r#"
+(function (c, e) {
+  eval("c = 9; use(e)");
+  use(c, e);
+})(0, target);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn iife_direct_eval_with_unknown_source_blocks_all_rewrites() {
+    let input = r#"
+(function (c, e) {
+  eval(code);
+  use(c, e);
+})(0, target);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn iife_direct_eval_not_mentioning_param_allows_rewrites() {
+    let input = r#"
+((a) => {
+  eval("g()");
+  use(a);
+})(1);
+"#;
+    let expected = r#"
+(() => {
+  const a = 1;
+  eval("g()");
+  use(a);
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_direct_eval_in_nested_function_blocks_literal_extraction() {
+    let input = r#"
+((a) => {
+  function inner() {
+    eval("a = 2");
+  }
+  inner();
+  use(a);
+})(1);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn iife_indirect_eval_does_not_block_literal_extraction() {
+    let input = r#"
+((a) => {
+  (0, eval)("a");
+  use(a);
+})(1);
+"#;
+    let expected = r#"
+(() => {
+  const a = 1;
+  (0, eval)("a");
+  use(a);
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn function_iife_eval_arguments_preserves_mapped_param_and_arg() {
+    let input = r#"
+(function (c) {
+  eval("arguments[0] = 9");
+  use(c);
+})(0);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_iife_unknown_eval_preserves_function_shape_through_pipeline() {
+    let input = r#"
+(function (c) {
+  eval(code);
+  use(c);
+})(0);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_iife_eval_mentioning_candidate_name_blocks_rename() {
+    let input = r#"
+(function (a) {
+  eval("target_1 = 9");
+  use(a);
+})(target);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn arrow_iife_eval_arguments_allows_literal_extraction() {
+    let input = r#"
+((a) => {
+  eval("arguments[0] = 9");
+  use(a);
+})(0);
+"#;
+    let expected = r#"
+(() => {
+  const a = 0;
+  eval("arguments[0] = 9");
+  use(a);
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn iife_param_with_longer_name_not_touched() {
     let input = r#"
 ((win, s, a) => {
