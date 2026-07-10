@@ -26,6 +26,7 @@ submodule.
 node scripts\correctness\test262-corpus.mjs setup
 node scripts\correctness\test262-corpus.mjs status
 node scripts\correctness\test262-corpus.mjs setup --offline
+node scripts\correctness\test262-metadata-audit.mjs
 ```
 
 Setup refuses to modify a dirty checkout. `--force` explicitly replaces dirty
@@ -38,6 +39,10 @@ node scripts\correctness\test262-corpus.mjs update --revision <full-commit-sha>
 
 `--test262 <dir>` remains available for focused work with another checkout;
 reports identify such a non-git fixture as `unmanaged`.
+
+Run the metadata audit after changing the pin. It parses every non-fixture
+JavaScript test, not only the paths selected by the baseline matrix, and fails
+on new flags, negative phases, or malformed frontmatter.
 
 ## Commands
 
