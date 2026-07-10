@@ -184,13 +184,12 @@ fn has_script_setup_marker(body: &swc_core::ecma::ast::BlockStmt) -> bool {
     struct MarkerFinder(bool);
 
     impl Visit for MarkerFinder {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(expr, Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup")
-            {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if script_setup_marker_target(call).is_some() {
                 self.0 = true;
                 return;
             }
-            expr.visit_children_with(self);
+            call.visit_children_with(self);
         }
     }
 
@@ -213,22 +212,7 @@ fn is_compiled_setup_artifact_stmt(
         }
     }
 
-    struct MarkerFinder(bool);
-
-    impl Visit for MarkerFinder {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if matches!(expr, Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup")
-            {
-                self.0 = true;
-                return;
-            }
-            expr.visit_children_with(self);
-        }
-    }
-
-    let mut finder = MarkerFinder(false);
-    stmt.visit_with(&mut finder);
-    finder.0
+    matches!(stmt, Stmt::Expr(expr_stmt) if matches!(unwrap_paren_expr(expr_stmt.expr.as_ref()), Expr::Call(call) if script_setup_marker_target(call).is_some()))
 }
 
 fn compiled_setup_return_binding(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)> {
@@ -236,30 +220,59 @@ fn compiled_setup_return_binding(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)
         let Stmt::Expr(expr_stmt) = stmt else {
             return None;
         };
-        let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        let Expr::Call(call) = unwrap_paren_expr(expr_stmt.expr.as_ref()) else {
             return None;
         };
-        let Callee::Expr(callee) = &call.callee else {
-            return None;
+        script_setup_marker_target(call).map(|ident| (ident.sym.clone(), ident.ctxt))
+    })
+}
+
+fn script_setup_marker_target(call: &CallExpr) -> Option<&Ident> {
+    if call.args.len() != 3 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !matches!(member.obj.as_ref(), Expr::Ident(object) if object.sym.as_ref() == "Object") {
+        return None;
+    }
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "defineProperty") {
+        return None;
+    }
+    let has_marker_name = call.args.get(1).is_some_and(
+        |arg| matches!(arg.expr.as_ref(), Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup"),
+    );
+    if !has_marker_name {
+        return None;
+    }
+    let Expr::Object(descriptor) = call.args.get(2)?.expr.as_ref() else {
+        return None;
+    };
+    if !object_bool_prop(descriptor, "enumerable", false)
+        || !object_bool_prop(descriptor, "value", true)
+    {
+        return None;
+    }
+    call.args
+        .first()
+        .and_then(|arg| ident_expr(unwrap_paren_expr(arg.expr.as_ref())))
+}
+
+fn object_bool_prop(object: &ObjectLit, name: &str, expected: bool) -> bool {
+    object.props.iter().any(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
         };
-        let Expr::Member(member) = callee.as_ref() else {
-            return None;
-        };
-        if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "defineProperty")
-        {
-            return None;
-        }
-        if !call
-            .args
-            .get(1)
-            .is_some_and(|arg| matches!(arg.expr.as_ref(), Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup"))
-        {
-            return None;
-        }
-        call.args.first().and_then(|arg| {
-            ident_expr(unwrap_paren_expr(arg.expr.as_ref()))
-                .map(|ident| (ident.sym.clone(), ident.ctxt))
-        })
+        matches!(
+            prop.as_ref(),
+            Prop::KeyValue(key_value)
+                if prop_name(&key_value.key).as_deref() == Some(name)
+                    && matches!(key_value.value.as_ref(), Expr::Lit(Lit::Bool(value)) if value.value == expected)
+        )
     })
 }
 

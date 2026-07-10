@@ -67,8 +67,7 @@ pub fn decompile(
     };
     let output =
         wakaru_core::decompile(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let vue_sfc = recover_vue_sfc_preview(&output.code, vue_sfc.unwrap_or(false))
-        .map_err(|e| JsValue::from_str(&e))?;
+    let vue_sfc = recover_vue_sfc_preview(&output.code, vue_sfc.unwrap_or(false));
     let formatted = format_code(output.code, "input.js", formatter);
     let result = WakaruDecompileResult {
         code: formatted.code,
@@ -143,13 +142,14 @@ fn parse_formatter(formatter: Option<bool>) -> CodeFormatter {
     }
 }
 
-fn recover_vue_sfc_preview(source: &str, enabled: bool) -> Result<Option<String>, String> {
+fn recover_vue_sfc_preview(source: &str, enabled: bool) -> Option<String> {
     if !enabled {
-        return Ok(None);
+        return None;
     }
 
     wakaru_core::recover_vue_sfc_source_from_js(source, Default::default())
-        .map_err(|error| error.to_string())
+        .ok()
+        .flatten()
 }
 
 fn collect_warnings(
@@ -249,19 +249,20 @@ mod tests {
 
     #[test]
     fn vue_sfc_preview_is_opt_in() {
-        assert_eq!(
-            recover_vue_sfc_preview(VUE_RENDER_MODULE, false).unwrap(),
-            None
-        );
+        assert_eq!(recover_vue_sfc_preview(VUE_RENDER_MODULE, false), None);
     }
 
     #[test]
     fn vue_sfc_preview_recovers_generated_render_module() {
         let recovered = recover_vue_sfc_preview(VUE_RENDER_MODULE, true)
-            .unwrap()
             .expect("Vue render module should recover");
 
         assert!(recovered.contains("<template>"));
         assert!(recovered.contains("<div class=\"card\">Hello</div>"));
+    }
+
+    #[test]
+    fn vue_sfc_preview_failure_is_non_fatal() {
+        assert_eq!(recover_vue_sfc_preview("export {", true), None);
     }
 }

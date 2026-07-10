@@ -558,6 +558,7 @@ const _sfc_ = {
     const selected = ref("");
     watch(selected, () => console.log(selected.value));
     onUnmounted(() => console.log("done"));
+    console.log("__isScriptSetup");
     const returned = { selected, onUnmounted, ref, watch };
     Object.defineProperty(returned, "__isScriptSetup", {
       enumerable: false,
@@ -592,8 +593,44 @@ export default _sfc_;
         recovered.contains("onUnmounted(()=>console.log(\"done\"));"),
         "{recovered}"
     );
+    assert!(
+        recovered.contains("console.log(\"__isScriptSetup\");"),
+        "{recovered}"
+    );
     assert!(!recovered.contains("__expose"));
-    assert!(!recovered.contains("__isScriptSetup"));
+    assert!(!recovered.contains("Object.defineProperty"));
+}
+
+#[test]
+fn authored_script_setup_literal_does_not_mark_options_as_compiled_script_setup() {
+    let input = r#"
+import { createElementBlock, openBlock } from "vue";
+
+const component = {
+  setup() {
+    console.log("__isScriptSetup");
+    return {};
+  }
+};
+
+function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("p", null, "Ready");
+}
+
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(recovered.contains("<script>"), "{recovered}");
+    assert!(!recovered.contains("<script setup>"), "{recovered}");
+    assert!(
+        recovered.contains("console.log(\"__isScriptSetup\");"),
+        "{recovered}"
+    );
 }
 
 #[test]
