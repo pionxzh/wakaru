@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "esbuild-minify",
+    "version": "0.23.1",
+    "configHash": "5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "reserved-words"
+    ],
+    "paths": [
+      "test/language/reserved-words"
+    ]
+  },
+  "totals": {
+    "discovered": 27,
+    "runnable": 14,
+    "skipped": 13,
+    "unsupported": 0,
+    "rejected": 1,
+    "passed": 13,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/reserved-words/await-module.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/await-script.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "3eaad1bc1c79fa58aea89abd7f0a76839eb0d2f108d766070ab81f2264b76d8a",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:9:4: ERROR: Cannot use \"await\" as an identifier here:"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-false-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-false.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-null-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-true-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/ident-reference-true.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-false-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-false.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-null-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-true-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/reserved-words/label-ident-true.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    }
+  ]
+}

@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "esbuild-minify",
+    "version": "0.23.1",
+    "configHash": "5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "calls"
+    ],
+    "paths": [
+      "test/language/expressions/call",
+      "test/language/expressions/new",
+      "test/language/expressions/member-expression",
+      "test/language/expressions/property-accessors",
+      "test/language/expressions/this",
+      "test/language/expressions/new.target"
+    ]
+  },
+  "totals": {
+    "discovered": 193,
+    "runnable": 185,
+    "skipped": 8,
+    "unsupported": 7,
+    "rejected": 3,
+    "passed": 175,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/expressions/call/eval-realm-indirect.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/expressions/call/eval-spread.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "eb52e7dbdc421df114538b9cd0073cc31ed97d8619d3fc310fac8456e1a8cf04",
+      "summary": "Test262Error: Expected SameValue(«\"local\"», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/call/S11.2.4_A1.3_T1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/call/tco-call-args.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-member-args.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-function-dynamic.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-function.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-global.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-with.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/new.target/escaped-new.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/new.target/escaped-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/new.target/unary-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/expressions/new/non-ctor-err-realm.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/expressions/property-accessors/non-identifier-name.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/property-accessors/S11.2.1_A4_T1.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "9f0342a62681fb655d67cde18f76a984af32cf75f17d2e3195a9fd80ec232551",
+      "summary": "Test262Error: #1: typeof (this.NaN) !== \"undefined\""
+    },
+    {
+      "path": "test/language/expressions/this/S11.1.1_A1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/this/S11.1.1_A3.1.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "59b5179f5b0d7805303d3cc56e08a7e971cf0234f0ec422d2d0d1d92d43fba13",
+      "summary": "Test262Error: #1: function ReturnThis() {return this} ReturnThis() === this. Actual: [object Object]"
+    },
+    {
+      "path": "test/language/expressions/this/S11.1.1_A4.1.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "7f4c3cc864d640a2473a21052734046f8b3af38bf629df36254d8c0456075fb0",
+      "summary": "Test262Error: #1: var MyFunction = new Function(\"return this\"); MyFunction() === this. Actual: [object Object]"
+    }
+  ]
+}

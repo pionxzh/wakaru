@@ -45,10 +45,11 @@ export function parseMatrixArgs(argv) {
     test262Root: null,
     level: null,
     knownBlockers: null,
-    caseTimeoutMs: null,
+    caseTimeoutMs: "15000",
     toolRoot: null,
     details: false,
     keepTemp: false,
+    updateBaselines: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -79,6 +80,8 @@ export function parseMatrixArgs(argv) {
       options.details = true;
     } else if (arg === "--keep-temp") {
       options.keepTemp = true;
+    } else if (arg === "--update") {
+      options.updateBaselines = true;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
@@ -99,6 +102,7 @@ export function buildBaselineMatrixJobs(options = {}) {
   const jobs = producers.flatMap((producer) =>
     slices.map((slice) => {
       const summary = join(repoRoot, "docs", "test262-baselines", producer, `${slice}.md`);
+      const baseline = join(repoRoot, "docs", "test262-baselines", producer, `${slice}.json`);
       const args = [
         roundTripScript,
         "--preset",
@@ -109,7 +113,13 @@ export function buildBaselineMatrixJobs(options = {}) {
         String(limit),
         "--summary",
         summary,
+        "--baseline",
+        baseline,
       ];
+
+      if (options.updateBaselines) {
+        args.push("--update-baseline");
+      }
 
       pushOptionalPair(args, "--test262", options.test262Root);
       pushOptionalPair(args, "--level", options.level);
@@ -127,6 +137,7 @@ export function buildBaselineMatrixJobs(options = {}) {
         producer,
         slice,
         summary,
+        baseline,
         command: process.execPath,
         args,
       };
@@ -145,7 +156,7 @@ export function formatCommand(job) {
 }
 
 function defaultConcurrency() {
-  return Math.max(1, Math.min(4, (cpus().length || 4) - 2));
+  return 1;
 }
 
 async function runPool(items, worker, concurrency = defaultConcurrency()) {
@@ -224,11 +235,12 @@ Options:
   --test262 <dir>         Test262 checkout passed through
   --level <level>         Wakaru rewrite level passed through
   --known-blockers <file> Known blocker manifest passed through
-  --case-timeout-ms <n>   Per-test timeout passed through
+  --case-timeout-ms <n>   Per-test timeout. Default: 15000 for parallel matrix stability
   --tool-root <dir>       Tool package directory passed through
   --details               Print detailed round-trip output
   --keep-temp             Keep temporary round-trip files
   --missing               Run only missing or incomplete summaries
+  --update                Explicitly rewrite selected JSON baselines and summaries
   --skip-build            Do not build wakaru before running jobs
   --dry-run               Print commands without running them
 `;

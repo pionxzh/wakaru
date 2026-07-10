@@ -31,6 +31,7 @@ test("baseline matrix writes summaries under producer directories", () => {
   assert.equal(jobs.length, 2);
   assert.match(jobs[0].summary, /docs[\\/]test262-baselines[\\/]terser-light[\\/]default\.md$/);
   assert.match(jobs[1].summary, /docs[\\/]test262-baselines[\\/]terser-light[\\/]scope\.md$/);
+  assert.match(jobs[0].baseline, /docs[\\/]test262-baselines[\\/]terser-light[\\/]default\.json$/);
   assert.deepEqual(jobs[0].args.slice(1, 7), [
     "--preset",
     "default",
@@ -68,6 +69,7 @@ test("parseMatrixArgs supports repeatable producer and slice filters", () => {
       "--missing",
       "--skip-build",
       "--dry-run",
+      "--update",
     ]),
     {
       dryRun: true,
@@ -79,10 +81,11 @@ test("parseMatrixArgs supports repeatable producer and slice filters", () => {
       test262Root: null,
       level: null,
       knownBlockers: null,
-      caseTimeoutMs: null,
+      caseTimeoutMs: "15000",
       toolRoot: null,
       details: false,
       keepTemp: false,
+      updateBaselines: true,
     },
   );
 });

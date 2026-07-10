@@ -1,0 +1,2581 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "terser-light",
+    "version": "5.31.6",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "assignment-target-type"
+    ],
+    "paths": [
+      "test/language/expressions/assignmenttargettype"
+    ]
+  },
+  "totals": {
+    "discovered": 324,
+    "runnable": 8,
+    "skipped": 316,
+    "unsupported": 2,
+    "rejected": 0,
+    "passed": 6,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-minus-multiplicativeexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-minus-multiplicativeexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-minus-multiplicativeexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-plus-multiplicativeexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-plus-multiplicativeexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-additiveexpression-plus-multiplicativeexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-arrowfunction-6.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-asyncarrowfunction-6.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseandexpression-bitwise-and-equalityexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseandexpression-bitwise-and-equalityexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseandexpression-bitwise-and-equalityexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseorexpression-bitwise-or-bitwisexorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseorexpression-bitwise-or-bitwisexorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwiseorexpression-bitwise-or-bitwisexorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwisexorexpression-bitwise-xor-bitwiseandexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwisexorexpression-bitwise-xor-bitwiseandexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-bitwisexorexpression-bitwise-xor-bitwiseandexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-as-for-in-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-as-for-of-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-in-compound-assignment.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-in-logical-assignment.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-in-postfix-update.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-in-prefix-update.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-callexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-coalesceexpressionhead-coalesce-bitwiseorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-coalesceexpressionhead-coalesce-bitwiseorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-coalesceexpressionhead-coalesce-bitwiseorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-not-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-not-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-abstract-not-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-not-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-not-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-equalityexpression-strict-not-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-expression-comma-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-expression-comma-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-expression-comma-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-identifierreference-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-identifierreference-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-import.meta.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-importcall-defer.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-importcall-source.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-importcall.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-coalesce-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-coalesce-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-coalesce-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-and-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-and-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-and-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-or-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-or-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-logical-or-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-minus-minus.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-plus-plus.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalandexpression-logical-and-bitwiseorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalandexpression-logical-and-bitwiseorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalandexpression-logical-and-bitwiseorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalorexpression-logical-or-logicalandexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalorexpression-logical-or-logicalandexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-logicalorexpression-logical-or-logicalandexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-memberexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-minus-minus-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-new-memberexpression-arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-new-newexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-optionalexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-plus-plus-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-asyncfunctionexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-asyncgeneratorexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-classexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-functionexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-generatorexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-literal-boolean.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-literal-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-literal-numeric.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-literal-string.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-objectliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-regularexpressionliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-primaryexpression-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-or-equal-to-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-or-equal-to-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-or-equal-to-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-greater-than-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-in-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-in-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-in-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-instanceof-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-instanceof-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-instanceof-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-or-equal-to-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-or-equal-to-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-or-equal-to-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-relationalexpression-less-than-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-left-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-left-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-left-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-right-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-right-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-bitwise-right-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-unsigned-bitwise-right-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-unsigned-bitwise-right-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shiftexpression-unsigned-bitwise-right-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-delete-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-exclamation-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-exclamation-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-exclamation-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-minus-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-minus-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-minus-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-plus-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-plus-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-plus-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-tilde-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-tilde-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-tilde-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-typeof-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-typeof-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-typeof-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-void-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-void-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-unaryexpression-void-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-updateexpression-star-star-exponentiationexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-updateexpression-star-star-exponentiationexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-updateexpression-star-star-exponentiationexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-yieldexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/direct-yieldexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-minus-multiplicativeexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-minus-multiplicativeexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-minus-multiplicativeexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-plus-multiplicativeexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-plus-multiplicativeexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-additiveexpression-plus-multiplicativeexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-arrowfunction-6.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-asyncarrowfunction-6.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseandexpression-bitwise-and-equalityexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseandexpression-bitwise-and-equalityexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseandexpression-bitwise-and-equalityexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseorexpression-bitwise-or-bitwisexorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseorexpression-bitwise-or-bitwisexorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwiseorexpression-bitwise-or-bitwisexorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwisexorexpression-bitwise-xor-bitwiseandexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwisexorexpression-bitwise-xor-bitwiseandexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-bitwisexorexpression-bitwise-xor-bitwiseandexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-callexpression-in-compound-assignment.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-callexpression-in-logical-assignment.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-callexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-callexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-coalesceexpressionhead-coalesce-bitwiseorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-coalesceexpressionhead-coalesce-bitwiseorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-coalesceexpressionhead-coalesce-bitwiseorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-not-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-not-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-abstract-not-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-not-equal-relationalexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-not-equal-relationalexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-equalityexpression-strict-not-equal-relationalexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-expression-comma-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-expression-comma-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-expression-comma-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-identifierreference-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-identifierreference-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-import.meta.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-importcall-defer.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-importcall-source.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-importcall.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-coalesce-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-coalesce-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-coalesce-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-and-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-and-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-and-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-or-assignment-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-or-assignment-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-or-assignment-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-minus-minus.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-plus-plus.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalandexpression-logical-and-bitwiseorexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalandexpression-logical-and-bitwiseorexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalandexpression-logical-and-bitwiseorexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalorexpression-logical-or-logicalandexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalorexpression-logical-or-logicalandexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-logicalorexpression-logical-or-logicalandexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-memberexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-minus-minus-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-multiplicativeexpression-multiplicativeoperator-exponentiationexpression-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-new-memberexpression-arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-new-newexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-optionalexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-plus-plus-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-asyncfunctionexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-asyncgeneratorexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-classexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-functionexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-generatorexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-literal-boolean.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-literal-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-literal-numeric.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-literal-string.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-objectliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-regularexpressionliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-templateliteral.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-primaryexpression-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-or-equal-to-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-or-equal-to-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-or-equal-to-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-in-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-in-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-in-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-instanceof-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-instanceof-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-instanceof-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-or-equal-to-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-or-equal-to-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-or-equal-to-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-shiftexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-shiftexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-less-than-shiftexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-left-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-left-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-left-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-right-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-right-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-bitwise-right-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-unsigned-bitwise-right-additiveexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-unsigned-bitwise-right-additiveexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shiftexpression-unsigned-bitwise-right-additiveexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-shortcircuitexpression-question-assignmentexpression-else-assignmentexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-delete-unaryexpression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-exclamation-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-exclamation-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-exclamation-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-minus-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-minus-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-minus-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-plus-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-plus-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-plus-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-tilde-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-tilde-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-tilde-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-typeof-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-typeof-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-typeof-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-void-unaryexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-void-unaryexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-void-unaryexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-updateexpression-star-star-exponentiationexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-updateexpression-star-star-exponentiationexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-updateexpression-star-star-exponentiationexpression-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-yieldexpression-0.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/parenthesized-yieldexpression-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/simple-basic-identifierreference-await.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "5263aa4168fe6e9ff2197ed3bfc03df95058019a53398053c21b7453e1db8d54",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (5..10, InvalidIdentInAsync) }"
+    },
+    {
+      "path": "test/language/expressions/assignmenttargettype/simple-basic-identifierreference-yield.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "swc-parse-yield-ident",
+      "fingerprint": "e67a5f3f14bb4107780560d2040a8ad15de2385d1dd81fe130155d9f76207cf8",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (1..6, TS1109) }"
+    }
+  ]
+}

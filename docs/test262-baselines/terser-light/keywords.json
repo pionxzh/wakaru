@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "terser-light",
+    "version": "5.31.6",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "keywords"
+    ],
+    "paths": [
+      "test/language/keywords"
+    ]
+  },
+  "totals": {
+    "discovered": 25,
+    "runnable": 0,
+    "skipped": 25,
+    "unsupported": 0,
+    "rejected": 0,
+    "passed": 0,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/keywords/ident-ref-break.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-case.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-catch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-continue.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-default.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-delete.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-do.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-else.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-for.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-if.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-in.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-instanceof.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-new.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-return.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-switch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-throw.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-try.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-typeof.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-void.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/keywords/ident-ref-with.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    }
+  ]
+}

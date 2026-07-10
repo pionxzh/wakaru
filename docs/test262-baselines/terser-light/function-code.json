@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "terser-light",
+    "version": "5.31.6",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "function-code"
+    ],
+    "paths": [
+      "test/language/function-code"
+    ]
+  },
+  "totals": {
+    "discovered": 217,
+    "runnable": 217,
+    "skipped": 0,
+    "unsupported": 0,
+    "rejected": 0,
+    "passed": 217,
+    "failed": 0
+  },
+  "outcomes": []
+}

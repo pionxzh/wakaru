@@ -1,7 +1,8 @@
 # Test262 Baseline Layout
 
-These files are deterministic Markdown summaries from
-`scripts/correctness/test262-roundtrip.mjs`.
+Each baseline has a canonical deterministic JSON file and a generated Markdown
+summary from `scripts/correctness/test262-roundtrip.mjs`. JSON is the enforced
+per-case contract; Markdown is the human review surface.
 
 The baseline path encodes two independent choices:
 
@@ -14,8 +15,11 @@ Normal baseline summaries live under producer pipeline directories:
 
 ```text
 terser-light/default.md
+terser-light/default.json
 swc-minify/default.md
+swc-minify/default.json
 esbuild-minify/default.md
+esbuild-minify/default.json
 ```
 
 Each normal producer runs the same slice set:
@@ -67,6 +71,8 @@ node scripts\correctness\test262-baseline-matrix.mjs
 ```
 
 Use `--producer` or `--slice` to refresh a subset.
+Baseline replacement also requires `--update`; ordinary runs compare without
+rewriting reviewed outcomes.
 Use `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
 is already set.

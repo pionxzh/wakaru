@@ -1,0 +1,453 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "esbuild-minify",
+    "version": "0.23.1",
+    "configHash": "5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "function-code"
+    ],
+    "paths": [
+      "test/language/function-code"
+    ]
+  },
+  "totals": {
+    "discovered": 217,
+    "runnable": 217,
+    "skipped": 0,
+    "unsupported": 0,
+    "rejected": 52,
+    "passed": 165,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/function-code/10.4.3-1-101-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "38522a57259d5233d22aec17c7da018d489a40b5f1ae1c517639d754151d02f7",
+      "summary": "Test262Error: x Expected SameValue(«[object Object]», «[object Object]») to be true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-101gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-17gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-18gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-19-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "96a49a3f585413bf39f85e9289a11681a0a7ec81a5442b8fb05e1414cd528065",
+      "summary": "Test262Error: my_eval(\"this\") Expected SameValue(«[object Object]», «[object Object]») to be true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-19gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-20gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-45-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-45gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-46-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-46gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-47-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-47gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-48-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-48gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-49-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-49gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-50-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "269e83fae63a57e86d8dfd25ef4bdb6002d2c9041b0b3c6d4bb2539fee131588",
+      "summary": "Test262Error: f1() !== true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-50gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-51-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "9604ea5b8a6ec0a6eb1d778da830a7acb9f2c37a8f791120b4e1a46bada09e33",
+      "summary": "Test262Error: this Expected SameValue(«[object Object]», «[object Object]») to be true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-51gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-52-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "9604ea5b8a6ec0a6eb1d778da830a7acb9f2c37a8f791120b4e1a46bada09e33",
+      "summary": "Test262Error: this Expected SameValue(«[object Object]», «[object Object]») to be true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-52gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-53-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "9604ea5b8a6ec0a6eb1d778da830a7acb9f2c37a8f791120b4e1a46bada09e33",
+      "summary": "Test262Error: this Expected SameValue(«[object Object]», «[object Object]») to be true"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-53gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-64-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-64gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-65-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-65gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-83-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-83gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-84-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-84gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cbd0ec525024328cde3696c91870bf8838737071cfc0cae6af385a3d11f970f2",
+      "summary": "ReferenceError: f is not defined"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-86-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-86gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-87-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-87gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-90-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-90gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-91-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-91gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-92-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-92gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-95-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-95gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-96-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-96gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-97-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/function-code/10.4.3-1-97gs.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "1a5d0d7d1dbd9037726a0161c632c2b1aa349ec306cb2a60166ca19c95783e97",
+      "summary": "'this' had incorrect value!"
+    },
+    {
+      "path": "test/language/function-code/block-decl-onlystrict.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cd1a70579d5fb957bcd9990918a9d2d024dde1e141c4d94a7af4a2c6c6382072",
+      "summary": "TypeError: Cannot read properties of undefined (reading 'constructor')"
+    },
+    {
+      "path": "test/language/function-code/switch-case-decl-onlystrict.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cd1a70579d5fb957bcd9990918a9d2d024dde1e141c4d94a7af4a2c6c6382072",
+      "summary": "TypeError: Cannot read properties of undefined (reading 'constructor')"
+    },
+    {
+      "path": "test/language/function-code/switch-dflt-decl-onlystrict.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "cd1a70579d5fb957bcd9990918a9d2d024dde1e141c4d94a7af4a2c6c6382072",
+      "summary": "TypeError: Cannot read properties of undefined (reading 'constructor')"
+    }
+  ]
+}

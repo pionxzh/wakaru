@@ -3,6 +3,10 @@
 ## Options
 
 - complete: true
+- test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- nodeMajor: 22
+- producerVersion: 1.7.26
+- producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
 - paths: test/language/statements/block, test/language/statements/const, test/language/statements/function, test/language/expressions/function, test/language/expressions/arrow-function, test/language/statements/with
 - limit: all
 - pipeline: swc-minify
@@ -10,7 +14,7 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
-- caseTimeoutMs: 5000
+- caseTimeoutMs: 15000
 - rerunFrom: none
 - rerunStatuses: none
 
@@ -18,7 +22,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1396 | 1146 | 250 | 19 | 33 | 1094 | 0 |
+| 1396 | 1146 | 250 | 18 | 33 | 1094 | 1 |
 
 ## Reasons
 
@@ -31,9 +35,8 @@
 | unsupported | node-vm-baseline | 10 |
 | unsupported | sloppy-only-strict-ident | 3 |
 | unsupported | swc-parse-async-ident | 3 |
-| unsupported | swc-parse-deep-iife-stack-overflow | 1 |
 | unsupported | swc-parse-yield-arrow-parameter | 2 |
 
 ## Failures
 
-No Wakaru correctness failures.
+- test/language/statements/const/fn-name-class.js (decompiled-runtime)

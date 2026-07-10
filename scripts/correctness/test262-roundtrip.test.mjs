@@ -12,7 +12,9 @@ import {
   executeTestSource,
   executeModuleGraph,
   discoverTestsFromReport,
+  describeProducer,
   formatMarkdownSummary,
+  formatBaselineComparison,
   isSloppyOnlyWakaruParseUnsupported,
   knownDecompiledRuntimeRejectReason,
   knownSwcFidelityIssueReason,
@@ -28,6 +30,7 @@ import {
   runnableVariants,
   runRoundTrip,
   transformSource,
+  test262ReportExitCode,
 } from "./test262-roundtrip.mjs";
 
 test("parseTestMetadata reads inline and block list metadata", () => {
@@ -286,6 +289,17 @@ test("resolvePipelineName maps legacy transform options", () => {
   assert.equal(resolvePipelineName({ pipeline: "esbuild-minify" }), "esbuild-minify");
 });
 
+test("describeProducer records a versioned configuration hash", () => {
+  const producer = describeProducer({ pipeline: "swc-minify" });
+
+  assert.deepEqual(producer, {
+    name: "swc-minify",
+    version: "1.7.26",
+    configHash: producer.configHash,
+  });
+  assert.match(producer.configHash, /^[0-9a-f]{64}$/);
+});
+
 test("missingToolPackageSpecs checks package resolution instead of directory presence", () => {
   const root = mkdtempSync(join(tmpdir(), "wakaru-tools-unit-"));
   try {
@@ -370,6 +384,22 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
   assert.equal(options.terserProfile, "light");
   assert.match(options.summary, /target[\\/]test262-summary\.md$/);
   assert.match(options.knownBlockers, /scripts[\\/]correctness[\\/]test262-known-blockers\.json$/);
+});
+
+test("parseArgs accepts explicit complete baseline updates", () => {
+  const options = parseArgs([
+    "--preset",
+    "operators",
+    "--limit",
+    "all",
+    "--baseline",
+    "target/test262-baseline.json",
+    "--update-baseline",
+  ]);
+
+  assert.match(options.baseline, /target[\\/]test262-baseline\.json$/);
+  assert.equal(options.updateBaseline, true);
+  assert.deepEqual(options.presets, ["operators"]);
 });
 
 test("discoverTestsFromReport reruns selected result statuses", () => {
@@ -738,6 +768,36 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
   assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);
   assert.match(summary, /- c\.js \(decompiled-runtime\)/);
+});
+
+test("reviewed baseline failures pass only while the comparison stays clean", () => {
+  assert.equal(
+    test262ReportExitCode({
+      totals: { failed: 2 },
+      baselineComparison: { clean: true },
+    }),
+    0,
+  );
+  assert.equal(
+    test262ReportExitCode({
+      totals: { failed: 0 },
+      baselineComparison: { clean: false },
+    }),
+    1,
+  );
+  assert.equal(test262ReportExitCode({ totals: { failed: 1 } }), 1);
+});
+
+test("formatBaselineComparison identifies changed paths", () => {
+  const output = formatBaselineComparison({
+    clean: false,
+    totalsChanged: true,
+    newOutcomes: [{ path: "new.js", status: "failed", kind: "runtime" }],
+    unexpectedPasses: [{ path: "fixed.js", status: "rejected", kind: "known" }],
+  });
+
+  assert.match(output, /\+ new\.js \[failed:runtime\]/);
+  assert.match(output, /- fixed\.js \[rejected:known\]/);
 });
 
 test("runRoundTrip reports baseline failures as unsupported inputs", async () => {

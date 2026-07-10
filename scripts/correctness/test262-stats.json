@@ -1,12 +1,12 @@
 {
-  "commit": "f220cb90",
-  "date": "2026-06-21",
+  "commit": "697bccf0",
+  "date": "2026-07-10",
   "aggregate": {
     "producers": 3,
     "entries": 60,
-    "runnable": 41504,
-    "passed": 37852,
-    "failed": 0,
+    "runnable": 41520,
+    "passed": 37851,
+    "failed": 7,
     "pct": 100
   },
   "entries": [
@@ -50,12 +50,12 @@
       "producer": "esbuild-minify",
       "slice": "async-generators",
       "complete": true,
-      "discovered": 1707,
-      "runnable": 666,
-      "skipped": 1041,
-      "unsupported": 7,
-      "rejected": 40,
-      "passed": 619,
+      "discovered": 2963,
+      "runnable": 674,
+      "skipped": 2289,
+      "unsupported": 8,
+      "rejected": 44,
+      "passed": 622,
       "failed": 0
     },
     {
@@ -113,9 +113,9 @@
       "discovered": 2180,
       "runnable": 1647,
       "skipped": 533,
-      "unsupported": 4,
-      "rejected": 111,
-      "passed": 1532,
+      "unsupported": 7,
+      "rejected": 110,
+      "passed": 1530,
       "failed": 0
     },
     {
@@ -290,12 +290,12 @@
       "producer": "swc-minify",
       "slice": "async-generators",
       "complete": true,
-      "discovered": 1707,
-      "runnable": 666,
-      "skipped": 1041,
-      "unsupported": 17,
-      "rejected": 19,
-      "passed": 630,
+      "discovered": 2963,
+      "runnable": 674,
+      "skipped": 2289,
+      "unsupported": 20,
+      "rejected": 22,
+      "passed": 632,
       "failed": 0
     },
     {
@@ -331,8 +331,8 @@
       "skipped": 3362,
       "unsupported": 27,
       "rejected": 156,
-      "passed": 4881,
-      "failed": 0
+      "passed": 4880,
+      "failed": 1
     },
     {
       "producer": "swc-minify",
@@ -353,8 +353,8 @@
       "discovered": 2180,
       "runnable": 1647,
       "skipped": 533,
-      "unsupported": 30,
-      "rejected": 100,
+      "unsupported": 33,
+      "rejected": 97,
       "passed": 1517,
       "failed": 0
     },
@@ -414,8 +414,8 @@
       "runnable": 215,
       "skipped": 319,
       "unsupported": 0,
-      "rejected": 1,
-      "passed": 214,
+      "rejected": 0,
+      "passed": 215,
       "failed": 0
     },
     {
@@ -461,10 +461,10 @@
       "discovered": 1396,
       "runnable": 1146,
       "skipped": 250,
-      "unsupported": 19,
+      "unsupported": 18,
       "rejected": 33,
       "passed": 1094,
-      "failed": 0
+      "failed": 1
     },
     {
       "producer": "swc-minify",
@@ -487,8 +487,8 @@
       "skipped": 48,
       "unsupported": 3,
       "rejected": 3,
-      "passed": 124,
-      "failed": 0
+      "passed": 123,
+      "failed": 1
     },
     {
       "producer": "terser-light",
@@ -571,8 +571,8 @@
       "skipped": 3362,
       "unsupported": 34,
       "rejected": 681,
-      "passed": 4349,
-      "failed": 0
+      "passed": 4347,
+      "failed": 2
     },
     {
       "producer": "terser-light",
@@ -654,8 +654,8 @@
       "runnable": 215,
       "skipped": 319,
       "unsupported": 0,
-      "rejected": 4,
-      "passed": 211,
+      "rejected": 3,
+      "passed": 212,
       "failed": 0
     },
     {
@@ -703,8 +703,8 @@
       "skipped": 250,
       "unsupported": 19,
       "rejected": 8,
-      "passed": 1119,
-      "failed": 0
+      "passed": 1118,
+      "failed": 1
     },
     {
       "producer": "terser-light",
@@ -727,8 +727,8 @@
       "skipped": 48,
       "unsupported": 4,
       "rejected": 0,
-      "passed": 126,
-      "failed": 0
+      "passed": 125,
+      "failed": 1
     }
   ]
 }

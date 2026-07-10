@@ -1,0 +1,3301 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "swc-minify",
+    "version": "1.7.26",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "modules"
+    ],
+    "paths": [
+      "test/language/module-code"
+    ]
+  },
+  "totals": {
+    "discovered": 755,
+    "runnable": 358,
+    "skipped": 397,
+    "unsupported": 10,
+    "rejected": 1,
+    "passed": 347,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_export-from_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_import-and-export_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "5b63c021f55c8452efb5982b1757423cb93e27c4d5f4ea63fb1a5cc908b7c779",
+      "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding.js"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-empty-module_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-export-star-as-from-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-export-star-as-from-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-import-source-and-export-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-import-source-and-export-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-import-source-and-export-reexport_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-import-star-as-and-export-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-import-star-as-and-export-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from-and-import-star-as-and-export.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "660cbd19d2ec183e2eca6e1440a65e4188567fe7f748b8f2a91a0273726e97e2",
+      "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from-and-import-star-as-and-export.js"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "2c8f15fa4f5588b952edd42c937b964d072bdf4a0c3839a07fd470f6ee11c81a",
+      "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from.js"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-import-source-and-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-import-star-as-and-export.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "4dd5eb0eed5eb38ca52f91eb638eaef146b0e64b6a99b95423c70ffa5cfa8ea2",
+      "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-import-star-as-and-export.js"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/comment-multi-line-html-close.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/comment-single-line-html-close.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/comment-single-line-html-open.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-as-star-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-dflt-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-id-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-export-star-as-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-lables.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-lex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-top-function-async-generator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-top-function-async.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-top-function-generator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-dup-top-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-export-global.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-export-ill-formed-string.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-export-unresolvable.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-import-arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-import-as-arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-import-as-eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-import-eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-lex-and-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-new-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-strict-mode.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-super.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-undef-break.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/early-undef-continue.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/eval-export-dflt-expr-err-eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/eval-export-dflt-expr-err-get-value.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/eval-gtbndng-indirect-trlng-comma_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-gtbndng-indirect-update_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-gtbndng-indirect-update-as_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-gtbndng-indirect-update-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-abrupt-err-type_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-abrupt-err-uri_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-abrupt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-once_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-3_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-4_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-5_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-6_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-7_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-8_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-rqstd-order-9_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-self-abrupt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-default-asyncfunction-declaration-binding-exists.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-default-asyncgenerator-declaration-binding-exists.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-default-function-declaration-binding-exists.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-default-generator-declaration-binding-exists.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/export-expname-binding-index_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/export-expname-from-as-unpaired-surrogate.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname-from-star-unpaired-surrogate.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname-from-unpaired-surrogate.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname-import-unpaired-surrogate.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname-string-binding.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-expname-unpaired-surrogate.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/export-star-as-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/export-star-as-dflt.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "df4374b3516a732391de0e859e2c6d1b5ba7e902dd8fd89501231cece94bcb0b",
+      "summary": "Error: unsupported bare module import mod in test/language/module-code/export-star-as-dflt.js"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/allow-nlt-before-with.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/early-dup-attribute-key-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/early-dup-attribute-key-import-nobinding.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/early-dup-attribute-key-import-withbinding.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/ensure-linking-error_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-3_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-key-identifiername.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-key-string-double.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-key-string-single.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-many.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-newlines.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-trlng-comma.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-value-string-double.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/import-attributes/import-attribute-value-string-single.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-cls_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-const_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-fun_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-gen_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-let_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-bndng-var_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-circular_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-circular-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-circular.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-dflt-thru-star-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-dflt-thru-star-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-dflt-thru-star-int_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-dflt-thru-star.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-not-found-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-not-found-empty_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-not-found.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-iee-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-star-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-star-cycle-indirect-x_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-trlng-comma_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-bndng-dflt-expr.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "fa3a4fc5f330ab845c9a403b461e3b4807058ad4bc52a4ea6d9620477329f6b4",
+      "summary": "Error: node <tmp> failed with exit 1\nnode:internal/modules/run_main:123\n    triggerUncaughtException("
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-dflt-thru-star-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-dflt-thru-star-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-dflt-thru-star-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-dflt-thru-star-int_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-not-found-as.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-not-found-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-not-found-empty_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-err-not-found.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-named-iee-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-star-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-named-star-cycle-indirect-x_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-empty-export_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-empty-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-empty-import_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-empty-import.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-err-syntax-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-err-syntax-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-err-syntax-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-err-syntax-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-depth-child_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-depth-reference_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-depth-syntax_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-depth.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-src-reference_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-src-syntax_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-src-valid_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-order-src.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-same-global-set_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-equality-other_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-err-not-found-empty_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-err-not-found-faulty_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-err-not-found.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/instn-star-id-name.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "e47ef5d77d46521c28413a69f7abc2b601a4b929e8b0ff71dc94bf05c1d77c71",
+      "summary": "Error: unsupported bare module import  in ns,  in test/language/module-code/instn-star-id-name.js"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-multi-cycle-same-name-a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-multi-cycle-same-name-b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-multi-cycle-same-name-c_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-multi-cycle-same-name-d_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-multi-cycle-same-name.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "1700d9514a7244225976ecd1aa13c497b9e6c20a39c4787ecb9fa29f4b8579c6",
+      "summary": "Error: unsupported bare module import a in test/language/module-code/instn-star-iee-multi-cycle-same-name.js"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-single-cycle-same-name-a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-single-cycle-same-name-b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-single-cycle-same-name-c_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-iee-single-cycle-same-name.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "module-graph-baseline",
+      "fingerprint": "56291150c0cc28e886e202cd4303b08ffb900e64659c3166da1193328f234789",
+      "summary": "Error: unsupported bare module import a in test/language/module-code/instn-star-iee-single-cycle-same-name.js"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-circular-a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-circular-b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-keep-indirect-def_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-keep-indirect-reexport_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-keep-local-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-keep-local-prod_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-prod_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-named-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-prod_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-prod-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-prod_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-nrml-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-nrml-indirect_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-nrml-star_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-star-cycle-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-star-cycle-indirect-x_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-uniq-env-rec-other_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/invalid-private-names-call-expression-bad-reference.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/invalid-private-names-call-expression-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/invalid-private-names-member-expression-bad-reference.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/invalid-private-names-member-expression-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-named_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-named-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-prod_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-prod-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-props-nrml-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-props-nrml-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-props-nrml-3_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/own-property-keys-binding-types_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/super-access-to-tdz-binding.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-module-baseline",
+      "fingerprint": "038ea31166e49dfe522dc53703f069f8a1d35456a3a52eb15d8ca0d49be4ca4b",
+      "summary": "Error: node <tmp> failed with exit 1\nnode:internal/modules/run_main:123\n    triggerUncaughtException("
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-arrow-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-block-stmt-list.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-block-stmt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-decl-meth-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-decl-meth.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-decl-method-gen-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-decl-method-gen.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-expr-meth-gen-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-expr-meth-gen.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-expr-meth-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-class-expr-meth.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-do-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-in-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-in-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-in-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-in-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-of-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-of-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-of-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-of-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-for-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-function-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-function-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-generator-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-generator-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-if-else.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-if-if.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-labeled.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-object-gen-method.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-object-getter.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-object-method.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-object-setter.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-switch-case-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-switch-case.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-switch-dftl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-try-catch-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-try-catch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-try-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-try-try.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-export-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-arrow-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-block-stmt-list.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-block-stmt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-decl-meth-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-decl-meth.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-decl-method-gen-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-decl-method-gen.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-expr-meth-gen-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-expr-meth-gen.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-expr-meth-static.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-class-expr-meth.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-do-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-in-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-in-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-in-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-in-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-of-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-of-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-of-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-of-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-for-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-function-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-function-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-generator-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-generator-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-if-else.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-if-if.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-labeled.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-object-gen-method.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-object-getter.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-object-method.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-object-setter.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-switch-case-dflt.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-switch-case.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-switch-dftl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-try-catch-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-try-catch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-try-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-try-try.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-decl-pos-import-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-export-dflt-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-export-dflt-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-export-dflt-let.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-export-dflt-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-hoist-lex-fun.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-hoist-lex-gen.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-invoke-anon-fun-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-invoke-anon-gen-decl.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-return.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-semi-dflt-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-semi-export-star.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-semi-name-space-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-semi-named-export-from.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-semi-named-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-syntax-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-syntax-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/parse-err-yield.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/private-identifiers-not-empty.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-3.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-5.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-6.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-7.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/privatename-not-valid-earlyerr-module-8.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/ensure-linking-error_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/import-source-binding-name_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/import-source-binding-name-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/import-source-newlines_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/import-source.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/reexport-source-binding_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/reexport-source-binding-named-import.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/reexport-source-binding-namespace-get.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/async-module-does-not-block-sibling-modules.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/async-module-sync_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/async-module-tla_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-awaits-thenable-not-callable.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-awaits-thenables-that-throw.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-awaits-thenables.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-dynamic-import-rejection.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-dynamic-import-resolution.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-func-expression.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-new-expr-reject.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-new-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-regexp.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-reject-throws.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-expr-resolution.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/await-void-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dfs-invariant-async_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dfs-invariant-direct-1_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dfs-invariant-direct-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dfs-invariant-indirect_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-rejection.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-resolution.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/early-errors-await-not-simple-assignment-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order_a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order_a-sentinel_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order_b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order_b-sentinel_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order_setup_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/fulfillment-order.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/if-await-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-async-import-async-resolution-ticks.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-graphs-does-not-hang.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-graphs-grandparent-tla_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-graphs-parent-tla_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection-body_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection-body.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection-tick_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection-tick.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-resolution_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-resolution.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-unwrapped_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-unwrapped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-self-import-async-resolution-ticks.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-sync-import-async-resolution-ticks.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/new-await-parens.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/new-await-script-code.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "a2eb0d237623900e90807e1f1c9cae92ec524f388198aa1ece9866bdf81fba36",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (7..12, InvalidIdentInAsync) }"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/new-await.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/no-operand.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle_cycle-leaf_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle_cycle-root_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle_import-cycle-leaf_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle_setup_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order_a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order_a-sentinel_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order_b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order_b-sentinel_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order_setup_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/rejection-order.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/syntax/early-does-not-propagate-to-fn-declaration-body.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/syntax/early-does-not-propagate-to-fn-declaration-params.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/syntax/early-does-not-propagate-to-fn-expr-body.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/syntax/early-does-not-propagate-to-fn-expr-params.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/syntax/early-no-escaped-await.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/tla_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/top-level-ticks-2.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/top-level-ticks.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-c_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-d_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-e_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset-setup_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/unobservable-global-async-evaluation-count-reset.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/void-await-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/while-dynamic-evaluation.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/module-code/verify-dfs-a_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/verify-dfs-b_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/verify-dfs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    }
+  ]
+}

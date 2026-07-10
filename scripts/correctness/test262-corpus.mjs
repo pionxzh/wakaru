@@ -278,6 +278,7 @@ function git(root, args, { allowFailure = false } = {}) {
   const result = spawnSync("git", ["-C", root, ...args], {
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
   });
   if (result.error) {
     throw new Error(`git ${args.join(" ")} failed: ${result.error.message}`);

@@ -1,0 +1,1925 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "swc-minify",
+    "version": "1.7.26",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "identifiers"
+    ],
+    "paths": [
+      "test/language/identifiers"
+    ]
+  },
+  "totals": {
+    "discovered": 268,
+    "runnable": 152,
+    "skipped": 116,
+    "unsupported": 8,
+    "rejected": 112,
+    "passed": 32,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/identifiers/part-unicode-10.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-10.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-10.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-10.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-11.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-11.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-11.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-11.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-12.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-12.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-12.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-12.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-13.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-13.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-13.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-13.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-14.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-14.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-14.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-14.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.1.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8c600685f4eb3ab9cf2fba789c6fd55b6dc2ed8e9f4bcb659f79ed531e5fbbca",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[19:1]\n 16 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.1.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "0eb1faf13c9f45f4da895ae85f37c3bb4e8d2105a5bfa32bb923844fbe53e2e9",
+      "summary": "Error:   x Unexpected character '･'\n    ,-[16:1]\n 13 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.1.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "c26282a5fde4205ae2fd8ba275e2fa26344ef8605dab2f39a3898e2b808e99dc",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[16:1]\n 13 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-15.1.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "941c75dcec0994285149bfc3af54a242ed4369b152415ec5b7743b83560cdd8c",
+      "summary": "Error:   x Unexpected character '・'\n    ,-[14:1]\n 11 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-16.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8c600685f4eb3ab9cf2fba789c6fd55b6dc2ed8e9f4bcb659f79ed531e5fbbca",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[19:1]\n 16 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-16.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "284b27f0d996b484476423fd81f2710529eafdd8aad88356f89b348f96df8636",
+      "summary": "Error:   x Unexpected character '/u{10d40}'\n    ,-[16:1]\n 13 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-16.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "c26282a5fde4205ae2fd8ba275e2fa26344ef8605dab2f39a3898e2b808e99dc",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[16:1]\n 13 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-16.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "0a8831c0f2740331c8ac589d1b6d0a28df792b7e4787a1e604bd31b581eeef4d",
+      "summary": "Error:   x Unexpected character '/u{897}'\n    ,-[14:1]\n 11 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-17.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-17.0.0-class.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-17.0.0-escaped.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-17.0.0.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-5.2.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-5.2.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-5.2.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-5.2.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.1.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.1.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.1.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-6.1.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-7.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-7.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-7.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-7.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-8.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-8.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-8.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-8.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-9.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-9.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-9.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/part-unicode-9.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-10.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-10.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-10.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-10.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-11.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-11.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-11.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-11.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-12.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-12.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-12.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-12.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-13.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-13.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-13.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-13.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-14.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-14.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-14.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-14.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.1.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.1.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.1.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-15.1.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-16.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8c600685f4eb3ab9cf2fba789c6fd55b6dc2ed8e9f4bcb659f79ed531e5fbbca",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[19:1]\n 16 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-16.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a0970c9bb8ca9dbdd22c0a11c9708da8d8f840b336c991f150a3afc03a7ae0f9",
+      "summary": "Error:   x Unexpected character '/u{1c89}'\n    ,-[16:1]\n 13 | ---*/"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-16.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "c26282a5fde4205ae2fd8ba275e2fa26344ef8605dab2f39a3898e2b808e99dc",
+      "summary": "Error:   x Invalid character in identifier\n    ,-[16:1]\n 13 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-16.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "eff3e6a2b192354dadfbad7966e905ea08a0a52c536c9a59eef2ba2548eb0900",
+      "summary": "Error:   x Unexpected character '/u{1c89}'\n    ,-[14:1]\n 11 |   Generated by https://github.com/mathiasbynens/caniunicode"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-17.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-17.0.0-class.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-17.0.0-escaped.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-17.0.0.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-5.2.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-5.2.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-5.2.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-5.2.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.1.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.1.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.1.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-6.1.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-7.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-7.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-7.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-7.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-8.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-8.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-8.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-8.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-9.0.0-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-9.0.0-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
+      "summary": "SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-9.0.0-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-unicode-9.0.0.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "4163213245b9f4996ac54b54bb845da4bc4757fc034778e1e72d18cacb247e32",
+      "summary": "SyntaxError: Unexpected string"
+    },
+    {
+      "path": "test/language/identifiers/start-zwj-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/start-zwnj-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/unicode-escape-nls-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-break-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-break-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-break.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-case-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-case-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-case.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-catch-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-catch-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-catch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-class-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-class-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-class.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-const-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-const-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-const.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-continue-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-continue-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-continue.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-debugger-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-debugger-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-debugger.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-default-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-default-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-default.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-delete-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-delete-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-delete.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-do-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-do-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-do.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-else-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-else-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-else.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-enum-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-enum-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-enum.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-export-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-export-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-export.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-extends-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-extends-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-extends.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-false-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-false-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-false.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-finally-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-finally-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-finally.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-for-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-for-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-for.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-function-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-function-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-if-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-if-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-if.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-import-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-import-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-import.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-in-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-in-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-in.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-instanceof-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-instanceof-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-instanceof.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-new-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-new-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-new.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-null-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-null-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-return-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-return-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-return.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-super-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-super-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-super.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-switch-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-switch-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-switch.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-this-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-this-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-throw-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-throw-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-throw.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-true-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-true-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-true.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-try-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-try-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-try.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-typeof-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-typeof-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-typeof.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-var-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-var-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-var.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-void-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-void-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-void.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-while-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-while-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-while.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-with-via-escape-hex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-with-via-escape-hex4.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-with.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/val-yield-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/vertical-tilde-continue-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/vertical-tilde-continue.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/vertical-tilde-start-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/identifiers/vertical-tilde-start.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    }
+  ]
+}

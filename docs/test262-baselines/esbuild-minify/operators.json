@@ -1,0 +1,2633 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "esbuild-minify",
+    "version": "0.23.1",
+    "configHash": "5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "operators"
+    ],
+    "paths": [
+      "test/language/expressions/addition",
+      "test/language/expressions/subtraction",
+      "test/language/expressions/multiplication",
+      "test/language/expressions/division",
+      "test/language/expressions/modulus",
+      "test/language/expressions/exponentiation",
+      "test/language/expressions/bitwise-and",
+      "test/language/expressions/bitwise-or",
+      "test/language/expressions/bitwise-xor",
+      "test/language/expressions/bitwise-not",
+      "test/language/expressions/left-shift",
+      "test/language/expressions/right-shift",
+      "test/language/expressions/unsigned-right-shift",
+      "test/language/expressions/logical-not",
+      "test/language/expressions/unary-minus",
+      "test/language/expressions/unary-plus",
+      "test/language/expressions/typeof",
+      "test/language/expressions/void",
+      "test/language/expressions/delete",
+      "test/language/expressions/postfix-decrement",
+      "test/language/expressions/postfix-increment",
+      "test/language/expressions/prefix-decrement",
+      "test/language/expressions/prefix-increment",
+      "test/language/expressions/equals",
+      "test/language/expressions/does-not-equals",
+      "test/language/expressions/strict-equals",
+      "test/language/expressions/strict-does-not-equals",
+      "test/language/expressions/greater-than",
+      "test/language/expressions/greater-than-or-equal",
+      "test/language/expressions/less-than",
+      "test/language/expressions/less-than-or-equal",
+      "test/language/expressions/in",
+      "test/language/expressions/instanceof",
+      "test/language/expressions/relational",
+      "test/language/expressions/assignment",
+      "test/language/expressions/compound-assignment",
+      "test/language/expressions/logical-assignment"
+    ]
+  },
+  "totals": {
+    "discovered": 2200,
+    "runnable": 2011,
+    "skipped": 189,
+    "unsupported": 93,
+    "rejected": 38,
+    "passed": 1880,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/expressions/assignment/11.13.1-4-1.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "8388ce1f625cd9206b4d64094cac9b6cea7259ea866f34553f0437963d52ff39",
+      "summary": "TypeError: Cannot read properties of undefined (reading 'value')"
+    },
+    {
+      "path": "test/language/expressions/assignment/11.13.1-4-27-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
+      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+    },
+    {
+      "path": "test/language/expressions/assignment/11.13.1-4-3-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
+      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-cover.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-fn.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-gen.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
+      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-put-const.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "31947c4cccc4b9b390e9528f4aa142bbed4aa0371f6e7b5f93f80cf71275ed47",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:21:7: ERROR: Cannot assign to \"c\" because it is a constant"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-target-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "27bd5db1ff847b5aabbda834c1e9419e79b92f27f40b2fe576bef4b7e14bdd2d",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "cdadf63f5159e92a4f9091ace5536fb937d573aea28b6eb913f4672a2f76d2cc",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "4606c0634d4086885d45260cc1eff632681e23bd16a61cba5f6ccbfbd3d54427",
+      "summary": "TypeError: Iterator result undefined is not an object"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "f73249fb2a21a711014c057348a9cce813adf862456cc3e598742dd86d6e4aee",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "c443359814b34ade1be52a474fa64c5ea3a55cf8910bdbb585e6168e3f31b06f",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "e080eb49168b6254398dca7d16146d757c9c4acc911ce675fafc8c005e5efa01",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "a04f062522cfcb259496eb8521829147a71b71a573ffa3ba2f8f728c9a7b1f62",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "9165ebbb3d881d6100790a880625837aeba166d768fd60dfae9dc4e3b2892770",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-iteration.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "a390fa77397bca813fc1d8d37e14f350451fb604812d8bf589cf01f37dcdacb3",
+      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-element.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-elision.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-rest.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-elision-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-put-const.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8398716ef99e241afa61787a3284b458f5a7a80c880a598a9a721291d6eb1cca",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:21:10: ERROR: Cannot assign to \"c\" because it is a constant"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
+      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-cover.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
+      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-fn.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
+      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-gen.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
+      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-put-const.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "31947c4cccc4b9b390e9528f4aa142bbed4aa0371f6e7b5f93f80cf71275ed47",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:21:7: ERROR: Cannot assign to \"c\" because it is a constant"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
+      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-cover.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
+      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-fn.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
+      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-gen.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
+      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-put-const.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8398716ef99e241afa61787a3284b458f5a7a80c880a598a9a721291d6eb1cca",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:21:10: ERROR: Cannot assign to \"c\" because it is a constant"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-rest-not-last-element-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-rest-put-const.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "264f64499d94bf41849f7cabc3377b21ab06aefc0bcd155cc9990d5a3a9993c8",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:21:9: ERROR: Cannot assign to \"rest\" because it is a constant"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-break-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-case-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-catch-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-class-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-const-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-continue-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-debugger-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped-ext.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-delete-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-do-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-else-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-enum-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-export-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped-ext.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-finally-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-for-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-function-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-if-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-implements-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-import-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-in-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-instanceof-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-interface-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-let-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-new-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-package-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-private-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-protected-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-public-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-return-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-static-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-super-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-switch-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-this-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-throw-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-try-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-typeof-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-var-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-void-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-while-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-with-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/fn-name-class.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime-inferred-name",
+      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
+      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+    },
+    {
+      "path": "test/language/expressions/assignment/fn-name-cover.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/fn-name-fn.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/fn-name-gen.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/assignment/fn-name-lhs-cover.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "765c5e246f17c8dfa501c7c18e84e6d53f3c99caee5a0498990613d6df4e6c62",
+      "summary": "Test262Error: name descriptor value should be ; name value should be "
+    },
+    {
+      "path": "test/language/expressions/assignment/id-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/id-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/non-simple-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
+      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "c8ddbf89dff117347e7438c46c013e66cfc7810ca51d30ede22d2b7c83867d45",
+      "summary": "Test262Error: #1: innerX === undefined. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "cd0826cb6eb613e3d5d7d1f4517986ebd1863acb500d66696354242c40232bf6",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "9e013c25f0fbba1d457e3b35e086e747035e09e3ba7b96a7a67d205584dda5f4",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-assignment-inside-function.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-assignment.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-boolean.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-cover-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-cover-yieldexpr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-null.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-number.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/target-string.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/11.13.2-6-1gs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/add-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/add-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/add-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/and-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/and-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/btws-and-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/btws-or-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/btws-xor-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--11.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--13.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--15.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--17.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--19.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--21.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--5.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--7.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--9.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/div-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/div-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/div-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/left-shift-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/lshift-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/lshift-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mod-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mod-div-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mod-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mult-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mult-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/mult-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/or-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/or-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/right-shift-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
+      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
+      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7540c2c373e30b333b4579c846e670bc4a2349321a7bfde4e1a74a504e6b19de",
+      "summary": "Test262Error: #1: innerScope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
+      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
+      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
+      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7540c2c373e30b333b4579c846e670bc4a2349321a7bfde4e1a74a504e6b19de",
+      "summary": "Test262Error: #1: innerScope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
+      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
+      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
+      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
+      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d537c17cf0f317264b73305e7dd88d208e73f9dcfc53ea949eaca5235c11c704",
+      "summary": "Test262Error: #1: scope.x === 16. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "d537c17cf0f317264b73305e7dd88d208e73f9dcfc53ea949eaca5235c11c704",
+      "summary": "Test262Error: #1: scope.x === 16. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2b4495cb544464b8b01d8a4fab1f2785d8ff779c8c98cd64f7eb222a48137351",
+      "summary": "Test262Error: #1: innerScope.x === 16. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
+      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
+      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
+      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
+      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.1_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "0053d39dd4b91599f1c732b952083f1c854d8c4a1309350990bf18a5cfaa2021",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 12"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.10_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.11_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.2_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.3_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "b071c5a7e728a54a4deb1428731b0c724db7c7afb6296bc1f3eaa222321d4da0",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 3"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.4_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.6_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a7b462db73443d5bf7c364250194a8fe8422ccafd0ab810d2d806ef9da49909e",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 8"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.7_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.8_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.9_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "cd0826cb6eb613e3d5d7d1f4517986ebd1863acb500d66696354242c40232bf6",
+      "summary": "Test262Error: #1: innerX === 2. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.10_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.11_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.2_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.3_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.4_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.5_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.6_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.7_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.8_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.9_T4.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/srshift-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/srshift-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/sub-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/sub-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/subtract-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/u-right-shift-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/urshift-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/urshift-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/xor-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/xor-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/delete/11.4.1-4.a-8-s.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
+      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+    },
+    {
+      "path": "test/language/expressions/delete/identifier-strict-recursive.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/delete/identifier-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/delete/S11.4.1_A3.1.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "c568fcdc1d66ce84833c8d6c9b2b6e9e49a5f5d6bba8ad1140d7f6a62536e567",
+      "summary": "Test262Error: #2: var y = 1; delete this.y === false"
+    },
+    {
+      "path": "test/language/expressions/delete/super-property-uninitialized-this.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "71d10b97af45ab9f12a66b5d0e8b2c42bc4c7c27ff0a63f269e56fdc2a8e368e",
+      "summary": "Test262Error: Expected a ReferenceError but got a Test262Error"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-bitnot-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-delete-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-logical-not-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-negate-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-plus-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-typeof-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-void-unary-expression-base.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-in-nested.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-in.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-invalid-assignment-reference.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-invalid-assignment-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-invalid-identifier-complex.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-invalid-identifier-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-invalid-rhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-rhs-await-absent.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "c881e5d04be15d0eb49bc1e4ccf6ef9a45fc51f9c7a66314bd1985a89442cc34",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:23:9: ERROR: Cannot use \"await\" as an identifier here:"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-rhs-await-present.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/expressions/in/private-field-rhs-yield-absent.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/in/rhs-yield-absent-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-and-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-and-assignment-operator-non-simple-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-and-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-and-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-nullish-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-nullish-assignment-operator-non-simple-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-nullish-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-nullish-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-or-arguments-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-or-assignment-operator-non-simple-lhs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-or-eval-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/logical-assignment/lgcl-or-non-simple.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/line-terminator-carriage-return.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/line-terminator-line-feed.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/line-terminator-line-separator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/line-terminator-paragraph-separator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/operator-x-postfix-decrement-calls-putvalue-lhs-newvalue--1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
+      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/S11.3.2_A6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/target-cover-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/target-cover-yieldexpr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/target-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-decrement/this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/11.3.1-2-1gs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/line-terminator-carriage-return.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/line-terminator-line-feed.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/line-terminator-line-separator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/line-terminator-paragraph-separator.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/operator-x-postfix-increment-calls-putvalue-lhs-newvalue--1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
+      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/S11.3.1_A6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/target-cover-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/target-cover-yieldexpr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/target-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/postfix-increment/this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/11.4.5-2-2gs.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/operator-prefix-decrement-x-calls-putvalue-lhs-newvalue--1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
+      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
+      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/S11.4.5_A6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/target-cover-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/target-cover-yieldexpr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/target-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-decrement/this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/arguments.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/eval.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/operator-prefix-increment-x-calls-putvalue-lhs-newvalue--1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
+      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T1.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T2.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
+      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
+      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/S11.4.4_A6_T3.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
+      "summary": "Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/target-cover-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/target-cover-yieldexpr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/target-newtarget.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/this.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/typeof/get-value.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "0f4b2b970839340199d6fa8e5bc7d9ec7699da7889b259164c1940a76a2e73c0",
+      "summary": "Test262Error: typeof x === \"number\" Expected SameValue(«\"undefined\"», «\"number\"») to be true"
+    }
+  ]
+}

@@ -3,6 +3,10 @@
 ## Options
 
 - complete: true
+- test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- nodeMajor: 22
+- producerVersion: 0.23.1
+- producerConfigHash: 5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f
 - paths: test/language/function-code
 - limit: all
 - pipeline: esbuild-minify
@@ -10,7 +14,7 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
-- caseTimeoutMs: 10000
+- caseTimeoutMs: 15000
 - rerunFrom: none
 - rerunStatuses: none
 

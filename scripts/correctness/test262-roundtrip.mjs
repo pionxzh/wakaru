@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   existsSync,
@@ -34,6 +35,10 @@ import {
   parseTestMetadata,
   runnableVariants,
 } from "./test262-metadata.mjs";
+import {
+  applyTest262Baseline,
+  validateTest262BaselineOptions,
+} from "./test262-baseline.mjs";
 
 export { parseTestMetadata, runnableVariants } from "./test262-metadata.mjs";
 
@@ -61,6 +66,37 @@ const babelPackages = [
 ];
 const swcPackages = [{ name: "@swc/core", spec: "@swc/core@1.7.26" }];
 const esbuildPackages = [{ name: "esbuild", spec: "esbuild@0.23.1" }];
+const producerDefinitions = {
+  none: {
+    version: "builtin",
+    config: { transform: "none" },
+  },
+  "terser-light": {
+    version: "5.31.6",
+    config: { compress: false, mangle: false, asciiOnly: true, comments: false },
+  },
+  "terser-full": {
+    version: "5.31.6",
+    config: { compress: { passes: 2 }, mangle: { toplevel: true }, asciiOnly: true },
+  },
+  "babel-env-terser": {
+    version: "babel-7.25.2+preset-env-7.25.4+terser-5.31.6",
+    config: { babelTargets: { ie: "11" }, bugfixes: true, modules: false, terser: "light" },
+  },
+  "swc-minify": {
+    version: "1.7.26",
+    config: { compress: false, mangle: false, asciiOnly: true, comments: false },
+  },
+  "esbuild-minify": {
+    version: "0.23.1",
+    config: {
+      minifyWhitespace: true,
+      minifySyntax: true,
+      minifyIdentifiers: false,
+      target: "es2020",
+    },
+  },
+};
 const defaultPaths = [
   "test/language/expressions/coalesce",
   "test/language/expressions/optional-chaining",
@@ -187,6 +223,8 @@ export function parseArgs(argv) {
     level: defaultRewriteLevel,
     json: null,
     summary: null,
+    baseline: null,
+    updateBaseline: false,
     knownBlockers: defaultKnownBlockersPath,
     caseTimeoutMs: 5_000,
     rerunFrom: null,
@@ -218,6 +256,10 @@ export function parseArgs(argv) {
       options.json = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--summary") {
       options.summary = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--baseline") {
+      options.baseline = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--update-baseline") {
+      options.updateBaseline = true;
     } else if (arg === "--known-blockers") {
       options.knownBlockers = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--case-timeout-ms") {
@@ -271,6 +313,7 @@ export function parseArgs(argv) {
     options.rerunStatuses = ["failed"];
   }
   options.paths = [...new Set(options.paths)];
+  validateTest262BaselineOptions(options);
   return options;
 }
 
@@ -289,6 +332,8 @@ Options:
   --level <level>       minimal | standard | aggressive. Default: minimal
   --json <file>         Write full JSON report
   --summary <file>      Write deterministic Markdown summary
+  --baseline <file>     Compare against a canonical per-case JSON baseline
+  --update-baseline     Explicitly replace the selected complete baseline
   --known-blockers <f>  Known non-Wakaru blocker manifest
   --case-timeout-ms <n> Per-test timeout. Default: 5000
   --rerun-from <json>   Run paths from a previous JSON report
@@ -345,7 +390,13 @@ export function buildHarnessSource(test262Root, metadata) {
     .join("\n");
 }
 
-export async function executeTestSource({ harnessSource, testSource, filename, strict }) {
+export async function executeTestSource({
+  harnessSource,
+  testSource,
+  filename,
+  strict,
+  timeoutMs = 1000,
+}) {
   const unhandledRejections = [];
   const onUnhandledRejection = (reason) => {
     unhandledRejections.push(reason);
@@ -355,13 +406,13 @@ export async function executeTestSource({ harnessSource, testSource, filename, s
   try {
     vm.runInContext(harnessSource, context, {
       filename: "test262-harness.js",
-      timeout: 1000,
+      timeout: timeoutMs,
     });
 
     const source = strict ? `"use strict";\n${testSource}` : testSource;
     const result = vm.runInContext(source, context, {
       filename,
-      timeout: 1000,
+      timeout: timeoutMs,
     });
     if (isThenable(result)) {
       await result;
@@ -520,6 +571,21 @@ export function resolvePipelineName(options) {
   throw new Error(`unsupported transform: ${options.transform}`);
 }
 
+export function describeProducer(options) {
+  const name = resolvePipelineName(options);
+  const definition = producerDefinitions[name];
+  if (!definition) {
+    throw new Error(`missing producer definition for ${name}`);
+  }
+  return {
+    name,
+    version: definition.version,
+    configHash: createHash("sha256")
+      .update(JSON.stringify(definition.config))
+      .digest("hex"),
+  };
+}
+
 export function discoverTests(test262Root, paths) {
   const files = [];
   const root = resolve(test262Root);
@@ -634,6 +700,7 @@ function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
 }
 
 export async function runRoundTrip(options) {
+  validateTest262BaselineOptions(options);
   if (resolve(options.test262Root) === resolve(defaultManagedTest262Root)) {
     assertPinnedTest262Corpus({ root: options.test262Root });
   }
@@ -648,6 +715,9 @@ export async function runRoundTrip(options) {
     options: {
       test262Root: options.test262Root,
       test262Revision,
+      nodeMajor: Number.parseInt(process.versions.node.split(".")[0], 10),
+      producer: describeProducer(options),
+      presets: options.presets ?? [],
       paths: options.paths,
       limit: Number.isFinite(options.limit) ? options.limit : "all",
       pipeline: resolvePipelineName(options),
@@ -658,6 +728,10 @@ export async function runRoundTrip(options) {
       caseTimeoutMs: options.caseTimeoutMs,
       rerunFrom: options.rerunFrom ? relative(repoRoot, options.rerunFrom).split(sep).join("/") : null,
       rerunStatuses: options.rerunStatuses,
+      baseline: options.baseline
+        ? relative(repoRoot, options.baseline).split(sep).join("/")
+        : null,
+      updateBaseline: options.updateBaseline === true,
     },
     totals: {
       discovered: tests.length,
@@ -799,6 +873,12 @@ export async function runRoundTrip(options) {
     }
 
     report.complete = true;
+    if (options.baseline) {
+      report.baselineComparison = applyTest262Baseline(report, {
+        path: options.baseline,
+        update: options.updateBaseline === true,
+      });
+    }
     writeReportOutputs(report, options);
   } finally {
     if (!options.keepTemp) {
@@ -833,6 +913,7 @@ async function prepareScriptTest({
         testSource: source,
         filename: `${relativePath}:${variant.name}:original`,
         strict: variant.strict,
+        timeoutMs: options.caseTimeoutMs,
       });
     }
   } catch (error) {
@@ -861,6 +942,7 @@ async function prepareScriptTest({
         testSource: transformed,
         filename: `${relativePath}:${variant.name}:transformed`,
         strict: variant.strict,
+        timeoutMs: options.caseTimeoutMs,
       });
     }
   } catch (error) {
@@ -884,6 +966,7 @@ async function prepareScriptTest({
     knownBlockers,
     decompiled: null,
     decompileError: null,
+    caseTimeoutMs: options.caseTimeoutMs,
   };
 }
 
@@ -977,7 +1060,14 @@ async function prepareModuleTest({
 }
 
 async function verifyScriptTest(entry) {
-  const { relativePath, variants, harnessSource, transformed, knownBlockers } = entry;
+  const {
+    relativePath,
+    variants,
+    harnessSource,
+    transformed,
+    knownBlockers,
+    caseTimeoutMs,
+  } = entry;
 
   if (entry.decompileError) {
     if (isTimeoutError(entry.decompileError)) {
@@ -1003,6 +1093,7 @@ async function verifyScriptTest(entry) {
         testSource: decompiled,
         filename: `${relativePath}:${variant.name}:decompiled`,
         strict: variant.strict,
+        timeoutMs: caseTimeoutMs,
       });
     }
   } catch (error) {
@@ -1581,6 +1672,9 @@ export function formatMarkdownSummary(report) {
     "",
     `- complete: ${report.complete}`,
     `- test262Revision: ${report.options.test262Revision ?? "unmanaged"}`,
+    `- nodeMajor: ${report.options.nodeMajor ?? Number.parseInt(process.versions.node.split(".")[0], 10)}`,
+    `- producerVersion: ${report.options.producer?.version ?? "unrecorded"}`,
+    `- producerConfigHash: ${report.options.producer?.configHash ?? "unrecorded"}`,
     `- paths: ${report.options.paths.join(", ")}`,
     `- limit: ${report.options.limit}`,
     `- pipeline: ${report.options.pipeline}`,
@@ -1624,7 +1718,33 @@ export function formatMarkdownSummary(report) {
     lines.push("");
   }
 
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export function test262ReportExitCode(report) {
+  if (report.baselineComparison) {
+    return report.baselineComparison.clean ? 0 : 1;
+  }
+  return report.totals.failed === 0 ? 0 : 1;
+}
+
+export function formatBaselineComparison(comparison) {
+  if (!comparison || comparison.clean) {
+    return "";
+  }
+  const lines = [
+    "Test262 baseline changed:",
+    `  totals changed: ${comparison.totalsChanged}`,
+    `  new outcomes: ${comparison.newOutcomes.length}`,
+    `  disappeared outcomes: ${comparison.unexpectedPasses.length}`,
+  ];
+  for (const outcome of comparison.newOutcomes.slice(0, 20)) {
+    lines.push(`  + ${outcome.path} [${outcome.status}:${outcome.kind}]`);
+  }
+  for (const outcome of comparison.unexpectedPasses.slice(0, 20)) {
+    lines.push(`  - ${outcome.path} [${outcome.status}:${outcome.kind}]`);
+  }
+  return lines.join("\n");
 }
 
 function summarizeReasons(results) {
@@ -1847,7 +1967,10 @@ if (isMain()) {
       const report = await runRoundTrip(options);
       printReport(report, options.details);
       writeReportOutputs(report, options);
-      process.exitCode = report.totals.failed === 0 ? 0 : 1;
+      if (report.baselineComparison?.clean === false) {
+        console.error(formatBaselineComparison(report.baselineComparison));
+      }
+      process.exitCode = test262ReportExitCode(report);
     }
   } catch (error) {
     console.error(formatError(error));

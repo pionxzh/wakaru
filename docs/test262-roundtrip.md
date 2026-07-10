@@ -70,6 +70,20 @@ Use `--summary <file>` when you want a stable Markdown report suitable for
 reviewing baseline movement in git diffs. It records options, totals,
 reason-count buckets, and current Wakaru failures without timestamps.
 
+Canonical baselines are deterministic JSON files keyed by the pinned Test262
+revision, Node major version, producer version/configuration, Wakaru level, and
+selected preset. They store reviewed non-passing outcomes by path, variant,
+typed reason, and a stable fingerprint that includes emitted-code hashes while
+excluding machine-specific stack frames. Complete baseline runs fail on new or
+changed outcomes, disappeared outcomes (including unexpected passes), or total
+movement. The timeout budget is also part of the reviewed identity; the parallel
+matrix defaults to 15 seconds to avoid load-dependent process-startup timeouts.
+That budget is applied consistently to harness and test execution as well as
+producer/decompiler subprocesses. The canonical matrix runs one slice job at a
+time because each slice already parallelizes Wakaru invocations internally;
+cross-slice parallelism made producer startup and VM timeouts load-dependent.
+Filtered and limited runs cannot read or update a complete baseline.
+
 When `--json` or `--summary` is provided, the runner updates that file after
 each processed test. Interrupted runs leave `complete: false` in the report, so
 the last saved result is still inspectable.
@@ -182,6 +196,7 @@ Use `--producer` and `--slice` to refresh a subset:
 
 ```powershell
 node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators
+node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators --update
 ```
 
 Add `--missing` to skip summaries that already exist and have `complete: true`.

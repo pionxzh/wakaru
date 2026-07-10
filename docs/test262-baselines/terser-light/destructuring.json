@@ -1,0 +1,1839 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "terser-light",
+    "version": "5.31.6",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "destructuring"
+    ],
+    "paths": [
+      "test/language/expressions/assignment/dstr",
+      "test/language/statements/for-of/dstr",
+      "test/language/statements/variable/dstr"
+    ]
+  },
+  "totals": {
+    "discovered": 1034,
+    "runnable": 891,
+    "skipped": 143,
+    "unsupported": 28,
+    "rejected": 54,
+    "passed": 809,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "43daa4e93ecb8694f9341f19ee0af4cef454b488bf63e6dcce265f377abcc161",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "697703e42ad885247d96d340998ad3dae259b122ec5c21f22056e8f9088c7425",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (65..70, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "d2ccb6d2521943d0a9786df01fe43d3558c54ba48110dc5aedfa166519004c05",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (57..62, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-target-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "3b5b66a086b0b5dcafd23d55631b563bf6c8e50ec3fb05f63a853cb17f95a8f6",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (62..67, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "00371a1ad28bdec08c0c1e884beaec783f87d1cabeaf6069fcb32d9dc11360a6",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "af59a9ae769ca8967fb2f6d9f26168f97f38e003a96d21a5a323a3c802670ab3",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "162a3c6987d6d41e201d7e28450af2cf5c6bca4d96ac90d34357257f0308511b",
+      "summary": "TypeError: Iterator result undefined is not an object"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "7fac522a9e06c463f85c66532d228c6252bbada390a68ede8c13b2aa10c26434",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "43d5e697ba01c50318c89c95feb161f64afcb12b0eb728a5ef301d90933d0a2a",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "1f388b10ef4910755c72687c48503aa8c0af441e1c3d8471b0d7c288cbcaf442",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "e9c89fda7a29ec54abaf7e2ca69dbe9cc9be73f57cdf9c7c844905330cf4f047",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "ac5399bd27f35f045871e2a1b547cf45db2e52c318435ea3c6575018526011fc",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-iteration.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "9f9aafd61fbba71bc4be8ddf7a365701a6c9688a862136dd04ba622d08bcd671",
+      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-element.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-elision.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-before-rest.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-elision-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "a7a5ad921e4471ac72a7c2908ec5dcaaf961606e2510818c1aa05259436f6b45",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (66..71, WithLabel { inner: Error { error: (66..71, TS1109) }, span: 60..63, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "c19281c16b21173008917f5650e3da2301417b046527bde2342510791118c3b1",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (60..65, WithLabel { inner: Error { error: (60..65, TS1109) }, span: 52..55, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "39e3b791b98380130954dcd27520e43748d051261604319a8772a20af0154ada",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (71..76, WithLabel { inner: Error { error: (71..76, TS1109) }, span: 66..69, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-break-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-case-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-catch-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-class-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-const-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-continue-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-debugger-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-default-escaped-ext.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-default-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-delete-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-do-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-else-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-enum-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-export-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-extends-escaped-ext.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-extends-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-finally-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-for-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-function-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-if-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-import-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-in-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-instanceof-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-let-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-new-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-return-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-super-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-switch-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-this-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-throw-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-try-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-typeof-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-var-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-void-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-while-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/ident-name-prop-name-literal-with-escaped.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a6244ed5bcab9f9ef58b24242db58c6c56622db42ec21ad166ef6ee1cb36f425",
+      "summary": "SyntaxError: Escaped characters are not allowed in keywords"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "4899ffca907bd2b6effccd9ac9f10014499928f71297255bdf8c38618796b8c8",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (56..61, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "11dd05a945decadb0e7b8bd42151aa2b7e202895f30ff55bc83df0317a921fbb",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (55..60, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-id-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "11dd05a945decadb0e7b8bd42151aa2b7e202895f30ff55bc83df0317a921fbb",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (55..60, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "e5733343c3c7cc507c0b86974215a2f8c25dcbcab08adb33c1e46811afa5e4cb",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (67..72, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "ca049c18992a2a51d8f2b7cf9fcb8f59ce644c5cbedadb9ab7291b10ab17ebee",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (61..66, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "a786c47ed91dc91de775412cc42f610e0404711dae2da9a18e6a013151caa0f8",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (69..74, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/obj-rest-not-last-element-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-break-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-case-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-catch-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-class-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-const-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-continue-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-debugger-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped-ext.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-delete-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-do-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-else-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-enum-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-export-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped-ext.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-finally-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-for-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-function-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-if-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-implements-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-import-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-in-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-instanceof-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-interface-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-let-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-new-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-package-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-private-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-protected-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-public-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-return-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-static-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-super-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-switch-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-this-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-throw-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-try-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-typeof-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-var-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-void-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-while-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-with-escaped.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "aba5886e06b2aa502962f977bf5b466118fb848f7b6e22f2838ed8c8450ed82b",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (40..45, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "19b5bbe18fef91a132977e472e29ed33a6fbbebbd8b09ad783cfddbb3ec29143",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (49..54, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "d0a09ec24ac14485bd6951b432baaaf395f3843e9011201d2c74d6ea27e25cf9",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (43..48, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-target-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-target-yield-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-target-yield-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "3595db12e4c80104139807d477c060364b8e4ffea75f7b153bdfee306d756b57",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (48..53, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "59f558eb928d7f33d5b3e4a24cb55f59590f41f63189d43ebe1e3804afe50949",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "0153516590056d94e6c957d9105d53a5c831b1a0bb2cf3cecc4bc029743b9637",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "869dc8122531dd58f45b3360f83db739d2a68c1582a46b474b47c8baa138901a",
+      "summary": "TypeError: Iterator result undefined is not an object"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "3dc6f4f9fe3ee64edbb0c5435e19ee2e50c6c43c08bb1cd7c88e8756b2ad7d6b",
+      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elision-iter-abpt.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "3b3fccf20746a59f3ace46cd7db27e9c6600086c4ffd9f5082346e25e57cbb12",
+      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close-err.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "3e9cbd5e3315406fe601118ff8ba41f625fe7dd97c9e8f173ae42041b550b5a7",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close-skip.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "0462c31c6f3be257f4fb1eac4c72c18fe008694d845fb3956edec83fbf1a4291",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "6014565a015cc2cb3324e397c41342574d6a7a6fc5da79afbb092d09923021d7",
+      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-iteration.js",
+      "variant": "case",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "8371ddb96013fda4d8afbff77c5998cb91685bcd7279e369ff51ed0e32b759df",
+      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-before-element.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-before-elision.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-before-rest.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-elision-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "81e7ab8b76d8e746b6c0d7e9c042d72d6409e62dba954de7a8af1be547230143",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, WithLabel { inner: Error { error: (52..57, TS1109) }, span: 46..49, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "929345de0f021d2acad50960296dd37a6826a25a8fca79a3134e339305726509",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (46..51, WithLabel { inner: Error { error: (46..51, TS1109) }, span: 38..41, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/array-rest-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "3f019b54a99b3bd1331e6d9591e6b1322d57ff13175f81c3c2647c42101dbc69",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (51..56, WithLabel { inner: Error { error: (51..56, TS1109) }, span: 46..49, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/const-obj-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/let-obj-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "da7bdce6df695f324204e0c129efa853192396b5e16ddd8c84c0c1ee5356c3a8",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (36..41, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-init-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "fd4885bb1968d637643fbcb0dba2b9415f46e610be97da0a6551851e5bdeb3b9",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (42..47, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-id-simple-strict.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-init-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-init-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "fd4885bb1968d637643fbcb0dba2b9415f46e610be97da0a6551851e5bdeb3b9",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (42..47, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "ef67070c6bfd5c1a7b0f62413ca92574d8d81f845a62c9ea49027134b9d7ffeb",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (50..55, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "43c38b5e8c5137bb3b648d911042ae8830785a7b5a02253306c1a82a4df9ac36",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (44..49, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-yield-ident-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "sloppy-only-strict-ident",
+      "fingerprint": "43daa4e93ecb8694f9341f19ee0af4cef454b488bf63e6dcce265f377abcc161",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/obj-rest-not-last-element-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/for-of/dstr/var-obj-ptrn-init-err.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-static-init-await-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-static-init-await-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "99cbe78343bac87a71ef56befcbba1f4c9f5a3915f7017e76c6942b240079782",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (25..30, InvalidIdentInAsync) }"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-ary.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-id.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-obj.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/obj-ptrn-elem-id-static-init-await-invalid.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/statements/variable/dstr/obj-ptrn-elem-id-static-init-await-valid.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "swc-parse-async-ident",
+      "fingerprint": "4aea9ef684ff1f0a9978415ecb2ac0bd527df6a5511f6891648d04e916c2b97a",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (31..36, InvalidIdentInAsync) }"
+    }
+  ]
+}

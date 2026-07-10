@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 2,
+  "test262": {
+    "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "environment": {
+    "nodeMajor": 22
+  },
+  "producer": {
+    "name": "terser-light",
+    "version": "5.31.6",
+    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+  },
+  "wakaru": {
+    "level": "minimal",
+    "caseTimeoutMs": 15000
+  },
+  "selection": {
+    "presets": [
+      "calls"
+    ],
+    "paths": [
+      "test/language/expressions/call",
+      "test/language/expressions/new",
+      "test/language/expressions/member-expression",
+      "test/language/expressions/property-accessors",
+      "test/language/expressions/this",
+      "test/language/expressions/new.target"
+    ]
+  },
+  "totals": {
+    "discovered": 193,
+    "runnable": 185,
+    "skipped": 8,
+    "unsupported": 7,
+    "rejected": 0,
+    "passed": 178,
+    "failed": 0
+  },
+  "outcomes": [
+    {
+      "path": "test/language/expressions/call/eval-realm-indirect.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/expressions/call/eval-spread.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "eb52e7dbdc421df114538b9cd0073cc31ed97d8619d3fc310fac8456e1a8cf04",
+      "summary": "Test262Error: Expected SameValue(«\"local\"», «1») to be true"
+    },
+    {
+      "path": "test/language/expressions/call/S11.2.4_A1.3_T1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/call/tco-call-args.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-member-args.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-function-dynamic.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-function.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-global.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/call/tco-non-eval-with.js",
+      "variant": "case",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
+      "summary": "RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "path": "test/language/expressions/new.target/escaped-new.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/new.target/escaped-target.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/new.target/unary-expr.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "flag:async",
+      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
+      "summary": "flag:async"
+    },
+    {
+      "path": "test/language/expressions/new/non-ctor-err-realm.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "host-api",
+      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
+      "summary": "host-api"
+    },
+    {
+      "path": "test/language/expressions/property-accessors/non-identifier-name.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    },
+    {
+      "path": "test/language/expressions/this/S11.1.1_A1.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "negative",
+      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
+      "summary": "negative"
+    }
+  ]
+}

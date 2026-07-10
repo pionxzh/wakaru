@@ -3,6 +3,10 @@
 ## Options
 
 - complete: true
+- test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- nodeMajor: 22
+- producerVersion: 5.31.6
+- producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
 - paths: test/language/expressions/class, test/language/statements/class
 - limit: all
 - pipeline: terser-light
@@ -10,7 +14,7 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
-- caseTimeoutMs: 5000
+- caseTimeoutMs: 15000
 - rerunFrom: none
 - rerunStatuses: none
 
@@ -18,7 +22,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 5064 | 3362 | 34 | 681 | 4349 | 0 |
+| 8426 | 5064 | 3362 | 34 | 681 | 4347 | 2 |
 
 ## Reasons
 
@@ -39,5 +43,5 @@
 
 ## Failures
 
-No Wakaru correctness failures.
-
+- test/language/expressions/class/elements/class-name-static-initializer-expr.js (decompiled-runtime)
+- test/language/expressions/class/scope-name-lex-open-heritage.js (decompiled-runtime)

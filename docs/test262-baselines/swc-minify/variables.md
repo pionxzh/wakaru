@@ -3,6 +3,10 @@
 ## Options
 
 - complete: true
+- test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- nodeMajor: 22
+- producerVersion: 1.7.26
+- producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
 - paths: test/language/statements/variable
 - limit: all
 - pipeline: swc-minify
@@ -10,7 +14,7 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
-- caseTimeoutMs: 5000
+- caseTimeoutMs: 15000
 - rerunFrom: none
 - rerunStatuses: none
 
@@ -18,7 +22,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 178 | 130 | 48 | 3 | 3 | 124 | 0 |
+| 178 | 130 | 48 | 3 | 3 | 123 | 1 |
 
 ## Reasons
 
@@ -31,4 +35,4 @@
 
 ## Failures
 
-No Wakaru correctness failures.
+- test/language/statements/variable/fn-name-class.js (decompiled-runtime)
