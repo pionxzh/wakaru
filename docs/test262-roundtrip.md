@@ -210,6 +210,11 @@ is already set.
 The lower-level roundtrip runner does not fall back to `cargo run`; build the
 CLI first or set `WAKARU` before calling it directly.
 
+The `Test262 Correctness` workflow runs the tooling tests and corpus-wide
+metadata audit first, then compares all canonical baselines in one isolated CI
+job per producer. It is path-gated for correctness-related changes, can be run
+manually, and also runs weekly to catch runtime or infrastructure drift.
+
 Both runners use parallel decompilation internally: the roundtrip runner batches
 all wakaru invocations and runs them concurrently (bounded by `cpus - 2`), and
 the matrix runner runs producer/slice jobs in parallel. A full 3-producer ×

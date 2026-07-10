@@ -1,0 +1,94 @@
+name: Test262 Correctness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/test262.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/cli/**"
+      - "crates/core/**"
+      - "crates/formatter/**"
+      - "docs/test262-baselines/**"
+      - "scripts/correctness/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/test262.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/cli/**"
+      - "crates/core/**"
+      - "crates/formatter/**"
+      - "docs/test262-baselines/**"
+      - "scripts/correctness/**"
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Test correctness tooling
+        run: node --test --test-concurrency=1 scripts/correctness/*.test.mjs
+      - name: Cache pinned Test262 corpus
+        uses: actions/cache@v4
+        with:
+          path: target/correctness-tools/test262/vendor
+          key: test262-${{ runner.os }}-${{ hashFiles('scripts/correctness/test262-upstreams.json') }}
+      - name: Set up pinned Test262 corpus
+        run: node scripts/correctness/test262-corpus.mjs setup
+      - name: Audit all Test262 metadata
+        run: node scripts/correctness/test262-metadata-audit.mjs
+
+  baselines:
+    needs: harness
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        producer: [terser-light, swc-minify, esbuild-minify]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned Test262 corpus
+        uses: actions/cache@v4
+        with:
+          path: target/correctness-tools/test262/vendor
+          key: test262-${{ runner.os }}-${{ hashFiles('scripts/correctness/test262-upstreams.json') }}
+      - name: Set up pinned Test262 corpus
+        run: node scripts/correctness/test262-corpus.mjs setup
+      - name: Build wakaru CLI
+        run: cargo build -p wakaru-cli
+      - name: Compare ${{ matrix.producer }} baselines
+        run: >-
+          node scripts/correctness/test262-baseline-matrix.mjs
+          --producer ${{ matrix.producer }}
+          --skip-build
+        env:
+          WAKARU: ${{ github.workspace }}/target/debug/wakaru
+      - name: Verify cached baseline totals
+        run: >-
+          node scripts/correctness/test262-collect-stats.mjs
+          --producer ${{ matrix.producer }}
+          --check
