@@ -422,6 +422,26 @@ c = c.toLowerCase();
 }
 
 #[test]
+fn destructuring_default_uses_let_for_parenthesized_update() {
+    let input = r#"
+var arr = ["a", "b"];
+
+var b = arr[1],
+    c = b === undefined ? "" : b;
+
+(c)++;
+"#;
+    let expected = r#"
+let [, c = ""] = ["a", "b"];
+c++;
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
 fn standard_preserves_potential_object_slice_semantics() {
     let input = r#"
 var first = source[0], rest = source.slice(1);

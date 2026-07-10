@@ -256,6 +256,25 @@ fn iife_literal_arg_written_by_parenthesized_for_in_extracts_to_let() {
 }
 
 #[test]
+fn iife_literal_arg_rewrite_marks_parenthesized_update_as_let() {
+    let input = r#"
+((a) => {
+  (a)++;
+  return a;
+})(1);
+"#;
+    let expected = r#"
+(() => {
+  let a = 1;
+  a++;
+  return a;
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn iife_literal_arg_with_same_binding_var_redeclaration_is_preserved() {
     let input = r#"
 ((a) => {

@@ -335,9 +335,7 @@ impl Visit for AssignedIdsCollector {
 
     fn visit_update_expr(&mut self, expr: &UpdateExpr) {
         // x++, x-- count as assignments
-        if let Expr::Ident(id) = expr.arg.as_ref() {
-            self.assigned.insert((id.sym.clone(), id.ctxt));
-        }
+        collect_assignment_expr_ids(&expr.arg, &mut self.assigned);
         expr.visit_children_with(self);
     }
 
@@ -1315,7 +1313,7 @@ fn collect_refs_in_for_head(head: &ForHead, var_ids: &HashSet<BindingId>) -> Has
 
 fn collect_for_head_assignment_ids(head: &ForHead, out: &mut HashSet<BindingId>) {
     if let ForHead::Pat(pat) = head {
-        collect_binding_ids_from_pat(pat, out);
+        collect_assignment_pat_ids(pat, out);
     }
 }
 
@@ -1781,14 +1779,52 @@ fn static_member_prop_name(prop: &MemberProp) -> Option<Atom> {
 
 fn collect_assign_target_ids(target: &AssignTarget, out: &mut HashSet<BindingId>) {
     match target {
-        AssignTarget::Simple(simple) => {
-            if let SimpleAssignTarget::Ident(bi) = simple {
-                out.insert((bi.id.sym.clone(), bi.id.ctxt));
-            }
-        }
+        AssignTarget::Simple(simple) => collect_simple_assign_target_ids(simple, out),
         AssignTarget::Pat(pat_target) => {
             collect_assign_pat_target_ids(pat_target, out);
         }
+    }
+}
+
+fn collect_simple_assign_target_ids(target: &SimpleAssignTarget, out: &mut HashSet<BindingId>) {
+    match target {
+        SimpleAssignTarget::Ident(binding) => {
+            out.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        SimpleAssignTarget::Paren(paren) => collect_assignment_expr_ids(&paren.expr, out),
+        SimpleAssignTarget::TsAs(ts_as) => collect_assignment_expr_ids(&ts_as.expr, out),
+        SimpleAssignTarget::TsSatisfies(ts_satisfies) => {
+            collect_assignment_expr_ids(&ts_satisfies.expr, out);
+        }
+        SimpleAssignTarget::TsNonNull(ts_non_null) => {
+            collect_assignment_expr_ids(&ts_non_null.expr, out);
+        }
+        SimpleAssignTarget::TsTypeAssertion(ts_assertion) => {
+            collect_assignment_expr_ids(&ts_assertion.expr, out);
+        }
+        SimpleAssignTarget::TsInstantiation(ts_instantiation) => {
+            collect_assignment_expr_ids(&ts_instantiation.expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_assignment_expr_ids(expr: &Expr, out: &mut HashSet<BindingId>) {
+    match expr {
+        Expr::Ident(ident) => {
+            out.insert((ident.sym.clone(), ident.ctxt));
+        }
+        Expr::Paren(paren) => collect_assignment_expr_ids(&paren.expr, out),
+        Expr::TsAs(ts_as) => collect_assignment_expr_ids(&ts_as.expr, out),
+        Expr::TsSatisfies(ts_satisfies) => collect_assignment_expr_ids(&ts_satisfies.expr, out),
+        Expr::TsNonNull(ts_non_null) => collect_assignment_expr_ids(&ts_non_null.expr, out),
+        Expr::TsTypeAssertion(ts_assertion) => {
+            collect_assignment_expr_ids(&ts_assertion.expr, out);
+        }
+        Expr::TsInstantiation(ts_instantiation) => {
+            collect_assignment_expr_ids(&ts_instantiation.expr, out);
+        }
+        _ => {}
     }
 }
 
@@ -1799,25 +1835,57 @@ fn collect_assign_pat_target_ids(
     match pat {
         swc_core::ecma::ast::AssignTargetPat::Array(ap) => {
             for elem in ap.elems.iter().flatten() {
-                collect_binding_ids_from_pat(elem, out);
+                collect_assignment_pat_ids(elem, out);
             }
         }
         swc_core::ecma::ast::AssignTargetPat::Object(op) => {
             for prop in &op.props {
                 match prop {
                     swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
-                        collect_binding_ids_from_pat(&kv.value, out);
+                        collect_assignment_pat_ids(&kv.value, out);
                     }
                     swc_core::ecma::ast::ObjectPatProp::Assign(a) => {
                         out.insert((a.key.sym.clone(), a.key.ctxt));
                     }
                     swc_core::ecma::ast::ObjectPatProp::Rest(r) => {
-                        collect_binding_ids_from_pat(&r.arg, out);
+                        collect_assignment_pat_ids(&r.arg, out);
                     }
                 }
             }
         }
         swc_core::ecma::ast::AssignTargetPat::Invalid(_) => {}
+    }
+}
+
+fn collect_assignment_pat_ids(pat: &Pat, out: &mut HashSet<BindingId>) {
+    match pat {
+        Pat::Ident(binding) => {
+            out.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_assignment_pat_ids(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                        collect_assignment_pat_ids(&kv.value, out);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                        out.insert((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                        collect_assignment_pat_ids(&rest.arg, out);
+                    }
+                }
+            }
+        }
+        Pat::Assign(assign) => collect_assignment_pat_ids(&assign.left, out),
+        Pat::Rest(rest) => collect_assignment_pat_ids(&rest.arg, out),
+        Pat::Expr(expr) => collect_assignment_expr_ids(expr, out),
+        Pat::Invalid(_) => {}
     }
 }
 

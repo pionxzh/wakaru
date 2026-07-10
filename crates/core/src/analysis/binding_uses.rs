@@ -484,11 +484,7 @@ impl Visit for BindingUseCollector {
     }
 
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
-        match update.arg.as_ref() {
-            Expr::Ident(ident) => self.record_use(ident, UseKind::ReadWrite),
-            Expr::Member(member) => self.record_member_use(member, true),
-            _ => update.arg.visit_with(self),
-        }
+        self.record_assignment_expr(&update.arg, UseKind::ReadWrite);
     }
 
     fn visit_for_in_stmt(&mut self, for_in: &ForInStmt) {
@@ -677,14 +673,14 @@ mod tests {
     }
 
     #[test]
-    fn classifies_parenthesized_assignment_targets() {
-        let module = resolved("let tmp; (tmp) = value; (tmp) += next;");
+    fn classifies_parenthesized_assignment_and_update_targets() {
+        let module = resolved("let tmp; (tmp) = value; (tmp) += next; (tmp)++;");
         let index = BindingUseIndex::collect(&module);
         let tmp = binding(&module, "tmp");
 
         assert_eq!(
             index.use_kinds(&tmp),
-            vec![UseKind::Write, UseKind::ReadWrite]
+            vec![UseKind::Write, UseKind::ReadWrite, UseKind::ReadWrite]
         );
         assert!(index.has_direct_write(&tmp));
     }

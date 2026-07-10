@@ -52,6 +52,34 @@ i++;
 }
 
 #[test]
+fn var_parenthesized_assignment_becomes_let() {
+    let input = r#"
+var value = 1;
+(value) = 2;
+"#;
+    let expected = r#"
+let value = 1;
+value = 2;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_parenthesized_update_becomes_let() {
+    let input = r#"
+var value = 1;
+(value)++;
+"#;
+    let expected = r#"
+let value = 1;
+value++;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn var_without_init_becomes_let() {
     let input = r#"
 var x;
@@ -703,6 +731,24 @@ for ([x] of values) {
 let x = null;
 for ([x] of values) {
     use(x);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_parenthesized_target_marks_existing_binding_assigned() {
+    let input = r#"
+var value = null;
+for ((value) of values) {
+    use(value);
+}
+"#;
+    let expected = r#"
+let value = null;
+for (value of values) {
+    use(value);
 }
 "#;
     let output = apply_rule(input);
