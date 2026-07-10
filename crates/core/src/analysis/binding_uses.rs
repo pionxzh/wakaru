@@ -122,6 +122,12 @@ impl BindingUseIndex {
         })
     }
 
+    pub(crate) fn has_declaration(&self, binding: &BindingId) -> bool {
+        self.bindings
+            .get(binding)
+            .is_some_and(|info| !info.declarations.is_empty())
+    }
+
     #[cfg(test)]
     fn use_kinds(&self, binding: &BindingId) -> Vec<UseKind> {
         self.bindings
@@ -325,7 +331,7 @@ impl BindingUseCollector {
             Pat::Array(_) | Pat::Object(_) | Pat::Assign(_) | Pat::Rest(_) => {
                 self.record_pat_decls_as_writes(pat, kind)
             }
-            Pat::Expr(expr) => expr.visit_with(self),
+            Pat::Expr(expr) => self.record_assignment_expr(expr, kind),
             Pat::Invalid(_) => {}
         }
     }
@@ -362,7 +368,7 @@ impl BindingUseCollector {
                 assign.right.visit_with(self);
             }
             Pat::Rest(rest) => self.record_pat_decls_as_writes(&rest.arg, kind),
-            Pat::Expr(expr) => expr.visit_with(self),
+            Pat::Expr(expr) => self.record_assignment_expr(expr, kind),
             Pat::Invalid(_) => {}
         }
     }
@@ -686,11 +692,11 @@ mod tests {
     #[test]
     fn classifies_for_in_and_for_of_assignment_heads_as_writes() {
         let module = resolved(
-            "let key, value, nested; for (key in object) {} for (value of values) {} for ({ nested } of items) {}",
+            "let key, value, nested, parenthesized; for (key in object) {} for (value of values) {} for ({ nested } of items) {} for ((parenthesized) of items) {}",
         );
         let index = BindingUseIndex::collect(&module);
 
-        for name in ["key", "value", "nested"] {
+        for name in ["key", "value", "nested", "parenthesized"] {
             let id = binding(&module, name);
             assert_eq!(index.use_kinds(&id), vec![UseKind::Write]);
             assert!(index.has_direct_write(&id));

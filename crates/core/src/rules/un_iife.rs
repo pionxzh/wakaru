@@ -296,6 +296,7 @@ where
         if param_sym.len() != 1 {
             continue;
         }
+        let param_binding = (param_sym.clone(), param_ctxt);
 
         match arg.expr.as_ref() {
             Expr::Ident(ident) => {
@@ -315,8 +316,14 @@ where
                 taken_for_suffix.insert(new_sym.clone());
                 plan.renames.push((i, param_sym, new_sym, param_ctxt));
             }
-            Expr::Lit(lit) if !preserve_arg_list => {
-                let kind = if binding_uses.has_direct_write(&(param_sym.clone(), param_ctxt)) {
+            // A body declaration with the parameter's resolved binding ID is a
+            // same-binding `var`/function redeclaration. Removing the parameter
+            // and inserting a lexical declaration would either create an early
+            // error or change the redeclaration semantics.
+            Expr::Lit(lit)
+                if !preserve_arg_list && !binding_uses.has_declaration(&param_binding) =>
+            {
+                let kind = if binding_uses.has_direct_write(&param_binding) {
                     VarDeclKind::Let
                 } else {
                     VarDeclKind::Const
