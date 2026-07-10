@@ -2,10 +2,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr,
-    BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr,
-    FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp,
-    Number, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, SimpleAssignTarget, Stmt,
-    UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
+    BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl,
+    ComputedPropName, Decl, Expr, FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit,
+    MemberExpr, MemberProp, Number, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName,
+    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -323,7 +323,7 @@ fn process_pattern_c_params(
             break;
         }
         rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident.clone());
-        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident) {
+        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident, unresolved_mark) {
             stmt_idx += 1;
         }
     }
@@ -337,7 +337,12 @@ fn process_pattern_c_params(
 /// avoids regressing cases where the fold's emitted-name safety check would
 /// bail out on the param name shadowed in a nested scope. Returns true if
 /// the alias declaration was removed.
-fn try_inline_dead_alias(stmts: &mut Vec<Stmt>, alias_idx: usize, param_ident: &Ident) -> bool {
+fn try_inline_dead_alias(
+    stmts: &mut Vec<Stmt>,
+    alias_idx: usize,
+    param_ident: &Ident,
+    unresolved_mark: Mark,
+) -> bool {
     let Stmt::Decl(Decl::Var(var)) = &stmts[alias_idx] else {
         return false;
     };
@@ -357,11 +362,11 @@ fn try_inline_dead_alias(stmts: &mut Vec<Stmt>, alias_idx: usize, param_ident: &
 
     let rest = &stmts[alias_idx + 1..];
 
-    // Only inline when a property of the alias has a reassignment default
-    // (e.g. `_ref$outer = _ref$outer === void 0 ? {} : _ref$outer`). Without
-    // this, the inline just shifts naming work to SmartInline and can regress
-    // property-fold naming via the emitted-name safety check.
-    if !has_property_reassignment_default(rest, alias) {
+    // Only inline when a property of the alias has a recognized default in the
+    // following statement. Without this, the inline just shifts naming work to
+    // SmartInline and can regress property-fold naming via the emitted-name
+    // safety check.
+    if !has_property_default(rest, alias, unresolved_mark) {
         return false;
     }
 
@@ -381,9 +386,8 @@ fn try_inline_dead_alias(stmts: &mut Vec<Stmt>, alias_idx: usize, param_ident: &
 }
 
 /// True when `stmts` contains a property access on `alias` whose local binding
-/// is then reassigned with a void-0 default — the Babel 7.8 nested destructuring
-/// pattern: `let prop = alias.key; prop = prop === void 0 ? {} : prop;`
-fn has_property_reassignment_default(stmts: &[Stmt], alias: &Ident) -> bool {
+/// receives a void-0 default in the following assignment or declaration.
+fn has_property_default(stmts: &[Stmt], alias: &Ident, unresolved_mark: Mark) -> bool {
     for (i, stmt) in stmts.iter().enumerate() {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
@@ -408,7 +412,13 @@ fn has_property_reassignment_default(stmts: &[Stmt], alias: &Ident) -> bool {
             continue;
         }
         if let Some(next) = stmts.get(i + 1) {
-            if is_reassignment_default_for(next, &local.id) {
+            let has_computed_declaration_default =
+                matches!(
+                    &member.prop,
+                    MemberProp::Computed(computed)
+                        if matches!(strip_parens(&computed.expr), Expr::Ident(_))
+                ) && extract_default_from_temp_stmt(next, &local.id, unresolved_mark).is_some();
+            if is_reassignment_default_for(next, &local.id) || has_computed_declaration_default {
                 return true;
             }
         }
@@ -493,7 +503,7 @@ fn process_pattern_c_arrow_params(
             break;
         }
         rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident.clone());
-        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident) {
+        if !try_inline_dead_alias(&mut body.stmts, stmt_idx, &param_ident, unresolved_mark) {
             stmt_idx += 1;
         }
     }
@@ -1064,6 +1074,9 @@ fn fold_object_property_param_aliases(
         else {
             break;
         };
+        if !computed_object_param_keys_are_safe(params, param_idx, &destructured_pat) {
+            break;
+        }
         let short_alias_renames = rename_short_object_property_aliases(
             params,
             param_idx,
@@ -1456,7 +1469,7 @@ fn extract_object_property_alias_props(
 }
 
 struct PropertyAlias {
-    prop: Atom,
+    prop: PropName,
     local: BindingIdent,
     default_val: Option<Box<Expr>>,
 }
@@ -1481,11 +1494,20 @@ fn extract_property_alias_stmt(
         return None;
     };
     let default_val = extract_property_alias_default(obj.as_ref(), alias, unresolved_mark)?;
-    let MemberProp::Ident(prop) = prop else {
-        return None;
+    let prop = match prop {
+        MemberProp::Ident(prop) => PropName::Ident(IdentName::new(prop.sym.clone(), prop.span)),
+        MemberProp::Computed(computed)
+            if matches!(strip_parens(&computed.expr), Expr::Ident(_)) =>
+        {
+            PropName::Computed(ComputedPropName {
+                span: computed.span,
+                expr: computed.expr.clone(),
+            })
+        }
+        _ => return None,
     };
     Some(PropertyAlias {
-        prop: prop.sym.clone(),
+        prop,
         local: local.clone(),
         default_val,
     })
@@ -1700,11 +1722,10 @@ impl VisitMut for InlineTempDefaultRewriter<'_> {
 }
 
 fn object_pat_prop(
-    prop: Atom,
+    prop: PropName,
     binding: BindingIdent,
     default_val: Option<Box<Expr>>,
 ) -> ObjectPatProp {
-    let key = PropName::Ident(IdentName::new(prop.clone(), DUMMY_SP));
     let value_pat = if let Some(default_val) = default_val {
         Pat::Assign(AssignPat {
             span: DUMMY_SP,
@@ -1715,7 +1736,7 @@ fn object_pat_prop(
         Pat::Ident(binding.clone())
     };
 
-    if binding.id.sym == prop {
+    if matches!(&prop, PropName::Ident(key) if binding.id.sym == key.sym) {
         let value = match value_pat {
             Pat::Assign(assign) => Some(assign.right),
             _ => None,
@@ -1727,9 +1748,60 @@ fn object_pat_prop(
         })
     } else {
         ObjectPatProp::KeyValue(KeyValuePatProp {
-            key,
+            key: prop,
             value: Box::new(value_pat),
         })
+    }
+}
+
+fn computed_object_param_keys_are_safe(params: &[Param], param_idx: usize, pat: &Pat) -> bool {
+    let mut computed_keys = Vec::new();
+    if !collect_computed_param_key_ids(pat, &mut computed_keys) {
+        return false;
+    }
+    if computed_keys.is_empty() {
+        return true;
+    }
+
+    // The original body access runs after every parameter initializer. Keep
+    // the destructured alias last so moving its key evaluation into the
+    // parameter list cannot move it before a later initializer side effect.
+    if param_idx + 1 != params.len() {
+        return false;
+    }
+
+    let mut earlier_bindings = Vec::new();
+    for param in &params[..param_idx] {
+        collect_pat_binding_ids(&param.pat, &mut earlier_bindings);
+    }
+    computed_keys
+        .iter()
+        .all(|key| earlier_bindings.contains(key))
+}
+
+fn collect_computed_param_key_ids(pat: &Pat, out: &mut Vec<BindingId>) -> bool {
+    match pat {
+        Pat::Assign(assign) => collect_computed_param_key_ids(&assign.left, out),
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .all(|elem| collect_computed_param_key_ids(elem, out)),
+        Pat::Object(object) => object.props.iter().all(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => {
+                if let PropName::Computed(computed) = &kv.key {
+                    let Expr::Ident(key) = strip_parens(&computed.expr) else {
+                        return false;
+                    };
+                    out.push((key.sym.clone(), key.ctxt));
+                }
+                collect_computed_param_key_ids(&kv.value, out)
+            }
+            ObjectPatProp::Assign(_) => true,
+            ObjectPatProp::Rest(rest) => collect_computed_param_key_ids(&rest.arg, out),
+        }),
+        Pat::Rest(rest) => collect_computed_param_key_ids(&rest.arg, out),
+        _ => true,
     }
 }
 

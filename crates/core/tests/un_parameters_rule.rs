@@ -630,6 +630,72 @@ function pick({ name, age = 0 } = {}) {
 }
 
 #[test]
+fn computed_object_property_alias_becomes_param_pattern() {
+    let input = r#"
+function pick(property_key, _ref = {}) {
+  let _ref$property_key = _ref[property_key];
+  let value = _ref$property_key === undefined ? fallback : _ref$property_key;
+  return use(value);
+}
+"#;
+    let expected = r#"
+function pick(property_key, { [property_key]: value = fallback } = {}) {
+  return use(value);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn computed_object_property_through_generated_default_alias_becomes_param_pattern() {
+    let input = r#"
+function pick(property_key, _temp) {
+  let _ref = _temp === undefined ? {} : _temp;
+  let _ref$property_key = _ref[property_key];
+  let value = _ref$property_key === undefined ? fallback : _ref$property_key;
+  return use(value);
+}
+"#;
+    let expected = r#"
+function pick(property_key, { [property_key]: value = fallback } = {}) {
+  return use(value);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn computed_object_property_alias_before_later_param_stays_in_body() {
+    let input = r#"
+function pick(property_key, _ref = {}, later = (property_key = "other")) {
+  let _ref$property_key = _ref[property_key];
+  let value = _ref$property_key === undefined ? fallback : _ref$property_key;
+  return use(value, later);
+}
+"#;
+    let expected = r#"
+function pick(property_key, _ref = {}, later = property_key = "other") {
+  let _ref$property_key = _ref[property_key];
+  let value = _ref$property_key === undefined ? fallback : _ref$property_key;
+  return use(value, later);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn computed_object_property_alias_with_non_param_key_stays_in_body() {
+    let input = r#"
+function pick(_ref = {}) {
+  let _ref$property_key = _ref[property_key];
+  let value = _ref$property_key === undefined ? fallback : _ref$property_key;
+  return use(value);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn object_property_inline_default_aliases_become_param_pattern() {
     let input = r#"
 function pick(_ref = {}) {
