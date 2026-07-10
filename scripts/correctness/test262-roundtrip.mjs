@@ -47,6 +47,7 @@ const defaultTest262Root = defaultManagedTest262Root;
 const defaultToolRoot = join(repoRoot, "target", "correctness-tools", "test262-roundtrip");
 const defaultKnownBlockersPath = join(repoRoot, "scripts", "correctness", "test262-known-blockers.json");
 const defaultRewriteLevel = "minimal";
+export const test262HarnessVersion = 2;
 const defaultTransform = "terser";
 const defaultPipeline = null;
 const supportedTransforms = new Set(["none", "terser"]);
@@ -348,20 +349,6 @@ export function classifyTest(filePath, source, metadata) {
   if (!pathClassification.runnable) {
     return pathClassification;
   }
-  if (metadata.negative) {
-    return { runnable: false, reason: "negative" };
-  }
-  for (const flag of ["raw", "async"]) {
-    if (metadata.flags.includes(flag)) {
-      return { runnable: false, reason: `flag:${flag}` };
-    }
-  }
-  if (source.includes("$262") || source.includes("detachArrayBuffer")) {
-    return { runnable: false, reason: "host-api" };
-  }
-  if (source.includes("$DONE") || source.includes("print(")) {
-    return { runnable: false, reason: "async-or-print" };
-  }
   return { runnable: true, reason: null };
 }
 
@@ -378,7 +365,10 @@ export function classifyTestPath(filePath) {
 
 export function buildHarnessSource(test262Root, metadata) {
   const harnessDir = join(test262Root, "harness");
-  const harnessFiles = ["assert.js", "sta.js", ...metadata.includes];
+  const harnessFiles = [
+    ...(metadata.flags?.includes("raw") ? [] : ["assert.js", "sta.js"]),
+    ...(metadata.includes ?? []),
+  ];
   return harnessFiles
     .map((file) => {
       const path = join(harnessDir, file);
@@ -396,34 +386,119 @@ export async function executeTestSource({
   filename,
   strict,
   timeoutMs = 1000,
+  async = false,
+}) {
+  const outcome = await executeTestSourceOutcome({
+    harnessSource,
+    testSource,
+    filename,
+    strict,
+    timeoutMs,
+    async,
+  });
+  if (outcome.phase !== "success") {
+    throw outcome.error;
+  }
+}
+
+export async function executeTestSourceOutcome({
+  harnessSource,
+  testSource,
+  filename,
+  strict,
+  timeoutMs = 1000,
+  async = false,
 }) {
   const unhandledRejections = [];
   const onUnhandledRejection = (reason) => {
     unhandledRejections.push(reason);
   };
   process.prependListener("unhandledRejection", onUnhandledRejection);
-  const context = createTestContext();
+  let resolveDone;
+  let rejectDone;
+  const donePromise = async
+    ? new Promise((resolvePromise, rejectPromise) => {
+        resolveDone = resolvePromise;
+        rejectDone = rejectPromise;
+      })
+    : null;
+  const realm = createTestContext({
+    timeoutMs,
+    onPrint(message) {
+      if (!async) return;
+      if (message === "Test262:AsyncTestComplete") {
+        resolveDone();
+      } else if (message.startsWith("Test262:AsyncTestFailure:")) {
+        rejectDone(new Error(message));
+      }
+    },
+  });
+  const { context } = realm;
+  if (async) {
+    context.$DONE = (error) => {
+      if (error == null) {
+        resolveDone();
+      } else {
+        rejectDone(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+  }
   try {
-    vm.runInContext(harnessSource, context, {
-      filename: "test262-harness.js",
-      timeout: timeoutMs,
-    });
+    try {
+      vm.runInContext(harnessSource, context, {
+        filename: "test262-harness.js",
+        timeout: timeoutMs,
+      });
+    } catch (error) {
+      return executionOutcome("harness", error);
+    }
 
     const source = strict ? `"use strict";\n${testSource}` : testSource;
-    const result = vm.runInContext(source, context, {
-      filename,
-      timeout: timeoutMs,
-    });
-    if (isThenable(result)) {
-      await result;
+    let script;
+    try {
+      script = new vm.Script(source, { filename });
+    } catch (error) {
+      return executionOutcome("parse", error);
     }
-    await new Promise((resolve) => setImmediate(resolve));
-    if (unhandledRejections.length > 0) {
-      throw unhandledRejections[0];
+    try {
+      const result = script.runInContext(context, { timeout: timeoutMs });
+      if (isThenable(result)) {
+        await withPromiseTimeout(Promise.resolve(result), timeoutMs);
+      }
+      if (async) {
+        await withPromiseTimeout(donePromise, timeoutMs);
+      }
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+      if (unhandledRejections.length > 0) {
+        throw unhandledRejections[0];
+      }
+      return { phase: "success", error: null, errorName: null };
+    } catch (error) {
+      return executionOutcome("runtime", error);
     }
   } finally {
     process.removeListener("unhandledRejection", onUnhandledRejection);
+    realm.cleanup();
   }
+}
+
+function executionOutcome(phase, error) {
+  return {
+    phase,
+    error,
+    errorName: error?.name ?? error?.constructor?.name ?? typeof error,
+  };
+}
+
+function withPromiseTimeout(promise, timeoutMs) {
+  let handle;
+  const timeout = new Promise((_, rejectPromise) => {
+    handle = setTimeout(
+      () => rejectPromise(new Error(`async test timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(handle));
 }
 
 function isThenable(value) {
@@ -715,6 +790,7 @@ export async function runRoundTrip(options) {
     options: {
       test262Root: options.test262Root,
       test262Revision,
+      harnessVersion: test262HarnessVersion,
       nodeMajor: Number.parseInt(process.versions.node.split(".")[0], 10),
       producer: describeProducer(options),
       presets: options.presets ?? [],
@@ -813,12 +889,52 @@ export async function runRoundTrip(options) {
       }
 
       report.totals.runnable += 1;
+      if (metadata.negative && ["parse", "early"].includes(metadata.negative.phase)) {
+        recordResult(
+          report,
+          verifyParseNegative({ relativePath, source, metadata, variants }),
+          options,
+        );
+        continue;
+      }
+      const unsupportedCapability = unsupportedTest262Capability(metadata);
+      if (unsupportedCapability) {
+        recordResult(
+          report,
+          unsupported(
+            relativePath,
+            "runtime-capability",
+            new Error(`unsupported Test262 capability: ${unsupportedCapability}`),
+            unsupportedCapability,
+            { variants: variants.map((variant) => variant.name) },
+          ),
+          options,
+        );
+        continue;
+      }
       const harnessSource = buildHarnessSource(options.test262Root, metadata);
       const isModule = variants.some((v) => v.module);
 
       const prepPromise = isModule
-        ? prepareModuleTest({ filePath, relativePath, harnessSource, tmpRoot, options, knownBlockers })
-        : prepareScriptTest({ filePath, relativePath, source, harnessSource, variants, options, knownBlockers });
+        ? prepareModuleTest({
+            filePath,
+            relativePath,
+            harnessSource,
+            metadata,
+            tmpRoot,
+            options,
+            knownBlockers,
+          })
+        : prepareScriptTest({
+            filePath,
+            relativePath,
+            source,
+            harnessSource,
+            metadata,
+            variants,
+            options,
+            knownBlockers,
+          });
 
       const prep = await withTimeout(prepPromise, options.caseTimeoutMs, relativePath);
 
@@ -902,22 +1018,29 @@ async function prepareScriptTest({
   relativePath,
   source,
   harnessSource,
+  metadata,
   variants,
   options,
   knownBlockers,
 }) {
   try {
     for (const variant of variants) {
-      await executeTestSource({
+      const outcome = await executeTestSourceOutcome({
         harnessSource,
         testSource: source,
         filename: `${relativePath}:${variant.name}:original`,
         strict: variant.strict,
         timeoutMs: options.caseTimeoutMs,
+        async: metadataIsAsync(metadata),
       });
+      assertExpectedOutcome(outcome, metadata.negative, variant.name);
     }
   } catch (error) {
-    return { result: unsupported(relativePath, "baseline", error, "node-vm-baseline") };
+    return {
+      result: unsupported(relativePath, "baseline", error, "node-vm-baseline", {
+        variants: variants.map((variant) => variant.name),
+      }),
+    };
   }
 
   let transformed;
@@ -937,13 +1060,15 @@ async function prepareScriptTest({
 
   try {
     for (const variant of variants) {
-      await executeTestSource({
+      const outcome = await executeTestSourceOutcome({
         harnessSource,
         testSource: transformed,
         filename: `${relativePath}:${variant.name}:transformed`,
         strict: variant.strict,
         timeoutMs: options.caseTimeoutMs,
+        async: metadataIsAsync(metadata),
       });
+      assertExpectedOutcome(outcome, metadata.negative, variant.name);
     }
   } catch (error) {
     return {
@@ -953,6 +1078,7 @@ async function prepareScriptTest({
         error,
         knownTransformedRuntimeRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
           "transform-runtime",
+        { variants: variants.map((variant) => variant.name) },
       ),
     };
   }
@@ -967,6 +1093,7 @@ async function prepareScriptTest({
     decompiled: null,
     decompileError: null,
     caseTimeoutMs: options.caseTimeoutMs,
+    metadata,
   };
 }
 
@@ -974,26 +1101,31 @@ async function prepareModuleTest({
   filePath,
   relativePath,
   harnessSource,
+  metadata,
   tmpRoot,
   options,
   knownBlockers,
 }) {
   let originalGraph;
   try {
-    originalGraph = readModuleGraph(options.test262Root, filePath);
+    originalGraph = readModuleGraph(options.test262Root, filePath, {
+      allowMissing: metadata.negative?.phase === "resolution",
+    });
   } catch (error) {
     return { result: unsupported(relativePath, "baseline", error, "module-graph-baseline") };
   }
 
   try {
-    executeModuleGraph({
+    const outcome = executeModuleGraphOutcome({
       harnessSource,
       entryPath: relativePath,
       sources: originalGraph.sources,
       tmpRoot,
       phase: "original",
       timeoutMs: options.caseTimeoutMs,
+      async: metadataIsAsync(metadata),
     });
+    assertExpectedOutcome(outcome, metadata.negative, "module");
   } catch (error) {
     return { result: unsupported(relativePath, "baseline", error, "node-module-baseline") };
   }
@@ -1021,14 +1153,16 @@ async function prepareModuleTest({
   }
 
   try {
-    executeModuleGraph({
+    const outcome = executeModuleGraphOutcome({
       harnessSource,
       entryPath: relativePath,
       sources: transformedSources,
       tmpRoot,
       phase: "transformed",
       timeoutMs: options.caseTimeoutMs,
+      async: metadataIsAsync(metadata),
     });
+    assertExpectedOutcome(outcome, metadata.negative, "module");
   } catch (error) {
     return {
       result: rejected(
@@ -1056,7 +1190,108 @@ async function prepareModuleTest({
     knownBlockers,
     decompiledSources: new Map(),
     decompileError: null,
+    metadata,
   };
+}
+
+function verifyParseNegative({ relativePath, source, metadata, variants }) {
+  try {
+    for (const variant of variants) {
+      const outcome = parseSourceOutcome({
+        source,
+        filename: `${relativePath}:${variant.name}:original`,
+        strict: variant.strict,
+        module: variant.module === true,
+      });
+      assertExpectedOutcome(outcome, metadata.negative, variant.name);
+    }
+  } catch (error) {
+    return unsupported(relativePath, "parser-boundary", error, "node-parse-baseline", {
+      variants: variants.map((variant) => variant.name),
+    });
+  }
+  return {
+    path: relativePath,
+    status: "passed",
+    lane: "parser-boundary",
+    variants: variants.map((variant) => variant.name),
+  };
+}
+
+function parseSourceOutcome({ source, filename, strict, module }) {
+  const prepared = strict && !module ? `"use strict";\n${source}` : source;
+  if (module) {
+    const result = spawnSync(process.execPath, ["--check", "--input-type=module"], {
+      input: prepared,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    if (result.status === 0) {
+      return { phase: "success", error: null, errorName: null };
+    }
+    const diagnostic = result.stderr || result.stdout || `module parse failed for ${filename}`;
+    const errorName = diagnostic.match(/\b([A-Za-z_$][\w$]*Error)\b/)?.[1] ?? "SyntaxError";
+    return { phase: "parse", error: new Error(diagnostic.trim()), errorName };
+  }
+  try {
+    new vm.Script(prepared, { filename });
+    return { phase: "success", error: null, errorName: null };
+  } catch (error) {
+    return executionOutcome("parse", error);
+  }
+}
+
+function assertExpectedOutcome(outcome, negative, variant) {
+  if (!negative) {
+    if (outcome.phase === "success") return;
+    throw new Error(
+      `${variant}: expected success, got ${outcome.phase} ${outcome.errorName}: ${outcome.error?.message ?? outcome.error}`,
+    );
+  }
+  const expectedPhase = ["parse", "early"].includes(negative.phase)
+    ? "parse"
+    : negative.phase;
+  if (outcome.phase !== expectedPhase || outcome.errorName !== negative.type) {
+    throw new Error(
+      `${variant}: expected ${negative.phase} ${negative.type}, got ${outcome.phase} ${outcome.errorName ?? "no error"}: ${outcome.error?.message ?? outcome.error ?? "success"}`,
+    );
+  }
+}
+
+function metadataIsAsync(metadata) {
+  return metadata?.flags?.includes("async") === true;
+}
+
+export function unsupportedTest262Capability(metadata) {
+  if (metadata.flags.includes("non-deterministic")) {
+    return "flag:non-deterministic";
+  }
+  if (metadata.flags.includes("CanBlockIsFalse")) {
+    return "host:CanBlockIsFalse";
+  }
+  if (metadata.includes.some((include) => ["agent.js", "atomicsHelper.js"].includes(include))) {
+    return "host:$262.agent";
+  }
+  if (metadata.features.includes("IsHTMLDDA")) {
+    return "host:IsHTMLDDA";
+  }
+  const probes = new Map([
+    ["Temporal", () => typeof globalThis.Temporal === "object"],
+    ["ShadowRealm", () => typeof globalThis.ShadowRealm === "function"],
+    ["Float16Array", () => typeof globalThis.Float16Array === "function"],
+    ["RegExp.escape", () => typeof RegExp.escape === "function"],
+    ["promise-try", () => typeof Promise.try === "function"],
+    ["Math.sumPrecise", () => typeof Math.sumPrecise === "function"],
+    ["Error.isError", () => typeof Error.isError === "function"],
+    ["Intl.DurationFormat", () => typeof Intl.DurationFormat === "function"],
+  ]);
+  for (const feature of metadata.features) {
+    const probe = probes.get(feature);
+    if (probe && !probe()) {
+      return `feature:${feature}`;
+    }
+  }
+  return null;
 }
 
 async function verifyScriptTest(entry) {
@@ -1067,6 +1302,7 @@ async function verifyScriptTest(entry) {
     transformed,
     knownBlockers,
     caseTimeoutMs,
+    metadata,
   } = entry;
 
   if (entry.decompileError) {
@@ -1088,13 +1324,15 @@ async function verifyScriptTest(entry) {
   const decompiled = entry.decompiled;
   try {
     for (const variant of variants) {
-      await executeTestSource({
+      const outcome = await executeTestSourceOutcome({
         harnessSource,
         testSource: decompiled,
         filename: `${relativePath}:${variant.name}:decompiled`,
         strict: variant.strict,
         timeoutMs: caseTimeoutMs,
+        async: metadataIsAsync(metadata),
       });
+      assertExpectedOutcome(outcome, metadata?.negative, variant.name);
     }
   } catch (error) {
     const decompiledRuntimeReason = knownDecompiledRuntimeRejectReason({
@@ -1137,7 +1375,7 @@ async function verifyScriptTest(entry) {
 async function verifyModuleTest(entry) {
   const {
     relativePath, harnessSource, transformedSources, originalGraphSize,
-    tmpRoot, caseTimeoutMs, knownBlockers, decompiledSources,
+    tmpRoot, caseTimeoutMs, knownBlockers, decompiledSources, metadata,
   } = entry;
 
   if (entry.decompileError) {
@@ -1159,14 +1397,16 @@ async function verifyModuleTest(entry) {
   }
 
   try {
-    executeModuleGraph({
+    const outcome = executeModuleGraphOutcome({
       harnessSource,
       entryPath: relativePath,
       sources: decompiledSources,
       tmpRoot,
       phase: "decompiled",
       timeoutMs: caseTimeoutMs,
+      async: metadataIsAsync(metadata),
     });
+    assertExpectedOutcome(outcome, metadata.negative, "module");
   } catch (error) {
     const decompiled = decompiledSources.get(relativePath) ?? "";
     const decompiledRuntimeReason = knownDecompiledRuntimeRejectReason({
@@ -1232,13 +1472,14 @@ function failure(path, phase, error, extra = {}) {
   };
 }
 
-function unsupported(path, phase, error, reason = null) {
+function unsupported(path, phase, error, reason = null, extra = {}) {
   return {
     path,
     status: "unsupported",
     phase,
     reason,
     error: formatError(error),
+    ...extra,
   };
 }
 
@@ -1581,31 +1822,95 @@ function assertEsbuildUsable(toolRoot) {
   }
 }
 
-function createTestContext() {
+class UnsupportedHostCapability extends Error {
+  constructor(capability) {
+    super(`unsupported Test262 host capability: ${capability}`);
+    this.name = "UnsupportedHostCapability";
+  }
+}
+
+function createTestContext({ timeoutMs = 1000, onPrint = () => {} } = {}) {
+  const timers = new Set();
+  const childRealms = [];
+  const trackedSetTimeout = (callback, delay, ...args) => {
+    let handle;
+    handle = setTimeout(() => {
+      timers.delete(handle);
+      callback(...args);
+    }, delay);
+    timers.add(handle);
+    return handle;
+  };
+  const trackedSetInterval = (callback, delay, ...args) => {
+    const handle = setInterval(callback, delay, ...args);
+    timers.add(handle);
+    return handle;
+  };
   const context = {
     console,
-    setTimeout,
-    clearTimeout,
+    setTimeout: trackedSetTimeout,
+    clearTimeout(handle) {
+      timers.delete(handle);
+      clearTimeout(handle);
+    },
+    setInterval: trackedSetInterval,
+    clearInterval(handle) {
+      timers.delete(handle);
+      clearInterval(handle);
+    },
     setImmediate,
     clearImmediate,
+    queueMicrotask,
+    structuredClone,
   };
-  context.print = () => {};
+  context.print = (...values) => onPrint(values.map(String).join(" "));
   context.globalThis = context;
-  context.$262 = {
+  let vmContext;
+  const supportedHost = {
     global: context,
     evalScript(source) {
-      return vm.runInContext(source, vmContext, { timeout: 1000 });
+      return vm.runInContext(String(source), vmContext, { timeout: timeoutMs });
     },
     createRealm() {
-      const realm = createTestContext();
-      return realm.$262;
+      const realm = createTestContext({ timeoutMs, onPrint });
+      childRealms.push(realm);
+      return realm.context.$262;
+    },
+    detachArrayBuffer(buffer) {
+      structuredClone(buffer, { transfer: [buffer] });
     },
     gc() {
-      throw new Error("$262.gc is not available in this runner");
+      if (typeof globalThis.gc !== "function") {
+        throw new UnsupportedHostCapability("gc");
+      }
+      globalThis.gc();
     },
   };
-  const vmContext = vm.createContext(context);
-  return vmContext;
+  context.$262 = new Proxy(supportedHost, {
+    get(target, property, receiver) {
+      if (typeof property !== "string" || property in target) {
+        return Reflect.get(target, property, receiver);
+      }
+      throw new UnsupportedHostCapability(property);
+    },
+    has(target, property) {
+      return typeof property !== "string" || property in target;
+    },
+  });
+  vmContext = vm.createContext(context);
+  return {
+    context: vmContext,
+    cleanup() {
+      for (const handle of timers) {
+        clearTimeout(handle);
+        clearInterval(handle);
+      }
+      timers.clear();
+      for (const realm of childRealms) {
+        realm.cleanup();
+      }
+    },
+  };
 }
 
 function collectJsFiles(path, files) {
@@ -1672,6 +1977,7 @@ export function formatMarkdownSummary(report) {
     "",
     `- complete: ${report.complete}`,
     `- test262Revision: ${report.options.test262Revision ?? "unmanaged"}`,
+    `- harnessVersion: ${report.options.harnessVersion ?? "unrecorded"}`,
     `- nodeMajor: ${report.options.nodeMajor ?? Number.parseInt(process.versions.node.split(".")[0], 10)}`,
     `- producerVersion: ${report.options.producer?.version ?? "unrecorded"}`,
     `- producerConfigHash: ${report.options.producer?.configHash ?? "unrecorded"}`,
@@ -1825,7 +2131,7 @@ function indent(text) {
     .join("\n");
 }
 
-export function readModuleGraph(test262Root, entryPath) {
+export function readModuleGraph(test262Root, entryPath, { allowMissing = false } = {}) {
   const root = resolve(test262Root);
   const entryAbsolute = resolve(entryPath);
   const sources = new Map();
@@ -1845,6 +2151,9 @@ export function readModuleGraph(test262Root, entryPath) {
       return;
     }
     if (!existsSync(absolute)) {
+      if (allowMissing) {
+        return;
+      }
       throw new Error(`missing module import: ${normalizedPath}`);
     }
 
@@ -1853,6 +2162,9 @@ export function readModuleGraph(test262Root, entryPath) {
     sources.set(normalizedPath, source);
     for (const specifier of collectStaticModuleSpecifiers(source)) {
       if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        if (allowMissing) {
+          continue;
+        }
         throw new Error(`unsupported bare module import ${specifier} in ${normalizedPath}`);
       }
       visit(resolveModuleSpecifier(absolute, specifier));
@@ -1892,6 +2204,28 @@ function resolveModuleSpecifier(fromPath, specifier) {
 }
 
 export function executeModuleGraph({ harnessSource, entryPath, sources, tmpRoot, phase, timeoutMs }) {
+  const outcome = executeModuleGraphOutcome({
+    harnessSource,
+    entryPath,
+    sources,
+    tmpRoot,
+    phase,
+    timeoutMs,
+  });
+  if (outcome.phase !== "success") {
+    throw outcome.error;
+  }
+}
+
+export function executeModuleGraphOutcome({
+  harnessSource,
+  entryPath,
+  sources,
+  tmpRoot,
+  phase,
+  timeoutMs,
+  async = false,
+}) {
   const graphRoot = join(tmpRoot, `module-${phase}-${sanitizePathForFile(entryPath)}`);
   rmSync(graphRoot, { recursive: true, force: true });
   mkdirSync(graphRoot, { recursive: true });
@@ -1903,23 +2237,68 @@ export function executeModuleGraph({ harnessSource, entryPath, sources, tmpRoot,
   }
 
   const bootstrapPath = join(graphRoot, "__wakaru_module_bootstrap__.mjs");
+  const marker = "__WAKARU_TEST262_OUTCOME__";
   writeFileSync(
     bootstrapPath,
-    `globalThis.print = () => {};\n` +
+    `const marker = ${JSON.stringify(marker)};\n` +
+      `let doneResolve, doneReject;\n` +
+      `const donePromise = new Promise((resolve, reject) => { doneResolve = resolve; doneReject = reject; });\n` +
+      `globalThis.$DONE = error => error == null ? doneResolve() : doneReject(error);\n` +
+      `globalThis.print = message => {\n` +
+      `  const text = String(message);\n` +
+      `  if (text === "Test262:AsyncTestComplete") doneResolve();\n` +
+      `  else if (text.startsWith("Test262:AsyncTestFailure:")) doneReject(new Error(text));\n` +
+      `};\n` +
       `globalThis.$262 = {\n` +
       `  global: globalThis,\n` +
       `  evalScript(source) { return (0, eval)(source); },\n` +
       `  createRealm() { return globalThis.$262; },\n` +
+      `  detachArrayBuffer(buffer) { structuredClone(buffer, { transfer: [buffer] }); },\n` +
       `  gc() { throw new Error("$262.gc is not available in this runner"); }\n` +
       `};\n` +
-      `(0, eval)(${JSON.stringify(harnessSource)});\n` +
-      `await import(${JSON.stringify(pathToFileURL(join(graphRoot, entryPath)).href)});\n`,
+      `function classify(error) {\n` +
+      `  const message = String(error?.message ?? error);\n` +
+      `  if (error?.code === "ERR_MODULE_NOT_FOUND" || /does not provide an export|ambiguous indirect export|requested module/i.test(message)) return "resolution";\n` +
+      `  return "runtime";\n` +
+      `}\n` +
+      `function emit(outcome) { process.stdout.write(marker + JSON.stringify(outcome) + "\\n"); }\n` +
+      `try {\n` +
+      `  (0, eval)(${JSON.stringify(harnessSource)});\n` +
+      `  await import(${JSON.stringify(pathToFileURL(join(graphRoot, entryPath)).href)});\n` +
+      `  if (${JSON.stringify(async)}) await donePromise;\n` +
+      `  emit({ phase: "success", errorName: null, message: null });\n` +
+      `} catch (error) {\n` +
+      `  emit({ phase: classify(error), errorName: error?.name ?? error?.constructor?.name ?? typeof error, message: String(error?.message ?? error) });\n` +
+      `}\n`,
   );
 
-  return runChecked("node", [bootstrapPath], {
+  const result = spawnForPlatform(process.execPath, [bootstrapPath], {
     cwd: graphRoot,
-    timeoutMs,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+    timeout: timeoutMs,
   });
+  if (result.error) {
+    return executionOutcome("runtime", result.error);
+  }
+  const markerLine = String(result.stdout)
+    .split(/\r?\n/)
+    .findLast((line) => line.startsWith(marker));
+  if (!markerLine) {
+    return executionOutcome(
+      "runtime",
+      new Error(
+        `module worker produced no outcome${result.stderr ? `: ${result.stderr.trim()}` : ""}`,
+      ),
+    );
+  }
+  const response = JSON.parse(markerLine.slice(marker.length));
+  if (response.phase === "success") {
+    return { phase: "success", error: null, errorName: null };
+  }
+  const error = new Error(response.message);
+  error.name = response.errorName;
+  return { phase: response.phase, error, errorName: response.errorName };
 }
 
 function sanitizePathForFile(path) {

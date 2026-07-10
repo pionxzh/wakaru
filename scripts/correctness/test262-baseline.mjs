@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const test262BaselineSchemaVersion = 2;
+export const test262BaselineSchemaVersion = 3;
 
 export function createTest262Baseline(report) {
   if (!report.complete) {
@@ -16,6 +16,9 @@ export function createTest262Baseline(report) {
     schemaVersion: test262BaselineSchemaVersion,
     test262: {
       revision: report.options.test262Revision,
+    },
+    harness: {
+      version: report.options.harnessVersion,
     },
     environment: {
       nodeMajor: report.options.nodeMajor,
@@ -179,6 +182,7 @@ function baselineTotals(totals) {
 function assertSameIdentity(expected, actual) {
   for (const [label, left, right] of [
     ["Test262 revision", expected.test262, actual.test262],
+    ["harness version", expected.harness, actual.harness],
     ["runtime environment", expected.environment, actual.environment],
     ["producer", expected.producer, actual.producer],
     ["Wakaru options", expected.wakaru, actual.wakaru],

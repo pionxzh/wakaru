@@ -27,8 +27,9 @@ test("baseline stores environment identity and only non-passing outcomes", () =>
     ]),
   );
 
-  assert.equal(baseline.schemaVersion, 2);
+  assert.equal(baseline.schemaVersion, 3);
   assert.equal(baseline.test262.revision, "abc123");
+  assert.equal(baseline.harness.version, 2);
   assert.equal(baseline.environment.nodeMajor, 22);
   assert.equal(baseline.producer.name, "terser-light");
   assert.equal(baseline.outcomes.length, 1);
@@ -70,6 +71,17 @@ test("comparison rejects environment identity drift", () => {
   );
 });
 
+test("comparison rejects harness identity drift", () => {
+  const expected = createTest262Baseline(report([]));
+  const actual = structuredClone(expected);
+  actual.harness.version += 1;
+
+  assert.throws(
+    () => compareTest262Baseline(expected, actual),
+    /harness version mismatch/,
+  );
+});
+
 test("explicit update writes a deterministic baseline", () => {
   const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-unit-"));
   const path = join(root, "baseline.json");
@@ -80,7 +92,7 @@ test("explicit update writes a deterministic baseline", () => {
 
     assert.equal(result.updated, true);
     assert.equal(readFileSync(path, "utf8"), first);
-    assert.equal(loadTest262Baseline(path).schemaVersion, 2);
+    assert.equal(loadTest262Baseline(path).schemaVersion, 3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -156,6 +168,7 @@ function report(results) {
     complete: true,
     options: {
       test262Revision: "abc123",
+      harnessVersion: 2,
       nodeMajor: 22,
       producer: {
         name: "terser-light",

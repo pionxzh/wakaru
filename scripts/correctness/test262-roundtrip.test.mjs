@@ -10,6 +10,7 @@ import {
   classifyTest,
   collectStaticModuleSpecifiers,
   executeTestSource,
+  executeTestSourceOutcome,
   executeModuleGraph,
   discoverTestsFromReport,
   describeProducer,
@@ -31,6 +32,7 @@ import {
   runRoundTrip,
   transformSource,
   test262ReportExitCode,
+  unsupportedTest262Capability,
 } from "./test262-roundtrip.mjs";
 
 test("parseTestMetadata reads inline and block list metadata", () => {
@@ -86,20 +88,20 @@ test("runnableVariants follows Test262 strict mode flags", () => {
   ]);
 });
 
-test("classifyTest skips unsupported host-sensitive tests", () => {
+test("classifyTest leaves runtime semantics to typed execution", () => {
   assert.deepEqual(
     classifyTest("test/language/example.js", "$262.gc();", {
       flags: [],
       negative: null,
     }),
-    { runnable: false, reason: "host-api" },
+    { runnable: true, reason: null },
   );
   assert.deepEqual(
     classifyTest("test/language/example.js", "assert.sameValue(1, 1);", {
       flags: ["async"],
       negative: null,
     }),
-    { runnable: false, reason: "flag:async" },
+    { runnable: true, reason: null },
   );
   assert.deepEqual(
     classifyTest("test/language/module-code/example_FIXTURE.js", "export const value = 1;", {
@@ -114,6 +116,29 @@ test("classifyTest skips unsupported host-sensitive tests", () => {
       negative: null,
     }),
     { runnable: true, reason: null },
+  );
+});
+
+test("unsupportedTest262Capability is metadata-driven", () => {
+  assert.equal(
+    unsupportedTest262Capability({
+      flags: [],
+      includes: ["agent.js"],
+      features: [],
+    }),
+    "host:$262.agent",
+  );
+  assert.equal(
+    unsupportedTest262Capability({
+      flags: [],
+      includes: [],
+      features: ["IsHTMLDDA"],
+    }),
+    "host:IsHTMLDDA",
+  );
+  assert.equal(
+    unsupportedTest262Capability({ flags: [], includes: [], features: [] }),
+    null,
   );
 });
 
@@ -162,6 +187,43 @@ test("executeTestSource captures unhandled rejections as test failures", async (
     }),
     /Promise resolver undefined is not a function/,
   );
+});
+
+test("executeTestSourceOutcome distinguishes parse and runtime failures", async () => {
+  const parse = await executeTestSourceOutcome({
+    harnessSource: "",
+    testSource: "let x = ;",
+    filename: "parse-negative.js",
+    strict: false,
+  });
+  const runtime = await executeTestSourceOutcome({
+    harnessSource: "",
+    testSource: "throw new TypeError('expected');",
+    filename: "runtime-negative.js",
+    strict: false,
+  });
+
+  assert.equal(parse.phase, "parse");
+  assert.equal(parse.errorName, "SyntaxError");
+  assert.equal(runtime.phase, "runtime");
+  assert.equal(runtime.errorName, "TypeError");
+});
+
+test("executeTestSourceOutcome supports async $DONE and fresh host realms", async () => {
+  const outcome = await executeTestSourceOutcome({
+    harnessSource: "",
+    testSource: `
+const realm = $262.createRealm();
+if (!realm.global) throw new Error("missing realm global");
+Promise.resolve().then(() => $DONE());
+`,
+    filename: "async.js",
+    strict: false,
+    async: true,
+    timeoutMs: 1000,
+  });
+
+  assert.equal(outcome.phase, "success");
 });
 
 test("collectStaticModuleSpecifiers finds imports and re-exports", () => {
@@ -275,6 +337,121 @@ test("runRoundTrip executes module graphs", async () => {
     assert.equal(report.totals.failed, 0);
     assert.equal(report.results[0].variants[0], "module");
     assert.equal(report.results[0].modules, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip handles parse negatives, runtime negatives, async, raw, and host cases", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      join(testDir, "parse-negative.js"),
+      "/*---\nnegative: { phase: parse, type: SyntaxError }\n---*/\nlet value = ;\n",
+    );
+    writeFileSync(
+      join(testDir, "runtime-negative.js"),
+      "/*---\nnegative: { phase: runtime, type: TypeError }\n---*/\nthrow new TypeError('expected');\n",
+    );
+    writeFileSync(
+      join(testDir, "async.js"),
+      "/*---\nflags: [async]\n---*/\nPromise.resolve().then(() => $DONE());\n",
+    );
+    writeFileSync(
+      join(testDir, "raw.js"),
+      "/*---\nflags: [raw]\n---*/\nif (typeof assert !== 'undefined') throw new Error('raw harness leak');\n",
+    );
+    writeFileSync(
+      join(testDir, "detach.js"),
+      "/*---\n---*/\nconst buffer = new ArrayBuffer(8); $262.detachArrayBuffer(buffer); if (buffer.byteLength !== 0) throw new Error('not detached');\n",
+    );
+    writeFileSync(
+      join(testDir, "agent.js"),
+      "/*---\nincludes: [agent.js]\n---*/\nvoid 0;\n",
+    );
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: Number.POSITIVE_INFINITY,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 2000,
+    });
+
+    assert.equal(report.totals.passed, 5);
+    assert.equal(report.totals.unsupported, 1);
+    assert.equal(report.totals.failed, 0);
+    assert.equal(
+      report.results.find((result) => result.path.endsWith("parse-negative.js")).lane,
+      "parser-boundary",
+    );
+    assert.equal(
+      report.results.find((result) => result.path.endsWith("agent.js")).reason,
+      "host:$262.agent",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip preserves module resolution/runtime negatives and async completion", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "module-code");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      join(testDir, "runtime-negative.js"),
+      "/*---\nflags: [module]\nnegative: { phase: runtime, type: TypeError }\n---*/\nthrow new TypeError('expected');\n",
+    );
+    writeFileSync(
+      join(testDir, "resolution-negative.js"),
+      "/*---\nflags: [module]\nnegative: { phase: resolution, type: SyntaxError }\n---*/\nimport { missing } from './resolution_FIXTURE.js'; void missing;\n",
+    );
+    writeFileSync(
+      join(testDir, "resolution_FIXTURE.js"),
+      "export const present = 1;\n",
+    );
+    writeFileSync(
+      join(testDir, "async-module.js"),
+      "/*---\nflags: [module, async]\n---*/\nawait Promise.resolve(); $DONE();\n",
+    );
+    writeFileSync(
+      join(testDir, "parse-negative.js"),
+      "/*---\nflags: [module]\nnegative: { phase: parse, type: SyntaxError }\n---*/\nexport const value = ;\n",
+    );
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/module-code"],
+      limit: Number.POSITIVE_INFINITY,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 3000,
+    });
+
+    assert.equal(report.totals.passed, 3);
+    assert.equal(report.totals.skipped, 1);
+    assert.equal(report.totals.failed, 1);
+    assert.equal(report.totals.unsupported, 0);
+    assert.equal(
+      report.results.find((result) => result.path.endsWith("parse-negative.js")).lane,
+      "parser-boundary",
+    );
+    assert.equal(
+      report.results.find((result) => result.path.endsWith("resolution-negative.js")).phase,
+      "decompiled-runtime",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -764,6 +941,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
   assert.match(summary, /# Test262 Round-Trip Summary/);
   assert.match(summary, /- complete: false/);
   assert.match(summary, /- test262Revision: unmanaged/);
+  assert.match(summary, /- harnessVersion: unrecorded/);
   assert.match(summary, /- caseTimeoutMs: 5000/);
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
   assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);

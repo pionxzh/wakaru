@@ -71,8 +71,8 @@ reviewing baseline movement in git diffs. It records options, totals,
 reason-count buckets, and current Wakaru failures without timestamps.
 
 Canonical baselines are deterministic JSON files keyed by the pinned Test262
-revision, Node major version, producer version/configuration, Wakaru level, and
-selected preset. They store reviewed non-passing outcomes by path, variant,
+revision, harness version, Node major version, producer version/configuration,
+Wakaru level, and selected preset. They store reviewed non-passing outcomes by path, variant,
 typed reason, and a stable fingerprint that includes emitted-code hashes while
 excluding machine-specific stack frames. Complete baseline runs fail on new or
 changed outcomes, disappeared outcomes (including unexpected passes), or total
