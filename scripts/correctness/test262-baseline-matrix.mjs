@@ -2,14 +2,23 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const roundTripScript = join(repoRoot, "scripts", "correctness", "test262-roundtrip.mjs");
 
-export const baselineProducers = ["terser-light", "swc-minify", "esbuild-minify"];
+export const normalBaselineProducers = ["terser-light", "swc-minify", "esbuild-minify"];
+export const moduleGraphBaselineProducers = [
+  "none",
+  "babel-env-terser",
+  "swc-minify",
+  "esbuild-minify",
+];
+export const baselineProducers = unique([
+  ...normalBaselineProducers,
+  ...moduleGraphBaselineProducers,
+]);
 
 export const baselineSlices = [
   "default",
@@ -90,65 +99,82 @@ export function parseMatrixArgs(argv) {
   }
 
   validateRequestedValues("--producer", options.producers, baselineProducers);
-  validateRequestedValues("--slice", options.slices, baselineSlices);
+  validateRequestedValues("--slice", options.slices, [...baselineSlices, "module-graph"]);
   return options;
 }
 
 export function buildBaselineMatrixJobs(options = {}) {
   const producers = unique(options.producers?.length ? options.producers : baselineProducers);
-  const slices = unique(options.slices?.length ? options.slices : baselineSlices);
+  const requestedSlices = unique(options.slices ?? []);
+  const slices = requestedSlices.length > 0
+    ? requestedSlices.filter((slice) => slice !== "module-graph")
+    : baselineSlices;
   const limit = options.limit ?? "all";
 
-  const jobs = producers.flatMap((producer) =>
-    slices.map((slice) => {
-      const summary = join(repoRoot, "docs", "test262-baselines", producer, `${slice}.md`);
-      const baseline = join(repoRoot, "docs", "test262-baselines", producer, `${slice}.json`);
-      const args = [
-        roundTripScript,
-        "--preset",
-        slice,
-        "--pipeline",
-        producer,
-        "--limit",
-        String(limit),
-        "--summary",
-        summary,
-        "--baseline",
-        baseline,
-      ];
-
-      if (options.updateBaselines) {
-        args.push("--update-baseline");
-      }
-
-      pushOptionalPair(args, "--test262", options.test262Root);
-      pushOptionalPair(args, "--level", options.level);
-      pushOptionalPair(args, "--known-blockers", options.knownBlockers);
-      pushOptionalPair(args, "--case-timeout-ms", options.caseTimeoutMs);
-      pushOptionalPair(args, "--tool-root", options.toolRoot);
-      if (options.details) {
-        args.push("--details");
-      }
-      if (options.keepTemp) {
-        args.push("--keep-temp");
-      }
-
-      return {
-        producer,
-        slice,
-        summary,
-        baseline,
-        command: process.execPath,
-        args,
-      };
-    }),
-  );
+  const jobs = producers.flatMap((producer) => {
+    const producerJobs = normalBaselineProducers.includes(producer)
+      ? slices.map((slice) => createMatrixJob({ producer, slice, preset: slice, limit, options }))
+      : [];
+    if (
+      moduleGraphBaselineProducers.includes(producer) &&
+      (requestedSlices.length === 0 || requestedSlices.includes("module-graph"))
+    ) {
+      producerJobs.push(
+        createMatrixJob({
+          producer,
+          slice: "module-graph",
+          preset: "modules",
+          limit,
+          options,
+        }),
+      );
+    }
+    return producerJobs;
+  });
 
   if (options.missingOnly) {
     return jobs.filter((job) => !isCompleteSummary(job.summary));
   }
 
   return jobs;
+}
+
+function createMatrixJob({ producer, slice, preset, limit, options }) {
+  const outputDir = slice === "module-graph"
+    ? join(repoRoot, "docs", "test262-baselines", "module-graph")
+    : join(repoRoot, "docs", "test262-baselines", producer);
+  const outputName = slice === "module-graph" ? producer : slice;
+  const summary = join(outputDir, `${outputName}.md`);
+  const baseline = join(outputDir, `${outputName}.json`);
+  const args = [
+    roundTripScript,
+    "--preset",
+    preset,
+    "--pipeline",
+    producer,
+    "--limit",
+    String(limit),
+    "--summary",
+    summary,
+    "--baseline",
+    baseline,
+  ];
+  if (options.updateBaselines) args.push("--update-baseline");
+  pushOptionalPair(args, "--test262", options.test262Root);
+  pushOptionalPair(args, "--level", options.level);
+  pushOptionalPair(args, "--known-blockers", options.knownBlockers);
+  pushOptionalPair(args, "--case-timeout-ms", options.caseTimeoutMs);
+  pushOptionalPair(args, "--tool-root", options.toolRoot);
+  if (options.details) args.push("--details");
+  if (options.keepTemp) args.push("--keep-temp");
+  return {
+    producer,
+    slice,
+    summary,
+    baseline,
+    command: process.execPath,
+    args,
+  };
 }
 
 export function formatCommand(job) {
@@ -230,7 +256,7 @@ export function usage() {
 
 Options:
   --producer <name>       Producer to run. Repeatable. Default: ${baselineProducers.join(", ")}
-  --slice <name>          Test262 slice to run. Repeatable. Default: ${baselineSlices.join(", ")}
+  --slice <name>          Test262 slice to run. Repeatable; also accepts module-graph
   --limit <n|all>         Runnable test limit passed through. Default: all
   --test262 <dir>         Test262 checkout passed through
   --level <level>         Wakaru rewrite level passed through

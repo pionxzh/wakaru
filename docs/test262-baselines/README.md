@@ -55,13 +55,20 @@ and `for-await-of` statement tests.
 mangling. Use `--pipeline none` or `--transform none` when a no-producer
 baseline is needed.
 
-`module-graph/` is different: it runs the module-code slice with recursive
-module dependency loading. Its file names are producer pipelines:
+`module-graph/` runs the same recursive module-code lane with additional
+producer variants that are not part of the normal 20-slice producer matrix.
+Its file names are producer pipelines, and each has both canonical JSON and a
+Markdown review summary:
 
 ```text
 module-graph/none.md
+module-graph/none.json
+module-graph/babel-env-terser.md
+module-graph/babel-env-terser.json
 module-graph/swc-minify.md
+module-graph/swc-minify.json
 module-graph/esbuild-minify.md
+module-graph/esbuild-minify.json
 ```
 
 Regenerate the normal baseline matrix with:
@@ -70,7 +77,8 @@ Regenerate the normal baseline matrix with:
 node scripts\correctness\test262-baseline-matrix.mjs
 ```
 
-Use `--producer` or `--slice` to refresh a subset.
+Use `--producer` or `--slice` to refresh a subset. Select only the additional
+module producer variants with `--slice module-graph`.
 Baseline replacement also requires `--update`; ordinary runs compare without
 rewriting reviewed outcomes.
 Use `--missing` to skip summaries that already exist and have `complete: true`.

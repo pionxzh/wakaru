@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        producer: [terser-light, swc-minify, esbuild-minify]
+        producer: [terser-light, swc-minify, esbuild-minify, none, babel-env-terser]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -88,6 +88,7 @@ jobs:
         env:
           WAKARU: ${{ github.workspace }}/target/debug/wakaru
       - name: Verify cached baseline totals
+        if: matrix.producer != 'none' && matrix.producer != 'babel-env-terser'
         run: >-
           node scripts/correctness/test262-collect-stats.mjs
           --producer ${{ matrix.producer }}

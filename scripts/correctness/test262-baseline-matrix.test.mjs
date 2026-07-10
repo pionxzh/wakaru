@@ -2,21 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  baselineProducers,
   baselineSlices,
   buildBaselineMatrixJobs,
+  moduleGraphBaselineProducers,
+  normalBaselineProducers,
   parseMatrixArgs,
 } from "./test262-baseline-matrix.mjs";
 
 test("baseline matrix runs every slice for every producer", () => {
   const jobs = buildBaselineMatrixJobs();
 
-  assert.equal(jobs.length, baselineProducers.length * baselineSlices.length);
+  assert.equal(
+    jobs.length,
+    normalBaselineProducers.length * baselineSlices.length + moduleGraphBaselineProducers.length,
+  );
 
-  for (const producer of baselineProducers) {
+  for (const producer of normalBaselineProducers) {
     assert.deepEqual(
-      jobs.filter((job) => job.producer === producer).map((job) => job.slice),
+      jobs
+        .filter((job) => job.producer === producer && job.slice !== "module-graph")
+        .map((job) => job.slice),
       baselineSlices,
+    );
+  }
+  for (const producer of moduleGraphBaselineProducers) {
+    assert.equal(
+      jobs.filter((job) => job.producer === producer && job.slice === "module-graph").length,
+      1,
     );
   }
 });
@@ -51,6 +63,25 @@ test("baseline matrix deduplicates repeatable filters", () => {
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].producer, "swc-minify");
   assert.equal(jobs[0].slice, "calls");
+});
+
+test("baseline matrix creates canonical module graph jobs", () => {
+  const jobs = buildBaselineMatrixJobs({
+    producers: ["none", "babel-env-terser"],
+    slices: ["module-graph"],
+  });
+
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(jobs.map((job) => job.slice), ["module-graph", "module-graph"]);
+  assert.match(jobs[0].baseline, /module-graph[\\/]none\.json$/);
+  assert.deepEqual(jobs[0].args.slice(1, 7), [
+    "--preset",
+    "modules",
+    "--pipeline",
+    "none",
+    "--limit",
+    "all",
+  ]);
 });
 
 test("parseMatrixArgs supports repeatable producer and slice filters", () => {
@@ -91,6 +122,10 @@ test("parseMatrixArgs supports repeatable producer and slice filters", () => {
 });
 
 test("parseMatrixArgs rejects unknown producer or slice", () => {
+  assert.deepEqual(
+    parseMatrixArgs(["--producer", "none", "--slice", "module-graph"]).producers,
+    ["none"],
+  );
   assert.throws(() => parseMatrixArgs(["--producer", "unknown"]), /unsupported --producer unknown/);
   assert.throws(() => parseMatrixArgs(["--slice", "unknown"]), /unsupported --slice unknown/);
 });

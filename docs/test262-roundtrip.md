@@ -224,14 +224,14 @@ the matrix runner runs producer/slice jobs in parallel. A full 3-producer ×
 not followed by Terser.
 
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
-these run the modules slice with recursive local dependency loading. In this
-directory, the file name is the producer pipeline.
+these add no-transform and Babel producer coverage to the canonical recursive
+modules slice (and retain matching SWC/esbuild views). In this directory, the
+file name is the producer pipeline. The baseline matrix includes these jobs;
+select only them with `--slice module-graph`.
 
 ```powershell
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline none --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\none.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline swc-minify --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\swc-minify.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbuild-minify --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\esbuild-minify.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
+node scripts\correctness\test262-baseline-matrix.mjs --slice module-graph
+node scripts\correctness\test262-baseline-matrix.mjs --slice module-graph --update
 ```
 
 The recorded totals are **not** kept inline here — they live in two places
