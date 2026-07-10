@@ -32,6 +32,8 @@ pub(super) struct VueSetupLocalBinding {
     pub(super) module_scope: bool,
     pub(super) template_selectable: bool,
     pub(super) setup_order: usize,
+    pub(super) always_emit: bool,
+    pub(super) preserve_ref_values: bool,
 }
 
 #[derive(Clone)]

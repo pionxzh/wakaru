@@ -112,6 +112,9 @@ impl VueSelectionPlan {
     }
 
     fn wants_declaration(&self, declaration: &VueSetupLocalBinding) -> bool {
+        if declaration.always_emit {
+            return true;
+        }
         let wanted_refs = if declaration.module_scope {
             &self.module_wanted_refs
         } else {

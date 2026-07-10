@@ -54,12 +54,23 @@ function increment() {
   </button>
 </template>
 `,
-    expected: [
-      "<template>",
-      "<button",
-      ":class=\"{ active: props.active }\"",
-      "@click=\"increment\"",
-      "{{ props.count }}",
+    expectedAny: [
+      [
+        "<script setup>",
+        "const props = defineProps(",
+        "defineEmits(",
+        ":class=\"{ active: props.active }\"",
+        "@click=\"increment\"",
+        "{{ props.count }}",
+      ],
+      [
+        "<script setup>",
+        "const props = defineProps(",
+        "defineEmits(",
+        ":class=\"{ active }\"",
+        "@click=\"increment\"",
+        "{{ count }}",
+      ],
     ],
   },
   {
@@ -111,7 +122,12 @@ defineProps({
   </article>
 </template>
 `,
-    expected: ["<PanelHeader :title=\"title\" />", "<slot name=\"body\">Empty</slot>"],
+    expected: [
+      "<script setup>",
+      "import PanelHeader from \"./PanelHeader.vue\";",
+      "<PanelHeader :title=\"title\" />",
+      "<slot name=\"body\">Empty</slot>",
+    ],
   },
   {
     name: "scoped-slots-with-destructuring",
@@ -151,7 +167,7 @@ const visible = true
   <input v-model="value" v-show="visible" />
 </template>
 `,
-    expected: ["v-model=\"value\"", "v-show=\"visible\""],
+    expected: ["<script setup>", "v-model=\"value\"", "v-show=\"visible\""],
   },
 ];
 

@@ -464,18 +464,23 @@ pub(super) fn recover_for_params(
     let mut values = Vec::new();
     let mut renames = Vec::new();
     let mut bindings = Vec::new();
+    let mut used_names = ctx.for_param_names.clone();
 
     for (param, fallback) in params.iter().take(3).zip(fallback_names) {
         collect_pat_bindings(param, &mut bindings);
         match param {
             Pat::Ident(binding) => {
-                values.push(fallback.clone());
-                renames.push((binding.id.sym.clone(), fallback));
+                let emitted = unique_for_param_fallback(&fallback, &mut used_names);
+                values.push(emitted.clone());
+                renames.push((binding.id.sym.clone(), emitted));
             }
             _ => {
                 let Some(value) = for_param_pat(param, ctx)? else {
                     return Ok(None);
                 };
+                let mut preserved_bindings = Vec::new();
+                collect_pat_bindings(param, &mut preserved_bindings);
+                used_names.extend(preserved_bindings.into_iter().map(|name| name.to_string()));
                 values.push(value);
             }
         }
@@ -591,6 +596,15 @@ pub(super) fn list_item_context(
     params: &RecoveredForParams,
 ) -> VueRecoveryContext {
     let mut item_ctx = ctx.clone();
+    item_ctx
+        .for_param_names
+        .extend(params.bindings.iter().map(|binding| {
+            params
+                .renames
+                .iter()
+                .find_map(|(from, to)| (from == binding).then(|| to.clone()))
+                .unwrap_or_else(|| binding.to_string())
+        }));
     if item_ctx
         .render_context
         .as_ref()
@@ -1297,6 +1311,10 @@ fn recover_static_component_tag(
     expr: &Expr,
     ctx: &VueRecoveryContext,
 ) -> Option<RecoveredComponentTag> {
+    if let Some(name) = render_setup_component_name(expr, ctx) {
+        return recover_named_component_tag(&name, ctx);
+    }
+
     let ident = match expr {
         Expr::Ident(ident) => ident,
         Expr::Member(member) if is_default_member_prop(&member.prop) => {
@@ -1308,40 +1326,80 @@ fn recover_static_component_tag(
         _ => return None,
     };
 
-    let import_ref = ctx
-        .script_imports
-        .contains_key(&ident.sym)
-        .then(|| ident.sym.clone());
+    recover_named_component_tag(&ident.sym, ctx)
+}
 
+fn render_setup_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Atom> {
+    let Expr::Member(member) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    let Expr::Ident(object) = member.obj.as_ref() else {
+        return None;
+    };
+    if ctx
+        .render_setup_context
+        .as_ref()
+        .is_none_or(|setup| setup != &object.sym)
+    {
+        return None;
+    }
+    match &member.prop {
+        MemberProp::Ident(prop) => Some(prop.sym.clone()),
+        MemberProp::Computed(computed) => string_lit(computed.expr.as_ref()).map(Atom::from),
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
+fn recover_named_component_tag(
+    name: &Atom,
+    ctx: &VueRecoveryContext,
+) -> Option<RecoveredComponentTag> {
     ctx.component_bindings
-        .get(&ident.sym)
+        .get(name)
         .cloned()
         .map(|tag| RecoveredComponentTag {
+            import_ref: component_import_ref(name, &tag, ctx),
             tag,
-            import_ref: import_ref.clone(),
             attrs: Vec::new(),
         })
         .or_else(|| {
-            ctx.vue_helpers
-                .get(&ident.sym)
-                .and_then(|helper| match helper {
-                    VueHelper::Other(name) if is_builtin_component(name) => {
-                        Some(RecoveredComponentTag {
-                            tag: name.clone(),
-                            import_ref: None,
-                            attrs: Vec::new(),
-                        })
-                    }
-                    _ => None,
-                })
+            ctx.vue_helpers.get(name).and_then(|helper| match helper {
+                VueHelper::Other(name) if is_builtin_component(name) => {
+                    Some(RecoveredComponentTag {
+                        tag: name.clone(),
+                        import_ref: None,
+                        attrs: Vec::new(),
+                    })
+                }
+                _ => None,
+            })
         })
         .or_else(|| {
-            is_pascal_case(&ident.sym).then(|| RecoveredComponentTag {
-                tag: ident.sym.to_string(),
-                import_ref,
+            is_pascal_case(name).then(|| RecoveredComponentTag {
+                tag: name.to_string(),
+                import_ref: ctx.script_imports.contains_key(name).then(|| name.clone()),
                 attrs: Vec::new(),
             })
         })
+}
+
+fn component_import_ref(name: &Atom, tag: &str, ctx: &VueRecoveryContext) -> Option<Atom> {
+    if ctx.script_imports.contains_key(name) {
+        return Some(name.clone());
+    }
+    let mut matches = ctx
+        .script_imports
+        .keys()
+        .filter(|local| {
+            local.as_ref() == tag
+                || ctx
+                    .component_bindings
+                    .get(*local)
+                    .is_some_and(|component| component == tag)
+        })
+        .cloned();
+    let import_ref = matches.next()?;
+    matches.next().is_none().then_some(import_ref)
 }
 
 fn is_default_member_prop(prop: &MemberProp) -> bool {

@@ -31,13 +31,23 @@ render JavaScript."
 
 - Vue 3 render helper imports and common Vite-style helper aliasing.
 - Standalone render functions and setup-returned render functions.
-- Basic script setup reconstruction for props, emits, refs, computed values,
-  setup locals, imported components, and common composables.
+- Script setup reconstruction for props, emits, refs, computed values, setup
+  locals, imported components, common composables, and compiler-generated
+  `setup(...)` objects paired with a separate render function.
+- Authored top-level script-setup effects such as `watch(...)`, lifecycle hooks,
+  and their imports, while compiler-only expose/return markers are omitted.
 - Template recovery for common element/component vnodes, text interpolation,
   static and dynamic attrs, events, class/style bindings, `v-if`, `v-for`,
   slots, dynamic components, and common runtime directives.
 - Additive CLI behavior for batch/unpack use cases.
 - Public-corpus smoke runs for small Vite projects and opt-in larger projects.
+- The official Vue docs Composition API examples: all 27 component fixtures at
+  docs commit `e4641141026871271e5083c99ad4cd3f4a8e9a68` recover to parseable,
+  template-compilable SFCs with required import specifiers and no leaked
+  script-setup markers. The stricter generated-template comparison is 12/27;
+  it also treats harmless loop-variable renaming and equivalent template syntax
+  as different, so it is a conservative fidelity signal rather than a semantic
+  pass rate.
 
 ## Known Gaps
 
@@ -63,6 +73,20 @@ render JavaScript."
   source locations.
 
 ## Public Corpus Workflow
+
+Use `scripts/repro/vue-docs-examples/` for a fast, focused check of the official
+Vue examples:
+
+```powershell
+node scripts/repro/vue-docs-examples/run.mjs
+node scripts/repro/vue-docs-examples/run.mjs --filter grid
+node --test scripts/repro/vue-docs-examples/run.test.mjs
+```
+
+The runner clones `vuejs/docs` over SSH into `target/vue-docs/` when needed,
+assembles the same Composition API SFC shape as the docs playground, compiles
+it with the docs repository's Vue version, and writes its report under
+`target/vue-docs-examples/`.
 
 Use `scripts/repro/vue-public-corpus/` for confidence checks and gap discovery:
 

@@ -7,6 +7,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::js_names::is_valid_identifier_name;
 
+use super::context::compiled_script_setup;
 use super::expressions::print_expr;
 use super::locals::{setup_script_binding_refs, VueSetupLocalBinding};
 use super::syntax::{prop_name, string_lit};
@@ -112,7 +113,20 @@ fn render_value_member_refs(render: RenderSource<'_>, ctx: &VueRecoveryContext) 
         refs: HashSet::new(),
     };
     match render {
-        RenderSource::Function { render, .. } => render.function.visit_with(&mut collector),
+        RenderSource::Function {
+            render,
+            component_options,
+        } => {
+            let options = component_options
+                .or(ctx.setup_component_options.as_ref())
+                .or(ctx.component_options.as_ref());
+            if let Some(setup) = compiled_script_setup(options) {
+                for stmt in setup.setup_stmts {
+                    stmt.visit_with(&mut collector);
+                }
+            }
+            render.function.visit_with(&mut collector);
+        }
         RenderSource::SetupArrow {
             render,
             setup_stmts,

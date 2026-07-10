@@ -130,6 +130,34 @@ foo_1();
 }
 
 #[test]
+fn generates_unique_name_when_target_shadowed_by_nested_function_declaration() {
+    let input = r#"
+import { shuffle as _shuffle } from 'lodash-es';
+export default {
+  setup() {
+    function shuffle(items) {
+      return _shuffle(items);
+    }
+    return { shuffle };
+  }
+};
+"#;
+    let expected = r#"
+import { shuffle as shuffle_1 } from 'lodash-es';
+export default {
+  setup() {
+    function shuffle(items) {
+      return shuffle_1(items);
+    }
+    return { shuffle };
+  }
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn generates_unique_name_when_target_shadowed_by_top_level_block() {
     // A `const foo` inside a module-level `if` block shadows references
     // to the renamed import within that block. The rename must account for

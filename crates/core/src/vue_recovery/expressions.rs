@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
-    IdentName, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -92,10 +92,27 @@ pub(super) fn print_clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> R
 }
 
 pub(super) fn clean_setup_stmt(stmt: &Stmt, ctx: &VueRecoveryContext) -> Stmt {
+    clean_setup_stmt_with_ref_values(stmt, ctx, false)
+}
+
+pub(super) fn clean_setup_stmt_preserving_ref_values(
+    stmt: &Stmt,
+    ctx: &VueRecoveryContext,
+) -> Stmt {
+    clean_setup_stmt_with_ref_values(stmt, ctx, true)
+}
+
+fn clean_setup_stmt_with_ref_values(
+    stmt: &Stmt,
+    ctx: &VueRecoveryContext,
+    preserve_ref_values: bool,
+) -> Stmt {
     let mut stmt = stmt.clone();
     stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
     rename_bindings(&mut stmt, &super::setup_alias_renames(ctx));
-    stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
+    if !preserve_ref_values {
+        stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
+    }
     stmt
 }
 
@@ -243,6 +260,9 @@ impl<'a> ContextMemberCleaner<'a> {
                 prefixes.push(render_context.as_ref());
             }
         }
+        if let Some(render_setup_context) = &ctx.render_setup_context {
+            prefixes.push(render_setup_context.as_ref());
+        }
         if let Some(setup_props_context) = &ctx.setup_props_context {
             prefixes.push(setup_props_context.as_ref());
         }
@@ -313,16 +333,26 @@ impl<'a> ContextMemberCleaner<'a> {
         }
     }
 
-    fn replacement_ident(&self, prop: &IdentName) -> Ident {
-        let sym = self
-            .prop_bindings
-            .get(&prop.sym)
-            .cloned()
-            .unwrap_or_else(|| prop.sym.clone());
+    fn replacement_ident(&self, prop: &MemberProp) -> Option<Ident> {
+        let (sym, span) = match prop {
+            MemberProp::Ident(prop) => (prop.sym.clone(), prop.span),
+            MemberProp::Computed(computed) => {
+                let Expr::Lit(swc_core::ecma::ast::Lit::Str(value)) = computed.expr.as_ref() else {
+                    return None;
+                };
+                let name = super::syntax::wtf8_to_string(&value.value);
+                if !crate::js_names::is_valid_identifier_name(&name) {
+                    return None;
+                }
+                (Atom::from(name), computed.span)
+            }
+            MemberProp::PrivateName(_) => return None,
+        };
+        let sym = self.prop_bindings.get(&sym).cloned().unwrap_or(sym);
         // The collapsed member access (`_ctx.foo` -> `foo`) is a free reference to
         // a template-scope binding; stamp the resolver's unresolved context so the
         // cleaned AST carries a consistent (non-colliding) context.
-        Ident::new(sym, prop.span, self.unresolved_ctxt)
+        Some(Ident::new(sym, span, self.unresolved_ctxt))
     }
 }
 
@@ -332,10 +362,7 @@ impl VisitMut for ContextMemberCleaner<'_> {
 
         let replacement = match &assign.left {
             AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
-                match &member.prop {
-                    MemberProp::Ident(prop) => Some(self.replacement_ident(prop)),
-                    MemberProp::Computed(_) | MemberProp::PrivateName(_) => None,
-                }
+                self.replacement_ident(&member.prop)
             }
             _ => None,
         };
@@ -352,10 +379,7 @@ impl VisitMut for ContextMemberCleaner<'_> {
 
         let replacement = match expr {
             Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
-                match &member.prop {
-                    MemberProp::Ident(prop) => Some(self.replacement_ident(prop)),
-                    MemberProp::Computed(_) | MemberProp::PrivateName(_) => None,
-                }
+                self.replacement_ident(&member.prop)
             }
             _ => None,
         };

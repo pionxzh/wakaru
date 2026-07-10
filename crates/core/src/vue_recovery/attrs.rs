@@ -886,6 +886,12 @@ fn cached_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<S
 }
 
 fn arrow_handler_expr(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    if matches!(arrow.params.first(), Some(Pat::Object(_) | Pat::Array(_))) {
+        return Ok(Some(clean_attr_expr(
+            &print_expr(&Expr::Arrow(arrow.clone()), ctx)?,
+            ctx,
+        )));
+    }
     let event_param = arrow_event_param(arrow);
     match arrow.body.as_ref() {
         BlockStmtOrExpr::Expr(expr) => handler_expr_name(expr.as_ref(), ctx, event_param),
@@ -916,9 +922,7 @@ fn handler_expr_name(
         Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
             clean_event_handler_expr(bin.left.as_ref(), ctx, event_param).map(Some)
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
-            clean_event_handler_expr(expr, ctx, event_param).map(Some)
-        }
+        Expr::Assign(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         Expr::Update(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         Expr::Call(_) => clean_event_handler_expr(expr, ctx, event_param).map(Some),
         _ => Ok(None),

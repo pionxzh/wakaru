@@ -123,6 +123,8 @@ fn test_local_binding_with_scope(
         module_scope,
         template_selectable: true,
         setup_order: 0,
+        always_emit: false,
+        preserve_ref_values: false,
     }
 }
 
@@ -485,6 +487,113 @@ export default _sfc_main;
             recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default()).unwrap().unwrap(),
             "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
         );
+}
+
+#[test]
+fn recovers_compiled_script_setup_with_external_render_function() {
+    let input = r#"
+import DemoGrid from "./Grid.vue";
+import { ref } from "vue";
+
+const _sfc_ = {
+  __name: "App",
+  setup(__props, { expose: __expose }) {
+    __expose();
+    const searchQuery = ref("");
+    const gridColumns = ["name", "power"];
+    const gridData = [{ name: "Chuck Norris", power: Infinity }];
+    const returned = { searchQuery, gridColumns, gridData, DemoGrid, ref };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+
+import { createVNode, Fragment, openBlock, createElementBlock } from "vue";
+function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock(Fragment, null, [
+    createVNode($setup["DemoGrid"], {
+      data: $setup.gridData,
+      columns: $setup.gridColumns,
+      "filter-key": $setup.searchQuery
+    }, null, 8, ["filter-key"])
+  ], 64);
+}
+
+_sfc_.render = render;
+_sfc_.__file = "src/App.vue";
+export default _sfc_;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(recovered.contains("<script setup>"));
+    assert!(
+        recovered.contains("import DemoGrid from \"./Grid.vue\";"),
+        "{recovered}"
+    );
+    assert!(recovered.contains("import { ref } from \"vue\";"));
+    assert!(recovered.contains("const searchQuery = ref(\"\");"));
+    assert!(recovered.contains("<DemoGrid"));
+    assert!(recovered.contains(":data=\"gridData\""));
+    assert!(recovered.contains(":filter-key=\"searchQuery\""));
+    assert!(!recovered.contains("$setup"));
+    assert!(!recovered.contains("__isScriptSetup"));
+    assert!(!recovered.contains("__expose"));
+}
+
+#[test]
+fn preserves_compiled_script_setup_side_effects_and_their_imports() {
+    let input = r#"
+import { onUnmounted, ref, watch } from "vue";
+
+const _sfc_ = {
+  __name: "App",
+  setup(__props, { expose: __expose }) {
+    __expose();
+    const selected = ref("");
+    watch(selected, () => console.log(selected.value));
+    onUnmounted(() => console.log("done"));
+    const returned = { selected, onUnmounted, ref, watch };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+
+import { createElementBlock, openBlock, toDisplayString } from "vue";
+function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("p", null, toDisplayString($setup.selected), 1);
+}
+
+_sfc_.render = render;
+export default _sfc_;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("import { onUnmounted, ref, watch } from \"vue\";"),
+        "{recovered}"
+    );
+    assert!(
+        recovered.contains("watch(selected, ()=>console.log(selected.value));"),
+        "{recovered}"
+    );
+    assert!(
+        recovered.contains("onUnmounted(()=>console.log(\"done\"));"),
+        "{recovered}"
+    );
+    assert!(!recovered.contains("__expose"));
+    assert!(!recovered.contains("__isScriptSetup"));
 }
 
 #[test]
@@ -4585,6 +4694,44 @@ export function render(_ctx, _cache) {
 }
 
 #[test]
+fn recovers_cached_compound_assignment_event() {
+    let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("button", {
+    onClick: _cache[0] || (_cache[0] = ($event) => _ctx.message += "!")
+  }, "Append");
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <button @click='message += \"!\"'>Append</button>\n</template>\n"
+    );
+}
+
+#[test]
+fn preserves_destructured_cached_vnode_hook_parameter() {
+    let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("input", {
+    onVnodeMounted: _cache[0] || (_cache[0] = ({ el }) => el.focus())
+  });
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <input @vue:mounted=\"({ el })=>el.focus()\" />\n</template>\n"
+    );
+}
+
+#[test]
 fn recovers_logical_assign_cached_event_direct_call() {
     let input = r#"
 import { openBlock, createElementBlock } from "vue";
@@ -5281,6 +5428,31 @@ export function render(e, a) {
             recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default()).unwrap().unwrap(),
             "<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
         );
+}
+
+#[test]
+fn nested_v_for_fallback_params_do_not_shadow_each_other() {
+    let input = r#"
+import { renderList, Fragment, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("table", null, [
+    (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.rows, entry => (
+      openBlock(), createElementBlock("tr", null, [
+        (openBlock(true), createElementBlock(Fragment, null, renderList(_ctx.columns, key => (
+          openBlock(), createElementBlock("td", null, toDisplayString(entry[key]), 1)
+        )), 256))
+      ])
+    )), 256))
+  ]);
+}
+"#;
+
+    assert_eq!(
+        recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+            .unwrap()
+            .unwrap(),
+        "<template>\n  <table>\n    <tr v-for=\"item in rows\">\n      <td v-for=\"item_1 in columns\">{{ item[item_1] }}</td>\n    </tr>\n  </table>\n</template>\n"
+    );
 }
 
 #[test]

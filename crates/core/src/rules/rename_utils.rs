@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, Decl, DefaultDecl, ExportNamedSpecifier,
-    Expr, Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp,
-    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
-    Prop, PropName, Stmt, VarDeclarator,
+    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, Decl, DefaultDecl,
+    ExportNamedSpecifier, Expr, FnDecl, Function, Ident, ImportDecl, ImportNamedSpecifier,
+    ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -129,6 +129,20 @@ impl RenameShadowIndex {
                     collect_pat_names(&declarator.name, &mut scope.declared_names);
                 }
                 declarator.visit_children_with(self);
+            }
+
+            fn visit_fn_decl(&mut self, declaration: &FnDecl) {
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.declared_names.insert(declaration.ident.sym.clone());
+                }
+                declaration.function.visit_with(self);
+            }
+
+            fn visit_class_decl(&mut self, declaration: &ClassDecl) {
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.declared_names.insert(declaration.ident.sym.clone());
+                }
+                declaration.class.visit_with(self);
             }
 
             fn visit_ident(&mut self, ident: &Ident) {

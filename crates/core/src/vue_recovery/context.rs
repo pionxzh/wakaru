@@ -13,7 +13,10 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::expressions::{clean_expr, clean_setup_stmt, print_clean_setup_stmt, print_expr};
+use super::expressions::{
+    clean_expr, clean_setup_stmt, clean_setup_stmt_preserving_ref_values, print_clean_setup_stmt,
+    print_expr,
+};
 use super::helpers::{helper_name, VueHelper};
 use super::imports;
 use super::locals::{
@@ -29,7 +32,7 @@ use super::{
     RenderSource, VueRecoveryContext, VueRenderChildListBinding, VueRenderChildListSource,
     VueRenderSlotBinding,
 };
-use crate::js_names::is_valid_identifier_name;
+use crate::js_names::{is_likely_generated_alias, is_valid_identifier_name};
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
 const MAX_INLINE_COMPUTED_TEMPLATE_BINDING_LEN: usize = 80;
@@ -39,6 +42,225 @@ struct SetupLocalCandidate {
     stmt: Stmt,
     template_selectable: bool,
     setup_order: usize,
+    always_emit: bool,
+    preserve_ref_values: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CompiledScriptSetup<'a> {
+    pub(super) setup_stmts: &'a [Stmt],
+    pub(super) setup_props: Option<&'a Ident>,
+    pub(super) setup_props_ctxt: Option<SyntaxContext>,
+    pub(super) setup_context: Option<&'a Ident>,
+    pub(super) setup_emit: Option<&'a Ident>,
+    pub(super) setup_slots: Option<&'a Ident>,
+    pub(super) setup_expose: Option<&'a Ident>,
+}
+
+pub(super) fn compiled_script_setup(
+    options: Option<&ObjectLit>,
+) -> Option<CompiledScriptSetup<'_>> {
+    let options = options?;
+    for prop in &options.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        match prop.as_ref() {
+            Prop::Method(method) if prop_name(&method.key).as_deref() == Some("setup") => {
+                if let Some(setup) = compiled_script_setup_from_function(&method.function) {
+                    return Some(setup);
+                }
+            }
+            Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("setup") => {
+                match unwrap_paren_expr(key_value.value.as_ref()) {
+                    Expr::Fn(function) => {
+                        if let Some(setup) = compiled_script_setup_from_function(&function.function)
+                        {
+                            return Some(setup);
+                        }
+                    }
+                    Expr::Arrow(arrow) => {
+                        if let Some(setup) = compiled_script_setup_from_arrow(arrow) {
+                            return Some(setup);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn compiled_script_setup_from_function(function: &Function) -> Option<CompiledScriptSetup<'_>> {
+    let body = function.body.as_ref()?;
+    if !has_script_setup_marker(body) {
+        return None;
+    }
+    let setup_props = function.params.first().and_then(param_binding_ident);
+    let setup_context = function
+        .params
+        .get(1)
+        .and_then(|param| pat_binding_ident(&param.pat));
+    let setup_emit = function
+        .params
+        .get(1)
+        .and_then(|param| named_object_pat_binding(&param.pat, "emit"));
+    let setup_slots = function
+        .params
+        .get(1)
+        .and_then(|param| named_object_pat_binding(&param.pat, "slots"));
+    let setup_expose = function
+        .params
+        .get(1)
+        .and_then(|param| named_object_pat_binding(&param.pat, "expose"));
+    Some(CompiledScriptSetup {
+        setup_stmts: body.stmts.as_slice(),
+        setup_props,
+        setup_props_ctxt: setup_props.map(|ident| ident.ctxt),
+        setup_context,
+        setup_emit,
+        setup_slots,
+        setup_expose,
+    })
+}
+
+fn compiled_script_setup_from_arrow(arrow: &ArrowExpr) -> Option<CompiledScriptSetup<'_>> {
+    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+        return None;
+    };
+    if !has_script_setup_marker(body) {
+        return None;
+    }
+    let setup_props = arrow.params.first().and_then(pat_binding_ident);
+    let setup_context = arrow.params.get(1).and_then(pat_binding_ident);
+    let setup_emit = arrow
+        .params
+        .get(1)
+        .and_then(|pat| named_object_pat_binding(pat, "emit"));
+    let setup_slots = arrow
+        .params
+        .get(1)
+        .and_then(|pat| named_object_pat_binding(pat, "slots"));
+    let setup_expose = arrow
+        .params
+        .get(1)
+        .and_then(|pat| named_object_pat_binding(pat, "expose"));
+    Some(CompiledScriptSetup {
+        setup_stmts: body.stmts.as_slice(),
+        setup_props,
+        setup_props_ctxt: setup_props.map(|ident| ident.ctxt),
+        setup_context,
+        setup_emit,
+        setup_slots,
+        setup_expose,
+    })
+}
+
+fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
+    match pat {
+        Pat::Ident(binding) => Some(&binding.id),
+        _ => None,
+    }
+}
+
+fn named_object_pat_binding<'a>(pat: &'a Pat, name: &str) -> Option<&'a Ident> {
+    let Pat::Object(object) = pat else {
+        return None;
+    };
+    object.props.iter().find_map(|prop| match prop {
+        ObjectPatProp::KeyValue(key_value)
+            if prop_name(&key_value.key).as_deref() == Some(name) =>
+        {
+            pat_binding_ident(key_value.value.as_ref())
+        }
+        ObjectPatProp::Assign(assign) if assign.key.sym.as_ref() == name => Some(&assign.key),
+        _ => None,
+    })
+}
+
+fn has_script_setup_marker(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+    struct MarkerFinder(bool);
+
+    impl Visit for MarkerFinder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(expr, Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup")
+            {
+                self.0 = true;
+                return;
+            }
+            expr.visit_children_with(self);
+        }
+    }
+
+    let mut finder = MarkerFinder(false);
+    body.visit_with(&mut finder);
+    finder.0
+}
+
+fn is_compiled_setup_artifact_stmt(
+    stmt: &Stmt,
+    setup_expose: Option<&(Atom, SyntaxContext)>,
+) -> bool {
+    if let (Stmt::Expr(expr_stmt), Some((expose_name, expose_ctxt))) = (stmt, setup_expose) {
+        if let Expr::Call(call) = expr_stmt.expr.as_ref() {
+            if call.args.is_empty()
+                && matches!(&call.callee, Callee::Expr(callee) if matches!(callee.as_ref(), Expr::Ident(ident) if ident.sym == *expose_name && ident.ctxt == *expose_ctxt))
+            {
+                return true;
+            }
+        }
+    }
+
+    struct MarkerFinder(bool);
+
+    impl Visit for MarkerFinder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if matches!(expr, Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup")
+            {
+                self.0 = true;
+                return;
+            }
+            expr.visit_children_with(self);
+        }
+    }
+
+    let mut finder = MarkerFinder(false);
+    stmt.visit_with(&mut finder);
+    finder.0
+}
+
+fn compiled_setup_return_binding(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)> {
+    stmts.iter().find_map(|stmt| {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            return None;
+        };
+        let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+            return None;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(member) = callee.as_ref() else {
+            return None;
+        };
+        if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "defineProperty")
+        {
+            return None;
+        }
+        if !call
+            .args
+            .get(1)
+            .is_some_and(|arg| matches!(arg.expr.as_ref(), Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "__isScriptSetup"))
+        {
+            return None;
+        }
+        call.args.first().and_then(|arg| {
+            ident_expr(unwrap_paren_expr(arg.expr.as_ref()))
+                .map(|ident| (ident.sym.clone(), ident.ctxt))
+        })
+    })
 }
 
 /// Record the resolved `SyntaxContext` of every top-level binding (imports plus
@@ -174,7 +396,12 @@ pub(super) fn collect_context(
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
                                     .entry(named.local.sym.clone())
-                                    .or_insert_with(|| component.clone());
+                                    .or_insert_with(|| {
+                                        preferred_imported_component_name(
+                                            &named.local.sym,
+                                            component,
+                                        )
+                                    });
                             }
                             let imported = named
                                 .imported
@@ -218,7 +445,12 @@ pub(super) fn collect_context(
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
                                     .entry(default.local.sym.clone())
-                                    .or_insert_with(|| component.clone());
+                                    .or_insert_with(|| {
+                                        preferred_imported_component_name(
+                                            &default.local.sym,
+                                            component,
+                                        )
+                                    });
                             }
                         }
                         ImportSpecifier::Namespace(namespace) => {
@@ -236,7 +468,12 @@ pub(super) fn collect_context(
                             if let Some(component) = &imported_component {
                                 ctx.component_bindings
                                     .entry(namespace.local.sym.clone())
-                                    .or_insert_with(|| component.clone());
+                                    .or_insert_with(|| {
+                                        preferred_imported_component_name(
+                                            &namespace.local.sym,
+                                            component,
+                                        )
+                                    });
                             }
                         }
                     }
@@ -583,6 +820,8 @@ fn push_script_local_binding(
             module_scope: true,
             template_selectable: true,
             setup_order: 0,
+            always_emit: false,
+            preserve_ref_values: false,
         });
     }
     Ok(())
@@ -599,7 +838,11 @@ pub(super) fn render_local_declaration_with_aliases(
         rename_bindings(&mut stmt, &binding_renames(aliases, ctx));
     }
 
-    let mut cleaned_stmt = clean_setup_stmt(&stmt, ctx);
+    let mut cleaned_stmt = if declaration.preserve_ref_values {
+        clean_setup_stmt_preserving_ref_values(&stmt, ctx)
+    } else {
+        clean_setup_stmt(&stmt, ctx)
+    };
     if !declaration.module_scope {
         if let Some(props_binding) = props_binding {
             rename_bindings(&mut cleaned_stmt, &setup_props_renames(ctx, props_binding));
@@ -632,6 +875,8 @@ pub(super) fn render_local_declaration_with_aliases(
         module_scope: declaration.module_scope,
         template_selectable: declaration.template_selectable,
         setup_order: declaration.setup_order,
+        always_emit: declaration.always_emit,
+        preserve_ref_values: declaration.preserve_ref_values,
     })
 }
 
@@ -946,6 +1191,23 @@ fn vue_component_name_from_source(source: &str) -> Option<String> {
         .next()
         .is_some_and(|ch| ch.is_ascii_uppercase());
     (starts_with_uppercase && !name.is_empty()).then(|| name.to_string())
+}
+
+fn preferred_imported_component_name(local: &Atom, inferred: &str) -> String {
+    let local = local.as_ref();
+    let looks_authored = !is_likely_generated_alias(local)
+        && local
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        && local
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '$');
+    if looks_authored {
+        local.to_string()
+    } else {
+        inferred.to_string()
+    }
 }
 
 pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecoveryContext) {
@@ -1666,21 +1928,61 @@ pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueReco
     }
 }
 
+#[derive(Clone, Copy)]
+enum SetupRenderNode<'a> {
+    Arrow(&'a ArrowExpr),
+    Function(&'a FnDecl),
+}
+
+fn visit_setup_render<V: Visit>(render: SetupRenderNode<'_>, visitor: &mut V) {
+    match render {
+        SetupRenderNode::Arrow(render) => render.visit_with(visitor),
+        SetupRenderNode::Function(render) => render.visit_with(visitor),
+    }
+}
+
 pub(super) fn collect_setup_context(
     render: RenderSource<'_>,
     ctx: &mut VueRecoveryContext,
 ) -> Result<()> {
-    let RenderSource::SetupArrow {
-        render,
-        setup_stmts,
-        setup_slots,
-        ..
-    } = render
-    else {
-        return Ok(());
+    let owned_setup_stmts: Vec<Stmt>;
+    let (render, setup_stmts, setup_slots, setup_expose, preserve_side_effects) = match render {
+        RenderSource::SetupArrow {
+            render,
+            setup_stmts,
+            setup_slots,
+            ..
+        } => (
+            SetupRenderNode::Arrow(render),
+            setup_stmts,
+            setup_slots.map(|slots| slots.sym.clone()),
+            None,
+            false,
+        ),
+        RenderSource::Function {
+            render,
+            component_options,
+        } => {
+            let options = component_options
+                .or(ctx.setup_component_options.as_ref())
+                .or(ctx.component_options.as_ref());
+            let Some(setup) = compiled_script_setup(options) else {
+                return Ok(());
+            };
+            owned_setup_stmts = setup.setup_stmts.to_vec();
+            (
+                SetupRenderNode::Function(render),
+                owned_setup_stmts.as_slice(),
+                setup.setup_slots.map(|slots| slots.sym.clone()),
+                setup
+                    .setup_expose
+                    .map(|expose| (expose.sym.clone(), expose.ctxt)),
+                true,
+            )
+        }
     };
     if let Some(setup_slots) = setup_slots {
-        ctx.slot_bindings.insert(setup_slots.sym.clone());
+        ctx.slot_bindings.insert(setup_slots);
     }
 
     let setup_tuple_value_candidates = setup_tuple_value_candidates(setup_stmts);
@@ -1695,6 +1997,9 @@ pub(super) fn collect_setup_context(
     let setup_non_value_member_refs = setup_non_value_member_refs(setup_stmts);
     let setup_value_member_refs = setup_value_member_refs(render, setup_stmts);
     let setup_render_refs = render_ident_refs(render);
+    let compiled_return_binding = preserve_side_effects
+        .then(|| compiled_setup_return_binding(setup_stmts))
+        .flatten();
     let mut provider_ref_object_bindings = HashMap::new();
     let mut composable_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
@@ -1707,6 +2012,8 @@ pub(super) fn collect_setup_context(
                     stmt: stmt.clone(),
                     template_selectable: true,
                     setup_order,
+                    always_emit: preserve_side_effects,
+                    preserve_ref_values: preserve_side_effects,
                 });
             }
             Stmt::Decl(Decl::Class(class)) => {
@@ -1715,6 +2022,8 @@ pub(super) fn collect_setup_context(
                     stmt: stmt.clone(),
                     template_selectable: true,
                     setup_order,
+                    always_emit: preserve_side_effects,
+                    preserve_ref_values: preserve_side_effects,
                 });
             }
             Stmt::Decl(Decl::Var(var)) => {
@@ -1722,6 +2031,13 @@ pub(super) fn collect_setup_context(
                 let mut local_bindings = HashSet::new();
 
                 for decl in &var.decls {
+                    if matches!(
+                        (&decl.name, compiled_return_binding.as_ref()),
+                        (Pat::Ident(binding), Some((name, ctxt)))
+                            if binding.id.sym == *name && binding.id.ctxt == *ctxt
+                    ) {
+                        continue;
+                    }
                     let consumed = match decl.init.as_deref() {
                         Some(init) => match &decl.name {
                             Pat::Ident(binding) => {
@@ -1736,6 +2052,11 @@ pub(super) fn collect_setup_context(
                                 } else if is_setup_slot_alias(init, ctx) {
                                     ctx.slot_bindings.insert(binding.id.sym.clone());
                                     true
+                                } else if preserve_side_effects {
+                                    if is_ref_like_value_expr(init, ctx) {
+                                        ctx.bindings.refs.insert(binding.id.sym.clone());
+                                    }
+                                    false
                                 } else if let Some(alias) = ident_expr(unwrap_paren_expr(init)) {
                                     ctx.bindings
                                         .aliases
@@ -1802,6 +2123,8 @@ pub(super) fn collect_setup_context(
                                             stmt: Stmt::Decl(Decl::Var(Box::new(local_var))),
                                             template_selectable: false,
                                             setup_order,
+                                            always_emit: false,
+                                            preserve_ref_values: preserve_side_effects,
                                         });
                                         true
                                     } else if let Some((value, import_refs)) =
@@ -1958,8 +2281,23 @@ pub(super) fn collect_setup_context(
                         stmt: Stmt::Decl(Decl::Var(Box::new(local_var))),
                         template_selectable: true,
                         setup_order,
+                        always_emit: preserve_side_effects,
+                        preserve_ref_values: preserve_side_effects,
                     });
                 }
+            }
+            _ if preserve_side_effects
+                && !matches!(stmt, Stmt::Empty(_) | Stmt::Return(_))
+                && !is_compiled_setup_artifact_stmt(stmt, setup_expose.as_ref()) =>
+            {
+                local_candidates.push(SetupLocalCandidate {
+                    bindings: Vec::new(),
+                    stmt: stmt.clone(),
+                    template_selectable: false,
+                    setup_order,
+                    always_emit: true,
+                    preserve_ref_values: true,
+                });
             }
             _ => {}
         }
@@ -1980,7 +2318,11 @@ pub(super) fn collect_setup_context(
     assign_setup_prop_bindings(ctx, &local_candidates);
 
     for candidate in local_candidates {
-        let cleaned_stmt = clean_setup_stmt(&candidate.stmt, ctx);
+        let cleaned_stmt = if candidate.preserve_ref_values {
+            clean_setup_stmt_preserving_ref_values(&candidate.stmt, ctx)
+        } else {
+            clean_setup_stmt(&candidate.stmt, ctx)
+        };
         let source = print_clean_setup_stmt(&cleaned_stmt, ctx)?;
         if !source.is_empty() {
             let emitted_bindings = emitted_stmt_bindings(&source, ctx, &candidate.bindings);
@@ -1994,6 +2336,8 @@ pub(super) fn collect_setup_context(
                 module_scope: false,
                 template_selectable: candidate.template_selectable,
                 setup_order: candidate.setup_order,
+                always_emit: candidate.always_emit,
+                preserve_ref_values: candidate.preserve_ref_values,
             });
         }
     }
@@ -2033,7 +2377,7 @@ fn setup_non_value_member_refs(stmts: &[Stmt]) -> HashSet<(Atom, SyntaxContext)>
 }
 
 fn setup_value_member_refs(
-    render: &ArrowExpr,
+    render: SetupRenderNode<'_>,
     setup_stmts: &[Stmt],
 ) -> HashSet<(Atom, SyntaxContext)> {
     let mut collector = ValueMemberIdentRefCollector {
@@ -2042,7 +2386,7 @@ fn setup_value_member_refs(
     for stmt in setup_stmts {
         stmt.visit_with(&mut collector);
     }
-    render.visit_with(&mut collector);
+    visit_setup_render(render, &mut collector);
     collector.refs
 }
 
@@ -2084,11 +2428,13 @@ impl Visit for NonValueMemberRefCollector {
     }
 }
 
-fn setup_render_template_ref_aliases(render: &ArrowExpr) -> Vec<(Atom, SyntaxContext, Atom)> {
+fn setup_render_template_ref_aliases(
+    render: SetupRenderNode<'_>,
+) -> Vec<(Atom, SyntaxContext, Atom)> {
     let mut collector = TemplateRefAliasCollector {
         aliases: Vec::new(),
     };
-    render.visit_with(&mut collector);
+    visit_setup_render(render, &mut collector);
     collector.aliases
 }
 
@@ -2131,13 +2477,17 @@ impl Visit for TemplateRefAliasCollector {
     }
 }
 
-fn render_ident_refs(render: &ArrowExpr) -> HashSet<Atom> {
-    let declared = declared_binding_idents(render);
+fn render_ident_refs(render: SetupRenderNode<'_>) -> HashSet<Atom> {
+    let mut declared_collector = DeclaredBindingIdents {
+        idents: HashSet::new(),
+    };
+    visit_setup_render(render, &mut declared_collector);
+    let declared = declared_collector.idents;
     let mut collector = IdentRefCollector {
         declared: &declared,
         refs: HashSet::new(),
     };
-    render.visit_with(&mut collector);
+    visit_setup_render(render, &mut collector);
     collector.refs
 }
 
@@ -2166,7 +2516,7 @@ fn setup_tuple_value_candidates(setup_stmts: &[Stmt]) -> HashSet<(Atom, SyntaxCo
 }
 
 fn setup_render_template_ref_refs(
-    render: &ArrowExpr,
+    render: SetupRenderNode<'_>,
     setup_stmts: &[Stmt],
     ctx: &VueRecoveryContext,
     tuple_value_candidates: &HashSet<(Atom, SyntaxContext)>,
@@ -2202,7 +2552,7 @@ fn setup_render_template_ref_refs(
         object_value_refs: HashSet::new(),
         unref_refs: HashSet::new(),
     };
-    render.visit_with(&mut collector);
+    visit_setup_render(render, &mut collector);
     let mut refs = collector.tuple_value_refs;
     refs.extend(
         collector
@@ -3041,8 +3391,26 @@ pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
     }
 }
 
-pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
+pub(super) fn render_setup_context_param(render: RenderSource<'_>) -> Option<Atom> {
     match render {
+        RenderSource::Function { render, .. } => render
+            .function
+            .params
+            .get(3)
+            .and_then(param_binding_ident)
+            .map(|ident| ident.sym.clone()),
+        RenderSource::SetupArrow { .. } => None,
+    }
+}
+
+pub(super) fn setup_props_param(
+    render: RenderSource<'_>,
+    component_options: Option<&ObjectLit>,
+) -> Option<Atom> {
+    match render {
+        RenderSource::Function { .. } => compiled_script_setup(component_options)
+            .and_then(|setup| setup.setup_props)
+            .map(|ident| ident.sym.clone()),
         RenderSource::SetupArrow {
             setup_props: Some(setup_props),
             ..
@@ -3051,8 +3419,14 @@ pub(super) fn setup_props_param(render: RenderSource<'_>) -> Option<Atom> {
     }
 }
 
-pub(super) fn setup_props_param_ctxt(render: RenderSource<'_>) -> Option<SyntaxContext> {
+pub(super) fn setup_props_param_ctxt(
+    render: RenderSource<'_>,
+    component_options: Option<&ObjectLit>,
+) -> Option<SyntaxContext> {
     match render {
+        RenderSource::Function { .. } => {
+            compiled_script_setup(component_options).and_then(|setup| setup.setup_props_ctxt)
+        }
         RenderSource::SetupArrow {
             setup_props: Some(setup_props),
             ..
@@ -3061,8 +3435,14 @@ pub(super) fn setup_props_param_ctxt(render: RenderSource<'_>) -> Option<SyntaxC
     }
 }
 
-pub(super) fn setup_context_param(render: RenderSource<'_>) -> Option<Atom> {
+pub(super) fn setup_context_param(
+    render: RenderSource<'_>,
+    component_options: Option<&ObjectLit>,
+) -> Option<Atom> {
     match render {
+        RenderSource::Function { .. } => compiled_script_setup(component_options)
+            .and_then(|setup| setup.setup_context)
+            .map(|ident| ident.sym.clone()),
         RenderSource::SetupArrow {
             setup_context: Some(setup_context),
             ..
@@ -3071,8 +3451,14 @@ pub(super) fn setup_context_param(render: RenderSource<'_>) -> Option<Atom> {
     }
 }
 
-pub(super) fn setup_emit_param(render: RenderSource<'_>) -> Option<Atom> {
+pub(super) fn setup_emit_param(
+    render: RenderSource<'_>,
+    component_options: Option<&ObjectLit>,
+) -> Option<Atom> {
     match render {
+        RenderSource::Function { .. } => compiled_script_setup(component_options)
+            .and_then(|setup| setup.setup_emit)
+            .map(|ident| ident.sym.clone()),
         RenderSource::SetupArrow {
             setup_emit: Some(setup_emit),
             ..

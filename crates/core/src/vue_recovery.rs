@@ -41,10 +41,11 @@ mod usage;
 use components::VueComponentScriptImport;
 use context::{
     call_callee_ident, collect_context, collect_render_context, collect_script_local_context,
-    collect_setup_context, component_name_from_init, component_name_from_options,
-    component_options_from_init, infer_render_helpers, render_context_param,
-    render_local_declaration_with_aliases, setup_alias_renames, setup_context_param,
-    setup_emit_param, setup_props_param, setup_props_param_ctxt, stmt_ident_refs,
+    collect_setup_context, compiled_script_setup, component_name_from_init,
+    component_name_from_options, component_options_from_init, infer_render_helpers,
+    render_context_param, render_local_declaration_with_aliases, render_setup_context_param,
+    setup_alias_renames, setup_context_param, setup_emit_param, setup_props_param,
+    setup_props_param_ctxt, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -94,6 +95,7 @@ struct VueRecoveryContext {
     component_options: Option<ObjectLit>,
     setup_component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
+    render_setup_context: Option<Atom>,
     setup_props_context: Option<Atom>,
     /// `SyntaxContext` of the setup `props` parameter (`setup_props_context`),
     /// recorded so props-ref rewriting can go through `BindingRenamer`.
@@ -108,6 +110,9 @@ struct VueRecoveryContext {
     render_child_list_bindings: HashMap<Atom, VueRenderChildListBinding>,
     render_slot_bindings: HashMap<Atom, VueRenderSlotBinding>,
     slot_result_normalizers: HashSet<Atom>,
+    /// Template-local names already claimed by enclosing `v-for` callbacks.
+    /// Nested list recovery uses this to avoid emitting shadowing fallback names.
+    for_param_names: HashSet<String>,
     cm: Lrc<SourceMap>,
 }
 
@@ -363,11 +368,23 @@ pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
         let Some(render) = find_render_source(&module, None) else {
             return Ok(false);
         };
+        if let Some(options) = render_component_options(render) {
+            ctx.setup_component_options = Some(options.clone());
+        }
+        let component_options = ctx
+            .setup_component_options
+            .as_ref()
+            .or(ctx.component_options.as_ref());
+        let setup_props_context = setup_props_param(render, component_options);
+        let setup_props_context_ctxt = setup_props_param_ctxt(render, component_options);
+        let setup_context = setup_context_param(render, component_options);
+        let setup_emit_context = setup_emit_param(render, component_options);
         ctx.render_context = render_context_param(render);
-        ctx.setup_props_context = setup_props_param(render);
-        ctx.setup_props_context_ctxt = setup_props_param_ctxt(render);
-        ctx.setup_context = setup_context_param(render);
-        ctx.setup_emit_context = setup_emit_param(render);
+        ctx.render_setup_context = render_setup_context_param(render);
+        ctx.setup_props_context = setup_props_context;
+        ctx.setup_props_context_ctxt = setup_props_context_ctxt;
+        ctx.setup_context = setup_context;
+        ctx.setup_emit_context = setup_emit_context;
         infer_render_helpers(render, &mut ctx);
         collect_setup_context(render, &mut ctx)?;
         collect_render_context(render, &mut ctx);
@@ -441,11 +458,20 @@ fn recover_vue_sfc_from_render(
     if let Some(options) = render_component_options(render) {
         ctx.setup_component_options = Some(options.clone());
     }
+    let component_options = ctx
+        .setup_component_options
+        .as_ref()
+        .or(ctx.component_options.as_ref());
+    let setup_props_context = setup_props_param(render, component_options);
+    let setup_props_context_ctxt = setup_props_param_ctxt(render, component_options);
+    let setup_context = setup_context_param(render, component_options);
+    let setup_emit_context = setup_emit_param(render, component_options);
     ctx.render_context = render_context_param(render);
-    ctx.setup_props_context = setup_props_param(render);
-    ctx.setup_props_context_ctxt = setup_props_param_ctxt(render);
-    ctx.setup_context = setup_context_param(render);
-    ctx.setup_emit_context = setup_emit_param(render);
+    ctx.render_setup_context = render_setup_context_param(render);
+    ctx.setup_props_context = setup_props_context;
+    ctx.setup_props_context_ctxt = setup_props_context_ctxt;
+    ctx.setup_context = setup_context;
+    ctx.setup_emit_context = setup_emit_context;
     infer_render_helpers(render, &mut ctx);
     collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
@@ -462,9 +488,11 @@ fn recover_vue_sfc_from_render(
 
     let script_setup = setup_script(&ctx, &mut root, render)?;
 
-    let script = if matches!(render, RenderSource::Function { .. }) {
-        render_component_options(render)
-            .or(ctx.component_options.as_ref())
+    let component_options = render_component_options(render).or(ctx.component_options.as_ref());
+    let script = if matches!(render, RenderSource::Function { .. })
+        && compiled_script_setup(component_options).is_none()
+    {
+        component_options
             .and_then(|options| component_script(options, &ctx).transpose())
             .transpose()?
     } else {
