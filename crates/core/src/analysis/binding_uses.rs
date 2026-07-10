@@ -4,10 +4,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Span, SyntaxContext};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, Callee, CatchClause,
-    ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
-    JSXElementName, JSXObject, KeyValuePatProp, MemberExpr, MemberProp, Module, ModuleItem,
-    ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
-    UpdateExpr, VarDeclarator,
+    ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, Function, Ident,
+    ImportDecl, ImportSpecifier, JSXElementName, JSXObject, KeyValuePatProp, MemberExpr,
+    MemberProp, Module, ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget,
+    Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -367,6 +367,13 @@ impl BindingUseCollector {
         }
     }
 
+    fn visit_for_head_as_assignment(&mut self, head: &ForHead) {
+        match head {
+            ForHead::Pat(pat) => self.record_pat_decls_as_writes(pat, UseKind::Write),
+            _ => head.visit_with(self),
+        }
+    }
+
     fn visit_function_params_and_body(&mut self, function: &Function) {
         for param in &function.params {
             self.record_pat_decls(&param.pat);
@@ -476,6 +483,21 @@ impl Visit for BindingUseCollector {
             Expr::Member(member) => self.record_member_use(member, true),
             _ => update.arg.visit_with(self),
         }
+    }
+
+    fn visit_for_in_stmt(&mut self, for_in: &ForInStmt) {
+        // A non-declaration loop head is assigned on every iteration. Default
+        // AST traversal sees its identifiers as reads, which is insufficient
+        // for consumers deciding whether a binding can be declared `const`.
+        self.visit_for_head_as_assignment(&for_in.left);
+        for_in.right.visit_with(self);
+        for_in.body.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, for_of: &ForOfStmt) {
+        self.visit_for_head_as_assignment(&for_of.left);
+        for_of.right.visit_with(self);
+        for_of.body.visit_with(self);
     }
 
     fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
@@ -659,6 +681,20 @@ mod tests {
             vec![UseKind::Write, UseKind::ReadWrite]
         );
         assert!(index.has_direct_write(&tmp));
+    }
+
+    #[test]
+    fn classifies_for_in_and_for_of_assignment_heads_as_writes() {
+        let module = resolved(
+            "let key, value, nested; for (key in object) {} for (value of values) {} for ({ nested } of items) {}",
+        );
+        let index = BindingUseIndex::collect(&module);
+
+        for name in ["key", "value", "nested"] {
+            let id = binding(&module, name);
+            assert_eq!(index.use_kinds(&id), vec![UseKind::Write]);
+            assert!(index.has_direct_write(&id));
+        }
     }
 
     #[test]

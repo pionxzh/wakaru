@@ -80,6 +80,17 @@ const snippets = [
     expected: ["cache ??= make()"],
   },
   {
+    name: "nullish-assignment-member",
+    source:
+      "const target = getTarget();\nconst out = target.value ??= make();\nuse(out, target);\n",
+    expected: ["target.value ??= make()"],
+  },
+  {
+    name: "nullish-assignment-computed",
+    source: "const out = getTarget()[getKey()] ??= make();\nuse(out);\n",
+    expected: ["getTarget()[getKey()] ??= make()"],
+  },
+  {
     name: "nullish-with-optional-middle",
     source: "const out = foo ?? bar?.prop ?? baz;\n",
     expected: ["foo ??", "bar?.prop ?? baz"],

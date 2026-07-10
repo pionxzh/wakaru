@@ -130,6 +130,90 @@ fn iife_literal_arg_rewrite_marks_written_param_as_let() {
 }
 
 #[test]
+fn iife_literal_arg_written_by_for_of_extracts_to_let() {
+    let input = r#"
+((a) => {
+  for (a of items) {
+    use(a);
+  }
+})(0);
+"#;
+    let expected = r#"
+(() => {
+  let a = 0;
+  for (a of items) {
+    use(a);
+  }
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_literal_arg_written_by_for_in_extracts_to_let() {
+    let input = r#"
+((a) => {
+  for (a in object) {
+    use(a);
+  }
+})("");
+"#;
+    let expected = r#"
+(() => {
+  let a = "";
+  for (a in object) {
+    use(a);
+  }
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_literal_arg_written_by_for_of_destructuring_extracts_to_let() {
+    let input = r#"
+((a) => {
+  for ({ value: a } of items) {
+    use(a);
+  }
+})(0);
+"#;
+    let expected = r#"
+(() => {
+  let a = 0;
+  for ({ value: a } of items) {
+    use(a);
+  }
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn iife_literal_arg_written_by_for_await_of_extracts_to_let() {
+    let input = r#"
+(async (a) => {
+  for await (a of items) {
+    use(a);
+  }
+})(0);
+"#;
+    let expected = r#"
+(async () => {
+  let a = 0;
+  for await (a of items) {
+    use(a);
+  }
+})();
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn iife_param_with_longer_name_not_touched() {
     let input = r#"
 ((win, s, a) => {

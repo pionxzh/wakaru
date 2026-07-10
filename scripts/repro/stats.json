@@ -1,10 +1,10 @@
 {
-  "commit": "538ec3ae",
-  "date": "2026-07-07",
+  "commit": "88cc0746",
+  "date": "2026-07-09",
   "aggregate": {
-    "yes": 1521,
-    "total": 1545,
-    "pct": 98.4
+    "yes": 1537,
+    "total": 1578,
+    "pct": 97.4
   },
   "matrices": [
     {
@@ -57,11 +57,11 @@
     },
     {
       "name": "optional-nullish",
-      "yes": 340,
-      "no": 10,
+      "yes": 355,
+      "no": 27,
       "error": 0,
-      "total": 350,
-      "pct": 97.1
+      "total": 382,
+      "pct": 92.9
     },
     {
       "name": "parameters",
@@ -73,11 +73,11 @@
     },
     {
       "name": "swc-minifier",
-      "yes": 36,
+      "yes": 37,
       "no": 2,
       "error": 0,
-      "total": 38,
-      "pct": 94.7
+      "total": 39,
+      "pct": 94.9
     },
     {
       "name": "template-literal",

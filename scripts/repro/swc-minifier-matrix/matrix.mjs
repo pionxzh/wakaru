@@ -213,6 +213,18 @@ console.log(out);
     informational: true,
   },
   {
+    name: "iife-for-of-target",
+    bucket: "mangle",
+    source: `
+(function (a) {
+  for (a of items) use(a);
+})(0);
+`,
+    expected: ["let ", "for ("],
+    rejected: ["const "],
+    skipProfiles: ["all"],
+  },
+  {
     name: "single-use-temp-alias",
     bucket: "inline-iife",
     source: `

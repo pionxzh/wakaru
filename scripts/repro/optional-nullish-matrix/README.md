@@ -7,9 +7,11 @@ assumptions-era Babel 7, current transform plugins, and the Babel 8 RC line.
 
 The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
 output minified through Terser, because optional/nullish lowering can become a
-different recoverable shape after minification. The `nullish-assignment-ident`
-row reproduces `cache ??= make()` lowering such as TypeScript/SWC's strict
-ternary form and esbuild/Babel loose nullish forms.
+different recoverable shape after minification. The nullish-assignment rows
+cover identifier, static-member, and side-effectful computed-member targets.
+The computed-member row currently documents incomplete recovery across lowered
+tool outputs: wakaru recovers `??` but leaves the compiler's object/key temps
+instead of restoring `getTarget()[getKey()] ??= make()`.
 
 The logical-AND rows include issue #166-style boolean prefixes, such as a
 lowered optional chain followed by ordinary suffix conditions or a second
