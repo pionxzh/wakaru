@@ -452,14 +452,25 @@ fn literal_case_key(expr: &Expr) -> Option<String> {
         Expr::Lit(Lit::Str(value)) => Some(format!("str:{}", value.value.to_string_lossy())),
         Expr::Lit(Lit::Bool(value)) => Some(format!("bool:{}", value.value)),
         Expr::Lit(Lit::Null(_)) => Some("null".to_string()),
-        Expr::Lit(Lit::Num(value)) => Some(format!(
-            "num:{}:{}",
-            value.value,
-            value.value.is_sign_positive()
-        )),
+        Expr::Lit(Lit::Num(value)) => Some(numeric_case_key(value.value)),
+        Expr::Unary(UnaryExpr { op, arg, .. }) if matches!(op, UnaryOp::Plus | UnaryOp::Minus) => {
+            let Expr::Lit(Lit::Num(value)) = unparen_expr(arg) else {
+                return None;
+            };
+            let value = if *op == UnaryOp::Minus {
+                -value.value
+            } else {
+                value.value
+            };
+            Some(numeric_case_key(value))
+        }
         Expr::Lit(Lit::BigInt(value)) => Some(format!("bigint:{}", value.value)),
         _ => None,
     }
+}
+
+fn numeric_case_key(value: f64) -> String {
+    format!("num:{}:{}", value, value.is_sign_positive())
 }
 
 fn unparen_expr(expr: &Expr) -> &Expr {

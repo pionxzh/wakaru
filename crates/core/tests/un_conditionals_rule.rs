@@ -324,6 +324,56 @@ function fn(kind) {
 }
 
 #[test]
+fn strict_signed_numeric_return_chain_to_switch() {
+    // Produced by Terser, SWC, and esbuild from a switch with a negative case.
+    let input = r#"
+function fn(code) {
+  return -1 === code ? negative() : code === 0 ? zero() : code === +2 ? two() : other();
+}
+"#;
+    let expected = r#"
+function fn(code) {
+  switch (code) {
+    case -1:
+      return negative();
+    case 0:
+      return zero();
+    case +2:
+      return two();
+    default:
+      return other();
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn unary_non_numeric_case_chain_stays_if_return_chain() {
+    let input = r#"
+function fn(kind) {
+  return kind === -value ? negative() : kind === 0 ? zero() : other();
+}
+"#;
+    let expected = r#"
+function fn(kind) {
+  if (kind === -value) {
+    return negative();
+  }
+
+  if (kind === 0) {
+    return zero();
+  }
+
+  return other();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn loose_equality_ternary_chain_stays_if_return_chain() {
     let input = r#"
 function fn(kind) {

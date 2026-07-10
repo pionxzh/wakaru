@@ -1,10 +1,10 @@
 {
-  "commit": "88cc0746",
+  "commit": "a4ffc22b",
   "date": "2026-07-10",
   "aggregate": {
-    "yes": 1612,
+    "yes": 1618,
     "total": 1707,
-    "pct": 94.4
+    "pct": 94.8
   },
   "matrices": [
     {
@@ -25,11 +25,11 @@
     },
     {
       "name": "conditional-switch",
-      "yes": 19,
-      "no": 6,
+      "yes": 25,
+      "no": 0,
       "error": 0,
       "total": 25,
-      "pct": 76
+      "pct": 100
     },
     {
       "name": "enum",
