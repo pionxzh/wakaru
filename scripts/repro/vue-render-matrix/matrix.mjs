@@ -3,13 +3,29 @@
 import {
   runMatrix, batchRunner, withTerserVariants, ensureNodeTool,
 } from "../lib/runner.mjs";
+import { prewarmNormalize, structurallyEqual } from "../lib/compare.mjs";
 import { VUE_SFC_COMPILE_PROFILES } from "../lib/vue-sfc-compiler.mjs";
+import { linkedEventHandlerProgram } from "../lib/vue-sfc-compare.mjs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const VUE_COMPILER_VERSION = "3.5.35";
+const BABEL_PARSER_VERSION = "7.29.7";
+const vueToolDir = ensureNodeTool(
+  `vue-sfc-${VUE_COMPILER_VERSION}`,
+  [
+    `@vue/compiler-sfc@${VUE_COMPILER_VERSION}`,
+    `@babel/parser@${BABEL_PARSER_VERSION}`,
+  ],
+);
+const vueToolRequire = createRequire(join(vueToolDir, "package.json"));
+const vueCompareOptions = {
+  compiler: vueToolRequire("@vue/compiler-sfc"),
+  babelParser: vueToolRequire("@babel/parser"),
+};
 
 const snippets = [
   {
@@ -185,9 +201,7 @@ const visible = true
 const allSources = snippets.map((s) => s.source);
 
 function vueSfcBatch(sources, profile) {
-  const toolKey = `vue-sfc-${VUE_COMPILER_VERSION}`;
-  const toolDir = ensureNodeTool(toolKey, [`@vue/compiler-sfc@${VUE_COMPILER_VERSION}`]);
-  const helper = join(toolDir, "vue-sfc-batch.mjs");
+  const helper = join(vueToolDir, "vue-sfc-batch.mjs");
   const compilerHelper = pathToFileURL(
     join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "vue-sfc-compiler.mjs"),
   ).href;
@@ -222,7 +236,7 @@ process.stdout.write(JSON.stringify(results));
   );
 
   const result = spawnSync("node", [helper], {
-    cwd: toolDir,
+    cwd: vueToolDir,
     input: JSON.stringify(sources),
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 50,
@@ -249,12 +263,37 @@ const transformers = VUE_SFC_COMPILE_PROFILES.flatMap((profile) =>
   ),
 );
 
+function linkedScopedSlotPrograms(snippet, recovered) {
+  if (snippet.name !== "scoped-slots-with-destructuring") return null;
+  const sourceProgram = linkedEventHandlerProgram(snippet.source, vueCompareOptions);
+  const recoveredProgram = linkedEventHandlerProgram(recovered, vueCompareOptions);
+  if (!sourceProgram || !recoveredProgram) return null;
+  return { sourceProgram, recoveredProgram };
+}
+
 runMatrix({
   name: "vue-render",
   snippets,
   transformers,
   wakaruArgs: ["--vue-sfc"],
-  validateRecovered({ snippet, recovered }) {
+  validateRecovered({ snippet, shape, recovered }) {
+    if (shape.tools.some((tool) => tool.includes("mangle"))) {
+      const linked = linkedScopedSlotPrograms(snippet, recovered);
+      const eventNeedle = linked && `@click="${linked.sourceProgram.expression}"`;
+      const otherSyntaxPresent = linked && snippet.expected
+        .filter((needle) => needle !== eventNeedle)
+        .every((needle) => recovered.includes(needle));
+      if (
+        linked
+        && otherSyntaxPresent
+        && structurallyEqual(linked.sourceProgram.program, linked.recoveredProgram.program)
+      ) {
+        return {
+          recovered: true,
+          notes: "linked slot handler is structurally equivalent (mangle-insensitive)",
+        };
+      }
+    }
     if (snippet.name === "model-and-directive") {
       const modelBinding = recovered.match(
         /v-model(?:\.[^=]+)?="([A-Za-z_$][\w$]*)(?:\.value)?"/,
@@ -275,5 +314,14 @@ runMatrix({
         };
       }
     }
+  },
+  async prewarm(rows) {
+    const codes = [];
+    for (const { snippet, shape, recovered } of rows) {
+      if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
+      const linked = linkedScopedSlotPrograms(snippet, recovered);
+      if (linked) codes.push(linked.sourceProgram.program, linked.recoveredProgram.program);
+    }
+    await prewarmNormalize(codes, { rename: true });
   },
 });
