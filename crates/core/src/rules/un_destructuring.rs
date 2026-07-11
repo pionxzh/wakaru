@@ -1080,6 +1080,10 @@ struct DeclGroup {
     declare: bool,
 }
 
+fn same_decl_group_ignoring_kind(left: DeclGroup, right: DeclGroup) -> bool {
+    left.span == right.span && left.ctxt == right.ctxt && left.declare == right.declare
+}
+
 fn try_reconstruct_direct_array_group(
     stmts: &[Stmt],
     start: usize,
@@ -1179,7 +1183,7 @@ fn try_extract_direct_array_access(
 
     let (group, binding, init) = extract_grouped_binding_decl(stmts.get(index)?)?;
     if let Some(expected_group) = expected_group {
-        if group != expected_group {
+        if !same_decl_group_ignoring_kind(group, expected_group) {
             return None;
         }
     }
@@ -1215,14 +1219,14 @@ fn try_extract_direct_default_access(
 ) -> Option<(Ident, DeclGroup, Access, BindingKey)> {
     let (group, temp, temp_init) = extract_grouped_binding_decl(stmts.get(index)?)?;
     if let Some(expected_group) = expected_group {
-        if group != expected_group {
+        if !same_decl_group_ignoring_kind(group, expected_group) {
             return None;
         }
     }
     let (source, array_index) = extract_direct_array_index(temp_init, expected_source)?;
 
     let (next_group, binding, binding_init) = extract_grouped_binding_decl(stmts.get(index + 1)?)?;
-    if expected_group.is_some() && next_group != group {
+    if expected_group.is_some() && !same_decl_group_ignoring_kind(next_group, group) {
         return None;
     }
     let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;

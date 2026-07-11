@@ -442,6 +442,24 @@ c++;
 }
 
 #[test]
+fn array_rest_uses_let_when_one_recovered_binding_is_reassigned() {
+    let input = r#"
+var first = items[0], restItems = items.slice(1);
+restItems = restItems.concat(extra);
+use(first, restItems);
+"#;
+    let expected = r#"
+let [first, ...restItems] = items;
+restItems = restItems.concat(extra);
+use(first, restItems);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Aggressive),
+        expected,
+    );
+}
+
+#[test]
 fn standard_preserves_potential_object_slice_semantics() {
     let input = r#"
 var first = source[0], rest = source.slice(1);
