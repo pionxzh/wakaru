@@ -85,6 +85,8 @@ node scripts\correctness\test262-baseline-matrix.mjs --slice classes --accept
 
 Use `--update` only when deliberately replacing an incompatible baseline
 identity, such as a pinned Node-major migration.
+Without `--update`, identity mismatches abort before tests run or tracked
+summaries are written.
 Use `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
 is already set.

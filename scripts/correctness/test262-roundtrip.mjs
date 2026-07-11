@@ -37,6 +37,7 @@ import {
 } from "./test262-metadata.mjs";
 import {
   applyTest262Baseline,
+  preflightTest262Baseline,
   validateTest262BaselineOptions,
 } from "./test262-baseline.mjs";
 
@@ -799,6 +800,20 @@ export async function runRoundTrip(options) {
     assertPinnedTest262Corpus({ root: options.test262Root });
   }
   const test262Revision = readTest262Revision(options.test262Root) ?? "unmanaged";
+  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+  const producer = describeProducer(options);
+  if (options.baseline && options.updateBaseline !== true) {
+    preflightTest262Baseline(options.baseline, {
+      test262Revision,
+      harnessVersion: test262HarnessVersion,
+      nodeMajor,
+      producer,
+      presets: options.presets ?? [],
+      paths: options.paths,
+      level: options.level,
+      caseTimeoutMs: options.caseTimeoutMs,
+    });
+  }
   const tests = options.rerunFrom
     ? discoverTestsFromReport(options.test262Root, options.rerunFrom, options.rerunStatuses)
     : discoverTests(options.test262Root, options.paths);
@@ -810,8 +825,8 @@ export async function runRoundTrip(options) {
       test262Root: options.test262Root,
       test262Revision,
       harnessVersion: test262HarnessVersion,
-      nodeMajor: Number.parseInt(process.versions.node.split(".")[0], 10),
-      producer: describeProducer(options),
+      nodeMajor,
+      producer,
       presets: options.presets ?? [],
       paths: options.paths,
       limit: Number.isFinite(options.limit) ? options.limit : "all",

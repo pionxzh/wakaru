@@ -36,6 +36,7 @@ import {
   runRoundTrip,
   transformSource,
   test262ReportExitCode,
+  test262HarnessVersion,
   unsupportedTest262Capability,
 } from "./test262-roundtrip.mjs";
 
@@ -1108,6 +1109,72 @@ test("runRoundTrip reports baseline failures as unsupported inputs", async () =>
     assert.equal(report.results[0].status, "unsupported");
     assert.equal(report.results[0].phase, "baseline");
     assert.equal(report.results[0].reason, "node-vm-baseline");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip aborts identity mismatches before writing outputs", async () => {
+  const root = makeTempTest262();
+  try {
+    const paths = ["test/language/sample"];
+    const testDir = join(root, paths[0]);
+    const baselinePath = join(root, "baseline.json");
+    const candidatePath = `${baselinePath}.new`;
+    const summaryPath = join(root, "summary.md");
+    const reportPath = join(root, "report.json");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "case.js"), "/*---\n---*/\nvoid 0;\n");
+    writeFileSync(summaryPath, "reviewed summary\n");
+    writeFileSync(reportPath, "reviewed report\n");
+    writeFileSync(
+      baselinePath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 3,
+          test262: { revision: "unmanaged" },
+          harness: { version: test262HarnessVersion },
+          environment: {
+            nodeMajor: Number.parseInt(process.versions.node.split(".")[0], 10) + 1,
+          },
+          producer: describeProducer({ pipeline: "none" }),
+          wakaru: { level: "minimal", caseTimeoutMs: 1000 },
+          selection: { presets: ["default"], paths },
+          totals: {},
+          outcomes: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const reviewedBaseline = readFileSync(baselinePath, "utf8");
+    writeFileSync(candidatePath, "reviewed candidate\n");
+
+    await assert.rejects(
+      runRoundTrip({
+        test262Root: root,
+        paths,
+        limit: Number.POSITIVE_INFINITY,
+        pipeline: "none",
+        transform: "terser",
+        terserProfile: "light",
+        level: "minimal",
+        toolRoot: join(root, "tools"),
+        keepTemp: false,
+        caseTimeoutMs: 1000,
+        baseline: baselinePath,
+        summary: summaryPath,
+        json: reportPath,
+        updateBaseline: false,
+        presets: ["default"],
+      }),
+      /runtime environment mismatch/,
+    );
+
+    assert.equal(readFileSync(summaryPath, "utf8"), "reviewed summary\n");
+    assert.equal(readFileSync(reportPath, "utf8"), "reviewed report\n");
+    assert.equal(readFileSync(baselinePath, "utf8"), reviewedBaseline);
+    assert.equal(readFileSync(candidatePath, "utf8"), "reviewed candidate\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

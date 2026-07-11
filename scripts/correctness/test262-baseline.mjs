@@ -14,27 +14,19 @@ export function createTest262Baseline(report) {
     .sort(compareOutcome);
   return {
     schemaVersion: test262BaselineSchemaVersion,
-    test262: {
-      revision: report.options.test262Revision,
-    },
-    harness: {
-      version: report.options.harnessVersion,
-    },
-    environment: {
-      nodeMajor: report.options.nodeMajor,
-    },
-    producer: report.options.producer,
-    wakaru: {
-      level: report.options.level,
-      caseTimeoutMs: report.options.caseTimeoutMs,
-    },
-    selection: {
-      presets: report.options.presets ?? [],
-      paths: report.options.paths,
-    },
+    ...createTest262BaselineIdentity(report.options),
     totals: baselineTotals(report.totals),
     outcomes,
   };
+}
+
+export function preflightTest262Baseline(path, options) {
+  if (!existsSync(path)) {
+    return false;
+  }
+  const expected = loadTest262Baseline(path);
+  assertSameIdentity(expected, createTest262BaselineIdentity(options));
+  return true;
 }
 
 export function loadTest262Baseline(path) {
@@ -225,6 +217,29 @@ function assertSameIdentity(expected, actual) {
       );
     }
   }
+}
+
+function createTest262BaselineIdentity(options) {
+  return {
+    test262: {
+      revision: options.test262Revision,
+    },
+    harness: {
+      version: options.harnessVersion,
+    },
+    environment: {
+      nodeMajor: options.nodeMajor,
+    },
+    producer: options.producer,
+    wakaru: {
+      level: options.level,
+      caseTimeoutMs: options.caseTimeoutMs,
+    },
+    selection: {
+      presets: options.presets ?? [],
+      paths: options.paths,
+    },
+  };
 }
 
 function outcomeKey(outcome) {

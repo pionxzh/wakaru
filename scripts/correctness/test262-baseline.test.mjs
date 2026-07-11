@@ -11,6 +11,7 @@ import {
   createTest262Baseline,
   fingerprintTest262Outcome,
   loadTest262Baseline,
+  preflightTest262Baseline,
   saveTest262Baseline,
   test262BaselineCandidatePath,
   validateTest262BaselineOptions,
@@ -170,6 +171,27 @@ test("identity mismatch preserves the actual baseline as a candidate", () => {
       /Candidate baseline written/,
     );
     assert.equal(loadTest262Baseline(candidatePath).environment.nodeMajor, 24);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("baseline preflight validates existing identities and allows missing baselines", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-preflight-"));
+  const path = join(root, "baseline.json");
+  const currentReport = report([]);
+  try {
+    assert.equal(preflightTest262Baseline(path, currentReport.options), false);
+    applyTest262Baseline(currentReport, { path, update: true });
+    assert.equal(preflightTest262Baseline(path, currentReport.options), true);
+    assert.throws(
+      () =>
+        preflightTest262Baseline(path, {
+          ...currentReport.options,
+          nodeMajor: currentReport.options.nodeMajor + 1,
+        }),
+      /runtime environment mismatch/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

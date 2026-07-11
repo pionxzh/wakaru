@@ -242,6 +242,9 @@ The clean comparison removes stale candidates. `--update` remains available
 for deliberate baseline-identity migrations, but bypasses the candidate review
 gate and should not be the initial command for ordinary Wakaru changes. CI
 still performs an independent clean comparison of the accepted baseline.
+Normal comparisons validate the stored identity before discovering or running
+tests, and leave summaries and candidates untouched when the Test262 revision,
+Node major, harness, producer, Wakaru options, or selection does not match.
 
 Add `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
