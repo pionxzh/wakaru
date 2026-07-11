@@ -239,6 +239,10 @@ node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --sli
 node scripts\correctness\test262-collect-stats.mjs --producer swc-minify --slice operators
 ```
 
+Candidates record the exact reviewed baseline they were compared against.
+Acceptance refuses stale candidates if that baseline has since changed; rerun
+the comparison to produce a fresh candidate.
+
 The clean comparison removes stale candidates. `--update` remains available
 for deliberate baseline-identity migrations, but bypasses the candidate review
 gate and should not be the initial command for ordinary Wakaru changes. CI

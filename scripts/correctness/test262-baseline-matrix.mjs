@@ -8,6 +8,7 @@ import { join, relative, resolve } from "node:path";
 import {
   acceptTest262BaselineCandidate,
   test262BaselineCandidatePath,
+  validateTest262BaselineCandidate,
 } from "./test262-baseline.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -286,11 +287,12 @@ export async function runBaselineMatrix(options) {
 }
 
 export function acceptBaselineMatrixCandidates(jobs) {
-  const accepted = [];
-  for (const job of jobs) {
-    if (!existsSync(job.candidate)) continue;
+  const accepted = jobs.filter((job) => existsSync(job.candidate));
+  for (const job of accepted) {
+    validateTest262BaselineCandidate(job.baseline);
+  }
+  for (const job of accepted) {
     acceptTest262BaselineCandidate(job.baseline);
-    accepted.push(job);
   }
   return accepted;
 }

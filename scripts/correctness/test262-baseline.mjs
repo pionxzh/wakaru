@@ -57,12 +57,36 @@ export function test262BaselineCandidatePath(path) {
   return `${path}.new`;
 }
 
-export function acceptTest262BaselineCandidate(path) {
+export function validateTest262BaselineCandidate(path) {
   const candidatePath = test262BaselineCandidatePath(path);
   const candidate = loadTest262Baseline(candidatePath);
-  saveTest262Baseline(path, candidate);
+  const reviewedBaselineSha256 = candidate._candidate?.reviewedBaselineSha256;
+  if (
+    !(reviewedBaselineSha256 === null ||
+      (typeof reviewedBaselineSha256 === "string" &&
+        /^[0-9a-f]{64}$/.test(reviewedBaselineSha256)))
+  ) {
+    throw new Error(
+      `Test262 baseline candidate ${candidatePath} has no valid freshness metadata; rerun the comparison`,
+    );
+  }
+  const currentBaselineSha256 = baselineFileSha256(path);
+  if (reviewedBaselineSha256 !== currentBaselineSha256) {
+    throw new Error(
+      `stale Test262 baseline candidate ${candidatePath}: reviewed baseline changed after the comparison; rerun it`,
+    );
+  }
+  const baseline = { ...candidate };
+  delete baseline._candidate;
+  return { path, candidatePath, baseline };
+}
+
+export function acceptTest262BaselineCandidate(path) {
+  const validated = validateTest262BaselineCandidate(path);
+  saveTest262Baseline(path, validated.baseline);
+  const { candidatePath } = validated;
   rmSync(candidatePath);
-  return { path, candidatePath, baseline: candidate };
+  return validated;
 }
 
 export function compareTest262Baseline(expected, actual) {
@@ -100,12 +124,13 @@ export function applyTest262Baseline(report, { path, update }) {
       totalsChanged: false,
     };
   }
+  const reviewedBaselineSha256 = baselineFileSha256(path);
   let comparison;
   try {
     const expected = loadTest262Baseline(path);
     comparison = compareTest262Baseline(expected, actual);
   } catch (error) {
-    saveTest262Baseline(candidatePath, actual);
+    saveTest262BaselineCandidate(candidatePath, actual, reviewedBaselineSha256);
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${message}\nCandidate baseline written to ${candidatePath}`, {
       cause: error,
@@ -114,7 +139,7 @@ export function applyTest262Baseline(report, { path, update }) {
   if (comparison.clean) {
     rmSync(candidatePath, { force: true });
   } else {
-    saveTest262Baseline(candidatePath, actual);
+    saveTest262BaselineCandidate(candidatePath, actual, reviewedBaselineSha256);
   }
   return {
     path,
@@ -122,6 +147,17 @@ export function applyTest262Baseline(report, { path, update }) {
     updated: false,
     ...comparison,
   };
+}
+
+function saveTest262BaselineCandidate(path, baseline, reviewedBaselineSha256) {
+  saveTest262Baseline(path, {
+    ...baseline,
+    _candidate: { reviewedBaselineSha256 },
+  });
+}
+
+function baselineFileSha256(path) {
+  return existsSync(path) ? sha256(readFileSync(path)) : null;
 }
 
 export function validateTest262BaselineOptions(options) {

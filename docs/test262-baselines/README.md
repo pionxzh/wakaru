@@ -83,6 +83,10 @@ then promote selected candidates without rerunning Test262:
 node scripts\correctness\test262-baseline-matrix.mjs --slice classes --accept
 ```
 
+Acceptance verifies that each candidate was generated from the current
+reviewed baseline and rejects the whole selected set before promoting anything
+if one is stale.
+
 Use `--update` only when deliberately replacing an incompatible baseline
 identity, such as a pinned Node-major migration.
 Without `--update`, identity mismatches abort before tests run or tracked

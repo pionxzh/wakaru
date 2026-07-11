@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -164,7 +165,13 @@ test("acceptBaselineMatrixCandidates promotes only existing candidates", () => {
   const baseline = join(root, "classes.json");
   const candidate = `${baseline}.new`;
   try {
-    writeFileSync(candidate, `${JSON.stringify({ schemaVersion: 3 })}\n`);
+    writeFileSync(
+      candidate,
+      `${JSON.stringify({
+        schemaVersion: 3,
+        _candidate: { reviewedBaselineSha256: null },
+      })}\n`,
+    );
     const accepted = acceptBaselineMatrixCandidates([
       { producer: "swc-minify", slice: "classes", baseline, candidate },
       {
@@ -182,3 +189,52 @@ test("acceptBaselineMatrixCandidates promotes only existing candidates", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("acceptBaselineMatrixCandidates validates every candidate before promotion", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-matrix-stale-candidate-"));
+  const firstBaseline = join(root, "first.json");
+  const secondBaseline = join(root, "second.json");
+  const firstCandidate = `${firstBaseline}.new`;
+  const secondCandidate = `${secondBaseline}.new`;
+  const firstReviewed = `${JSON.stringify({ schemaVersion: 3, value: "reviewed-first" })}\n`;
+  const secondReviewed = `${JSON.stringify({ schemaVersion: 3, value: "reviewed-second" })}\n`;
+  try {
+    writeFileSync(firstBaseline, firstReviewed);
+    writeFileSync(secondBaseline, secondReviewed);
+    writeFileSync(
+      firstCandidate,
+      `${JSON.stringify({
+        schemaVersion: 3,
+        value: "candidate-first",
+        _candidate: { reviewedBaselineSha256: sha256(firstReviewed) },
+      })}\n`,
+    );
+    writeFileSync(
+      secondCandidate,
+      `${JSON.stringify({
+        schemaVersion: 3,
+        value: "candidate-second",
+        _candidate: { reviewedBaselineSha256: "0".repeat(64) },
+      })}\n`,
+    );
+
+    assert.throws(
+      () =>
+        acceptBaselineMatrixCandidates([
+          { producer: "swc-minify", slice: "first", baseline: firstBaseline, candidate: firstCandidate },
+          { producer: "swc-minify", slice: "second", baseline: secondBaseline, candidate: secondCandidate },
+        ]),
+      /stale Test262 baseline candidate/,
+    );
+    assert.equal(readFileSync(firstBaseline, "utf8"), firstReviewed);
+    assert.equal(readFileSync(secondBaseline, "utf8"), secondReviewed);
+    assert.equal(existsSync(firstCandidate), true);
+    assert.equal(existsSync(secondCandidate), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}

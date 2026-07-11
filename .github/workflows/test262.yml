@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: test262-${{ github.workflow }}-${{ github.ref }}
+  group: test262-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:

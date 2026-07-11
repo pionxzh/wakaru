@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -136,6 +136,60 @@ test("failed comparison writes a reviewable candidate that can be accepted", () 
     acceptTest262BaselineCandidate(path);
     assert.equal(existsSync(candidatePath), false);
     assert.notEqual(readFileSync(path, "utf8"), reviewed);
+    assert.equal("_candidate" in loadTest262Baseline(path), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("candidate acceptance rejects a reviewed baseline changed after comparison", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-stale-candidate-"));
+  const path = join(root, "baseline.json");
+  const candidatePath = test262BaselineCandidatePath(path);
+  try {
+    applyTest262Baseline(
+      report([{ path: "case.js", status: "rejected", reason: "known", error: "old" }]),
+      { path, update: true },
+    );
+    applyTest262Baseline(
+      report([{ path: "case.js", status: "rejected", reason: "known", error: "new" }]),
+      { path, update: false },
+    );
+    const candidate = loadTest262Baseline(candidatePath);
+    assert.match(candidate._candidate.reviewedBaselineSha256, /^[0-9a-f]{64}$/);
+
+    const changedBaseline = `${readFileSync(path, "utf8").trimEnd()}\n\n`;
+    writeFileSync(path, changedBaseline);
+    assert.throws(() => acceptTest262BaselineCandidate(path), /stale Test262 baseline candidate/);
+    assert.equal(readFileSync(path, "utf8"), changedBaseline);
+    assert.equal(existsSync(candidatePath), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("candidate freshness supports missing baselines and rejects unverifiable candidates", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-candidate-origin-"));
+  const missingPath = join(root, "missing.json");
+  const legacyPath = join(root, "legacy.json");
+  try {
+    assert.throws(
+      () => applyTest262Baseline(report([]), { path: missingPath, update: false }),
+      /Candidate baseline written/,
+    );
+    assert.equal(
+      loadTest262Baseline(test262BaselineCandidatePath(missingPath))._candidate
+        .reviewedBaselineSha256,
+      null,
+    );
+    acceptTest262BaselineCandidate(missingPath);
+    assert.equal(existsSync(missingPath), true);
+
+    saveTest262Baseline(test262BaselineCandidatePath(legacyPath), createTest262Baseline(report([])));
+    assert.throws(
+      () => acceptTest262BaselineCandidate(legacyPath),
+      /no valid freshness metadata/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
