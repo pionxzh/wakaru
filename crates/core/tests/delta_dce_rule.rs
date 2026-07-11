@@ -130,6 +130,21 @@ export const value = 42;
 }
 
 #[test]
+fn transform_only_preserves_named_import_link_check_after_use_cleanup() {
+    // Even when a rewrite removes the only runtime read, the original named
+    // specifier still performs an observable ESM link-time export check.
+    let input = r#"
+import { missing } from "./resolution_FIXTURE.js";
+void missing;
+"#;
+    let output = decompile_with_dce(input, DceMode::TransformOnly);
+    assert!(
+        output.contains("import { missing }"),
+        "transform-only DCE must preserve the original named import:\n{output}"
+    );
+}
+
+#[test]
 fn full_dce_removes_pre_existing_dead_import() {
     let input = r#"
 import { neverUsed } from "./utils.js";

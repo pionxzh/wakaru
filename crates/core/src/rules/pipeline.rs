@@ -9,7 +9,7 @@ use crate::facts::ModuleFactsMap;
 use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
-use super::dead_imports::compute_pre_dead_import_spans;
+use super::dead_imports::compute_pre_existing_import_spans;
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::*;
 
@@ -76,7 +76,7 @@ struct RuleRunContext<'a> {
 pub(super) struct PreDeadSet {
     pub decl_spans:
         std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
-    pub import_spans:
+    pub pre_existing_import_spans:
         std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
 }
 
@@ -489,7 +489,7 @@ fn run_dead_imports(module: &mut Module, ctx: RuleRunContext<'_>) {
         DceMode::Full => module.visit_mut_with(&mut DeadImports::full()),
         DceMode::TransformOnly => {
             if let Some(pre_dead) = ctx.pre_dead.as_ref() {
-                module.visit_mut_with(&mut DeadImports::delta(&pre_dead.import_spans));
+                module.visit_mut_with(&mut DeadImports::delta(&pre_dead.pre_existing_import_spans));
             }
         }
         DceMode::Off => {}
@@ -836,7 +836,7 @@ fn apply_rules_impl(
     let pre_dead = if options.dce_mode == DceMode::TransformOnly {
         Some(Rc::new(PreDeadSet {
             decl_spans: compute_pre_dead_decl_spans(module),
-            import_spans: compute_pre_dead_import_spans(module),
+            pre_existing_import_spans: compute_pre_existing_import_spans(module),
         }))
     } else {
         None

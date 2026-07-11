@@ -549,17 +549,17 @@ test("runRoundTrip preserves module resolution/runtime negatives and async compl
       caseTimeoutMs: 3000,
     });
 
-    assert.equal(report.totals.passed, 3);
+    assert.equal(report.totals.passed, 4);
     assert.equal(report.totals.skipped, 1);
-    assert.equal(report.totals.failed, 1);
+    assert.equal(report.totals.failed, 0);
     assert.equal(report.totals.unsupported, 0);
     assert.equal(
       report.results.find((result) => result.path.endsWith("parse-negative.js")).lane,
       "parser-boundary",
     );
     assert.equal(
-      report.results.find((result) => result.path.endsWith("resolution-negative.js")).phase,
-      "decompiled-runtime",
+      report.results.find((result) => result.path.endsWith("resolution-negative.js")).status,
+      "passed",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
