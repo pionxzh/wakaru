@@ -9,9 +9,9 @@ The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
 output minified through Terser, because optional/nullish lowering can become a
 different recoverable shape after minification. The nullish-assignment rows
 cover identifier, static-member, and side-effectful computed-member targets.
-The computed-member row currently documents incomplete recovery across lowered
-tool outputs: wakaru recovers `??` but leaves the compiler's object/key temps
-instead of restoring `getTarget()[getKey()] ??= make()`.
+The computed-member rows verify that compiler object/key temporaries are folded
+back into `getTarget()[getKey()] ??= make()` when those temporaries prove the
+receiver and key are each evaluated once.
 
 The logical-AND rows include issue #166-style boolean prefixes, such as a
 lowered optional chain followed by ordinary suffix conditions or a second

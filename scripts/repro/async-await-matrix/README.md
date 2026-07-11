@@ -25,6 +25,17 @@ now correctly show as `no`. Remaining `no` rows fall into three honest buckets:
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
+- **control-flow** — complex `for await` plus `break` inside `try/finally`
+  remains native or lowered, or leaks generator state opcodes instead of being
+  reconstructed as one structured loop.
+
+The matrix's `error` count is separate from those Wakaru recovery failures.
+The current errors are producer/harness transform failures: Babel regenerator
+cannot process the added object-pattern/default rows in this plugin setup, and
+older async/regenerator combinations cannot lower the `for await` challenge.
+One failed producer transform also marks its two downstream Terser variants as
+`source not in batch`, so the reported error count grows by three per failed
+source transform. Wakaru is not invoked for those rows.
 
 Some hoisted `let x; … x = await …` splits are folded back to `let x = await …`
 by the `MergeDeclarationInit` rule, while others intentionally remain split

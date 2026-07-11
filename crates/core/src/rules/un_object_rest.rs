@@ -192,7 +192,7 @@ fn run_un_object_rest(
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
 
-    let property_key_helpers =
+    let (property_key_helpers, property_key_typeof_helpers) =
         collect_property_key_coercion_helpers(module, local_helpers, unresolved_mark);
     let computed_context = ComputedObjectRestContext {
         named_helpers: &named_helpers,
@@ -200,10 +200,16 @@ fn run_un_object_rest(
         swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
         cross_module_namespaces: &cross_module_helpers.namespaces,
         property_key_helpers: &property_key_helpers,
+        property_key_typeof_helpers: &property_key_typeof_helpers,
+        unresolved_mark,
     };
     let collapsed_key_aliases = recover_computed_object_rest(module, &computed_context);
     remove_unused_computed_key_aliases(module, &collapsed_key_aliases);
-    remove_unused_property_key_helpers(module, &property_key_helpers);
+    let property_key_cleanup_helpers = property_key_helpers
+        .union(&property_key_typeof_helpers)
+        .cloned()
+        .collect();
+    remove_unused_property_key_helpers(module, &property_key_cleanup_helpers);
 
     if named_helpers.is_empty()
         && cross_module_helpers.namespaces.is_empty()
@@ -257,7 +263,9 @@ fn run_un_object_rest(
             )
         });
 
-        if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
+        if let Some((rest_binding, declaration_kind, source, excluded_keys, before, after)) =
+            extraction
+        {
             let future_jsx_tag_bindings = jsx_tag_bindings_in_module_items(&items[index + 1..]);
             if has_jsx_tag_default_pair(
                 &recent_stmts,
@@ -289,6 +297,7 @@ fn run_un_object_rest(
             let original_span = stmt.span();
             let new_stmt = build_rest_destructuring(
                 original_span,
+                declaration_kind,
                 &rest_binding,
                 &source,
                 &excluded_keys,
@@ -301,7 +310,7 @@ fn run_un_object_rest(
                 let after_stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
                     span: original_span,
                     ctxt: Default::default(),
-                    kind: VarDeclKind::Var,
+                    kind: declaration_kind,
                     declare: false,
                     decls: after,
                 })));
@@ -392,6 +401,11 @@ fn remove_unused_property_key_helpers(module: &mut Module, helpers: &HashSet<Bin
     remove_import_specifiers_by_binding(&mut module.body, &removable);
 }
 
+// This semantic matcher stays rule-local because the shared helper registry
+// intentionally classifies these paths as lifecycle-only HelperDependency.
+// UnObjectRest is the only rule that rewrites calls based on ToPropertyKey
+// identity, and it needs the producer-specific wrapper shapes below as well as
+// import provenance.
 const PROPERTY_KEY_HELPER_PATHS: &[&str] = &[
     "@babel/runtime/helpers/toPropertyKey",
     "@babel/runtime/helpers/esm/toPropertyKey",
@@ -402,7 +416,7 @@ fn collect_property_key_coercion_helpers(
     module: &Module,
     local_helpers: &LocalHelperContext,
     unresolved_mark: Mark,
-) -> HashSet<BindingKey> {
+) -> (HashSet<BindingKey>, HashSet<BindingKey>) {
     let mut typeof_helpers: HashSet<_> = local_helpers
         .helpers_of_kind(TranspilerHelperKind::Typeof)
         .into_keys()
@@ -463,7 +477,7 @@ fn collect_property_key_coercion_helpers(
         }
     }
 
-    helpers
+    (helpers, typeof_helpers)
 }
 
 fn collect_property_key_typeof_helpers(
@@ -872,6 +886,8 @@ struct ComputedObjectRestContext<'a> {
     swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
     cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     property_key_helpers: &'a HashSet<BindingKey>,
+    property_key_typeof_helpers: &'a HashSet<BindingKey>,
+    unresolved_mark: Mark,
 }
 
 fn recover_computed_object_rest(
@@ -949,21 +965,29 @@ fn recover_computed_object_rest_in_stmts(
         } else {
             None
         };
+        let used_preceding_access = extraction.picked.is_none() && preceding_access.is_some();
         let picked = extraction.picked.clone().or(preceding_access);
         let Some(picked) = picked else {
             rebuilt.push(stmt);
             continue;
         };
+        if used_preceding_access {
+            rebuilt.pop();
+        }
+        let preceding_alias = if used_preceding_access {
+            rebuilt
+                .last()
+                .and_then(|stmt| resolve_computed_key_alias_in_stmt(stmt, &extraction.key))
+        } else {
+            None
+        };
         let pattern_key = if binding_key(&extraction.pattern_key) == binding_key(&extraction.key) {
-            resolve_computed_key_alias_in_stmts(&rebuilt, &extraction.key)
+            preceding_alias.unwrap_or_else(|| extraction.key.clone())
         } else {
             extraction.pattern_key.clone()
         };
         if binding_key(&pattern_key) != binding_key(&extraction.key) {
             collapsed_key_aliases.insert(binding_key(&extraction.key));
-        }
-        if extraction.picked_index.is_none() {
-            rebuilt.pop();
         }
 
         if !extraction.before.is_empty() {
@@ -975,6 +999,7 @@ fn recover_computed_object_rest_in_stmts(
         }
         rebuilt.push(build_computed_rest_destructuring(
             extraction.span,
+            extraction.kind,
             &extraction.rest,
             &extraction.source,
             &pattern_key,
@@ -1027,16 +1052,11 @@ impl VisitMut for UnusedComputedKeyAliasRemover<'_> {
     }
 }
 
-fn resolve_computed_key_alias_in_stmts(stmts: &[Stmt], key: &Ident) -> Ident {
-    for stmt in stmts.iter().rev() {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            continue;
-        };
-        if let Some(original) = resolve_computed_key_alias_from_decls(&var.decls, key) {
-            return original;
-        }
-    }
-    key.clone()
+fn resolve_computed_key_alias_in_stmt(stmt: &Stmt, key: &Ident) -> Option<Ident> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    resolve_computed_key_alias_from_decl(var.decls.last()?, key)
 }
 
 struct ComputedObjectRestExtraction {
@@ -1075,10 +1095,13 @@ fn extract_computed_object_rest(
         .find_map(|(index, decl)| {
             computed_access_from_declarator(decl, &source, &key).map(|picked| (index, picked))
         });
-    let pattern_key = resolve_computed_key_alias(&var.decls[..rest_index], &key);
     let (picked_index, picked) = picked_match
         .map(|(index, picked)| (Some(index), Some(picked)))
         .unwrap_or((None, None));
+    let pattern_key = picked_index
+        .and_then(|index| index.checked_sub(1))
+        .and_then(|alias_index| resolve_computed_key_alias_from_decl(&var.decls[alias_index], &key))
+        .unwrap_or_else(|| key.clone());
     let before = var.decls[..rest_index]
         .iter()
         .enumerate()
@@ -1101,23 +1124,17 @@ fn extract_computed_object_rest(
     })
 }
 
-fn resolve_computed_key_alias(decls: &[VarDeclarator], key: &Ident) -> Ident {
-    resolve_computed_key_alias_from_decls(decls, key).unwrap_or_else(|| key.clone())
-}
-
-fn resolve_computed_key_alias_from_decls(decls: &[VarDeclarator], key: &Ident) -> Option<Ident> {
-    decls.iter().find_map(|decl| {
-        let Pat::Ident(binding) = &decl.name else {
-            return None;
-        };
-        if binding_key(&binding.id) != binding_key(key) {
-            return None;
-        }
-        let Expr::Ident(original) = strip_parens(decl.init.as_deref()?) else {
-            return None;
-        };
-        Some(original.clone())
-    })
+fn resolve_computed_key_alias_from_decl(decl: &VarDeclarator, key: &Ident) -> Option<Ident> {
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    if binding_key(&binding.id) != binding_key(key) {
+        return None;
+    }
+    let Expr::Ident(original) = strip_parens(decl.init.as_deref()?) else {
+        return None;
+    };
+    Some(original.clone())
 }
 
 fn extract_computed_named_owp_args(
@@ -1141,14 +1158,13 @@ fn extract_computed_named_owp_args(
     {
         return None;
     }
-    let key =
-        extract_computed_exclusion_key(call.args[1].expr.as_ref(), context.property_key_helpers)?;
+    let key = extract_computed_exclusion_key(call.args[1].expr.as_ref(), context)?;
     Some((call.args[0].expr.clone(), key))
 }
 
 fn extract_computed_exclusion_key(
     expr: &Expr,
-    property_key_helpers: &HashSet<BindingKey>,
+    context: &ComputedObjectRestContext<'_>,
 ) -> Option<Ident> {
     if let Expr::Array(array) = strip_parens(expr) {
         if array.elems.len() != 1 {
@@ -1158,17 +1174,21 @@ fn extract_computed_exclusion_key(
         if element.spread.is_some() {
             return None;
         }
-        return extract_property_key_coercion(&element.expr, property_key_helpers);
+        return extract_property_key_coercion(&element.expr, context);
     }
-    extract_property_key_coercion(expr, property_key_helpers)
+    extract_property_key_coercion(expr, context)
 }
 
 fn extract_property_key_coercion(
     expr: &Expr,
-    property_key_helpers: &HashSet<BindingKey>,
+    context: &ComputedObjectRestContext<'_>,
 ) -> Option<Ident> {
     if let Expr::Cond(_) = strip_parens(expr) {
-        let candidate = property_key_cond_candidate(expr, &HashSet::new(), Mark::root())?;
+        let candidate = property_key_cond_candidate(
+            expr,
+            context.property_key_typeof_helpers,
+            context.unresolved_mark,
+        )?;
         return Some(Ident::new(candidate.0, DUMMY_SP, candidate.1));
     }
 
@@ -1181,7 +1201,7 @@ fn extract_property_key_coercion(
 
     if call.args.len() == 1 && call.args[0].spread.is_none() {
         if let Expr::Ident(helper) = strip_parens(callee) {
-            if !property_key_helpers.contains(&binding_key(helper)) {
+            if !context.property_key_helpers.contains(&binding_key(helper)) {
                 return None;
             }
             let Expr::Ident(key) = strip_parens(call.args[0].expr.as_ref()) else {
@@ -1203,7 +1223,7 @@ fn extract_property_key_coercion(
     let Expr::Ident(helper) = strip_parens(call.args[0].expr.as_ref()) else {
         return None;
     };
-    if !property_key_helpers.contains(&binding_key(helper)) {
+    if !context.property_key_helpers.contains(&binding_key(helper)) {
         return None;
     }
     let Expr::Array(keys) = strip_parens(member.obj.as_ref()) else {
@@ -1293,6 +1313,7 @@ fn var_decl_stmt(span: Span, kind: VarDeclKind, decls: Vec<VarDeclarator>) -> St
 
 fn build_computed_rest_destructuring(
     span: Span,
+    kind: VarDeclKind,
     rest: &BindingIdent,
     source: &Expr,
     key: &Ident,
@@ -1300,7 +1321,7 @@ fn build_computed_rest_destructuring(
 ) -> Stmt {
     var_decl_stmt(
         span,
-        VarDeclKind::Const,
+        kind,
         vec![VarDeclarator {
             span: DUMMY_SP,
             name: Pat::Object(ObjectPat {
@@ -1689,7 +1710,9 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 )
             });
 
-            if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
+            if let Some((rest_binding, declaration_kind, source, excluded_keys, before, after)) =
+                extraction
+            {
                 let future_jsx_tag_bindings = jsx_tag_bindings_in_stmts(&stmts[index + 1..]);
                 if has_jsx_tag_default_pair(
                     &new_stmts,
@@ -1721,6 +1744,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 let original_span = stmt.span();
                 new_stmts.push(build_rest_destructuring(
                     original_span,
+                    declaration_kind,
                     &rest_binding,
                     &source,
                     &excluded_keys,
@@ -1731,7 +1755,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                     new_stmts.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
                         span: original_span,
                         ctxt: Default::default(),
-                        kind: VarDeclKind::Var,
+                        kind: declaration_kind,
                         declare: false,
                         decls: after,
                     }))));
@@ -2153,13 +2177,15 @@ enum PrecedingAccess {
 }
 
 /// Try to extract an `_objectWithoutPropertiesLoose` inline IIFE from a statement.
-/// Returns (rest_binding_name, source_expr, excluded_keys, declarators_before, declarators_after).
+/// Returns (rest_binding_name, declaration_kind, source_expr, excluded_keys,
+/// declarators_before, declarators_after).
 /// The before/after declarators are from the same var decl if it had multiple declarators.
 fn try_extract_owp_iife(
     stmt: &Stmt,
     exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(
     BindingIdent,
+    VarDeclKind,
     Box<Expr>,
     Vec<Atom>,
     Vec<VarDeclarator>,
@@ -2189,7 +2215,14 @@ fn try_extract_owp_iife(
 
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
-    Some((binding.clone(), source, excluded_keys, before, after))
+    Some((
+        binding.clone(),
+        var.kind,
+        source,
+        excluded_keys,
+        before,
+        after,
+    ))
 }
 
 /// Try to extract a named OWP helper call from a statement.
@@ -2203,6 +2236,7 @@ fn try_extract_owp_named_call(
     exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(
     BindingIdent,
+    VarDeclKind,
     Box<Expr>,
     Vec<Atom>,
     Vec<VarDeclarator>,
@@ -2253,7 +2287,14 @@ fn try_extract_owp_named_call(
 
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
-    Some((binding.clone(), source, excluded_keys, before, after))
+    Some((
+        binding.clone(),
+        var.kind,
+        source,
+        excluded_keys,
+        before,
+        after,
+    ))
 }
 
 fn try_extract_owp_named_assignment(
@@ -3229,6 +3270,7 @@ fn match_undefined_check(
 
 fn build_rest_destructuring(
     original_span: Span,
+    kind: VarDeclKind,
     rest_binding: &BindingIdent,
     source: &Expr,
     excluded_keys: &[Atom],
@@ -3348,7 +3390,7 @@ fn build_rest_destructuring(
     Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: var_span,
         ctxt: Default::default(),
-        kind: VarDeclKind::Const,
+        kind,
         declare: false,
         decls: vec![VarDeclarator {
             span: DUMMY_SP,

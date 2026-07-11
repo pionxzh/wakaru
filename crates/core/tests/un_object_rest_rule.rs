@@ -84,7 +84,7 @@ use(label, rest);
 "#;
     let expected = r#"
 import { __rest } from "./helpers.js";
-const { label, ...rest } = props;
+var { label, ...rest } = props;
 use(label, rest);
 "#;
     assert_eq_normalized(
@@ -115,7 +115,7 @@ use(label, rest);
 "#;
     let expected = r#"
 import * as helpers from "./helpers.js";
-const { label, ...rest } = props;
+var { label, ...rest } = props;
 use(label, rest);
 "#;
     assert_eq_normalized(
@@ -399,7 +399,7 @@ use(name, rest_info);
 "#;
     let expected = r#"
 import helpers from "./helpers.js";
-const { name, ...rest_info } = app_info;
+var { name, ...rest_info } = app_info;
 use(name, rest_info);
 "#;
     assert_eq_normalized(
@@ -430,7 +430,7 @@ use(name, rest_info);
 "#;
     let expected = r#"
 import { rest as objectWithoutProperties } from "./helpers.js";
-const { name, ...rest_info } = app_info;
+var { name, ...rest_info } = app_info;
 use(name, rest_info);
 "#;
     assert_eq_normalized(
@@ -1506,6 +1506,23 @@ use(picked, rest);
 }
 
 #[test]
+fn computed_key_inline_coercion_uses_proven_typeof_helper() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+import inspect from "@babel/runtime/helpers/typeof";
+const key = getKey();
+const picked = source[key];
+const rest = omit(source, [inspect(key) === "symbol" ? key : String(key)]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [key]: picked, ...rest } = source;"),
+        "the inline coercion should use the proven typeof binding: {output}"
+    );
+}
+
+#[test]
 fn computed_key_recovers_typescript_inline_coercion() {
     let input = r#"
 var __rest = (this && this.__rest) || function(source, excluded) {
@@ -1524,7 +1541,7 @@ use(picked, rest);
 "#;
     let output = render_rule(input, UnObjectRest::new);
     assert!(
-        output.contains("const { [propertyKey]: picked, ...rest } = sourceAlias;"),
+        output.contains("var { [propertyKey]: picked, ...rest } = sourceAlias;"),
         "TypeScript's inline property-key coercion should recover: {output}"
     );
 }
@@ -1625,5 +1642,60 @@ use(picked, rest);
     assert!(
         !output.contains("...rest"),
         "SWC-like names cannot substitute for nested helper provenance: {output}"
+    );
+}
+
+#[test]
+fn computed_key_rest_binding_stays_mutable() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+import coerce from "@babel/runtime/helpers/toPropertyKey";
+var key = getKey();
+var picked = source[key], rest = omit(source, [coerce(key)]);
+rest = mutate(rest);
+use(picked, rest);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("let { [key]: picked, ...rest } = source;"),
+        "a reassigned computed rest binding must not become const: {output}"
+    );
+}
+
+#[test]
+fn string_key_rest_binding_stays_mutable() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+var picked = source.name, rest = omit(source, ["name"]);
+rest = mutate(rest);
+use(picked, rest);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("let { name: picked, ...rest } = source;"),
+        "a reassigned string-key rest binding must not become const: {output}"
+    );
+}
+
+#[test]
+fn computed_key_alias_is_not_collapsed_across_source_write() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+import coerce from "@babel/runtime/helpers/toPropertyKey";
+let key = initialKey;
+const keyAlias = key;
+key = otherKey();
+const picked = source[keyAlias];
+const rest = omit(source, [coerce(keyAlias)]);
+use(picked, rest, key);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [keyAlias]: picked, ...rest } = source;"),
+        "the frozen alias must remain the computed pattern key: {output}"
+    );
+    assert!(
+        output.contains("const keyAlias = key;"),
+        "the frozen alias declaration must remain: {output}"
     );
 }
