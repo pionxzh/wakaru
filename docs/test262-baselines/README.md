@@ -65,10 +65,6 @@ module-graph/none.md
 module-graph/none.json
 module-graph/babel-env-terser.md
 module-graph/babel-env-terser.json
-module-graph/swc-minify.md
-module-graph/swc-minify.json
-module-graph/esbuild-minify.md
-module-graph/esbuild-minify.json
 ```
 
 Regenerate the normal baseline matrix with:

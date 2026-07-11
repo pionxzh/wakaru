@@ -250,9 +250,10 @@ not followed by Terser.
 
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
 these add no-transform and Babel producer coverage to the canonical recursive
-modules slice (and retain matching SWC/esbuild views). In this directory, the
-file name is the producer pipeline. The baseline matrix includes these jobs;
-select only them with `--slice module-graph`.
+modules slice. SWC and esbuild module graphs are already covered by their
+normal `modules` slice, so they are not duplicated here. In this directory,
+the file name is the producer pipeline. The baseline matrix includes these
+jobs; select only them with `--slice module-graph`.
 
 ```powershell
 node scripts\correctness\test262-baseline-matrix.mjs --slice module-graph

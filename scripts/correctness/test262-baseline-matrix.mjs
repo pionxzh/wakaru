@@ -12,8 +12,6 @@ export const normalBaselineProducers = ["terser-light", "swc-minify", "esbuild-m
 export const moduleGraphBaselineProducers = [
   "none",
   "babel-env-terser",
-  "swc-minify",
-  "esbuild-minify",
 ];
 export const baselineProducers = unique([
   ...normalBaselineProducers,
