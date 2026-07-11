@@ -416,15 +416,22 @@ fn inline_temp_vars(
     stmts: Vec<Stmt>,
     context_for_init_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
-    // Collect candidates: `const t = e` where e is a simple expr.
-    // Only inline if t is used exactly once in the rest of the block (not in nested functions)
+    // Collect candidates: `const t = e` (or a never-written `let t = e`, the
+    // shape minifiers emit) where e is a simple expr. Only inline if t is used
+    // exactly once in the rest of the block (not in nested functions).
     let mut candidates: HashMap<BindingKey, TempCandidate> = HashMap::new();
 
     for (idx, stmt) in stmts.iter().enumerate() {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
-            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+            if var.kind != VarDeclKind::Var && var.decls.len() == 1 {
                 let decl = &var.decls[0];
                 if let Pat::Ident(bi) = &decl.name {
+                    // A local binding shadowing a builtin name is handled by
+                    // the builtin-alias passes; folding it away here would
+                    // reshape the fixtures those passes are keyed on.
+                    if is_stable_builtin_alias_root(&bi.id.sym) {
+                        continue;
+                    }
                     if let Some(init) = &decl.init {
                         if is_simple_expr(init) {
                             let key = (bi.id.sym.clone(), bi.id.ctxt);
@@ -468,7 +475,7 @@ fn inline_temp_vars(
     for stmt in stmts {
         // Skip definitions of inlined vars
         if let Stmt::Decl(Decl::Var(var)) = &stmt {
-            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+            if var.kind != VarDeclKind::Var && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
                     if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
                         continue;
@@ -810,6 +817,11 @@ struct TempUsageInfo {
     used_in_loop: bool,
     used_in_nested_function: bool,
     source_mutated_after_def: bool,
+    // The candidate binding itself is a write target somewhere (assignment,
+    // destructuring assignment, update, for-in/of head). Impossible for
+    // `const` candidates in valid code; disqualifies `let` candidates, whose
+    // single reference could otherwise be the write itself.
+    mutated: bool,
 }
 
 impl TempUsageInfo {
@@ -818,6 +830,7 @@ impl TempUsageInfo {
             || self.used_above_decl
             || self.used_in_nested_function
             || self.source_mutated_after_def
+            || self.mutated
         {
             return false;
         }
@@ -1028,7 +1041,7 @@ fn stmt_is_temp_definition(stmt: &Stmt, candidates: &HashMap<BindingKey, TempCan
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return false;
     };
-    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+    if var.kind == VarDeclKind::Var || var.decls.len() != 1 {
         return false;
     }
     let Pat::Ident(bi) = &var.decls[0].name else {
@@ -1078,9 +1091,17 @@ impl Visit for TempUsageCollector<'_> {
         match &assign.left {
             AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
                 self.record_direct_mutation(&(id.sym.clone(), id.ctxt));
+                self.record_candidate_mutation(&(id.sym.clone(), id.ctxt));
             }
             AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
                 self.record_property_mutation(member);
+            }
+            AssignTarget::Pat(pat_target) => {
+                let mut targets = HashSet::new();
+                collect_assign_target_pat_ids(pat_target, &mut targets);
+                for key in targets {
+                    self.record_candidate_mutation(&key);
+                }
             }
             _ => {}
         }
@@ -1090,7 +1111,10 @@ impl Visit for TempUsageCollector<'_> {
 
     fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
         match update.arg.as_ref() {
-            Expr::Ident(id) => self.record_direct_mutation(&(id.sym.clone(), id.ctxt)),
+            Expr::Ident(id) => {
+                self.record_direct_mutation(&(id.sym.clone(), id.ctxt));
+                self.record_candidate_mutation(&(id.sym.clone(), id.ctxt));
+            }
             Expr::Member(member) => self.record_property_mutation(member),
             _ => {}
         }
@@ -1137,11 +1161,13 @@ impl Visit for TempUsageCollector<'_> {
         self.visit_within_loop(&stmt.body);
     }
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        self.record_for_head_mutations(&stmt.left);
         stmt.left.visit_with(self);
         stmt.right.visit_with(self);
         self.visit_within_loop(&stmt.body);
     }
     fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        self.record_for_head_mutations(&stmt.left);
         stmt.left.visit_with(self);
         stmt.right.visit_with(self);
         self.visit_within_loop(&stmt.body);
@@ -1163,6 +1189,22 @@ impl Visit for TempUsageCollector<'_> {
 }
 
 impl TempUsageCollector<'_> {
+    fn record_candidate_mutation(&mut self, key: &BindingKey) {
+        if let Some(usage) = self.analysis.usage.get_mut(key) {
+            usage.mutated = true;
+        }
+    }
+
+    fn record_for_head_mutations(&mut self, head: &swc_core::ecma::ast::ForHead) {
+        if let swc_core::ecma::ast::ForHead::Pat(pat) = head {
+            let mut targets = HashSet::new();
+            collect_pat_write_ids(pat, &mut targets);
+            for key in targets {
+                self.record_candidate_mutation(&key);
+            }
+        }
+    }
+
     fn record_direct_mutation(&mut self, key: &BindingKey) {
         for (candidate_key, candidate) in self.candidates {
             let Expr::Ident(src_id) = candidate.init.as_ref() else {
@@ -1194,6 +1236,64 @@ impl TempUsageCollector<'_> {
         self.loop_depth += 1;
         node.visit_with(self);
         self.loop_depth -= 1;
+    }
+}
+
+fn collect_assign_target_pat_ids(
+    pat: &swc_core::ecma::ast::AssignTargetPat,
+    out: &mut HashSet<BindingKey>,
+) {
+    use swc_core::ecma::ast::AssignTargetPat;
+    match pat {
+        AssignTargetPat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_write_ids(elem, out);
+            }
+        }
+        AssignTargetPat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_write_ids(&kv.value, out),
+                    ObjectPatProp::Assign(assign) => {
+                        out.insert((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_write_ids(&rest.arg, out),
+                }
+            }
+        }
+        AssignTargetPat::Invalid(_) => {}
+    }
+}
+
+fn collect_pat_write_ids(pat: &Pat, out: &mut HashSet<BindingKey>) {
+    match pat {
+        Pat::Ident(binding) => {
+            out.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_write_ids(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_write_ids(&kv.value, out),
+                    ObjectPatProp::Assign(assign) => {
+                        out.insert((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_write_ids(&rest.arg, out),
+                }
+            }
+        }
+        Pat::Assign(assign) => collect_pat_write_ids(&assign.left, out),
+        Pat::Rest(rest) => collect_pat_write_ids(&rest.arg, out),
+        Pat::Expr(expr) => {
+            if let Expr::Ident(id) = strip_parens(expr) {
+                out.insert((id.sym.clone(), id.ctxt));
+            }
+        }
+        Pat::Invalid(_) => {}
     }
 }
 

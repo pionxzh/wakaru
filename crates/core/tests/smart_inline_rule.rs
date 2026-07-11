@@ -44,6 +44,68 @@ bar(foo);
 }
 
 #[test]
+fn inline_single_read_let_temp_var() {
+    // A `let` with one read and no writes is as safe to inline as a `const`.
+    // Minifier output declares temps with `let`, and VarDeclToLetConst never
+    // narrows an existing `let`, so const-only matching leaves the alias.
+    let input = r#"
+let o = app_info;
+let { name, ...rest } = o;
+rest = mutate(rest);
+use(name, rest);
+"#;
+    let expected = r#"
+let { name, ...rest } = app_info;
+rest = mutate(rest);
+use(name, rest);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn let_temp_written_by_assignment_is_not_inlined() {
+    // The single reference is a write target; inlining would rewrite the
+    // assignment onto the init expression.
+    let input = r#"
+let t = app_info;
+t = other;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn let_temp_written_by_destructuring_assignment_is_not_inlined() {
+    let input = r#"
+let t = app_info;
+[t] = items;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn let_temp_written_by_update_is_not_inlined() {
+    let input = r#"
+let t = counter;
+t++;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn let_temp_written_by_for_of_head_is_not_inlined() {
+    let input = r#"
+let t = app_info;
+for (t of items) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn module_decl_keeps_statement_run_order() {
     let input = r#"
 const first = source.first;
