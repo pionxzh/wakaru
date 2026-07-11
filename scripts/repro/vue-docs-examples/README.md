@@ -1,9 +1,11 @@
 # Vue docs examples corpus
 
 This manual harness assembles the official `vuejs/docs` examples into the same
-Composition API SFC shape used by the Vue docs playground, compiles them with
-the repository's Vue compiler version, and runs Wakaru's `--vue-sfc` recovery
-against every generated component.
+Composition API source SFCs used by the Vue docs playground, compiles their
+script and template into the external-render shape with the repository's Vue
+compiler version, and runs Wakaru's `--vue-sfc` recovery against every generated
+component. The Vue web playground may use the compiler's inline-template
+development shape instead; that path is covered by reduced core regressions.
 
 The checkout lives under `target/vue-docs/` and outputs/reports stay under
 `target/vue-docs-examples/`; third-party source and generated artifacts are not

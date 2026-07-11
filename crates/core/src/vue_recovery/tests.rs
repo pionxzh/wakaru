@@ -547,6 +547,99 @@ export default _sfc_;
 }
 
 #[test]
+fn preserves_compiled_inline_script_setup_order_and_effects() {
+    let input = r#"
+import { ref, watchEffect, openBlock, createElementBlock, toDisplayString } from "vue";
+
+const API_URL = "https://example.test/items?branch=";
+const component = {
+  __name: "Example",
+  setup(__props) {
+    const branches = ["main", "minor"];
+    const currentBranch = ref(branches[0]);
+    const items = ref([]);
+    const { ignored } = globalThis.makeState();
+    watchEffect(async () => {
+      items.value = await (await fetch(API_URL + currentBranch.value)).json();
+    });
+    return (_ctx, _cache) => (
+      openBlock(),
+      createElementBlock("p", null, toDisplayString(currentBranch.value), 1)
+    );
+  }
+};
+
+component.__file = "src/Example.vue";
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("import { ref, watchEffect } from \"vue\";"),
+        "{recovered}"
+    );
+    assert!(recovered.contains("watchEffect(async ()=>{"), "{recovered}");
+    assert!(
+        recovered
+            .contains("items.value = await (await fetch(API_URL + currentBranch.value)).json();"),
+        "{recovered}"
+    );
+    assert!(
+        recovered.contains("const { ignored } = globalThis.makeState();"),
+        "{recovered}"
+    );
+
+    let api = recovered.find("const API_URL").unwrap();
+    let branches = recovered.find("const branches").unwrap();
+    let current_branch = recovered.find("const currentBranch").unwrap();
+    let items = recovered.find("const items").unwrap();
+    let destructuring = recovered.find("const { ignored }").unwrap();
+    let effect = recovered.find("watchEffect(async").unwrap();
+    assert!(
+        api < branches
+            && branches < current_branch
+            && current_branch < items
+            && items < destructuring
+            && destructuring < effect,
+        "compiled setup declarations must retain dependency-safe source order:\n{recovered}"
+    );
+}
+
+#[test]
+fn recognizes_minified_compiled_inline_script_setup() {
+    let input = r#"
+import { ref, watchEffect, openBlock, createElementBlock, toDisplayString } from "vue";
+const component = {
+  __name: "Example",
+  setup(p) {
+    const current = ref(0);
+    watchEffect(() => console.log(current.value));
+    return (c, k) => (
+      openBlock(), createElementBlock("p", null, toDisplayString(current.value), 1)
+    );
+  }
+};
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("import { ref, watchEffect } from \"vue\";"),
+        "{recovered}"
+    );
+    assert!(
+        recovered.contains("watchEffect(()=>console.log(current.value));"),
+        "{recovered}"
+    );
+}
+
+#[test]
 fn preserves_compiled_script_setup_side_effects_and_their_imports() {
     let input = r#"
 import { onUnmounted, ref, watch } from "vue";

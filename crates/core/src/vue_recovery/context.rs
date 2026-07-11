@@ -1954,11 +1954,42 @@ fn visit_setup_render<V: Visit>(render: SetupRenderNode<'_>, visitor: &mut V) {
     }
 }
 
+// Vue's playground compiles `<script setup>` with `inlineTemplate` in development.
+// That shape has no `__isScriptSetup` marker, so use its generated component name
+// together with the setup props and context/cache render parameters. Their names are
+// not stable because downstream minifiers may rename them.
+fn is_compiled_inline_script_setup(render: RenderSource<'_>) -> bool {
+    let RenderSource::SetupArrow {
+        render,
+        setup_props: Some(_),
+        component_options: Some(options),
+        ..
+    } = render
+    else {
+        return false;
+    };
+
+    render.params.len() >= 2
+        && options.props.iter().any(|prop| {
+            matches!(
+                prop,
+                PropOrSpread::Prop(prop)
+                    if match prop.as_ref() {
+                        Prop::KeyValue(key_value) => {
+                            prop_name(&key_value.key).as_deref() == Some("__name")
+                        }
+                        _ => false,
+                    }
+            )
+        })
+}
+
 pub(super) fn collect_setup_context(
     render: RenderSource<'_>,
     ctx: &mut VueRecoveryContext,
 ) -> Result<()> {
     let owned_setup_stmts: Vec<Stmt>;
+    let preserve_inline_script_setup = is_compiled_inline_script_setup(render);
     let (render, setup_stmts, setup_slots, setup_expose, preserve_side_effects) = match render {
         RenderSource::SetupArrow {
             render,
@@ -1970,7 +2001,7 @@ pub(super) fn collect_setup_context(
             setup_stmts,
             setup_slots.map(|slots| slots.sym.clone()),
             None,
-            false,
+            preserve_inline_script_setup,
         ),
         RenderSource::Function {
             render,
@@ -2255,7 +2286,8 @@ pub(super) fn collect_setup_context(
                     let is_local_candidate = match &decl.name {
                         Pat::Ident(_) | Pat::Array(_) => true,
                         Pat::Object(_) => {
-                            has_template_ref
+                            preserve_side_effects
+                                || has_template_ref
                                 || has_render_ref
                                 || is_ref_object_local
                                 || is_imported_call_local

@@ -84,9 +84,12 @@ node --test scripts/repro/vue-docs-examples/run.test.mjs
 ```
 
 The runner clones `vuejs/docs` over SSH into `target/vue-docs/` when needed,
-assembles the same Composition API SFC shape as the docs playground, compiles
-it with the docs repository's Vue version, and writes its report under
-`target/vue-docs-examples/`.
+assembles the same Composition API source SFCs as the docs playground, compiles
+their script and template into the external-render shape with the docs
+repository's Vue version, and writes its report under
+`target/vue-docs-examples/`. The Vue web playground can instead use the
+compiler's inline-template development shape; reduced core regressions cover
+that path, including preserved setup effects and declaration order.
 
 Use `scripts/repro/vue-public-corpus/` for confidence checks and gap discovery:
 
