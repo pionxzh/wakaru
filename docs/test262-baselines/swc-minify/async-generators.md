@@ -5,7 +5,7 @@
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
 - harnessVersion: 2
-- nodeMajor: 22
+- nodeMajor: 24
 - producerVersion: 1.7.26
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
 - paths: test/language/expressions/async-arrow-function, test/language/expressions/async-function, test/language/expressions/async-generator, test/language/expressions/await, test/language/expressions/generators, test/language/statements/async-function, test/language/statements/async-generator, test/language/statements/for-await-of, test/language/statements/generators

@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "none",
@@ -777,8 +777,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "node-module-baseline",
-      "fingerprint": "e4a0b25bcee10296191114378e1a668b8cf8e1e8ddebc7cdd23291b09299b8e7",
-      "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Illegal break statement"
+      "fingerprint": "a8f69733a6cd7c95645f934e5c67348148421b4d78a619d92c0b138465cf8c0c",
+      "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Invalid left-hand side expression in postfix operation"
     },
     {
       "path": "test/language/module-code/instn-resolve-order-src-reference_FIXTURE.js",
@@ -1585,8 +1585,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "node-module-baseline",
-      "fingerprint": "e76241c001fd819bac5c6686d0065137ceb534cb34746e0eabbc76b7b4a64fdd",
-      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: node:internal/modules/esm/resolve:274\n    throw new ERR_MODULE_NOT_FOUND(\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '<tmp> imported from <tmp>"
+      "fingerprint": "098f6a4839c0790a2df00e6903403bde3694fbe885939f2b9ed337732638d946",
+      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: node:internal/modules/esm/resolve:271\n    throw new ERR_MODULE_NOT_FOUND(\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '<tmp> imported from <tmp>"
     },
     {
       "path": "test/language/module-code/verify-dfs-a_FIXTURE.js",

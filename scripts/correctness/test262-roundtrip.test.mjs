@@ -9,6 +9,7 @@ import {
   classifyKnownBlocker,
   classifyTest,
   collectStaticModuleSpecifiers,
+  createToolValidationCache,
   executeTestSource,
   executeTestSourceOutcome,
   executeModuleGraph,
@@ -28,12 +29,31 @@ import {
   parseTestMetadata,
   readModuleGraph,
   resolvePipelineName,
+  resolvePipelineToolRoot,
   runnableVariants,
   runRoundTrip,
   transformSource,
   test262ReportExitCode,
   unsupportedTest262Capability,
 } from "./test262-roundtrip.mjs";
+
+test("tool validation cache validates once and retries failures", () => {
+  const validateOnce = createToolValidationCache();
+  let successfulCalls = 0;
+  validateOnce("esbuild", () => successfulCalls++);
+  validateOnce("esbuild", () => successfulCalls++);
+  assert.equal(successfulCalls, 1);
+
+  let attempts = 0;
+  assert.throws(() =>
+    validateOnce("swc", () => {
+      attempts += 1;
+      throw new Error("not ready");
+    }),
+  );
+  validateOnce("swc", () => attempts++);
+  assert.equal(attempts, 2);
+});
 
 test("parseTestMetadata reads inline and block list metadata", () => {
   const source = `/*---
@@ -464,6 +484,13 @@ test("resolvePipelineName maps legacy transform options", () => {
   assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "full" }), "terser-full");
   assert.equal(resolvePipelineName({ pipeline: "swc-minify" }), "swc-minify");
   assert.equal(resolvePipelineName({ pipeline: "esbuild-minify" }), "esbuild-minify");
+});
+
+test("resolvePipelineToolRoot isolates producer dependencies", () => {
+  assert.match(
+    resolvePipelineToolRoot("target/tools", "esbuild-minify"),
+    /target[\\/]tools[\\/]esbuild-minify$/,
+  );
 });
 
 test("describeProducer records a versioned configuration hash", () => {

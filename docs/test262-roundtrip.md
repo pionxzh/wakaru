@@ -236,7 +236,7 @@ CLI first or set `WAKARU` before calling it directly.
 
 The `Test262 Correctness` workflow runs the tooling tests and corpus-wide
 metadata audit first, then compares all canonical baselines in one isolated CI
-job per producer on Node 22, matching the tracked baseline identity. It is
+job per producer on Node 24, matching the tracked baseline identity. It is
 path-gated for correctness-related changes, can be run manually, and also runs
 weekly to catch runtime or infrastructure drift.
 
@@ -247,6 +247,10 @@ the matrix runner runs producer/slice jobs in parallel. A full 3-producer ×
 
 `swc-minify` and `esbuild-minify` are standalone producer pipelines; they are
 not followed by Terser.
+
+Pinned producer packages are installed in separate subdirectories under the
+tool root. Keeping Terser, Babel, SWC, and esbuild isolated prevents npm from
+pruning and reinstalling one producer while another matrix job starts.
 
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
 these add no-transform and Babel producer coverage to the canonical recursive

@@ -67,6 +67,7 @@ const babelPackages = [
 ];
 const swcPackages = [{ name: "@swc/core", spec: "@swc/core@1.7.26" }];
 const esbuildPackages = [{ name: "esbuild", spec: "esbuild@0.23.1" }];
+const validateToolOnce = createToolValidationCache();
 const producerDefinitions = {
   none: {
     version: "builtin",
@@ -646,6 +647,10 @@ export function resolvePipelineName(options) {
   throw new Error(`unsupported transform: ${options.transform}`);
 }
 
+export function resolvePipelineToolRoot(toolRoot, pipeline) {
+  return join(resolve(toolRoot), pipeline);
+}
+
 export function describeProducer(options) {
   const name = resolvePipelineName(options);
   const definition = producerDefinitions[name];
@@ -775,6 +780,12 @@ function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
 }
 
 export async function runRoundTrip(options) {
+  const pipeline = resolvePipelineName(options);
+  options = {
+    ...options,
+    pipeline,
+    toolRoot: resolvePipelineToolRoot(options.toolRoot, pipeline),
+  };
   validateTest262BaselineOptions(options);
   if (resolve(options.test262Root) === resolve(defaultManagedTest262Root)) {
     assertPinnedTest262Corpus({ root: options.test262Root });
@@ -1693,39 +1704,54 @@ function ensureBabelEnvTerser(toolRoot) {
 }
 
 function ensureBabelPackages(toolRoot, packages) {
-  ensureToolPackages(toolRoot, packages);
-  try {
-    assertBabelUsable(toolRoot);
-  } catch {
-    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
-    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+  validateToolOnce(`babel:${resolve(toolRoot)}`, () => {
     ensureToolPackages(toolRoot, packages);
-    assertBabelUsable(toolRoot);
-  }
+    try {
+      assertBabelUsable(toolRoot);
+    } catch {
+      rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+      rmSync(join(toolRoot, "package-lock.json"), { force: true });
+      ensureToolPackages(toolRoot, packages);
+      assertBabelUsable(toolRoot);
+    }
+  });
 }
 
 function ensureSwc(toolRoot) {
-  ensureToolPackages(toolRoot, swcPackages);
-  try {
-    assertSwcUsable(toolRoot);
-  } catch {
-    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
-    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+  validateToolOnce(`swc:${resolve(toolRoot)}`, () => {
     ensureToolPackages(toolRoot, swcPackages);
-    assertSwcUsable(toolRoot);
-  }
+    try {
+      assertSwcUsable(toolRoot);
+    } catch {
+      rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+      rmSync(join(toolRoot, "package-lock.json"), { force: true });
+      ensureToolPackages(toolRoot, swcPackages);
+      assertSwcUsable(toolRoot);
+    }
+  });
 }
 
 function ensureEsbuild(toolRoot) {
-  ensureToolPackages(toolRoot, esbuildPackages);
-  try {
-    assertEsbuildUsable(toolRoot);
-  } catch {
-    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
-    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+  validateToolOnce(`esbuild:${resolve(toolRoot)}`, () => {
     ensureToolPackages(toolRoot, esbuildPackages);
-    assertEsbuildUsable(toolRoot);
-  }
+    try {
+      assertEsbuildUsable(toolRoot);
+    } catch {
+      rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+      rmSync(join(toolRoot, "package-lock.json"), { force: true });
+      ensureToolPackages(toolRoot, esbuildPackages);
+      assertEsbuildUsable(toolRoot);
+    }
+  });
+}
+
+export function createToolValidationCache() {
+  const validated = new Set();
+  return (key, validate) => {
+    if (validated.has(key)) return;
+    validate();
+    validated.add(key);
+  };
 }
 
 function ensureToolPackages(toolRoot, packages) {

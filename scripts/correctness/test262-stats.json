@@ -1,11 +1,11 @@
 {
-  "commit": "ffbec3c6",
+  "commit": "d979a3c2",
   "date": "2026-07-11",
   "aggregate": {
     "producers": 3,
     "entries": 60,
     "runnable": 66729,
-    "passed": 62045,
+    "passed": 62048,
     "failed": 27,
     "pct": 100
   },
@@ -113,9 +113,9 @@
       "discovered": 2180,
       "runnable": 2180,
       "skipped": 0,
-      "unsupported": 9,
-      "rejected": 128,
-      "passed": 2043,
+      "unsupported": 5,
+      "rejected": 129,
+      "passed": 2046,
       "failed": 0
     },
     {
@@ -149,8 +149,8 @@
       "discovered": 268,
       "runnable": 268,
       "skipped": 0,
-      "unsupported": 8,
-      "rejected": 8,
+      "unsupported": 0,
+      "rejected": 16,
       "passed": 252,
       "failed": 0
     },
@@ -353,8 +353,8 @@
       "discovered": 2180,
       "runnable": 2180,
       "skipped": 0,
-      "unsupported": 37,
-      "rejected": 101,
+      "unsupported": 33,
+      "rejected": 105,
       "passed": 2042,
       "failed": 0
     },
@@ -389,8 +389,8 @@
       "discovered": 268,
       "runnable": 268,
       "skipped": 0,
-      "unsupported": 8,
-      "rejected": 112,
+      "unsupported": 0,
+      "rejected": 120,
       "passed": 148,
       "failed": 0
     },
@@ -593,8 +593,8 @@
       "discovered": 2180,
       "runnable": 2180,
       "skipped": 0,
-      "unsupported": 41,
-      "rejected": 125,
+      "unsupported": 37,
+      "rejected": 129,
       "passed": 2014,
       "failed": 0
     },
@@ -629,8 +629,8 @@
       "discovered": 268,
       "runnable": 268,
       "skipped": 0,
-      "unsupported": 8,
-      "rejected": 112,
+      "unsupported": 0,
+      "rejected": 120,
       "passed": 148,
       "failed": 0
     },

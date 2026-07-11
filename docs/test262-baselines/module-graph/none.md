@@ -5,7 +5,7 @@
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
 - harnessVersion: 2
-- nodeMajor: 22
+- nodeMajor: 24
 - producerVersion: builtin
 - producerConfigHash: e120e019753b4151fe08f6e1bc7a188f80feb455ad9416656f6bc275440941be
 - paths: test/language/module-code

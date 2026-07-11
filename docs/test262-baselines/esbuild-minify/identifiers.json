@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "esbuild-minify",
@@ -30,8 +30,8 @@
     "discovered": 268,
     "runnable": 268,
     "skipped": 0,
-    "unsupported": 8,
-    "rejected": 8,
+    "unsupported": 0,
+    "rejected": 16,
     "passed": 252,
     "failed": 0
   },
@@ -70,35 +70,35 @@
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "6e8d43022b8bcca97cd84dba1b899a2493a475fb76a991fc66f488182aa8bcfb",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:19:2: ERROR: Invalid identifier: \"#_/u1acf/u1ad0/u1ad1/u1ad2/u1ad3/u1ad4/u1ad5/u1ad6/u1ad7/u1ad8/u1ad9/u1ada/u1adb/u1adc/u1add/u1ae0/u1ae1/u1ae2/u1ae3/u1ae4/u1ae5/u1ae6/u1ae7/u1ae8/u1ae9/u1aea/u1aeb/U00010efa/U00010efb/U00011b60/U00011b61/U00011b62/U00011b63/U00011b64/U00011b65/U00011b66/U00011b67/U00011de0/U00011de1/U00011de2/U00011de3/U00011de4/U00011de5/U00011de6/U00011de7/U00011de8/U00011de9/U0001e6e3/U0001e6e6/U0001e6ee/U0001e6ef/U0001e6f5\""
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "672773918d70751005c28582af24764d30fa27e027d5f2394be722678b0ba180",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:16:4: ERROR: Expected \";\" but found \"/u1acf\""
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "b24323d9e586da64213dba7896250547084137d1b21b2d43ee775bd0c4bb8545",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:16:4: ERROR: Invalid identifier: \"_/u1acf/u1ad0/u1ad1/u1ad2/u1ad3/u1ad4/u1ad5/u1ad6/u1ad7/u1ad8/u1ad9/u1ada/u1adb/u1adc/u1add/u1ae0/u1ae1/u1ae2/u1ae3/u1ae4/u1ae5/u1ae6/u1ae7/u1ae8/u1ae9/u1aea/u1aeb/U00010efa/U00010efb/U00011b60/U00011b61/U00011b62/U00011b63/U00011b64/U00011b65/U00011b66/U00011b67/U00011de0/U00011de1/U00011de2/U00011de3/U00011de4/U00011de5/U00011de6/U00011de7/U00011de8/U00011de9/U0001e6e3/U0001e6e6/U0001e6ee/U0001e6ef/U0001e6f5\""
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "00a26174c994c08d78663a1d209007678a8fe9e45a61b7514537bfbd7f4bc7cd",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:14:5: ERROR: Expected \";\" but found \"/u1acf\""
     },
     {
       "path": "test/language/identifiers/start-unicode-16.0.0-class-escaped.js",
@@ -134,35 +134,35 @@
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "78673ad367b4f1c1840bd24df5a0a846d67cca7a1383c018ba1e2f195e5b8a4d",
+      "summary": "Error: Transform failed with 4647 errors:\n<stdin>:19:2: ERROR: Invalid identifier: \"#/u088f\"\n<stdin>:20:2: ERROR: Invalid identifier: \"#/u0c5c\""
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "843087d74da18c3d57294fdcaa57460527298a38ce68c868be05d5298685ddf3",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:16:3: ERROR: Syntax error \"/u{88f}\""
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8139dc685a79c1de7cfeb23ee3b74660467dec2b059495f5b300a461790b9b28",
+      "summary": "Error: Transform failed with 4647 errors:\n<stdin>:16:4: ERROR: Invalid identifier: \"/u088f\"\n<stdin>:17:4: ERROR: Invalid identifier: \"/u0c5c\""
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "8e6bafd3c8e5196daac26c63172166475bfe8b5ac57ab3e01ceb0c03a97e177a",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:14:4: ERROR: Expected identifier but found \"/u088f\""
     }
   ]
 }

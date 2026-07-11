@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "terser-light",
@@ -35,8 +35,8 @@
     "discovered": 2180,
     "runnable": 2180,
     "skipped": 0,
-    "unsupported": 41,
-    "rejected": 125,
+    "unsupported": 37,
+    "rejected": 129,
     "passed": 2014,
     "failed": 0
   },
@@ -1291,19 +1291,19 @@
     },
     {
       "path": "test/language/statements/for-of/head-await-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "5273372e583bf8903ef370c5107e80103fe1f32eb499977bce6a3b5290af198e",
+      "summary": "SyntaxError: Unexpected token name «x», expected punc «;»"
     },
     {
       "path": "test/language/statements/for-of/head-await-using-fresh-binding-per-iteration.js",
       "variant": "case",
-      "status": "unsupported",
-      "kind": "node-module-baseline",
-      "fingerprint": "2ff67b5b26c92206fa2e85b42d73832922bbf3f99fdde3b07549bc41b3c86c82",
-      "summary": "Error: module: expected success, got runtime SyntaxError: Unexpected identifier 'x'"
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "5273372e583bf8903ef370c5107e80103fe1f32eb499977bce6a3b5290af198e",
+      "summary": "SyntaxError: Unexpected token name «x», expected punc «;»"
     },
     {
       "path": "test/language/statements/for-of/head-lhs-async-escaped.js",
@@ -1323,19 +1323,19 @@
     },
     {
       "path": "test/language/statements/for-of/head-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "5273372e583bf8903ef370c5107e80103fe1f32eb499977bce6a3b5290af198e",
+      "summary": "SyntaxError: Unexpected token name «x», expected punc «;»"
     },
     {
       "path": "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "5273372e583bf8903ef370c5107e80103fe1f32eb499977bce6a3b5290af198e",
+      "summary": "SyntaxError: Unexpected token name «x», expected punc «;»"
     },
     {
       "path": "test/language/statements/for-of/head-var-bound-names-let.js",

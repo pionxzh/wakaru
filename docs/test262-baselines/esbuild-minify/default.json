@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "esbuild-minify",
@@ -35,9 +35,9 @@
     "discovered": 2180,
     "runnable": 2180,
     "skipped": 0,
-    "unsupported": 9,
-    "rejected": 128,
-    "passed": 2043,
+    "unsupported": 5,
+    "rejected": 129,
+    "passed": 2046,
     "failed": 0
   },
   "outcomes": [
@@ -954,36 +954,12 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
-      "path": "test/language/statements/for-of/head-await-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
-    },
-    {
       "path": "test/language/statements/for-of/head-await-using-fresh-binding-per-iteration.js",
       "variant": "case",
-      "status": "unsupported",
-      "kind": "node-module-baseline",
-      "fingerprint": "2ff67b5b26c92206fa2e85b42d73832922bbf3f99fdde3b07549bc41b3c86c82",
-      "summary": "Error: module: expected success, got runtime SyntaxError: Unexpected identifier 'x'"
-    },
-    {
-      "path": "test/language/statements/for-of/head-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
-    },
-    {
-      "path": "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "status": "rejected",
+      "kind": "transform-reject-top-level-await",
+      "fingerprint": "ac5ce5a57a7ab1615f41b405387ed3ba1c127dc0456bed7f0970df700da906bd",
+      "summary": "Error: Transform failed with 1 error:\n<stdin>:18:5: ERROR: Top-level await is not available in the configured target environment (\"es2020\")"
     },
     {
       "path": "test/language/statements/for-of/scope-body-lex-open.js",

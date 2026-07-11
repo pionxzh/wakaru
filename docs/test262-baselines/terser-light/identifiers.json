@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "terser-light",
@@ -30,8 +30,8 @@
     "discovered": 268,
     "runnable": 268,
     "skipped": 0,
-    "unsupported": 8,
-    "rejected": 112,
+    "unsupported": 0,
+    "rejected": 120,
     "passed": 148,
     "failed": 0
   },
@@ -294,35 +294,35 @@
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "51359ad98d3ab32dec4a5971a2af8b1169fcce4ae9e98e0628e12207b1b30f6a",
+      "summary": "SyntaxError: Invalid escaped identifier char"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "cc535af325ebc65fb7a783a90d037c0d770cd742c422e751adf57c8447000563",
+      "summary": "SyntaxError: Unexpected character '᫏'"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "51359ad98d3ab32dec4a5971a2af8b1169fcce4ae9e98e0628e12207b1b30f6a",
+      "summary": "SyntaxError: Invalid escaped identifier char"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "cc535af325ebc65fb7a783a90d037c0d770cd742c422e751adf57c8447000563",
+      "summary": "SyntaxError: Unexpected character '᫏'"
     },
     {
       "path": "test/language/identifiers/part-unicode-5.2.0-class-escaped.js",
@@ -774,35 +774,35 @@
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "844ba52ae4667f342b46d09db2688be60e4303cddc1eff6a94fec148dccd05ad",
+      "summary": "SyntaxError: First identifier char is an invalid identifier char"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "631d201fa672465192d729a64cbc2403abd3deca17712e1aa864004ddf301c9f",
+      "summary": "SyntaxError: Unexpected character '࢏'"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-escaped.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "844ba52ae4667f342b46d09db2688be60e4303cddc1eff6a94fec148dccd05ad",
+      "summary": "SyntaxError: First identifier char is an invalid identifier char"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "631d201fa672465192d729a64cbc2403abd3deca17712e1aa864004ddf301c9f",
+      "summary": "SyntaxError: Unexpected character '࢏'"
     },
     {
       "path": "test/language/identifiers/start-unicode-5.2.0-class-escaped.js",

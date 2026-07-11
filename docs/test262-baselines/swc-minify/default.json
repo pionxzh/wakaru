@@ -7,7 +7,7 @@
     "version": 2
   },
   "environment": {
-    "nodeMajor": 22
+    "nodeMajor": 24
   },
   "producer": {
     "name": "swc-minify",
@@ -35,8 +35,8 @@
     "discovered": 2180,
     "runnable": 2180,
     "skipped": 0,
-    "unsupported": 37,
-    "rejected": 101,
+    "unsupported": 33,
+    "rejected": 105,
     "passed": 2042,
     "failed": 0
   },
@@ -1067,19 +1067,19 @@
     },
     {
       "path": "test/language/statements/for-of/head-await-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "58fb896f5eec569e2b3cefbc8859de30f6a71667f1b16f2c8f578b2aefa6d8c6",
+      "summary": "Error:   x Expected ';', got 'x'\n    ,-[15:1]\n 12 | asyncTest(async function () {"
     },
     {
       "path": "test/language/statements/for-of/head-await-using-fresh-binding-per-iteration.js",
       "variant": "case",
-      "status": "unsupported",
-      "kind": "node-module-baseline",
-      "fingerprint": "2ff67b5b26c92206fa2e85b42d73832922bbf3f99fdde3b07549bc41b3c86c82",
-      "summary": "Error: module: expected success, got runtime SyntaxError: Unexpected identifier 'x'"
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "a1375a63fa5eefa92c11680d5c741d6961adcaf20a97f6532082372d909a9c52",
+      "summary": "Error:   x Expected ';', got 'x'\n    ,-[18:1]\n 15 | const obj3 = { async [Symbol.asyncDispose]() { } };"
     },
     {
       "path": "test/language/statements/for-of/head-lhs-async-escaped.js",
@@ -1091,19 +1091,19 @@
     },
     {
       "path": "test/language/statements/for-of/head-using-bound-names-fordecl-tdz.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "fd6fe1ef502469ef08e37aaa96e42b236a1d91fabc3332098fcffc92e44f0bf4",
+      "summary": "Error:   x Expected ';', got 'x'\n    ,-[12:1]\n  9 | "
     },
     {
       "path": "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "ddca78467c537f75760661f5009e3219fd20be851e1372825b87935eda139e57",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Unexpected identifier 'x'"
+      "variant": "case",
+      "status": "rejected",
+      "kind": "transform-reject",
+      "fingerprint": "c4e380d7cc7ef2fe8241557514c871644dda7ce8dbd017f2e819337028383df0",
+      "summary": "Error:   x Expected ';', got 'x'\n    ,-[17:1]\n 14 | const obj3 = { [Symbol.dispose]() { } };"
     },
     {
       "path": "test/language/statements/let/dstr/ary-ptrn-elem-ary-elision-init.js",
