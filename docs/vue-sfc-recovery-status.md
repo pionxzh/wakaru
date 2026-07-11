@@ -80,16 +80,17 @@ Vue examples:
 ```powershell
 node scripts/repro/vue-docs-examples/run.mjs
 node scripts/repro/vue-docs-examples/run.mjs --filter grid
+node scripts/repro/vue-docs-examples/run.mjs --profile prod-inline
 node --test scripts/repro/vue-docs-examples/run.test.mjs
 ```
 
 The runner clones `vuejs/docs` over SSH into `target/vue-docs/` when needed,
 assembles the same Composition API source SFCs as the docs playground, compiles
-their script and template into the external-render shape with the docs
-repository's Vue version, and writes its report under
-`target/vue-docs-examples/`. The Vue web playground can instead use the
-compiler's inline-template development shape; reduced core regressions cover
-that path, including preserved setup effects and declaration order.
+them with the docs repository's Vue version, and writes its report under
+`target/vue-docs-examples/`. It checks the production inline-template default
+used by Vite and vue-loader, the production external-render fallback, and the
+development external-render shape independently. The smaller Vue render matrix
+also applies Terser compression and identifier mangling to all three profiles.
 
 Use `scripts/repro/vue-public-corpus/` for confidence checks and gap discovery:
 
@@ -104,6 +105,9 @@ The runner clones pinned public repositories into `target/vue-public-corpus/`,
 builds them, runs `wakaru --unpack --vue-sfc --json`, writes recovered outputs
 under `target/vue-public-corpus/outputs/`, and reports recovery/fallback counts,
 unsupported markers, SFC parse results, and template compile results.
+The default smoke set includes pinned Vite JavaScript/TypeScript starters and a
+webpack 5 + vue-loader production build; larger application corpora remain
+opt-in.
 
 The corpus is intentionally not committed. When it reveals a bug, inspect the
 generated output locally, identify the smallest structural gap, and add a

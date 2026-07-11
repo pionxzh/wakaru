@@ -22,7 +22,8 @@ node scripts/repro/vue-public-corpus/run.mjs --all
 ```
 
 By default, the runner executes only cases with `"enabled": true` in
-`cases.json`. Use `--all` or `--case <name>` for opt-in larger cases.
+`cases.json`. The smoke set includes pinned production builds from both Vite
+and webpack/vue-loader. Use `--all` or `--case <name>` for opt-in larger cases.
 
 The runner builds `wakaru-cli` with the `dev-release` profile unless `WAKARU`
 points at an existing binary:

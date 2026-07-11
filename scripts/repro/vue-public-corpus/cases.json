@@ -79,8 +79,8 @@
   },
   {
     "name": "module-federation-vue3-home-webpack5",
-    "enabled": false,
-    "tier": "small",
+    "enabled": true,
+    "tier": "smoke",
     "bundler": "webpack5",
     "repo": "https://github.com/module-federation/module-federation-examples.git",
     "ref": "583a1551e96a5a6418691891be9f04c1d15d6f8f",
@@ -89,7 +89,7 @@
     "install": ["npm", "install", "--silent", "--no-audit", "--no-fund"],
     "build": ["npm", "run", "build"],
     "inputs": ["dist"],
-    "notes": "Public Vue 3 webpack 5 Module Federation remote. Useful for webpack/vue-loader output even when SFC recovery is limited."
+    "notes": "Pinned webpack 5 + vue-loader Module Federation packaging smoke. Its ordinary SFCs use separate render transforms and the project disables minimization, so inline script-setup and minified coverage comes from the compiler matrix instead."
   },
   {
     "name": "module-federation-vue3-layout-webpack5",

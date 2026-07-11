@@ -3,9 +3,11 @@
 import {
   runMatrix, batchRunner, withTerserVariants, ensureNodeTool,
 } from "../lib/runner.mjs";
-import { join } from "node:path";
+import { VUE_SFC_COMPILE_PROFILES } from "../lib/vue-sfc-compiler.mjs";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const VUE_COMPILER_VERSION = "3.5.35";
 
@@ -60,7 +62,7 @@ function increment() {
         "const props = defineProps(",
         "defineEmits(",
         ":class=\"{ active: props.active }\"",
-        "@click=\"increment\"",
+        "@click=",
         "{{ props.count }}",
       ],
       [
@@ -68,8 +70,17 @@ function increment() {
         "const props = defineProps(",
         "defineEmits(",
         ":class=\"{ active }\"",
-        "@click=\"increment\"",
+        "@click=",
         "{{ count }}",
+      ],
+      [
+        "<script setup>",
+        "const __props = defineProps(",
+        "const props = __props;",
+        "defineEmits(",
+        ":class=\"{ active: props.active }\"",
+        "@click=",
+        "{{ props.count }}",
       ],
     ],
   },
@@ -167,67 +178,40 @@ const visible = true
   <input v-model="value" v-show="visible" />
 </template>
 `,
-    expected: ["<script setup>", "v-model=\"value\"", "v-show=\"visible\""],
+    expected: ["<script setup>", "v-model=", "v-show="],
   },
 ];
 
 const allSources = snippets.map((s) => s.source);
 
-function vueSfcBatch(sources, options = {}) {
-  const isProd = options.isProd ?? true;
+function vueSfcBatch(sources, profile) {
   const toolKey = `vue-sfc-${VUE_COMPILER_VERSION}`;
   const toolDir = ensureNodeTool(toolKey, [`@vue/compiler-sfc@${VUE_COMPILER_VERSION}`]);
   const helper = join(toolDir, "vue-sfc-batch.mjs");
+  const compilerHelper = pathToFileURL(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "vue-sfc-compiler.mjs"),
+  ).href;
   writeFileSync(
     helper,
     `
 import fs from "node:fs";
 import { parse, compileScript, compileTemplate } from "@vue/compiler-sfc";
+import { compileVueSfc } from ${JSON.stringify(compilerHelper)};
 
-const isProd = process.env.MATRIX_VUE_PROD === "1";
+const profile = JSON.parse(process.env.MATRIX_VUE_PROFILE);
 const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map((source, index) => {
   const filename = "Component" + index + ".vue";
   const id = "data-v-wakaru-" + index.toString(36);
   try {
-    const parsed = parse(source, { filename });
-    if (parsed.errors.length > 0) {
-      return { error: parsed.errors.map(error => error.message || String(error)).join("; ") };
-    }
-
-    const descriptor = parsed.descriptor;
-    const script = descriptor.script || descriptor.scriptSetup
-      ? compileScript(descriptor, {
-          id,
-          genDefaultAs: "__sfc__",
-        }).content
-      : "const __sfc__ = {}";
-
-    if (!descriptor.template) {
-      return { code: script + "\\nexport default __sfc__;\\n" };
-    }
-
-    const template = compileTemplate({
-      source: descriptor.template.content,
-      filename,
-      id,
-      isProd,
-      compilerOptions: {
-        hoistStatic: true,
-        cacheHandlers: true,
-      },
-    });
-    if (template.errors.length > 0) {
-      return { error: template.errors.map(error => error.message || String(error)).join("; ") };
-    }
-
     return {
-      code: [
-        script,
-        template.code,
-        "__sfc__.render = render;",
-        "export default __sfc__;",
-      ].join("\\n\\n"),
+      code: compileVueSfc({
+        source,
+        filename,
+        compiler: { parse, compileScript, compileTemplate },
+        profile,
+        id,
+      }),
     };
   } catch (error) {
     return { error: error.message };
@@ -242,7 +226,7 @@ process.stdout.write(JSON.stringify(results));
     input: JSON.stringify(sources),
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 50,
-    env: { ...process.env, MATRIX_VUE_PROD: isProd ? "1" : "0" },
+    env: { ...process.env, MATRIX_VUE_PROFILE: JSON.stringify(profile) },
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -257,22 +241,39 @@ process.stdout.write(JSON.stringify(results));
   return map;
 }
 
-const transformers = [
-  ...withTerserVariants(
-    `vue-${VUE_COMPILER_VERSION}-prod`,
+const transformers = VUE_SFC_COMPILE_PROFILES.flatMap((profile) =>
+  withTerserVariants(
+    `vue-${VUE_COMPILER_VERSION}-${profile.name}`,
     allSources,
-    batchRunner(() => vueSfcBatch(allSources, { isProd: true })),
+    batchRunner(() => vueSfcBatch(allSources, profile)),
   ),
-  ...withTerserVariants(
-    `vue-${VUE_COMPILER_VERSION}-dev`,
-    allSources,
-    batchRunner(() => vueSfcBatch(allSources, { isProd: false })),
-  ),
-];
+);
 
 runMatrix({
   name: "vue-render",
   snippets,
   transformers,
   wakaruArgs: ["--vue-sfc"],
+  validateRecovered({ snippet, recovered }) {
+    if (snippet.name === "model-and-directive") {
+      const modelBinding = recovered.match(
+        /v-model(?:\.[^=]+)?="([A-Za-z_$][\w$]*)(?:\.value)?"/,
+      );
+      if (!modelBinding || recovered.includes(`v-model="${modelBinding[1]}.value"`)) {
+        return {
+          recovered: false,
+          notes: "template v-model still contains compiled ref .value access",
+        };
+      }
+      const declaration = new RegExp(
+        `const\\s+${modelBinding[1]}\\s*=\\s*useModel\\(`,
+      );
+      if (!declaration.test(recovered)) {
+        return {
+          recovered: false,
+          notes: `v-model binding ${modelBinding[1]} has no recovered useModel declaration`,
+        };
+      }
+    }
+  },
 });

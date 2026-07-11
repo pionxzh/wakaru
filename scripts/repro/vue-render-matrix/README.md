@@ -25,8 +25,11 @@ Add `--level minimal`, `--level standard`, or `--level aggressive` to run
 wakaru with a specific rewrite level.
 
 Rows are grouped by distinct generated output per snippet. Vue compiler output
-is tested in dev/prod modes and through Terser variants because patch flags,
-comments, hoists, and minification all affect the shapes Wakaru must recover.
+is tested as production inline-template (the Vite/vue-loader default),
+production external-render fallback, and development external-render output.
+Each profile also runs through Terser compression and compression+mangling
+because patch flags, comments, hoists, and renamed bindings all affect the
+shapes Wakaru must recover.
 
 By default the script uses `target/debug/wakaru(.exe)` when present, otherwise
 it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
