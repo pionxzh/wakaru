@@ -9,7 +9,7 @@ use crate::facts::ModuleFactsMap;
 use crate::DceMode;
 
 use super::dead_decls::compute_pre_dead_decl_spans;
-use super::dead_imports::compute_pre_existing_import_spans;
+use super::dead_imports::{compute_pre_dead_import_spans, compute_pre_existing_import_spans};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 use super::*;
 
@@ -76,7 +76,7 @@ struct RuleRunContext<'a> {
 pub(super) struct PreDeadSet {
     pub decl_spans:
         std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
-    pub pre_existing_import_spans:
+    pub preserved_import_spans:
         std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
 }
 
@@ -489,7 +489,7 @@ fn run_dead_imports(module: &mut Module, ctx: RuleRunContext<'_>) {
         DceMode::Full => module.visit_mut_with(&mut DeadImports::full()),
         DceMode::TransformOnly => {
             if let Some(pre_dead) = ctx.pre_dead.as_ref() {
-                module.visit_mut_with(&mut DeadImports::delta(&pre_dead.pre_existing_import_spans));
+                module.visit_mut_with(&mut DeadImports::delta(&pre_dead.preserved_import_spans));
             }
         }
         DceMode::Off => {}
@@ -805,7 +805,15 @@ impl<'a> RulePipelineOptions<'a> {
 }
 
 pub fn apply_rules(module: &mut Module, unresolved_mark: Mark, options: RulePipelineOptions<'_>) {
-    apply_rules_impl(module, unresolved_mark, options, None);
+    apply_rules_impl(module, unresolved_mark, options, None, true);
+}
+
+pub(crate) fn apply_rules_to_recovered_module(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    options: RulePipelineOptions<'_>,
+) {
+    apply_rules_impl(module, unresolved_mark, options, None, false);
 }
 
 pub(crate) fn apply_rules_with_observer(
@@ -814,7 +822,7 @@ pub(crate) fn apply_rules_with_observer(
     options: RulePipelineOptions<'_>,
     observer: &mut dyn FnMut(&'static str, &Module),
 ) {
-    apply_rules_impl(module, unresolved_mark, options, Some(observer));
+    apply_rules_impl(module, unresolved_mark, options, Some(observer), true);
 }
 
 /// Returns the ordered list of rule names in the pipeline.
@@ -832,11 +840,16 @@ fn apply_rules_impl(
     unresolved_mark: Mark,
     options: RulePipelineOptions<'_>,
     mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
+    preserve_input_import_link_checks: bool,
 ) {
     let pre_dead = if options.dce_mode == DceMode::TransformOnly {
         Some(Rc::new(PreDeadSet {
             decl_spans: compute_pre_dead_decl_spans(module),
-            pre_existing_import_spans: compute_pre_existing_import_spans(module),
+            preserved_import_spans: if preserve_input_import_link_checks {
+                compute_pre_existing_import_spans(module)
+            } else {
+                compute_pre_dead_import_spans(module)
+            },
         }))
     } else {
         None

@@ -31,9 +31,9 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_rules, ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence,
-    UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly, UnImportRename,
-    UnOptionalChaining,
+    apply_rules, apply_rules_to_recovered_module, ImportDedup, RewriteLevel, RulePipelineOptions,
+    SimplifySequence, UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly,
+    UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 
@@ -316,7 +316,7 @@ pub(super) fn unpack_multi_module_with_plan(
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
             // Late helper-through-UnReturn range.
-            apply_rules(
+            apply_rules_to_recovered_module(
                 &mut module,
                 unresolved_mark,
                 RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
@@ -577,6 +577,33 @@ mod tests {
     use super::super::should_merge_raw_import_cycles;
     use super::*;
     use crate::unpacker::UnpackedModule;
+    use crate::DceMode;
+
+    #[test]
+    fn recovered_imports_do_not_gain_source_link_check_semantics() {
+        let output = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                r#"import { recovered } from "./module.js"; void recovered;"#,
+                "module.js",
+                cm.clone(),
+            )
+            .expect("fixture should parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+            apply_rules_to_recovered_module(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::default().with_dce_mode(DceMode::TransformOnly),
+            );
+            apply_fixer(&mut module).expect("fixture should fix");
+            print_js(&module, cm).expect("fixture should print")
+        });
+
+        assert_eq!(output, "import \"./module.js\";\n");
+    }
 
     #[test]
     fn import_cycle_premerge_is_currently_disabled() {

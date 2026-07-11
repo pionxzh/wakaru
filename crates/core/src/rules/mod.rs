@@ -172,10 +172,10 @@ pub use merge_declaration_init::MergeDeclarationInit;
 pub use obj_method_shorthand::ObjMethodShorthand;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
-pub(crate) use pipeline::apply_rules_with_observer;
 pub use pipeline::{
     apply_rules, rule_descriptors, rule_names, RuleDescriptor, RulePipelineOptions, RuleStage,
 };
+pub(crate) use pipeline::{apply_rules_to_recovered_module, apply_rules_with_observer};
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
 pub use smart_inline::SmartInline;

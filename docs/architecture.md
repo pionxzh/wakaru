@@ -199,6 +199,11 @@ the rewrite pipeline synthesized. `--dce` opts into a full reachability sweep.
 Tests and API callers can set `DceMode::Off` to snapshot structural restoration
 separately from dead-code cleanup.
 
+Unpacked bundle modules are the complementary case: their ESM imports are
+Wakaru's recovered representation of bundle edges, not source-level link
+checks. Transform-only cleanup may therefore remove a recovered specifier when
+a later rewrite removes its last use, while retaining the side-effect import.
+
 `DecompileOptions.level` controls rewrite aggressiveness — `minimal` (high
 confidence, semantics-preserving), `standard` (default, readability-oriented),
 or `aggressive` (speculative recovery). Rules gate risky subpatterns inside the
