@@ -1388,7 +1388,7 @@ async function verifyScriptTest(entry) {
 
   if (entry.decompileError) {
     if (isTimeoutError(entry.decompileError)) {
-      return rejected(relativePath, "case-timeout", entry.decompileError, "case-timeout");
+      return failure(relativePath, "wakaru-timeout", entry.decompileError, { transformed });
     }
     const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
       entry.decompileError,
@@ -1461,7 +1461,9 @@ async function verifyModuleTest(entry) {
 
   if (entry.decompileError) {
     if (isTimeoutError(entry.decompileError)) {
-      return rejected(relativePath, "case-timeout", entry.decompileError, "case-timeout");
+      return failure(relativePath, "wakaru-timeout", entry.decompileError, {
+        transformed: Object.fromEntries(transformedSources),
+      });
     }
     const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
       entry.decompileError,

@@ -152,8 +152,10 @@ aliases, and top-level await.
 ## Timeouts and Reruns
 
 `--case-timeout-ms <n>` bounds each runnable test case. The default is 5000 ms.
-Timeouts are recorded as `rejected` with reason `case-timeout`, so they are
-visible in JSON and Markdown reports without losing the whole run.
+Case preparation and execution timeouts are recorded as `rejected` with reason
+`case-timeout`, so they remain visible without losing the whole run. A timeout
+from the Wakaru decompiler is instead a `failed` `wakaru-timeout`, because
+non-termination is a Wakaru correctness defect and must fail non-baseline runs.
 
 Use `--rerun-from <json>` to rerun paths selected from a previous report. By
 default it reruns `failed` results. Add one or more `--rerun-status` values to

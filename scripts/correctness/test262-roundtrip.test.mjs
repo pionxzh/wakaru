@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1253,6 +1253,42 @@ test("runRoundTrip records missing harness includes without aborting", async () 
     assert.equal(report.results[0].phase, "harness-configuration");
     assert.match(report.results[0].error, /missing Test262 harness file/);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip reports Wakaru decompile timeouts as failures", async () => {
+  const root = makeTempTest262();
+  const previousWakaru = process.env.WAKARU;
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    const hangingWakaru = join(root, "hanging-wakaru.mjs");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "case.js"), "/*---\n---*/\nvoid 0;\n");
+    writeFileSync(hangingWakaru, "#!/usr/bin/env node\nsetTimeout(() => {}, 10000);\n");
+    chmodSync(hangingWakaru, 0o755);
+    process.env.WAKARU = hangingWakaru;
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: Number.POSITIVE_INFINITY,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 50,
+    });
+
+    assert.equal(report.totals.failed, 1);
+    assert.equal(report.totals.rejected, 0);
+    assert.equal(report.results[0].phase, "wakaru-timeout");
+    assert.equal(test262ReportExitCode(report), 1);
+  } finally {
+    if (previousWakaru === undefined) delete process.env.WAKARU;
+    else process.env.WAKARU = previousWakaru;
     rmSync(root, { recursive: true, force: true });
   }
 });
