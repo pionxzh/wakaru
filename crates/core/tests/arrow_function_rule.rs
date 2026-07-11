@@ -89,6 +89,53 @@ const load = () => {
 }
 
 #[test]
+fn direct_eval_in_nested_function_does_not_block_outer_arrow() {
+    let input = r#"
+const outer = function () {
+  return function () {
+    return eval("this");
+  };
+};
+"#;
+    let expected = r#"
+const outer = () => {
+  return function () {
+    return eval("this");
+  };
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn direct_eval_in_nested_arrow_blocks_outer_arrow() {
+    let input = r#"
+const outer = function () {
+  return () => eval("arguments");
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn bind_this_eval_mentioning_this_can_be_arrow() {
+    let input = r#"
+register(function (value) {
+  return eval("this.value");
+}.bind(this));
+"#;
+    let expected = r#"
+register((value) => {
+  return eval("this.value");
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn single_return_becomes_arrow_expression() {
     let input = r#"
 const double = [1, 2, 3].map(function(x) { return x * 2; });

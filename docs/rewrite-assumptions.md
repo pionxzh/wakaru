@@ -182,7 +182,11 @@ direct/indirect eval calls and their sources, and
 string mentions (an unknown source blocks all). `VarDeclToLetConst`,
 `DeadDecls`, and `UnIife` follow this pattern. `ArrowFunction` preserves the
 function shape for unknown direct-eval sources, or when a known source mentions
-function-only bindings such as `this`, `arguments`, and `new.target`.
+function-only bindings such as `this`, `arguments`, and `new.target`. Nested
+regular functions have their own function-only bindings and do not block an
+outer conversion; nested arrows still do. For `function() {}.bind(this)`, a
+source that mentions only `this` is safe because both forms capture the same
+value, while `arguments` and `new.target` still block conversion.
 
 This limitation should be documented for users, especially for `minimal`.
 

@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
@@ -11,7 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 
 use super::decl_utils::has_duplicate_param_names;
-use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
+use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
 
 pub struct ArrowFunction;
 
@@ -163,7 +164,7 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
     // Direct eval can observe function-only bindings (`this`, `arguments`,
     // `new.target`) that are not visible to an AST walk of the containing
     // function. Keep the function shape rather than guessing from source text.
-    if body_has_arrow_sensitive_direct_eval(body) {
+    if body_has_arrow_sensitive_direct_eval(body, true) {
         return None;
     }
 
@@ -255,7 +256,7 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
     if func
         .body
         .as_ref()
-        .is_some_and(body_has_arrow_sensitive_direct_eval)
+        .is_some_and(|body| body_has_arrow_sensitive_direct_eval(body, false))
     {
         return None;
     }
@@ -284,8 +285,8 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
     })
 }
 
-fn body_has_arrow_sensitive_direct_eval(body: &BlockStmt) -> bool {
-    let mut analyzer = DirectEvalAnalyzer::default();
+fn body_has_arrow_sensitive_direct_eval(body: &BlockStmt, include_this: bool) -> bool {
+    let mut analyzer = ArrowSensitiveDirectEvalAnalyzer::default();
     body.visit_with(&mut analyzer);
     if analyzer.unknown_direct_eval {
         return true;
@@ -293,13 +294,43 @@ fn body_has_arrow_sensitive_direct_eval(body: &BlockStmt) -> bool {
 
     // `new` is deliberately broader than the exact `new.target` spelling so
     // whitespace/comments in evaluated source cannot evade the guard.
-    let sensitive_names: [swc_core::atoms::Atom; 3] =
-        ["this".into(), "arguments".into(), "new".into()];
+    let arguments_name: Atom = "arguments".into();
+    let new_name: Atom = "new".into();
+    let this_name: Atom = "this".into();
     analyzer.known_direct_eval_sources.iter().any(|source| {
-        sensitive_names
-            .iter()
-            .any(|name| js_source_mentions_binding(source, name))
+        js_source_mentions_binding(source, &arguments_name)
+            || js_source_mentions_binding(source, &new_name)
+            || (include_this && js_source_mentions_binding(source, &this_name))
     })
+}
+
+#[derive(Default)]
+struct ArrowSensitiveDirectEvalAnalyzer {
+    known_direct_eval_sources: Vec<String>,
+    unknown_direct_eval: bool,
+}
+
+impl Visit for ArrowSensitiveDirectEvalAnalyzer {
+    fn visit_call_expr(&mut self, expr: &CallExpr) {
+        if let Some(source) = direct_eval_call_source(expr) {
+            match source {
+                EvalCallSource::NoSource => {}
+                EvalCallSource::Known(source) => self.known_direct_eval_sources.push(source),
+                EvalCallSource::Unknown => self.unknown_direct_eval = true,
+            }
+            for arg in &expr.args {
+                arg.expr.visit_with(self);
+            }
+            return;
+        }
+
+        expr.visit_children_with(self);
+    }
+
+    // Regular functions have their own `this`, `arguments`, and `new.target`.
+    // Arrows still recurse through the default visitor because they capture
+    // those bindings from the function being considered for conversion.
+    fn visit_function(&mut self, _: &Function) {}
 }
 
 // ============================================================
