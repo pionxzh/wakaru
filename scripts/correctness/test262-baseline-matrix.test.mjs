@@ -11,6 +11,7 @@ import {
   moduleGraphBaselineProducers,
   normalBaselineProducers,
   parseMatrixArgs,
+  runBaselineMatrix,
 } from "./test262-baseline-matrix.mjs";
 
 test("baseline matrix runs every slice for every producer", () => {
@@ -143,6 +144,19 @@ test("parseMatrixArgs accepts candidate promotion", () => {
 
   assert.equal(options.acceptCandidates, true);
   assert.equal(options.updateBaselines, false);
+});
+
+test("runBaselineMatrix rejects valid filters that select zero jobs", async (t) => {
+  const error = t.mock.method(console, "error", () => {});
+  const code = await runBaselineMatrix({
+    producers: ["none"],
+    slices: ["modules"],
+    dryRun: true,
+  });
+
+  assert.equal(code, 1);
+  assert.equal(error.mock.callCount(), 1);
+  assert.match(error.mock.calls[0].arguments[0], /No Test262 baseline jobs match/);
 });
 
 test("acceptBaselineMatrixCandidates promotes only existing candidates", () => {

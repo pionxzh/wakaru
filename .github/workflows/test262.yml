@@ -30,12 +30,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: test262-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   harness:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -58,6 +63,7 @@ jobs:
   baselines:
     needs: harness
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +93,15 @@ jobs:
           --skip-build
         env:
           WAKARU: ${{ github.workspace }}/target/debug/wakaru
+      - name: Preserve baseline comparison evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test262-${{ matrix.producer }}-comparison
+          path: |
+            docs/test262-baselines/**/*.json.new
+            docs/test262-baselines/**/*.md
+          if-no-files-found: ignore
       - name: Verify cached baseline totals
         if: matrix.producer != 'none' && matrix.producer != 'babel-env-terser'
         run: >-

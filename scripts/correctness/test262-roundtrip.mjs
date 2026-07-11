@@ -738,7 +738,7 @@ function resolveWakaruCmd() {
   );
 }
 
-function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
+export function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
   const { command, prefix } = wakaruCmd;
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, [...prefix, "--level", level, "-"], {
@@ -749,6 +749,9 @@ function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
     let stderr = "";
     let done = false;
     let timer = null;
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
 
     function finish(error, result) {
       if (done) return;
@@ -772,8 +775,13 @@ function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", (err) => finish(err));
     child.on("close", (code) => {
-      if (code === 0) finish(null, stdout);
-      else finish(new Error(`wakaru exited ${code}\n${stderr || stdout}`));
+      if (code === 0 && stdout.trim().length === 0) {
+        finish(new Error("wakaru exited successfully but produced empty output"));
+      } else if (code === 0) {
+        finish(null, stdout);
+      } else {
+        finish(new Error(`wakaru exited ${code}\n${stderr || stdout}`));
+      }
     });
     child.stdin.end(source);
   });
@@ -903,7 +911,13 @@ export async function runRoundTrip(options) {
       if (metadata.negative && ["parse", "early"].includes(metadata.negative.phase)) {
         recordResult(
           report,
-          verifyParseNegative({ relativePath, source, metadata, variants }),
+          verifyParseNegative({
+            relativePath,
+            source,
+            metadata,
+            variants,
+            timeoutMs: options.caseTimeoutMs,
+          }),
           options,
         );
         continue;
@@ -1205,7 +1219,7 @@ async function prepareModuleTest({
   };
 }
 
-function verifyParseNegative({ relativePath, source, metadata, variants }) {
+function verifyParseNegative({ relativePath, source, metadata, variants, timeoutMs }) {
   try {
     for (const variant of variants) {
       const outcome = parseSourceOutcome({
@@ -1213,6 +1227,7 @@ function verifyParseNegative({ relativePath, source, metadata, variants }) {
         filename: `${relativePath}:${variant.name}:original`,
         strict: variant.strict,
         module: variant.module === true,
+        timeoutMs,
       });
       assertExpectedOutcome(outcome, metadata.negative, variant.name);
     }
@@ -1229,20 +1244,45 @@ function verifyParseNegative({ relativePath, source, metadata, variants }) {
   };
 }
 
-function parseSourceOutcome({ source, filename, strict, module }) {
+export function parseSourceOutcome({
+  source,
+  filename,
+  strict,
+  module,
+  timeoutMs,
+  spawnSyncImpl = spawnSync,
+}) {
   const prepared = strict && !module ? `"use strict";\n${source}` : source;
   if (module) {
-    const result = spawnSync(process.execPath, ["--check", "--input-type=module"], {
+    const result = spawnSyncImpl(process.execPath, ["--check", "--input-type=module"], {
       input: prepared,
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
+      timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
     });
+    if (result.error) {
+      throw new Error(`module parse check failed for ${filename}: ${result.error.message}`, {
+        cause: result.error,
+      });
+    }
+    if (result.signal) {
+      throw new Error(`module parse check terminated by ${result.signal} for ${filename}`);
+    }
+    if (result.status == null) {
+      throw new Error(`module parse check did not report an exit status for ${filename}`);
+    }
     if (result.status === 0) {
       return { phase: "success", error: null, errorName: null };
     }
-    const diagnostic = result.stderr || result.stdout || `module parse failed for ${filename}`;
-    const errorName = diagnostic.match(/\b([A-Za-z_$][\w$]*Error)\b/)?.[1] ?? "SyntaxError";
-    return { phase: "parse", error: new Error(diagnostic.trim()), errorName };
+    const diagnostic = (result.stderr || result.stdout || "").trim();
+    if (diagnostic.length === 0) {
+      throw new Error(
+        `module parse check exited ${result.status} without a diagnostic for ${filename}`,
+      );
+    }
+    const errorMatches = [...diagnostic.matchAll(/\b([A-Za-z_$][\w$]*Error)\b/g)];
+    const errorName = errorMatches.at(-1)?.[1] ?? "SyntaxError";
+    return { phase: "parse", error: new Error(diagnostic), errorName };
   }
   try {
     new vm.Script(prepared, { filename });

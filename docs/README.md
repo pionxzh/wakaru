@@ -26,7 +26,8 @@ the registry defines *what*.
 
 ## Data directories
 
-- [test262-baselines/](test262-baselines/) — tracked Test262 baseline
-  summaries (current totals cached in `scripts/correctness/test262-stats.json`)
+- [test262-baselines/](test262-baselines/) — tracked canonical Test262 JSON
+  baselines and Markdown summaries (current totals cached in
+  `scripts/correctness/test262-stats.json`)
 - [proposals/](proposals/) — design proposals, deferred or in progress
 - [learnings/](learnings/) — post-mortems of measured-and-reverted approaches

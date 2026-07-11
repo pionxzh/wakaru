@@ -26,16 +26,88 @@ import {
   loadKnownBlockers,
   missingToolPackageSpecs,
   parseArgs,
+  parseSourceOutcome,
   parseTestMetadata,
   readModuleGraph,
   resolvePipelineName,
   resolvePipelineToolRoot,
   runnableVariants,
+  runWakaruAsync,
   runRoundTrip,
   transformSource,
   test262ReportExitCode,
   unsupportedTest262Capability,
 } from "./test262-roundtrip.mjs";
+
+test("runWakaruAsync rejects empty output and decodes split UTF-8 chunks", async () => {
+  await assert.rejects(
+    runWakaruAsync("void 0;", {
+      level: "minimal",
+      timeoutMs: 1000,
+      wakaruCmd: { command: process.execPath, prefix: ["-e", "", "--"] },
+    }),
+    /produced empty output/,
+  );
+
+  const output = await runWakaruAsync("void 0;", {
+    level: "minimal",
+    timeoutMs: 1000,
+    wakaruCmd: {
+      command: process.execPath,
+      prefix: [
+        "-e",
+        "process.stdout.write(Buffer.from([0xe2])); setTimeout(() => process.stdout.write(Buffer.from([0x82, 0xac])), 10);",
+        "--",
+      ],
+    },
+  });
+  assert.equal(output, "€");
+});
+
+test("module parser checks reject infrastructure failures and use the final error diagnostic", () => {
+  const base = {
+    source: "TypeError + ;",
+    filename: "sample.js",
+    strict: true,
+    module: true,
+    timeoutMs: 321,
+  };
+
+  assert.throws(
+    () =>
+      parseSourceOutcome({
+        ...base,
+        spawnSyncImpl: () => ({ error: new Error("spawn EAGAIN") }),
+      }),
+    /module parse check failed.*spawn EAGAIN/,
+  );
+  assert.throws(
+    () =>
+      parseSourceOutcome({
+        ...base,
+        spawnSyncImpl: () => ({ error: null, signal: "SIGKILL", status: null }),
+      }),
+    /terminated by SIGKILL/,
+  );
+
+  let receivedOptions;
+  const outcome = parseSourceOutcome({
+    ...base,
+    spawnSyncImpl: (_command, _args, options) => {
+      receivedOptions = options;
+      return {
+        error: null,
+        signal: null,
+        status: 1,
+        stderr: "TypeError + ;\n            ^\nSyntaxError: Unexpected token ';'\n",
+        stdout: "",
+      };
+    },
+  });
+  assert.equal(receivedOptions.timeout, 321);
+  assert.equal(outcome.phase, "parse");
+  assert.equal(outcome.errorName, "SyntaxError");
+});
 
 test("tool validation cache validates once and retries failures", () => {
   const validateOnce = createToolValidationCache();

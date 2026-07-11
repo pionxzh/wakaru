@@ -88,18 +88,12 @@ export function setupTest262Corpus({
   prepareRepository(absoluteRoot, upstream, { force });
 
   let status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
-  if (status.dirty) {
-    if (!force) {
+  if (status.origin !== upstream.url) {
+    if (status.dirty) {
       throw new Error(
-        `refusing to modify dirty Test262 checkout at ${absoluteRoot}; clean it or rerun with --force`,
+        `refusing to replace dirty Test262 checkout at ${absoluteRoot}: origin is ${status.origin ?? "missing"}, expected ${upstream.url}`,
       );
     }
-    rmSync(absoluteRoot, { recursive: true, force: true });
-    prepareRepository(absoluteRoot, upstream, { force: false });
-    status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
-  }
-
-  if (status.origin !== upstream.url) {
     if (status.origin && !force) {
       throw new Error(
         `Test262 checkout origin is ${status.origin}, expected ${upstream.url}; rerun with --force to replace it`,
@@ -110,6 +104,17 @@ export function setupTest262Corpus({
     } else {
       git(absoluteRoot, ["remote", "add", "origin", upstream.url]);
     }
+    status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
+  }
+  if (status.dirty) {
+    if (!force) {
+      throw new Error(
+        `refusing to modify dirty Test262 checkout at ${absoluteRoot}; clean it or rerun with --force`,
+      );
+    }
+    rmSync(absoluteRoot, { recursive: true, force: true });
+    prepareRepository(absoluteRoot, upstream, { force: false });
+    status = inspectTest262CorpusWithUpstream(absoluteRoot, upstream);
   }
 
   if (status.head !== upstream.revision) {

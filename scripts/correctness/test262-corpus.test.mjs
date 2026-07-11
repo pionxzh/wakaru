@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -47,6 +47,26 @@ test("setup refuses dirty state unless force is explicit", () => {
     assert.throws(() => setupTest262Corpus(fixture.options()), /refusing to modify dirty/);
     const repaired = setupTest262Corpus({ ...fixture.options(), force: true });
     assert.equal(repaired.ready, true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("setup --force never deletes a dirty checkout with an unexpected origin", () => {
+  const fixture = makeFixture();
+  try {
+    setupTest262Corpus(fixture.options());
+    const unexpectedOrigin = join(fixture.root, "unrelated-repository");
+    git(fixture.checkout, ["remote", "set-url", "origin", unexpectedOrigin]);
+    const dirtyPath = join(fixture.checkout, "dirty.txt");
+    writeFileSync(dirtyPath, "must survive\n");
+
+    assert.throws(
+      () => setupTest262Corpus({ ...fixture.options(), force: true }),
+      /refusing to replace dirty Test262 checkout.*origin is/,
+    );
+    assert.equal(existsSync(dirtyPath), true);
+    assert.equal(git(fixture.checkout, ["remote", "get-url", "origin"]).stdout.trim(), unexpectedOrigin);
   } finally {
     fixture.cleanup();
   }

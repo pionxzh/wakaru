@@ -226,6 +226,10 @@ function spawnJobAsync(job) {
 
 export async function runBaselineMatrix(options) {
   const jobs = buildBaselineMatrixJobs(options);
+  if (jobs.length === 0) {
+    console.error("No Test262 baseline jobs match the selected producers and slices.");
+    return 1;
+  }
   if (options.acceptCandidates) {
     if (options.dryRun) {
       for (const job of jobs) {
@@ -302,7 +306,7 @@ Options:
   --test262 <dir>         Test262 checkout passed through
   --level <level>         Wakaru rewrite level passed through
   --known-blockers <file> Known blocker manifest passed through
-  --case-timeout-ms <n>   Per-test timeout. Default: 15000 for parallel matrix stability
+  --case-timeout-ms <n>   Per-test timeout. Default: 15000
   --tool-root <dir>       Tool package directory passed through
   --details               Print detailed round-trip output
   --keep-temp             Keep temporary round-trip files
