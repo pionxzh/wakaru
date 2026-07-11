@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
+  acceptBaselineMatrixCandidates,
   baselineSlices,
   buildBaselineMatrixJobs,
   moduleGraphBaselineProducers,
@@ -44,6 +48,7 @@ test("baseline matrix writes summaries under producer directories", () => {
   assert.match(jobs[0].summary, /docs[\\/]test262-baselines[\\/]terser-light[\\/]default\.md$/);
   assert.match(jobs[1].summary, /docs[\\/]test262-baselines[\\/]terser-light[\\/]scope\.md$/);
   assert.match(jobs[0].baseline, /docs[\\/]test262-baselines[\\/]terser-light[\\/]default\.json$/);
+  assert.match(jobs[0].candidate, /default\.json\.new$/);
   assert.deepEqual(jobs[0].args.slice(1, 7), [
     "--preset",
     "default",
@@ -117,6 +122,7 @@ test("parseMatrixArgs supports repeatable producer and slice filters", () => {
       details: false,
       keepTemp: false,
       updateBaselines: true,
+      acceptCandidates: false,
     },
   );
 });
@@ -128,4 +134,37 @@ test("parseMatrixArgs rejects unknown producer or slice", () => {
   );
   assert.throws(() => parseMatrixArgs(["--producer", "unknown"]), /unsupported --producer unknown/);
   assert.throws(() => parseMatrixArgs(["--slice", "unknown"]), /unsupported --slice unknown/);
+  assert.throws(() => parseMatrixArgs(["--accept", "--update"]), /cannot be combined/);
+  assert.throws(() => parseMatrixArgs(["--accept", "--missing"]), /cannot be combined/);
+});
+
+test("parseMatrixArgs accepts candidate promotion", () => {
+  const options = parseMatrixArgs(["--producer", "swc-minify", "--slice", "classes", "--accept"]);
+
+  assert.equal(options.acceptCandidates, true);
+  assert.equal(options.updateBaselines, false);
+});
+
+test("acceptBaselineMatrixCandidates promotes only existing candidates", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-matrix-candidate-"));
+  const baseline = join(root, "classes.json");
+  const candidate = `${baseline}.new`;
+  try {
+    writeFileSync(candidate, `${JSON.stringify({ schemaVersion: 3 })}\n`);
+    const accepted = acceptBaselineMatrixCandidates([
+      { producer: "swc-minify", slice: "classes", baseline, candidate },
+      {
+        producer: "esbuild-minify",
+        slice: "classes",
+        baseline: join(root, "missing.json"),
+        candidate: join(root, "missing.json.new"),
+      },
+    ]);
+
+    assert.equal(accepted.length, 1);
+    assert.equal(existsSync(baseline), true);
+    assert.equal(existsSync(candidate), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -81,7 +81,10 @@ Wakaru level, and selected preset. They store reviewed non-passing outcomes by p
 typed reason, and a stable fingerprint that includes emitted-code hashes while
 excluding machine-specific stack frames. Complete baseline runs fail on new or
 changed outcomes, disappeared outcomes (including unexpected passes), or total
-movement. The timeout budget is also part of the reviewed identity; the parallel
+movement. A failed comparison writes the complete actual baseline beside the
+reviewed file as `<baseline>.json.new`, analogous to an insta `.snap.new` file.
+The reviewed JSON remains unchanged until that candidate is explicitly
+accepted. The timeout budget is also part of the reviewed identity; the parallel
 matrix defaults to 15 seconds to avoid load-dependent process-startup timeouts.
 That budget is applied consistently to harness and test execution as well as
 producer/decompiler subprocesses. The canonical matrix runs one slice job at a
@@ -225,8 +228,20 @@ Use `--producer` and `--slice` to refresh a subset:
 
 ```powershell
 node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators
-node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators --update
 ```
+
+When comparison reports intentional movement, review the Markdown summary and
+the adjacent `.json.new` candidate, then promote it without rerunning Test262:
+
+```powershell
+node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators --accept
+node scripts\correctness\test262-collect-stats.mjs --producer swc-minify --slice operators
+```
+
+The clean comparison removes stale candidates. `--update` remains available
+for deliberate baseline-identity migrations, but bypasses the candidate review
+gate and should not be the initial command for ordinary Wakaru changes. CI
+still performs an independent clean comparison of the accepted baseline.
 
 Add `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
@@ -240,10 +255,10 @@ job per producer on Node 24, matching the tracked baseline identity. It is
 path-gated for correctness-related changes, can be run manually, and also runs
 weekly to catch runtime or infrastructure drift.
 
-Both runners use parallel decompilation internally: the roundtrip runner batches
-all wakaru invocations and runs them concurrently (bounded by `cpus - 2`), and
-the matrix runner runs producer/slice jobs in parallel. A full 3-producer ×
-20-slice matrix that previously took hours completes in minutes.
+The roundtrip runner batches Wakaru invocations and runs them concurrently
+(bounded by `cpus - 2`). The matrix runs one producer/slice job at a time because
+each slice already parallelizes decompilation internally and cross-slice load
+made timeouts nondeterministic.
 
 `swc-minify` and `esbuild-minify` are standalone producer pipelines; they are
 not followed by Terser.

@@ -75,8 +75,16 @@ node scripts\correctness\test262-baseline-matrix.mjs
 
 Use `--producer` or `--slice` to refresh a subset. Select only the additional
 module producer variants with `--slice module-graph`.
-Baseline replacement also requires `--update`; ordinary runs compare without
-rewriting reviewed outcomes.
+Ordinary runs compare without rewriting reviewed outcomes. Movement writes a
+visible `<baseline>.json.new` candidate; review it and the generated Markdown,
+then promote selected candidates without rerunning Test262:
+
+```powershell
+node scripts\correctness\test262-baseline-matrix.mjs --slice classes --accept
+```
+
+Use `--update` only when deliberately replacing an incompatible baseline
+identity, such as a pinned Node-major migration.
 Use `--missing` to skip summaries that already exist and have `complete: true`.
 The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
 is already set.

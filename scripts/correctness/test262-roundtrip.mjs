@@ -2070,6 +2070,9 @@ export function formatBaselineComparison(comparison) {
     `  new outcomes: ${comparison.newOutcomes.length}`,
     `  disappeared outcomes: ${comparison.unexpectedPasses.length}`,
   ];
+  if (comparison.candidatePath) {
+    lines.push(`  candidate: ${comparison.candidatePath}`);
+  }
   for (const outcome of comparison.newOutcomes.slice(0, 20)) {
     lines.push(`  + ${outcome.path} [${outcome.status}:${outcome.kind}]`);
   }

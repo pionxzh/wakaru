@@ -5,6 +5,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, relative, resolve } from "node:path";
 
+import {
+  acceptTest262BaselineCandidate,
+  test262BaselineCandidatePath,
+} from "./test262-baseline.mjs";
+
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const roundTripScript = join(repoRoot, "scripts", "correctness", "test262-roundtrip.mjs");
 
@@ -57,6 +62,7 @@ export function parseMatrixArgs(argv) {
     details: false,
     keepTemp: false,
     updateBaselines: false,
+    acceptCandidates: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -89,6 +95,8 @@ export function parseMatrixArgs(argv) {
       options.keepTemp = true;
     } else if (arg === "--update") {
       options.updateBaselines = true;
+    } else if (arg === "--accept") {
+      options.acceptCandidates = true;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
@@ -98,6 +106,12 @@ export function parseMatrixArgs(argv) {
 
   validateRequestedValues("--producer", options.producers, baselineProducers);
   validateRequestedValues("--slice", options.slices, [...baselineSlices, "module-graph"]);
+  if (options.acceptCandidates && options.updateBaselines) {
+    throw new Error("--accept cannot be combined with --update");
+  }
+  if (options.acceptCandidates && options.missingOnly) {
+    throw new Error("--accept cannot be combined with --missing");
+  }
   return options;
 }
 
@@ -144,6 +158,7 @@ function createMatrixJob({ producer, slice, preset, limit, options }) {
   const outputName = slice === "module-graph" ? producer : slice;
   const summary = join(outputDir, `${outputName}.md`);
   const baseline = join(outputDir, `${outputName}.json`);
+  const candidate = test262BaselineCandidatePath(baseline);
   const args = [
     roundTripScript,
     "--preset",
@@ -170,6 +185,7 @@ function createMatrixJob({ producer, slice, preset, limit, options }) {
     slice,
     summary,
     baseline,
+    candidate,
     command: process.execPath,
     args,
   };
@@ -210,6 +226,23 @@ function spawnJobAsync(job) {
 
 export async function runBaselineMatrix(options) {
   const jobs = buildBaselineMatrixJobs(options);
+  if (options.acceptCandidates) {
+    if (options.dryRun) {
+      for (const job of jobs) {
+        console.log(`ACCEPT ${relative(repoRoot, job.candidate)} -> ${relative(repoRoot, job.baseline)}`);
+      }
+      return 0;
+    }
+    const accepted = acceptBaselineMatrixCandidates(jobs);
+    for (const item of accepted) {
+      console.log(`ACCEPTED ${item.producer} / ${item.slice} -> ${relative(repoRoot, item.baseline)}`);
+    }
+    if (accepted.length === 0) {
+      console.error("No Test262 baseline candidates found for the selected jobs.");
+      return 1;
+    }
+    return 0;
+  }
   if (options.dryRun) {
     for (const job of jobs) {
       console.log(formatCommand(job));
@@ -248,6 +281,16 @@ export async function runBaselineMatrix(options) {
   return failCount > 0 ? 1 : 0;
 }
 
+export function acceptBaselineMatrixCandidates(jobs) {
+  const accepted = [];
+  for (const job of jobs) {
+    if (!existsSync(job.candidate)) continue;
+    acceptTest262BaselineCandidate(job.baseline);
+    accepted.push(job);
+  }
+  return accepted;
+}
+
 export function usage() {
   return `Usage:
   node scripts/correctness/test262-baseline-matrix.mjs [options]
@@ -265,6 +308,7 @@ Options:
   --keep-temp             Keep temporary round-trip files
   --missing               Run only missing or incomplete summaries
   --update                Explicitly rewrite selected JSON baselines and summaries
+  --accept                Accept selected .json.new candidates without rerunning tests
   --skip-build            Do not build wakaru before running jobs
   --dry-run               Print commands without running them
 `;

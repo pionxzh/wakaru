@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const test262BaselineSchemaVersion = 3;
@@ -55,6 +55,18 @@ export function saveTest262Baseline(path, baseline) {
   writeFileSync(path, `${JSON.stringify(baseline, null, 2)}\n`);
 }
 
+export function test262BaselineCandidatePath(path) {
+  return `${path}.new`;
+}
+
+export function acceptTest262BaselineCandidate(path) {
+  const candidatePath = test262BaselineCandidatePath(path);
+  const candidate = loadTest262Baseline(candidatePath);
+  saveTest262Baseline(path, candidate);
+  rmSync(candidatePath);
+  return { path, candidatePath, baseline: candidate };
+}
+
 export function compareTest262Baseline(expected, actual) {
   assertSameIdentity(expected, actual);
   const expectedByKey = new Map(expected.outcomes.map((outcome) => [outcomeKey(outcome), outcome]));
@@ -76,10 +88,13 @@ export function compareTest262Baseline(expected, actual) {
 
 export function applyTest262Baseline(report, { path, update }) {
   const actual = createTest262Baseline(report);
+  const candidatePath = test262BaselineCandidatePath(path);
   if (update) {
     saveTest262Baseline(path, actual);
+    rmSync(candidatePath, { force: true });
     return {
       path,
+      candidatePath: null,
       updated: true,
       clean: true,
       newOutcomes: [],
@@ -87,11 +102,27 @@ export function applyTest262Baseline(report, { path, update }) {
       totalsChanged: false,
     };
   }
-  const expected = loadTest262Baseline(path);
+  let comparison;
+  try {
+    const expected = loadTest262Baseline(path);
+    comparison = compareTest262Baseline(expected, actual);
+  } catch (error) {
+    saveTest262Baseline(candidatePath, actual);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}\nCandidate baseline written to ${candidatePath}`, {
+      cause: error,
+    });
+  }
+  if (comparison.clean) {
+    rmSync(candidatePath, { force: true });
+  } else {
+    saveTest262Baseline(candidatePath, actual);
+  }
   return {
     path,
+    candidatePath: comparison.clean ? null : candidatePath,
     updated: false,
-    ...compareTest262Baseline(expected, actual),
+    ...comparison,
   };
 }
 

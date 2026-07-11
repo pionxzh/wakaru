@@ -996,6 +996,7 @@ test("reviewed baseline failures pass only while the comparison stays clean", ()
 test("formatBaselineComparison identifies changed paths", () => {
   const output = formatBaselineComparison({
     clean: false,
+    candidatePath: "baseline.json.new",
     totalsChanged: true,
     newOutcomes: [{ path: "new.js", status: "failed", kind: "runtime" }],
     unexpectedPasses: [{ path: "fixed.js", status: "rejected", kind: "known" }],
@@ -1003,6 +1004,7 @@ test("formatBaselineComparison identifies changed paths", () => {
 
   assert.match(output, /\+ new\.js \[failed:runtime\]/);
   assert.match(output, /- fixed\.js \[rejected:known\]/);
+  assert.match(output, /candidate: baseline\.json\.new/);
 });
 
 test("runRoundTrip reports baseline failures as unsupported inputs", async () => {

@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  acceptTest262BaselineCandidate,
   applyTest262Baseline,
   compareTest262Baseline,
   createTest262Baseline,
   fingerprintTest262Outcome,
   loadTest262Baseline,
+  saveTest262Baseline,
+  test262BaselineCandidatePath,
   validateTest262BaselineOptions,
 } from "./test262-baseline.mjs";
 
@@ -98,6 +101,69 @@ test("explicit update writes a deterministic baseline", () => {
   }
 });
 
+test("failed comparison writes a reviewable candidate that can be accepted", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-candidate-"));
+  const path = join(root, "baseline.json");
+  const candidatePath = test262BaselineCandidatePath(path);
+  try {
+    applyTest262Baseline(
+      report([{ path: "case.js", status: "rejected", reason: "known", error: "old" }]),
+      { path, update: true },
+    );
+    const reviewed = readFileSync(path, "utf8");
+    const comparison = applyTest262Baseline(
+      report([{ path: "case.js", status: "rejected", reason: "known", error: "new" }]),
+      { path, update: false },
+    );
+
+    assert.equal(comparison.clean, false);
+    assert.equal(comparison.candidatePath, candidatePath);
+    assert.equal(readFileSync(path, "utf8"), reviewed);
+    assert.equal(existsSync(candidatePath), true);
+
+    acceptTest262BaselineCandidate(path);
+    assert.equal(existsSync(candidatePath), false);
+    assert.notEqual(readFileSync(path, "utf8"), reviewed);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("clean comparison and explicit update remove stale candidates", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-clean-"));
+  const path = join(root, "baseline.json");
+  const candidatePath = test262BaselineCandidatePath(path);
+  const currentReport = report([]);
+  try {
+    applyTest262Baseline(currentReport, { path, update: true });
+    saveTest262Baseline(candidatePath, createTest262Baseline(currentReport));
+    assert.equal(applyTest262Baseline(currentReport, { path, update: false }).clean, true);
+    assert.equal(existsSync(candidatePath), false);
+
+    saveTest262Baseline(candidatePath, createTest262Baseline(currentReport));
+    applyTest262Baseline(currentReport, { path, update: true });
+    assert.equal(existsSync(candidatePath), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("identity mismatch preserves the actual baseline as a candidate", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-baseline-identity-"));
+  const path = join(root, "baseline.json");
+  const candidatePath = test262BaselineCandidatePath(path);
+  try {
+    applyTest262Baseline(report([]), { path, update: true });
+    assert.throws(
+      () => applyTest262Baseline(report([], { nodeMajor: 24 }), { path, update: false }),
+      /Candidate baseline written/,
+    );
+    assert.equal(loadTest262Baseline(candidatePath).environment.nodeMajor, 24);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("filtered runs cannot compare or update a complete baseline", () => {
   assert.throws(
     () =>
@@ -153,7 +219,7 @@ test("fingerprints ignore unstable VM source carets", () => {
   assert.equal(left, right);
 });
 
-function report(results) {
+function report(results, optionOverrides = {}) {
   const counts = {
     skipped: 0,
     unsupported: 0,
@@ -179,6 +245,7 @@ function report(results) {
       caseTimeoutMs: 15000,
       presets: ["default"],
       paths: ["test/language/sample"],
+      ...optionOverrides,
     },
     totals: {
       discovered: results.length,
