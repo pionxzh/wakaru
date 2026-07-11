@@ -545,6 +545,70 @@ export const x = 23;
 }
 
 #[test]
+fn preserves_import_binding_reads_nested_in_void_expressions() {
+    let input = r#"
+import { x as y } from './self.js';
+assert.throws(ReferenceError, function() {
+  void y;
+});
+void (0, y);
+void [y];
+export const x = 23;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_tdz_read_nested_in_void_expression() {
+    let input = r#"
+{
+  void x;
+  let x;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn drops_safe_void_literal_no_op_statement() {
+    let input = r#"
+void 0;
+void 1;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, "");
+}
+
+#[test]
+fn drops_stable_builtin_member_reads_but_keeps_computed_key_reads() {
+    let input = r#"
+void Math.min;
+void Math[missing];
+"#;
+    let expected = r#"
+void Math[missing];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn drops_void_wrapped_closures_without_executing_their_reads() {
+    let input = r#"
+let helper;
+void (() => helper);
+void function() { helper; };
+"#;
+    let expected = r#"
+let helper;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn preserves_require_binding_read_statement_for_later_esm_recovery() {
     let input = r#"
 var a = require("./dep.js");

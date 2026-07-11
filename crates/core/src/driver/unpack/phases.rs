@@ -328,9 +328,10 @@ pub(super) fn unpack_multi_module_with_plan(
             // Later rules can expose sequence expressions. The old unpack
             // path cleaned those by running a second full module pipeline;
             // keep only the syntax cleanup needed after the split.
-            module.visit_mut_with(&mut SimplifySequence::new_with_level(
+            module.visit_mut_with(&mut SimplifySequence::new_with_import_semantics(
                 unresolved_mark,
                 options.level,
+                false,
             ));
             module.visit_mut_with(&mut UnAssignmentMerging);
             // UnIife2 can expose webpack export helpers that were hidden in

@@ -2,23 +2,27 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, Decl, Expr, ExprStmt, ForHead,
-    ForInStmt, ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl,
-    ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt,
-    ThrowStmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, ClassExpr, Decl, Expr,
+    ExprStmt, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid,
+    Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr,
+    SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
 use super::RewriteLevel;
 
+use crate::js_names::is_stable_builtin_alias_root;
 use crate::utils::paren::strip_parens;
 
 pub struct SimplifySequence {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    source_import_reads_are_observable: bool,
     observable_ident_reads: HashSet<BindingId>,
+    nested_observable_ident_reads: HashSet<BindingId>,
 }
 
 impl SimplifySequence {
@@ -27,10 +31,20 @@ impl SimplifySequence {
     }
 
     pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self::new_with_import_semantics(unresolved_mark, level, true)
+    }
+
+    pub(crate) fn new_with_import_semantics(
+        unresolved_mark: Mark,
+        level: RewriteLevel,
+        source_import_reads_are_observable: bool,
+    ) -> Self {
         Self {
             unresolved_mark,
             level,
+            source_import_reads_are_observable,
             observable_ident_reads: HashSet::new(),
+            nested_observable_ident_reads: HashSet::new(),
         }
     }
 }
@@ -38,8 +52,13 @@ impl SimplifySequence {
 impl VisitMut for SimplifySequence {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
         let outer_observable_ident_reads = self.observable_ident_reads.clone();
+        let outer_nested_observable_ident_reads = self.nested_observable_ident_reads.clone();
+        let import_bindings = collect_import_binding_ids_from_module_items(&module.body);
         self.observable_ident_reads
-            .extend(collect_import_binding_ids_from_module_items(&module.body));
+            .extend(import_bindings.iter().cloned());
+        if self.source_import_reads_are_observable {
+            self.nested_observable_ident_reads.extend(import_bindings);
+        }
         self.observable_ident_reads
             .extend(collect_cjs_require_binding_ids_from_module_items(
                 &module.body,
@@ -49,6 +68,7 @@ impl VisitMut for SimplifySequence {
         module.visit_mut_children_with(self);
 
         self.observable_ident_reads = outer_observable_ident_reads;
+        self.nested_observable_ident_reads = outer_nested_observable_ident_reads;
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -69,6 +89,7 @@ impl VisitMut for SimplifySequence {
                             self.unresolved_mark,
                             &future_lexical,
                             &self.observable_ident_reads,
+                            &self.nested_observable_ident_reads,
                         ) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
@@ -102,6 +123,7 @@ impl VisitMut for SimplifySequence {
                     self.unresolved_mark,
                     &future_lexical,
                     &self.observable_ident_reads,
+                    &self.nested_observable_ident_reads,
                 ) {
                     new_stmts.push(s);
                 }
@@ -121,6 +143,7 @@ fn is_pure_no_op_stmt(
     unresolved_mark: Mark,
     future_lexical: &HashSet<BindingId>,
     observable_ident_reads: &HashSet<BindingId>,
+    nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
@@ -141,6 +164,7 @@ fn is_pure_no_op_stmt(
         unresolved_mark,
         future_lexical,
         observable_ident_reads,
+        nested_observable_ident_reads,
     ) {
         return false;
     }
@@ -210,25 +234,78 @@ fn is_observable_ident_read(
     unresolved_mark: Mark,
     future_lexical: &HashSet<BindingId>,
     observable_ident_reads: &HashSet<BindingId>,
+    nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
-    match expr {
-        Expr::Ident(ident) => {
-            let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-            if ident.ctxt == unresolved_ctxt {
-                return ident.sym.as_ref() != "undefined";
-            }
-            if observable_ident_reads.contains(&(ident.sym.clone(), ident.ctxt)) {
-                return true;
-            }
-            future_lexical.contains(&(ident.sym.clone(), ident.ctxt))
+    if let Expr::Ident(ident) = strip_parens(expr) {
+        let binding = (ident.sym.clone(), ident.ctxt);
+        return (ident.ctxt == SyntaxContext::empty().apply_mark(unresolved_mark)
+            && ident.sym.as_ref() != "undefined")
+            || future_lexical.contains(&binding)
+            || observable_ident_reads.contains(&binding);
+    }
+
+    let mut detector = ObservableIdentReadDetector {
+        unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+        future_lexical,
+        observable_ident_reads: nested_observable_ident_reads,
+        found: false,
+    };
+    expr.visit_with(&mut detector);
+    detector.found
+}
+
+struct ObservableIdentReadDetector<'a> {
+    unresolved_ctxt: SyntaxContext,
+    future_lexical: &'a HashSet<BindingId>,
+    observable_ident_reads: &'a HashSet<BindingId>,
+    found: bool,
+}
+
+impl Visit for ObservableIdentReadDetector<'_> {
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if self.found {
+            return;
         }
-        Expr::Paren(paren) => is_observable_ident_read(
-            &paren.expr,
-            unresolved_mark,
-            future_lexical,
-            observable_ident_reads,
-        ),
-        _ => false,
+        let binding = (ident.sym.clone(), ident.ctxt);
+        self.found = (ident.ctxt == self.unresolved_ctxt && ident.sym.as_ref() != "undefined")
+            || self.future_lexical.contains(&binding)
+            || self.observable_ident_reads.contains(&binding);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if self.found {
+            return;
+        }
+        if unary.op == UnaryOp::TypeOf {
+            if let Expr::Ident(ident) = strip_parens(&unary.arg) {
+                if ident.ctxt == self.unresolved_ctxt {
+                    return;
+                }
+            }
+        }
+        unary.arg.visit_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if let Expr::Ident(root) = strip_parens(&member.obj) {
+            if root.ctxt == self.unresolved_ctxt && is_stable_builtin_alias_root(root.sym.as_ref())
+            {
+                if let swc_core::ecma::ast::MemberProp::Computed(computed) = &member.prop {
+                    computed.expr.visit_with(self);
+                }
+                return;
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, _: &FnExpr) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class_expr(&mut self, _: &ClassExpr) {
+        // Class evaluation can run computed keys and static initializers.
+        self.found = true;
     }
 }
 
