@@ -1678,6 +1678,24 @@ use(picked, rest);
 }
 
 #[test]
+fn computed_key_pick_separated_from_rest_is_preserved() {
+    // The recovered pattern performs the property read at the rest
+    // declarator's position. A declarator between the pick and the rest call
+    // originally evaluates after that read, so recovery would reorder it.
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+import coerce from "@babel/runtime/helpers/toPropertyKey";
+var picked = source[key], other = touch(), rest = omit(source, [coerce(key)]);
+use(picked, other, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("omit(source"),
+        "a pick separated from the rest call must not be recovered: {output}"
+    );
+}
+
+#[test]
 fn computed_key_alias_is_not_collapsed_across_source_write() {
     let input = r#"
 import omit from "@babel/runtime/helpers/objectWithoutProperties";

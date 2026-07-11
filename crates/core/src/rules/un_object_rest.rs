@@ -1089,12 +1089,13 @@ fn extract_computed_object_rest(
             Some((index, rest.clone(), source, key))
         })?;
 
-    let picked_match = var.decls[..rest_index]
-        .iter()
-        .enumerate()
-        .find_map(|(index, decl)| {
-            computed_access_from_declarator(decl, &source, &key).map(|picked| (index, picked))
-        });
+    // The recovered pattern performs the property read at the rest
+    // declarator's position, so only accept a pick immediately before it —
+    // any declarator between them would be reordered across that read.
+    let picked_match = rest_index.checked_sub(1).and_then(|index| {
+        computed_access_from_declarator(&var.decls[index], &source, &key)
+            .map(|picked| (index, picked))
+    });
     let (picked_index, picked) = picked_match
         .map(|(index, picked)| (Some(index), Some(picked)))
         .unwrap_or((None, None));
