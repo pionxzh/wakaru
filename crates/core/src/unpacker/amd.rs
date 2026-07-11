@@ -64,16 +64,13 @@ fn parse_define_call(expr: &Expr) -> Option<AmdDefine<'_>> {
 
     let mut index = 0;
     let mut is_anonymous = true;
-    let id = if let Some(arg) = call.args.get(index) {
-        if let Some(id) = string_lit_value(&arg.expr) {
-            index += 1;
-            is_anonymous = false;
-            id
-        } else {
-            "module".to_string()
-        }
+    let arg = call.args.get(index)?;
+    let id = if let Some(id) = string_lit_value(&arg.expr) {
+        index += 1;
+        is_anonymous = false;
+        id
     } else {
-        return None;
+        "module".to_string()
     };
 
     let deps = if let Some(arg) = call.args.get(index) {

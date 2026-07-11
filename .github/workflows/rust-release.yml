@@ -40,9 +40,10 @@ jobs:
             npm-pkg: cli-win32-x64
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Install pinned Rust toolchain
+        run: rustc --version
+      - name: Install release target
+        run: rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
 
       - name: Build

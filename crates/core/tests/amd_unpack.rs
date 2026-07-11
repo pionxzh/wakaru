@@ -105,6 +105,19 @@ define(["./dep"], function(dep) {
 }
 
 #[test]
+fn empty_amd_define_is_not_unpacked() {
+    let source = "define();";
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].0, "module.js");
+    assert!(
+        raw[0].1.contains("define();"),
+        "an empty define call should remain unchanged:\n{}",
+        raw[0].1
+    );
+}
+
+#[test]
 fn anonymous_amd_external_dependency_preserves_bare_specifier() {
     // Rollup AMD output for an external package dependency. A bare AMD module
     // ID that is not another define in the bundle must stay bare; rewriting it

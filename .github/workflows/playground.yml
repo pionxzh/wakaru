@@ -29,9 +29,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      - name: Install pinned Rust toolchain
+        run: rustc --version
       - uses: Swatinem/rust-cache@v2
 
       - name: Install wasm-pack

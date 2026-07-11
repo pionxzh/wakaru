@@ -1064,11 +1064,7 @@ fn try_iife_to_class(
     if call.args.is_empty() && !param_pats.is_empty() {
         // Scan body for inline _inherits IIFE to discover the super class.
         // If found, super_class is extracted from the inline call's second argument.
-        if let Some(discovered_super) = find_inline_inherits_super(body_stmts, unresolved_mark) {
-            super_class = Some(discovered_super);
-        } else {
-            return None;
-        }
+        super_class = Some(find_inline_inherits_super(body_stmts, unresolved_mark)?);
     }
 
     let inner_ctor_ident = find_inner_constructor_ident(body_stmts)?;

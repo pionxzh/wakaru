@@ -886,6 +886,23 @@ class Child extends Base {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn zero_arg_iife_with_params_requires_inline_inheritance() {
+    let input = r#"
+var Foo = (function(_super) {
+    function Foo() {}
+    return Foo;
+}());
+"#;
+    let expected = r#"
+var Foo = function(_super) {
+    function Foo() {}
+    return Foo;
+}();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
 // ============================================================
 // Both call forms: (function(){...}()) and (function(){...})()
 // ============================================================
