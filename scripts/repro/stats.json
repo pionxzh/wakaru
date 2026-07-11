@@ -1,10 +1,10 @@
 {
-  "commit": "7902e615",
+  "commit": "f11eb4d2",
   "date": "2026-07-11",
   "aggregate": {
-    "yes": 1648,
-    "total": 1707,
-    "pct": 96.5
+    "yes": 1661,
+    "total": 1723,
+    "pct": 96.4
   },
   "matrices": [
     {
@@ -57,11 +57,11 @@
     },
     {
       "name": "optional-nullish",
-      "yes": 356,
-      "no": 10,
+      "yes": 369,
+      "no": 13,
       "error": 0,
-      "total": 366,
-      "pct": 97.3
+      "total": 382,
+      "pct": 96.6
     },
     {
       "name": "parameters",
