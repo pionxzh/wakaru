@@ -21,6 +21,7 @@ enum Direction {
 use(Direction.Up, Direction[2], Direction.Right);
 `,
     expected: ["Up: 1", "Down: 2", "Left: 4", "Right: -4", "2: \"Down\"", "[-4]: \"Right\""],
+    execute: true,
   },
   {
     name: "numeric-computed",
@@ -34,6 +35,7 @@ enum Flag {
 use(Flag.None, Flag.ReadWrite);
 `,
     expected: ["None: 0", "Read: 4", "Write: 8", "ReadWrite: 12", "12: \"ReadWrite\""],
+    execute: true,
   },
   {
     name: "numeric-alias-auto-increment",
@@ -52,6 +54,7 @@ use(Alias.First, Alias.AlsoFirst, Alias.Next, Alias[1], Alias[2]);
       "1: \"AlsoFirst\"",
       "2: \"Next\"",
     ],
+    execute: true,
   },
   {
     name: "string-basic",
@@ -63,6 +66,7 @@ enum Status {
 use(Status.Ready, Status.Done);
 `,
     expected: ["Ready: \"ready\"", "Done: \"done\""],
+    execute: true,
   },
   {
     name: "heterogeneous",
@@ -74,6 +78,7 @@ enum Mixed {
 use(Mixed.No, Mixed.Yes, Mixed[0]);
 `,
     expected: ["No: 0", "Yes: \"YES\"", "0: \"No\""],
+    execute: true,
   },
   {
     name: "string-literal-member",
@@ -85,6 +90,7 @@ enum RenderMode {
 use(RenderMode["2D"], RenderMode.WebGL);
 `,
     expected: ["\"2D\": 1", "WebGL: 2", "1: \"2D\"", "2: \"WebGL\""],
+    execute: true,
   },
   {
     name: "exported-string-enum",

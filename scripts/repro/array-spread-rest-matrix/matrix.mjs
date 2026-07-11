@@ -48,18 +48,21 @@ const snippets = [
     source: "const out = [head, ...items, tail];\nuse(out);\n",
     expected: ["head", "...items", "tail"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { head: 1, items: [2, 3], tail: 4 } },
   },
   {
     name: "array-spread-multiple",
     source: "const out = [...left_items, middle, ...right_items];\nuse(out);\n",
     expected: ["...left_items", "middle", "...right_items"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { left_items: [1], middle: 2, right_items: [3, 4] } },
   },
   {
     name: "call-spread-free",
     source: "const out = build(app_id, ...items, tail);\nuse(out);\n",
     expected: ["build(app_id, ...items, tail)"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { app_id: 7, items: [1, 2], tail: 3 } },
   },
   {
     name: "call-spread-method",
@@ -88,6 +91,7 @@ const snippets = [
     ],
     expected: ["const [first, ...rest_items] = items", "use(first, rest_items)"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { items: [1, 2, 3] } },
   },
   {
     name: "array-rest-default-hole",
@@ -97,6 +101,7 @@ const snippets = [
     ],
     expected: ["first", "second = fallback", "...rest_items"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { items: [1, 2], fallback: 7 } },
   },
   {
     name: "array-rest-nested-pattern",
@@ -104,6 +109,7 @@ const snippets = [
       "const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;\nuse(first, nested, inner_rest, outer_rest);\n",
     expected: ["[nested, ...inner_rest] = []", "...outer_rest", "use(first, nested, inner_rest, outer_rest)"],
     rejected: ARRAY_HELPER_REJECTED,
+    execute: { env: { items: [1, [2, 3, 4], 5, 6] } },
   },
   {
     name: "array-destructure-tuple",
