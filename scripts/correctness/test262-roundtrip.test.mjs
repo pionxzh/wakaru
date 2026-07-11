@@ -301,21 +301,23 @@ test("executeTestSourceOutcome distinguishes parse and runtime failures", async 
   assert.equal(runtime.errorName, "TypeError");
 });
 
-test("executeTestSourceOutcome supports async $DONE and fresh host realms", async () => {
-  const outcome = await executeTestSourceOutcome({
-    harnessSource: "",
-    testSource: `
+test("executeTestSourceOutcome treats every falsy $DONE value as success", async () => {
+  for (const value of ["undefined", "null", "false", "0", "''", "NaN"]) {
+    const outcome = await executeTestSourceOutcome({
+      harnessSource: "",
+      testSource: `
 const realm = $262.createRealm();
 if (!realm.global) throw new Error("missing realm global");
-Promise.resolve().then(() => $DONE());
+Promise.resolve().then(() => $DONE(${value}));
 `,
-    filename: "async.js",
-    strict: false,
-    async: true,
-    timeoutMs: 1000,
-  });
+      filename: "async.js",
+      strict: false,
+      async: true,
+      timeoutMs: 1000,
+    });
 
-  assert.equal(outcome.phase, "success");
+    assert.equal(outcome.phase, "success", `$DONE(${value})`);
+  }
 });
 
 test("collectStaticModuleSpecifiers finds imports and re-exports", () => {
@@ -512,7 +514,7 @@ test("runRoundTrip preserves module resolution/runtime negatives and async compl
     );
     writeFileSync(
       join(testDir, "async-module.js"),
-      "/*---\nflags: [module, async]\n---*/\nawait Promise.resolve(); $DONE();\n",
+      "/*---\nflags: [module, async]\n---*/\nawait Promise.resolve(); $DONE(0);\n",
     );
     writeFileSync(
       join(testDir, "parse-negative.js"),

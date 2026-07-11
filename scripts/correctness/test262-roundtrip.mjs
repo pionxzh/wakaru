@@ -437,7 +437,7 @@ export async function executeTestSourceOutcome({
   const { context } = realm;
   if (async) {
     context.$DONE = (error) => {
-      if (error == null) {
+      if (!error) {
         resolveDone();
       } else {
         rejectDone(error instanceof Error ? error : new Error(String(error)));
@@ -2312,7 +2312,7 @@ export function executeModuleGraphOutcome({
     `const marker = ${JSON.stringify(marker)};\n` +
       `let doneResolve, doneReject;\n` +
       `const donePromise = new Promise((resolve, reject) => { doneResolve = resolve; doneReject = reject; });\n` +
-      `globalThis.$DONE = error => error == null ? doneResolve() : doneReject(error);\n` +
+      `globalThis.$DONE = error => error ? doneReject(error) : doneResolve();\n` +
       `globalThis.print = message => {\n` +
       `  const text = String(message);\n` +
       `  if (text === "Test262:AsyncTestComplete") doneResolve();\n` +

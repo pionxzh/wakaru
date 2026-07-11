@@ -36,6 +36,8 @@ export function parseTestMetadata(source) {
     .replaceAll("\r\n", "\n")
     .replaceAll("\r", "\n");
   const fields = scanTopLevelFields(raw);
+  const features = parseListField(fields, "features");
+  const includes = parseListField(fields, "includes");
   const flags = parseListField(fields, "flags");
   for (const flag of flags) {
     if (!knownFlags.has(flag)) {
@@ -45,12 +47,12 @@ export function parseTestMetadata(source) {
   if (new Set(flags).size !== flags.length) {
     throw new Test262MetadataError("Test262 metadata contains duplicate flags");
   }
-  validateFlagCombinations(flags);
+  validateFlagCombinations(flags, includes);
 
   return {
     esid: parseOptionalScalar(fields, "esid"),
-    features: parseListField(fields, "features"),
-    includes: parseListField(fields, "includes"),
+    features,
+    includes,
     flags,
     negative: parseNegative(fields),
     raw,
@@ -84,7 +86,7 @@ export function runnableVariants(metadata) {
   ];
 }
 
-function validateFlagCombinations(flags) {
+function validateFlagCombinations(flags, includes) {
   const unique = new Set(flags);
   const onlyStrict = unique.has("onlyStrict");
   const noStrict = unique.has("noStrict");
@@ -96,6 +98,12 @@ function validateFlagCombinations(flags) {
   if (unique.has("raw") && (onlyStrict || noStrict)) {
     throw new Test262MetadataError("Test262 `raw` tests cannot request strictness injection");
   }
+  if (unique.has("raw") && unique.has("async")) {
+    throw new Test262MetadataError("Test262 `raw` tests cannot use the async harness");
+  }
+  if (unique.has("raw") && includes.length > 0) {
+    throw new Test262MetadataError("Test262 `raw` tests cannot include harness files");
+  }
   if (unique.has("module") && (onlyStrict || noStrict)) {
     throw new Test262MetadataError("Test262 module tests are inherently strict");
   }
@@ -103,13 +111,22 @@ function validateFlagCombinations(flags) {
 
 function scanTopLevelFields(raw) {
   const lines = raw.split("\n");
+  const contentLines = lines.filter(
+    (line) => line.trim().length > 0 && !line.trimStart().startsWith("#"),
+  );
+  const baseIndent = contentLines.length > 0
+    ? Math.min(...contentLines.map(leadingWhitespaceLength))
+    : 0;
   const fields = new Map();
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (line.trim().length === 0 || line.trimStart().startsWith("#") || /^\s/.test(line)) {
+    if (line.trim().length === 0 || line.trimStart().startsWith("#")) {
       continue;
     }
-    const match = line.match(/^([A-Za-z0-9_-]+):(?:[ \t]*(.*))?$/);
+    if (leadingWhitespaceLength(line) > baseIndent) {
+      throw new Test262MetadataError(`orphaned indented metadata line: ${line}`);
+    }
+    const match = line.slice(baseIndent).match(/^([A-Za-z0-9_-]+):(?:[ \t]*(.*))?$/);
     if (!match) {
       throw new Test262MetadataError(`invalid Test262 metadata line: ${line}`);
     }
@@ -121,7 +138,11 @@ function scanTopLevelFields(raw) {
     let cursor = index + 1;
     while (cursor < lines.length) {
       const candidate = lines[cursor];
-      if (candidate.length > 0 && !/^\s/.test(candidate)) {
+      if (
+        candidate.trim().length > 0 &&
+        leadingWhitespaceLength(candidate) <= baseIndent &&
+        !candidate.trimStart().startsWith("#")
+      ) {
         break;
       }
       block.push(candidate);
@@ -133,12 +154,17 @@ function scanTopLevelFields(raw) {
   return fields;
 }
 
+function leadingWhitespaceLength(line) {
+  return line.match(/^[ \t]*/)[0].length;
+}
+
 function parseListField(fields, key) {
   const field = fields.get(key);
   if (!field) {
     return [];
   }
   if (field.inline) {
+    assertNoBlockValue(field, key);
     return parseFlowSequence(field.inline, key);
   }
   const values = [];
@@ -151,6 +177,9 @@ function parseListField(fields, key) {
       throw new Test262MetadataError(`\`${key}\` must be a YAML sequence of strings`);
     }
     values.push(parseScalar(match[1], `${key} entry`));
+  }
+  if (values.length === 0) {
+    throw new Test262MetadataError(`\`${key}\` must be a YAML sequence of strings`);
   }
   return values;
 }
@@ -174,6 +203,7 @@ function parseNegative(fields) {
   }
   const values = new Map();
   if (field.inline) {
+    assertNoBlockValue(field, "negative");
     const match = field.inline.match(/^\{([\s\S]*)\}(?:\s+#.*)?$/);
     if (!match) {
       throw new Test262MetadataError("`negative` must be a YAML mapping");
@@ -219,10 +249,22 @@ function parseOptionalScalar(fields, key) {
   if (!field) {
     return null;
   }
-  if (!field.inline || field.block.some((line) => line.trim().length > 0)) {
+  if (!field.inline || hasBlockValue(field)) {
     throw new Test262MetadataError(`\`${key}\` must be a string`);
   }
   return parseScalar(field.inline, key);
+}
+
+function assertNoBlockValue(field, key) {
+  if (hasBlockValue(field)) {
+    throw new Test262MetadataError(`\`${key}\` cannot combine inline and block values`);
+  }
+}
+
+function hasBlockValue(field) {
+  return field.block.some(
+    (line) => line.trim().length > 0 && !line.trimStart().startsWith("#"),
+  );
 }
 
 function setMappingValue(values, key, value, field) {

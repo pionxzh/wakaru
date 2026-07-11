@@ -40,6 +40,17 @@ test("baseline stores environment identity and only non-passing outcomes", () =>
   assert.doesNotMatch(baseline.outcomes[0].summary, /machine\/path/);
 });
 
+test("baseline outcomes use locale-independent UTF-16 code-unit ordering", () => {
+  const baseline = createTest262Baseline(
+    report([
+      { path: "a.js", status: "unsupported", reason: "host" },
+      { path: "Z.js", status: "unsupported", reason: "host" },
+    ]),
+  );
+
+  assert.deepEqual(baseline.outcomes.map((outcome) => outcome.path), ["Z.js", "a.js"]);
+});
+
 test("comparison detects new outcomes, changed fingerprints, and unexpected passes", () => {
   const expected = createTest262Baseline(
     report([{ path: "case.js", status: "rejected", reason: "known", error: "first" }]),

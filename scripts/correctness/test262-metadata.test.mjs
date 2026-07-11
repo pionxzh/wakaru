@@ -66,11 +66,34 @@ test("rejects missing, malformed, and unknown metadata", () => {
   }
 });
 
+test("does not silently discard interrupted or trailing list entries", () => {
+  assert.deepEqual(
+    parseTestMetadata("/*---\nflags:\n# explanatory comment\n  - async\n---*/").flags,
+    ["async"],
+  );
+  assert.throws(
+    () => parseTestMetadata("/*---\n  - async\n---*/"),
+    /invalid Test262 metadata line/,
+  );
+  assert.throws(
+    () => parseTestMetadata("/*---\nflags: [async]\n  - onlyStrict\n---*/"),
+    /cannot combine inline and block values/,
+  );
+  assert.deepEqual(
+    parseTestMetadata(
+      "/*---\n description: >\n    Valid indented metadata text.\n flags: [module, raw]\n---*/",
+    ).flags,
+    ["module", "raw"],
+  );
+});
+
 test("rejects conflicting and duplicate flags", () => {
   for (const source of [
     "/*---\nflags: [onlyStrict, noStrict]\n---*/",
     "/*---\nflags: [raw, onlyStrict]\n---*/",
     "/*---\nflags: [module, noStrict]\n---*/",
+    "/*---\nflags: [raw, async]\n---*/",
+    "/*---\nflags: [raw]\nincludes: [assert.js]\n---*/",
     "/*---\nflags: [async, async]\n---*/",
   ]) {
     assert.throws(() => parseTestMetadata(source), Test262MetadataError);

@@ -238,7 +238,7 @@ function outcomeKey(outcome) {
 }
 
 function compareOutcome(left, right) {
-  return outcomeKey(left).localeCompare(outcomeKey(right));
+  return compareCodeUnits(outcomeKey(left), outcomeKey(right));
 }
 
 function canonicalJson(value) {
@@ -252,11 +252,15 @@ function canonicalize(value) {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([key, child]) => [key, canonicalize(child)]),
     );
   }
   return value;
+}
+
+function compareCodeUnits(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function sha256(value) {
