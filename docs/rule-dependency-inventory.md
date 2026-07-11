@@ -246,7 +246,11 @@ rationale, or level gating appear.
 ### Modernization
 
 - **VarDeclToLetConst** — late by design: every rule that introduces new
-  variables must run first.
+  variables must run first. The contract cuts both ways: earlier rules that
+  construct declarations must emit the consumed statements' kind (or `var`)
+  and let this rule decide mutability — it converts `var` to `let`/`const`
+  but never widens an existing `const`, so a hardcoded `const` on a binding
+  that is later written ships a runtime `TypeError`.
 - **ArgRest → UnRestArrayCopy** — hard chain: UnRestArrayCopy detects the
   Babel copy loop for rest params that ArgRest just created. ArgRest is
   `standard+`.

@@ -40,6 +40,10 @@ cargo run -p wakaru-cli -- input.js -m input.js.map         # with source map
 cargo run -p wakaru-cli -- debug trace path/to/module.js    # debug: per-rule diffs
 ```
 
+Branch worktrees live as sibling checkouts at `../wakaru-<branch-suffix>`
+(e.g. `../wakaru-repro-edge-cases` for branch `codex/repro-edge-cases`).
+Run `git worktree list` before creating one — it usually already exists.
+
 ## Testing
 
 ```bash
@@ -92,6 +96,14 @@ Rules run in a fixed order. Check `crates/core/src/rules/pipeline.rs` and place 
 - Needs alias var declarations intact? Place before `SmartInline` (it removes `var h = p`)
 - Needs export specifiers to reference real bindings? Place after `SmartInline`
 
+### Constructing declarations
+
+If your rule builds a `VarDecl` and runs before `VarDeclToLetConst`, carry the
+declaration kind of the statements you consumed (or `var`) — never hardcode
+`const`/`let`. `VarDeclToLetConst` decides mutability late with full write
+analysis, and it never widens an existing `const`, so a hardcoded `const` on a
+binding that is later reassigned becomes a runtime `TypeError`.
+
 ### Scope-aware identifier matching
 
 If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding:
@@ -116,6 +128,7 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
 3. If you changed a rule that a reproduction matrix covers (see `scripts/repro/`), verify the recovery-rate baseline:
    - `node scripts/repro/collect-stats.mjs --check`
    - If rates deliberately moved, regenerate without `--check` and commit the `stats.json` diff with the change
+   - The `commit`/`date` fields in `stats.json` are provenance from regeneration time (typically the parent of the commit carrying the diff); `--check` compares only the measured numbers
 4. Run formatting and lint checks:
    - `cargo fmt --check`
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
