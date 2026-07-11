@@ -227,6 +227,59 @@ fn compiled_setup_return_binding(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)
     })
 }
 
+fn compiled_setup_return_values(
+    stmts: &[Stmt],
+    return_binding: &(Atom, SyntaxContext),
+) -> Vec<(Atom, Box<Expr>, usize)> {
+    stmts
+        .iter()
+        .enumerate()
+        .filter_map(|stmt| match stmt {
+            (setup_order, Stmt::Decl(Decl::Var(var))) => Some((setup_order, var.decls.as_slice())),
+            _ => None,
+        })
+        .find_map(|(setup_order, decls)| {
+            decls.iter().find_map(|decl| {
+                let Pat::Ident(binding) = &decl.name else {
+                    return None;
+                };
+                if binding.id.sym != return_binding.0 || binding.id.ctxt != return_binding.1 {
+                    return None;
+                }
+                let Expr::Object(object) = decl.init.as_deref()? else {
+                    return None;
+                };
+                Some((object, setup_order))
+            })
+        })
+        .map(|(object, setup_order)| {
+            object
+                .props
+                .iter()
+                .filter_map(|prop| {
+                    let PropOrSpread::Prop(prop) = prop else {
+                        return None;
+                    };
+                    let Prop::KeyValue(key_value) = prop.as_ref() else {
+                        return None;
+                    };
+                    let name = prop_name(&key_value.key)?;
+                    is_valid_identifier_name(name.as_ref())
+                        .then(|| (Atom::from(name), key_value.value.clone(), setup_order))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn is_undefined_placeholder(expr: &Expr) -> bool {
+    match unwrap_paren_expr(expr) {
+        Expr::Ident(ident) => ident.sym.as_ref() == "undefined",
+        Expr::Unary(unary) => unary.op == UnaryOp::Void,
+        _ => false,
+    }
+}
+
 fn script_setup_marker_target(call: &CallExpr) -> Option<&Ident> {
     if call.args.len() != 3 || call.args.iter().any(|arg| arg.spread.is_some()) {
         return None;
@@ -2044,6 +2097,10 @@ pub(super) fn collect_setup_context(
     let compiled_return_binding = preserve_side_effects
         .then(|| compiled_setup_return_binding(setup_stmts))
         .flatten();
+    let compiled_return_values = compiled_return_binding
+        .as_ref()
+        .map(|binding| compiled_setup_return_values(setup_stmts, binding))
+        .unwrap_or_default();
     let mut provider_ref_object_bindings = HashMap::new();
     let mut composable_ref_object_bindings = HashMap::new();
     let mut local_candidates = Vec::new();
@@ -2074,7 +2131,22 @@ pub(super) fn collect_setup_context(
                 let mut local_decls = Vec::new();
                 let mut local_bindings = HashSet::new();
 
-                for decl in &var.decls {
+                for original_decl in &var.decls {
+                    let rewritten_decl = match (&original_decl.name, original_decl.init.as_deref())
+                    {
+                        (Pat::Ident(binding), Some(init)) if is_undefined_placeholder(init) => {
+                            compiled_return_values
+                                .iter()
+                                .find(|(name, _, _)| name == &binding.id.sym)
+                                .map(|(_, init, _)| {
+                                    let mut decl = original_decl.clone();
+                                    decl.init = Some(init.clone());
+                                    decl
+                                })
+                        }
+                        _ => None,
+                    };
+                    let decl = rewritten_decl.as_ref().unwrap_or(original_decl);
                     if matches!(
                         (&decl.name, compiled_return_binding.as_ref()),
                         (Pat::Ident(binding), Some((name, ctxt)))
@@ -2346,6 +2418,45 @@ pub(super) fn collect_setup_context(
             }
             _ => {}
         }
+    }
+
+    let mut candidate_bindings = local_candidates
+        .iter()
+        .flat_map(|candidate| candidate.bindings.iter().cloned())
+        .collect::<HashSet<_>>();
+    for (binding, init, setup_order) in compiled_return_values {
+        if candidate_bindings.contains(&binding)
+            || ctx.top_level_binding_ctxts.contains_key(&binding)
+        {
+            continue;
+        }
+        if is_ref_like_value_expr(init.as_ref(), ctx) {
+            ctx.bindings.refs.insert(binding.clone());
+        }
+        let stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Const,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(swc_core::ecma::ast::BindingIdent {
+                    id: Ident::new(binding.clone(), DUMMY_SP, Default::default()),
+                    type_ann: None,
+                }),
+                init: Some(init),
+                definite: false,
+            }],
+        })));
+        local_candidates.push(SetupLocalCandidate {
+            bindings: vec![binding.clone()],
+            stmt,
+            template_selectable: true,
+            setup_order,
+            always_emit: true,
+            preserve_ref_values: true,
+        });
+        candidate_bindings.insert(binding);
     }
 
     for (from, from_ctxt, to) in setup_template_ref_aliases {
@@ -3032,7 +3143,10 @@ fn should_emit_ref_script_setup_expr(
 }
 
 fn is_ref_like_vue_helper(name: &str) -> bool {
-    matches!(name, "ref" | "shallowRef" | "customRef" | "toRef")
+    matches!(
+        name,
+        "ref" | "shallowRef" | "customRef" | "toRef" | "useModel"
+    )
 }
 
 fn ref_script_setup_expr(
@@ -3442,6 +3556,18 @@ pub(super) fn render_setup_context_param(render: RenderSource<'_>) -> Option<Ato
             .function
             .params
             .get(3)
+            .and_then(param_binding_ident)
+            .map(|ident| ident.sym.clone()),
+        RenderSource::SetupArrow { .. } => None,
+    }
+}
+
+pub(super) fn render_props_context_param(render: RenderSource<'_>) -> Option<Atom> {
+    match render {
+        RenderSource::Function { render, .. } => render
+            .function
+            .params
+            .get(2)
             .and_then(param_binding_ident)
             .map(|ident| ident.sym.clone()),
         RenderSource::SetupArrow { .. } => None,

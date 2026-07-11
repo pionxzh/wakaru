@@ -640,6 +640,42 @@ export default component;
 }
 
 #[test]
+fn recognizes_use_model_as_inline_script_setup_ref() {
+    let input = r#"
+import { useModel, vModelText, withDirectives, openBlock, createElementBlock } from "vue";
+const component = {
+  __name: "Example",
+  props: { modelValue: {}, modelModifiers: {} },
+  emits: ["update:modelValue"],
+  setup(__props) {
+    const value = useModel(__props, "modelValue");
+    return (_ctx, _cache) => withDirectives(
+      (openBlock(), createElementBlock("input", {
+        "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => value.value = $event)
+      }, null, 512)),
+      [[vModelText, value.value]]
+    );
+  }
+};
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("const value = useModel(props, \"modelValue\");"),
+        "{recovered}"
+    );
+    assert!(recovered.contains("v-model=\"value\""), "{recovered}");
+    assert!(
+        !recovered.contains("v-model=\"value.value\""),
+        "{recovered}"
+    );
+}
+
+#[test]
 fn preserves_compiled_script_setup_side_effects_and_their_imports() {
     let input = r#"
 import { onUnmounted, ref, watch } from "vue";
@@ -692,6 +728,127 @@ export default _sfc_;
     );
     assert!(!recovered.contains("__expose"));
     assert!(!recovered.contains("Object.defineProperty"));
+}
+
+#[test]
+fn cleans_minified_external_render_props_parameter() {
+    let input = r#"
+const component = {
+  __name: "Example",
+  props: { status: String },
+  setup(e, { expose: r }) {
+    r();
+    const returned = {};
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+import { openBlock as r, createElementBlock as t, createCommentVNode as o } from "vue";
+export function render(e, o, u, i, c, d) {
+  return u.status === "ready"
+    ? (r(), t("p", { key: 0 }, "Ready"))
+    : o("v-if", true);
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("v-if=\"status === 'ready'\""),
+        "{recovered}"
+    );
+    assert!(!recovered.contains("u.status"), "{recovered}");
+}
+
+#[test]
+fn restores_initializer_moved_into_compiled_setup_return_object() {
+    let input = r#"
+import { useModel, vModelText, withDirectives, openBlock, createElementBlock } from "vue";
+const component = {
+  __name: "Example",
+  props: { modelValue: {}, modelModifiers: {} },
+  emits: ["update:modelValue"],
+  setup(__props, { expose: __expose }) {
+    __expose();
+    const value = void 0;
+    const returned = { value: useModel(__props, "modelValue") };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+export function render(_ctx, _cache, $props, $setup) {
+  return withDirectives(
+    (openBlock(), createElementBlock("input", {
+      "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => $setup.value = $event)
+    }, null, 512)),
+    [[vModelText, $setup.value]]
+  );
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("import { useModel } from \"vue\";"),
+        "{recovered}"
+    );
+    assert!(
+        recovered.contains("const value = useModel(props, \"modelValue\");"),
+        "{recovered}"
+    );
+    assert!(recovered.contains("v-model=\"value\""), "{recovered}");
+}
+
+#[test]
+fn preserves_order_of_initializers_moved_into_setup_return_object() {
+    let input = r#"
+const component = {
+  __name: "Example",
+  setup(__props, { expose: __expose }) {
+    __expose();
+    const returned = {
+      first: alpha(),
+      second: beta()
+    };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("p", null, $setup.first + $setup.second, 1);
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    let first = recovered.find("const first = alpha();").unwrap();
+    let second = recovered.find("const second = beta();").unwrap();
+    assert!(
+        first < second,
+        "setup initializer order changed:\n{recovered}"
+    );
 }
 
 #[test]

@@ -43,9 +43,9 @@ use context::{
     call_callee_ident, collect_context, collect_render_context, collect_script_local_context,
     collect_setup_context, compiled_script_setup, component_name_from_init,
     component_name_from_options, component_options_from_init, infer_render_helpers,
-    render_context_param, render_local_declaration_with_aliases, render_setup_context_param,
-    setup_alias_renames, setup_context_param, setup_emit_param, setup_props_param,
-    setup_props_param_ctxt, stmt_ident_refs,
+    render_context_param, render_local_declaration_with_aliases, render_props_context_param,
+    render_setup_context_param, setup_alias_renames, setup_context_param, setup_emit_param,
+    setup_props_param, setup_props_param_ctxt, stmt_ident_refs,
 };
 use expressions::print_expr;
 use helpers::{helper_name, VueHelper};
@@ -95,6 +95,7 @@ struct VueRecoveryContext {
     component_options: Option<ObjectLit>,
     setup_component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
+    render_props_context: Option<Atom>,
     render_setup_context: Option<Atom>,
     setup_props_context: Option<Atom>,
     /// `SyntaxContext` of the setup `props` parameter (`setup_props_context`),
@@ -380,6 +381,7 @@ pub fn is_likely_vue_sfc_source(source: &str) -> Result<bool> {
         let setup_context = setup_context_param(render, component_options);
         let setup_emit_context = setup_emit_param(render, component_options);
         ctx.render_context = render_context_param(render);
+        ctx.render_props_context = render_props_context_param(render);
         ctx.render_setup_context = render_setup_context_param(render);
         ctx.setup_props_context = setup_props_context;
         ctx.setup_props_context_ctxt = setup_props_context_ctxt;
@@ -467,6 +469,7 @@ fn recover_vue_sfc_from_render(
     let setup_context = setup_context_param(render, component_options);
     let setup_emit_context = setup_emit_param(render, component_options);
     ctx.render_context = render_context_param(render);
+    ctx.render_props_context = render_props_context_param(render);
     ctx.render_setup_context = render_setup_context_param(render);
     ctx.setup_props_context = setup_props_context;
     ctx.setup_props_context_ctxt = setup_props_context_ctxt;

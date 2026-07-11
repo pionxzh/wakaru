@@ -260,6 +260,9 @@ impl<'a> ContextMemberCleaner<'a> {
                 prefixes.push(render_context.as_ref());
             }
         }
+        if let Some(render_props_context) = &ctx.render_props_context {
+            prefixes.push(render_props_context.as_ref());
+        }
         if let Some(render_setup_context) = &ctx.render_setup_context {
             prefixes.push(render_setup_context.as_ref());
         }
