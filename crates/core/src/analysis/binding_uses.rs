@@ -700,6 +700,72 @@ mod tests {
     }
 
     #[test]
+    fn write_position_inventory_classifies_every_direct_write() {
+        // One row per syntactic position that writes an existing binding.
+        // New write positions belong in this table first — gaps here have
+        // shipped as rule bugs (for-of heads, parenthesized targets,
+        // wrapped update expressions).
+        let write_positions = [
+            "x = 1;",
+            "x += 1;",
+            "x ||= 1;",
+            "x &&= 1;",
+            "x ??= 1;",
+            "x++;",
+            "--x;",
+            "(x) = 1;",
+            "(x)++;",
+            "((x)) += 1;",
+            "[x] = arr;",
+            "[, x] = arr;",
+            "[...x] = arr;",
+            "[x = 1] = arr;",
+            "[[x]] = arr;",
+            "({ x } = obj);",
+            "({ p: x } = obj);",
+            "({ x = 1 } = obj);",
+            "({ ...x } = obj);",
+            "({ p: [x] } = obj);",
+            "for (x of xs) {}",
+            "for ((x) of xs) {}",
+            "for ([x] of xs) {}",
+            "for ({ p: x } of xs) {}",
+            "for (x in obj) {}",
+            "for ((x) in obj) {}",
+            "async function f() { for await (x of xs) {} }",
+            "function g() { x = 1; }",
+        ];
+        for stmt in write_positions {
+            let module = resolved(&format!("let x; {stmt}"));
+            let index = BindingUseIndex::collect(&module);
+            let x = binding(&module, "x");
+            assert!(
+                index.has_direct_write(&x),
+                "`{stmt}` must classify `x` as a direct write"
+            );
+        }
+
+        // Boundary: uses that must NOT count as direct binding writes.
+        let non_writes = [
+            "use(x);",
+            "x.p = 1;",
+            "x[k] = 1;",
+            "typeof x;",
+            "delete x.p;",
+            "const y = x;",
+        ];
+        for stmt in non_writes {
+            let module = resolved(&format!("let x; {stmt}"));
+            let index = BindingUseIndex::collect(&module);
+            let x = binding(&module, "x");
+            assert!(
+                !index.has_direct_write(&x),
+                "`{stmt}` must not classify `x` as a direct write"
+            );
+        }
+    }
+
+    #[test]
     fn exposes_direct_new_callee_bindings() {
         let module = resolved("let C, ns; new C(); new ns.C(); C();");
         let index = BindingUseIndex::collect(&module);
