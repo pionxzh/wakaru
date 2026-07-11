@@ -97,6 +97,54 @@
       "summary": "Error: strict: expected success, got runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
     },
     {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T2.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A5_T3.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "58d02e73da29d37acf7a1ca0e697f52a5e09f0570155ed3faf68283bed3974f9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === undefined. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T2.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "b51d7150f384e6fb8daf6bf35b66c642667b1ca2fcb8f1cb302706b21637ff78",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 1"
+    },
+    {
+      "path": "test/language/expressions/assignment/S11.13.1_A6_T3.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "f1688e70388a0253fd26262f40cc4418b67c9af77c8f1c1e5c7d515377c0175f",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: 1"
+    },
+    {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-class.js",
       "variant": "sloppy,strict",
       "status": "rejected",
@@ -345,166 +393,6 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: name descriptor value should be ; name value should be "
     },
     {
-      "path": "test/language/expressions/assignment/S11.13.1_A5_T1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
-    },
-    {
-      "path": "test/language/expressions/assignment/S11.13.1_A5_T2.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
-    },
-    {
-      "path": "test/language/expressions/assignment/S11.13.1_A5_T3.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
-    },
-    {
-      "path": "test/language/expressions/assignment/S11.13.1_A6_T1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "58d02e73da29d37acf7a1ca0e697f52a5e09f0570155ed3faf68283bed3974f9",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === undefined. Actual: 1"
-    },
-    {
-      "path": "test/language/expressions/assignment/S11.13.1_A6_T2.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "b51d7150f384e6fb8daf6bf35b66c642667b1ca2fcb8f1cb302706b21637ff78",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 1"
-    },
-    {
-      "path": "test/language/expressions/assignment/S11.13.1_A6_T3.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "f1688e70388a0253fd26262f40cc4418b67c9af77c8f1c1e5c7d515377c0175f",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: 1"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--11.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--13.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--15.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--17.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--19.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--21.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--3.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--5.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--7.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--9.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T2.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T3.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "1a64b800c0e5f04b588d9cde7aab2321ac00b14e271b2506d1fe45e5b27c41ac",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 6. Actual: undefined"
-    },
-    {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T1.js",
       "variant": "sloppy",
       "status": "unsupported",
@@ -546,6 +434,30 @@
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T3.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "1a64b800c0e5f04b588d9cde7aab2321ac00b14e271b2506d1fe45e5b27c41ac",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T2.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T3.js",
       "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
@@ -745,14 +657,6 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
-      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.1_T1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "032181daafa7bc7db1b7cc6004cd3653359582acddff30ce5f3cb684e52f292e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 12"
-    },
-    {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.10_T1.js",
       "variant": "sloppy",
       "status": "unsupported",
@@ -767,6 +671,14 @@
       "kind": "node-vm-baseline",
       "fingerprint": "f685c3e7f9d19b92c09eda69320418324926c7ab66c91f5a61404ef3d5f5d1ec",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 5"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A6.1_T1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "032181daafa7bc7db1b7cc6004cd3653359582acddff30ce5f3cb684e52f292e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 12"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.2_T1.js",
@@ -833,14 +745,6 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 1"
     },
     {
-      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
-      "variant": "sloppy,strict",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
-    },
-    {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.10_T4.js",
       "variant": "sloppy,strict",
       "status": "unsupported",
@@ -850,6 +754,14 @@
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.11_T4.js",
+      "variant": "sloppy,strict",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
       "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
@@ -921,6 +833,94 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--11.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--13.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--15.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--17.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--19.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--21.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--3.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--5.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--7.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
+      "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--9.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
+    },
+    {
       "path": "test/language/expressions/delete/11.4.1-4.a-8-s.js",
       "variant": "strict",
       "status": "rejected",
@@ -951,14 +951,6 @@
       "kind": "transform-reject",
       "fingerprint": "c881e5d04be15d0eb49bc1e4ccf6ef9a45fc51f9c7a66314bd1985a89442cc34",
       "summary": "Error: Transform failed with 1 error:\n<stdin>:23:9: ERROR: Cannot use \"await\" as an identifier here:"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/operator-x-postfix-decrement-calls-putvalue-lhs-newvalue--1.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T1.js",
@@ -993,7 +985,7 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
-      "path": "test/language/expressions/postfix-increment/operator-x-postfix-increment-calls-putvalue-lhs-newvalue--1.js",
+      "path": "test/language/expressions/postfix-decrement/operator-x-postfix-decrement-calls-putvalue-lhs-newvalue--1.js",
       "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
@@ -1033,7 +1025,7 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
-      "path": "test/language/expressions/prefix-decrement/operator-prefix-decrement-x-calls-putvalue-lhs-newvalue--1.js",
+      "path": "test/language/expressions/postfix-increment/operator-x-postfix-increment-calls-putvalue-lhs-newvalue--1.js",
       "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
@@ -1073,7 +1065,7 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
-      "path": "test/language/expressions/prefix-increment/operator-prefix-increment-x-calls-putvalue-lhs-newvalue--1.js",
+      "path": "test/language/expressions/prefix-decrement/operator-prefix-decrement-x-calls-putvalue-lhs-newvalue--1.js",
       "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
@@ -1111,6 +1103,14 @@
       "kind": "node-vm-baseline",
       "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
+    },
+    {
+      "path": "test/language/expressions/prefix-increment/operator-prefix-increment-x-calls-putvalue-lhs-newvalue--1.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/typeof/get-value.js",

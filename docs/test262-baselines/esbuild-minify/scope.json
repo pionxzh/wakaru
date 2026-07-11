@@ -562,6 +562,46 @@
       "summary": "Error: sloppy: expected runtime ReferenceError, got success no error: success"
     },
     {
+      "path": "test/language/statements/function/S13.2.2_A17_T2.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "76b00718f00876f7d18f3e61ceeb840f4cfee49bdf55998762259e6c9c9a90d7",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/function/S13.2.2_A17_T3.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "2cee1a35a2ff32ee16557b3686b3e28ff2918f1ee7ee0c70faa1ce270ac64af7",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: __obj is not defined"
+    },
+    {
+      "path": "test/language/statements/function/S13.2.2_A18_T1.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "f542f415166e641b80a352522e6d4126249dc166082ae02be41161fc1f23f697",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #4: this.b === true. Actual: this.b ===undefined"
+    },
+    {
+      "path": "test/language/statements/function/S13.2.2_A18_T2.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "eea0281f7d430b2b27ae928c6159e59ffe9ab3d549916e682d8df98b255a3c9e",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: callee is not defined"
+    },
+    {
+      "path": "test/language/statements/function/S13.2.2_A19_T7.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "b3b919bb99628653e16444092dd71d8080f7a0b57c5ee69b780b84146685dd49",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: this.hasOwnProperty('__func') === true"
+    },
+    {
       "path": "test/language/statements/function/dstr/ary-ptrn-elem-id-init-fn-name-class.js",
       "variant": "sloppy,strict",
       "status": "rejected",
@@ -690,46 +730,6 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
-      "path": "test/language/statements/function/S13.2.2_A17_T2.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "76b00718f00876f7d18f3e61ceeb840f4cfee49bdf55998762259e6c9c9a90d7",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
-      "path": "test/language/statements/function/S13.2.2_A17_T3.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "2cee1a35a2ff32ee16557b3686b3e28ff2918f1ee7ee0c70faa1ce270ac64af7",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: __obj is not defined"
-    },
-    {
-      "path": "test/language/statements/function/S13.2.2_A18_T1.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "f542f415166e641b80a352522e6d4126249dc166082ae02be41161fc1f23f697",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #4: this.b === true. Actual: this.b ===undefined"
-    },
-    {
-      "path": "test/language/statements/function/S13.2.2_A18_T2.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "eea0281f7d430b2b27ae928c6159e59ffe9ab3d549916e682d8df98b255a3c9e",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: callee is not defined"
-    },
-    {
-      "path": "test/language/statements/function/S13.2.2_A19_T7.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "b3b919bb99628653e16444092dd71d8080f7a0b57c5ee69b780b84146685dd49",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: this.hasOwnProperty('__func') === true"
-    },
-    {
       "path": "test/language/statements/function/scope-param-elem-var-open.js",
       "variant": "sloppy",
       "status": "rejected",
@@ -752,54 +752,6 @@
       "kind": "transform-runtime",
       "fingerprint": "548e5b5b912c7419473a37f4a29783f914685d178994f560b1ab3aaced6de550",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: The value of globalThis.v is 1 Expected SameValue(«undefined», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/with/get-binding-value-call-with-proxy-env.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
-    },
-    {
-      "path": "test/language/statements/with/get-binding-value-idref-with-proxy-env.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
-    },
-    {
-      "path": "test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "acac106221921667e68abe8a554ace60dfe055231b32544f53c4fc2b899ff1d9",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all"
-    },
-    {
-      "path": "test/language/statements/with/S12.10_A1.1_T1.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
-      "path": "test/language/statements/with/S12.10_A1.1_T2.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
-      "path": "test/language/statements/with/S12.10_A1.1_T3.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
     },
     {
       "path": "test/language/statements/with/S12.10_A1.10_T1.js",
@@ -915,6 +867,30 @@
     },
     {
       "path": "test/language/statements/with/S12.10_A1.12_T5.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A1.1_T1.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A1.1_T2.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A1.1_T3.js",
       "variant": "sloppy",
       "status": "rejected",
       "kind": "transform-runtime-with-environment",
@@ -1210,30 +1186,6 @@
       "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
     },
     {
-      "path": "test/language/statements/with/S12.10_A3.1_T1.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
-      "path": "test/language/statements/with/S12.10_A3.1_T2.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
-      "path": "test/language/statements/with/S12.10_A3.1_T3.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime-with-environment",
-      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
-      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
-    },
-    {
       "path": "test/language/statements/with/S12.10_A3.10_T1.js",
       "variant": "sloppy",
       "status": "rejected",
@@ -1323,6 +1275,30 @@
     },
     {
       "path": "test/language/statements/with/S12.10_A3.12_T5.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A3.1_T1.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A3.1_T2.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime-with-environment",
+      "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
+      "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/S12.10_A3.1_T3.js",
       "variant": "sloppy",
       "status": "rejected",
       "kind": "transform-runtime-with-environment",
@@ -1608,6 +1584,30 @@
       "kind": "transform-runtime-with-environment",
       "fingerprint": "094739844e30acc5daf952ef54c53de5bc459d3130788ce19c33df312b819e18",
       "summary": "Error: sloppy: expected success, got runtime ReferenceError: p1 is not defined"
+    },
+    {
+      "path": "test/language/statements/with/get-binding-value-call-with-proxy-env.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
+    },
+    {
+      "path": "test/language/statements/with/get-binding-value-idref-with-proxy-env.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
+    },
+    {
+      "path": "test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "acac106221921667e68abe8a554ace60dfe055231b32544f53c4fc2b899ff1d9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",

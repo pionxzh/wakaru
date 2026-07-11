@@ -37,6 +37,46 @@
   },
   "outcomes": [
     {
+      "path": "test/language/statements/variable/S12.2_A11.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "60848782dbb65a9f0f79ba3c3cccc5bd1c08558c1843c8654f447c50032d8050",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: __declared__var === \"baloon\". Actual:  __declared__var ===undefined"
+    },
+    {
+      "path": "test/language/statements/variable/S12.2_A2.js",
+      "variant": "sloppy",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "58b9c1def2ba27f5433dfab3e16f0e149959b1fb47104dc8f8425daf8e7c273c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: delete(this[\"__variable\"])===false"
+    },
+    {
+      "path": "test/language/statements/variable/S12.2_A6_T1.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "c12be3473d3bc8a5ed23b1aa83c1cada1ae771ad43aa1135f962dfe8eca5c5c4",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try\" block is admitted"
+    },
+    {
+      "path": "test/language/statements/variable/S12.2_A6_T2.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "9cadfca6dafdcb88505ebb337d67328868a3b2f4da262bb50aaf8b435ad1a990",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try-catch\" block is admitted"
+    },
+    {
+      "path": "test/language/statements/variable/S12.2_A9.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "f27628204a27a3d21f5738fdbe3f32a784f2530cdd7c20e1feb6193f2a0e9cf9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: When using property attributes, {DontEnum} not used"
+    },
+    {
       "path": "test/language/statements/variable/binding-resolution.js",
       "variant": "sloppy",
       "status": "unsupported",
@@ -139,46 +179,6 @@
       "kind": "transform-runtime",
       "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A11.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "60848782dbb65a9f0f79ba3c3cccc5bd1c08558c1843c8654f447c50032d8050",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: __declared__var === \"baloon\". Actual:  __declared__var ===undefined"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A2.js",
-      "variant": "sloppy",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "58b9c1def2ba27f5433dfab3e16f0e149959b1fb47104dc8f8425daf8e7c273c",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: delete(this[\"__variable\"])===false"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A6_T1.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "c12be3473d3bc8a5ed23b1aa83c1cada1ae771ad43aa1135f962dfe8eca5c5c4",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try\" block is admitted"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A6_T2.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "9cadfca6dafdcb88505ebb337d67328868a3b2f4da262bb50aaf8b435ad1a990",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try-catch\" block is admitted"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A9.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "f27628204a27a3d21f5738fdbe3f32a784f2530cdd7c20e1feb6193f2a0e9cf9",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: When using property attributes, {DontEnum} not used"
     }
   ]
 }

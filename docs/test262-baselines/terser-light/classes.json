@@ -2414,14 +2414,6 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
-    },
-    {
       "path": "test/language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
       "variant": "sloppy,strict",
       "status": "rejected",
@@ -2438,7 +2430,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/expressions/class/elements/private-accessor-name/inst-private-name-u2118.js",
+      "path": "test/language/expressions/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -2462,7 +2454,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/expressions/class/elements/private-accessor-name/static-private-escape-sequence-u2118.js",
+      "path": "test/language/expressions/class/elements/private-accessor-name/inst-private-name-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -2486,7 +2478,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/expressions/class/elements/private-accessor-name/static-private-name-u2118.js",
+      "path": "test/language/expressions/class/elements/private-accessor-name/static-private-escape-sequence-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -2503,6 +2495,14 @@
     },
     {
       "path": "test/language/expressions/class/elements/private-accessor-name/static-private-name-ZWNJ.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/expressions/class/elements/private-accessor-name/static-private-name-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -6614,14 +6614,6 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-      "variant": "sloppy,strict",
-      "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
-    },
-    {
       "path": "test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
       "variant": "sloppy,strict",
       "status": "rejected",
@@ -6638,7 +6630,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/statements/class/elements/private-accessor-name/inst-private-name-u2118.js",
+      "path": "test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -6662,7 +6654,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/statements/class/elements/private-accessor-name/static-private-escape-sequence-u2118.js",
+      "path": "test/language/statements/class/elements/private-accessor-name/inst-private-name-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -6686,7 +6678,7 @@
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
-      "path": "test/language/statements/class/elements/private-accessor-name/static-private-name-u2118.js",
+      "path": "test/language/statements/class/elements/private-accessor-name/static-private-escape-sequence-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
@@ -6703,6 +6695,14 @@
     },
     {
       "path": "test/language/statements/class/elements/private-accessor-name/static-private-name-ZWNJ.js",
+      "variant": "sloppy,strict",
+      "status": "rejected",
+      "kind": "transform-runtime",
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
+    },
+    {
+      "path": "test/language/statements/class/elements/private-accessor-name/static-private-name-u2118.js",
       "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",

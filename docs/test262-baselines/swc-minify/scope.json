@@ -314,30 +314,6 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (30..35, InvalidIdentInAsync) }"
     },
     {
-      "path": "test/language/statements/with/get-binding-value-call-with-proxy-env.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
-    },
-    {
-      "path": "test/language/statements/with/get-binding-value-idref-with-proxy-env.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
-    },
-    {
-      "path": "test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
-      "variant": "sloppy",
-      "status": "unsupported",
-      "kind": "node-vm-baseline",
-      "fingerprint": "acac106221921667e68abe8a554ace60dfe055231b32544f53c4fc2b899ff1d9",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all"
-    },
-    {
       "path": "test/language/statements/with/S12.10_A1.2_T1.js",
       "variant": "sloppy",
       "status": "rejected",
@@ -416,6 +392,30 @@
       "kind": "transform-runtime-with-environment",
       "fingerprint": "3dabf5ae37130e7df71cf0be333192603849149558b092524ae25e007722e560",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: #3: myObj.p1 === \"x1\". Actual:  myObj.p1 ===a"
+    },
+    {
+      "path": "test/language/statements/with/get-binding-value-call-with-proxy-env.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
+    },
+    {
+      "path": "test/language/statements/with/get-binding-value-idref-with-proxy-env.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "a7bd9e98726fab40a01940a073f1c030fb68151a4d93d8e64723fbcd7c44ede1",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Actual [has:Object, get:Symbol(Symbol.unscopables), get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. "
+    },
+    {
+      "path": "test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "acac106221921667e68abe8a554ace60dfe055231b32544f53c4fc2b899ff1d9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js",

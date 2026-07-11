@@ -37,14 +37,6 @@
   },
   "outcomes": [
     {
-      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named-1_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -61,7 +53,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named_FIXTURE.js",
+      "path": "test/language/module-code/ambiguous-export-bindings/error-export-from-named_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -85,23 +77,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_export-from_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_import-and-export_FIXTURE.js",
+      "path": "test/language/module-code/ambiguous-export-bindings/error-import-named_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -115,6 +91,30 @@
       "kind": "module-graph-baseline",
       "fingerprint": "5b63c021f55c8452efb5982b1757423cb93e27c4d5f4ea63fb1a5cc908b7c779",
       "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding.js"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_export-from_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/ambiguous-export-bindings/import-and-export-propagates-binding_import-and-export_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/ambiguous-export-bindings/namespace-empty-module_FIXTURE.js",
@@ -213,14 +213,6 @@
       "summary": "Error: unsupported bare module import mod in test/language/module-code/ambiguous-export-bindings/namespace-unambiguous-if-import-star-as-and-export.js"
     },
     {
-      "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace-1_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -237,7 +229,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/eval-gtbndng-indirect-trlng-comma_FIXTURE.js",
+      "path": "test/language/module-code/ambiguous-export-bindings/omitted-from-namespace_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -245,7 +237,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/eval-gtbndng-indirect-update_FIXTURE.js",
+      "path": "test/language/module-code/eval-gtbndng-indirect-trlng-comma_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -262,6 +254,14 @@
     },
     {
       "path": "test/language/module-code/eval-gtbndng-indirect-update-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/eval-gtbndng-indirect-update_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -365,14 +365,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/export-expname_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/export-expname-binding-index_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -381,7 +373,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/export-star-as-dflt_FIXTURE.js",
+      "path": "test/language/module-code/export-expname_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -395,6 +387,14 @@
       "kind": "module-graph-baseline",
       "fingerprint": "df4374b3516a732391de0e859e2c6d1b5ba7e902dd8fd89501231cece94bcb0b",
       "summary": "Error: unsupported bare module import mod in test/language/module-code/export-star-as-dflt.js"
+    },
+    {
+      "path": "test/language/module-code/export-star-as-dflt_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/import-attributes/allow-nlt-before-with.js",
@@ -549,14 +549,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-iee-err-circular_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/instn-iee-err-circular-as.js",
       "variant": "case",
       "status": "unsupported",
@@ -571,6 +563,14 @@
       "kind": "node-module-baseline",
       "fingerprint": "7ace1e3da95c3d260db902ea10c7bdb209ee08912711fd77eb15b22bbb641427",
       "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Detected cycle while resolving name 'x' in './instn-iee-err-circular_FIXTURE.js'"
+    },
+    {
+      "path": "test/language/module-code/instn-iee-err-circular_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/instn-iee-err-dflt-thru-star-dflt_FIXTURE.js",
@@ -685,14 +685,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-resolve-empty-export_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/instn-resolve-empty-export.js",
       "variant": "case",
       "status": "unsupported",
@@ -701,7 +693,7 @@
       "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Invalid left-hand side expression in postfix operation"
     },
     {
-      "path": "test/language/module-code/instn-resolve-empty-import_FIXTURE.js",
+      "path": "test/language/module-code/instn-resolve-empty-export_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -717,7 +709,7 @@
       "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Invalid left-hand side expression in postfix operation"
     },
     {
-      "path": "test/language/module-code/instn-resolve-err-syntax-1_FIXTURE.js",
+      "path": "test/language/module-code/instn-resolve-empty-import_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -733,7 +725,7 @@
       "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Illegal break statement"
     },
     {
-      "path": "test/language/module-code/instn-resolve-err-syntax-2_FIXTURE.js",
+      "path": "test/language/module-code/instn-resolve-err-syntax-1_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -747,6 +739,14 @@
       "kind": "node-module-baseline",
       "fingerprint": "a8f69733a6cd7c95645f934e5c67348148421b4d78a619d92c0b138465cf8c0c",
       "summary": "Error: module: expected resolution SyntaxError, got runtime SyntaxError: Invalid left-hand side expression in postfix operation"
+    },
+    {
+      "path": "test/language/module-code/instn-resolve-err-syntax-2_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/instn-resolve-order-depth-child_FIXTURE.js",
@@ -997,14 +997,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-named_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-named-end_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1013,7 +1005,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-prod_FIXTURE.js",
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-named_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1022,6 +1014,14 @@
     },
     {
       "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-prod-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/instn-star-props-dflt-skip-star-as-prod_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1093,14 +1093,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-named_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-named-end_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1109,7 +1101,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-prod_FIXTURE.js",
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-named_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1118,6 +1110,14 @@
     },
     {
       "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-prod-end_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/namespace/internals/get-nested-namespace-dflt-skip-prod_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1173,14 +1173,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/source-phase-import/import-source-binding-name_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/source-phase-import/import-source-binding-name-2_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1189,7 +1181,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/source-phase-import/import-source-newlines_FIXTURE.js",
+      "path": "test/language/module-code/source-phase-import/import-source-binding-name_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1197,7 +1189,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/source-phase-import/reexport-source-binding_FIXTURE.js",
+      "path": "test/language/module-code/source-phase-import/import-source-newlines_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1219,6 +1211,14 @@
       "kind": "module-graph-baseline",
       "fingerprint": "724741eec9043b8ba849ff8436756b4a79cd13630b625dae0f3f91865aaa3a77",
       "summary": "Error: missing module import: test/language/module-code/source-phase-import/..."
+    },
+    {
+      "path": "test/language/module-code/source-phase-import/reexport-source-binding_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/top-level-await/async-module-sync_FIXTURE.js",
@@ -1285,14 +1285,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module-2_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1307,6 +1299,14 @@
       "kind": "node-vm-baseline",
       "fingerprint": "6d19641820cc2e4ec6e7bbcaa3dc6429bb338b35d8a9dbf549c607a6fece7fc3",
       "summary": "Error: sloppy: expected success, got runtime Error: async test timed out after 15000ms"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/dynamic-import-of-waiting-module_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/top-level-await/dynamic-import-rejection.js",
@@ -1325,12 +1325,12 @@
       "summary": "Error: module: expected success, got resolution Error: Cannot find module '<tmp> imported from <tmp>"
     },
     {
-      "path": "test/language/module-code/top-level-await/fulfillment-order_a_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/fulfillment-order.js",
       "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
+      "status": "unsupported",
+      "kind": "node-module-baseline",
+      "fingerprint": "924b45e8b8b15ab1a95651a7cb182cf01d9bad66c88c352f38ba2927b9b294cf",
+      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: Warning: Detected unsettled top-level await at file://<tmp>:26\n  if (true) await donePromise;"
     },
     {
       "path": "test/language/module-code/top-level-await/fulfillment-order_a-sentinel_FIXTURE.js",
@@ -1341,7 +1341,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/fulfillment-order_b_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/fulfillment-order_a_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1357,7 +1357,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/fulfillment-order_setup_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/fulfillment-order_b_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1365,12 +1365,12 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/fulfillment-order.js",
+      "path": "test/language/module-code/top-level-await/fulfillment-order_setup_FIXTURE.js",
       "variant": "case",
-      "status": "unsupported",
-      "kind": "node-module-baseline",
-      "fingerprint": "924b45e8b8b15ab1a95651a7cb182cf01d9bad66c88c352f38ba2927b9b294cf",
-      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: Warning: Detected unsettled top-level await at file://<tmp>:26\n  if (true) await donePromise;"
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/top-level-await/module-graphs-does-not-hang.js",
@@ -1397,14 +1397,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/module-import-rejection_FIXTURE.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
-    },
-    {
       "path": "test/language/module-code/top-level-await/module-import-rejection-body_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1414,6 +1406,14 @@
     },
     {
       "path": "test/language/module-code/top-level-await/module-import-rejection-tick_FIXTURE.js",
+      "variant": "case",
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
+    },
+    {
+      "path": "test/language/module-code/top-level-await/module-import-rejection_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1477,12 +1477,12 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/rejection-order_a_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/rejection-order.js",
       "variant": "case",
-      "status": "skipped",
-      "kind": "fixture",
-      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
-      "summary": "fixture"
+      "status": "unsupported",
+      "kind": "node-module-baseline",
+      "fingerprint": "924b45e8b8b15ab1a95651a7cb182cf01d9bad66c88c352f38ba2927b9b294cf",
+      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: Warning: Detected unsettled top-level await at file://<tmp>:26\n  if (true) await donePromise;"
     },
     {
       "path": "test/language/module-code/top-level-await/rejection-order_a-sentinel_FIXTURE.js",
@@ -1493,7 +1493,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/rejection-order_b_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/rejection-order_a_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1509,7 +1509,7 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/rejection-order_setup_FIXTURE.js",
+      "path": "test/language/module-code/top-level-await/rejection-order_b_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
@@ -1517,12 +1517,12 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/top-level-await/rejection-order.js",
+      "path": "test/language/module-code/top-level-await/rejection-order_setup_FIXTURE.js",
       "variant": "case",
-      "status": "unsupported",
-      "kind": "node-module-baseline",
-      "fingerprint": "924b45e8b8b15ab1a95651a7cb182cf01d9bad66c88c352f38ba2927b9b294cf",
-      "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: Warning: Detected unsettled top-level await at file://<tmp>:26\n  if (true) await donePromise;"
+      "status": "skipped",
+      "kind": "fixture",
+      "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
+      "summary": "fixture"
     },
     {
       "path": "test/language/module-code/top-level-await/tla_FIXTURE.js",
