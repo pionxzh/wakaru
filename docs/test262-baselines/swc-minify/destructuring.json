@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "test262": {
     "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "harness": {
+    "version": 2
   },
   "environment": {
     "nodeMajor": 22
@@ -27,22 +30,14 @@
   },
   "totals": {
     "discovered": 1034,
-    "runnable": 891,
-    "skipped": 143,
+    "runnable": 1034,
+    "skipped": 0,
     "unsupported": 27,
     "rejected": 49,
-    "passed": 815,
+    "passed": 958,
     "failed": 0
   },
   "outcomes": [
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-valid.js",
       "variant": "case",
@@ -50,22 +45,6 @@
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "43daa4e93ecb8694f9341f19ee0af4cef454b488bf63e6dcce265f377abcc161",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-valid.js",
@@ -76,60 +55,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (65..70, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "11dd05a945decadb0e7b8bd42151aa2b7e202895f30ff55bc83df0317a921fbb",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (55..60, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-target-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-valid.js",
@@ -141,131 +72,75 @@
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4fbf06eb5761f3df2f7ee0851aeb30e0588689925e983d5fb84048753eef66ce",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "1c1f27a3e33cae2d2eb22833454b9bbb2be353cd4dc794daa194a89a123de795",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "84e9d2206e2353554e42eb04af9e6cf7a8ff02f88b6a9a9e841048edd083acb7",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "913d3459bcd2b47b8df4c8154e2cd9288a9c8c476f5cb1b201609246f73d5453",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "01f7aec6272791a7ba6d8aa8a3da0502912cffed55c6ed9a812f4d9149f8ec4c",
-      "summary": "TypeError: Iterator result undefined is not an object"
+      "fingerprint": "dc35434483bc60b600068159d7db8ae7734cc4ccc7d009693a26ff4436e81684",
+      "summary": "Error: sloppy: expected success, got runtime TypeError: Iterator result undefined is not an object"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "84e9d2206e2353554e42eb04af9e6cf7a8ff02f88b6a9a9e841048edd083acb7",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "913d3459bcd2b47b8df4c8154e2cd9288a9c8c476f5cb1b201609246f73d5453",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-abpt.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4fbf06eb5761f3df2f7ee0851aeb30e0588689925e983d5fb84048753eef66ce",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "1c1f27a3e33cae2d2eb22833454b9bbb2be353cd4dc794daa194a89a123de795",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-iteration.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "344d867b3761bf0864560da95aa834795ad48ff15a0b52cd08168b0d5b9a064e",
-      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-element.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-elision.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-rest.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-elision-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "47cab09b8aa1d2cd6151e59615291b9287d8cdefe18baea8a25de16d1cd6bc84",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-valid.js",
@@ -276,36 +151,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (66..71, WithLabel { inner: Error { error: (66..71, TS1109) }, span: 60..63, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "10eba2dbb04b4254b5fd683b20f780b13fe4e3fc66d1954d6766e444bedf3498",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (58..63, WithLabel { inner: Error { error: (58..63, TS1109) }, span: 52..55, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-valid.js",
@@ -468,44 +319,12 @@
       "summary": "Error:   x Unexpected escape sequence in reserved word: with\n    ,-[39:1]\n 36 | ---*/"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-expr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "9c16d72b3fec538671d79be8739b3dcde780d532dfa862aa249d53af3536e1bf",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (78..83, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-init-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-valid.js",
@@ -516,52 +335,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-id-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "9cd910e8c18336673c2dddfa9b312ca040ba8a060fddc816395b532d5603666d",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (54..59, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-valid.js",
@@ -572,44 +351,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (66..71, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "afc183ec1c0188a77badb48da51a06bea24d079570873b2887608118b5a4f6e2",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (60..65, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-valid.js",
@@ -620,404 +367,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (66..71, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-rest-not-last-element-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-break-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-case-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-catch-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-class-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-const-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-continue-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-debugger-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped-ext.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-delete-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-do-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-else-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-enum-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-export-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped-ext.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-finally-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-for-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-function-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-if-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-implements-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-import-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-in-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-instanceof-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-interface-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-let-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-new-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-package-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-private-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-protected-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-public-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-return-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-static-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-super-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-switch-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-this-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-throw-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-try-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-typeof-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-var-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-void-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-while-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-with-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/array-elem-init-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "aba5886e06b2aa502962f977bf5b466118fb848f7b6e22f2838ed8c8450ed82b",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (40..45, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-nested-array-yield-ident-valid.js",
@@ -1028,60 +383,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (49..54, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/array-elem-nested-obj-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "d04bfac0270f5b4d267485b7163c95884cd98def15e88323e99261b45d163d9c",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (41..46, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-target-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-elem-target-yield-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-target-yield-valid.js",
@@ -1093,131 +400,75 @@
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4fbf06eb5761f3df2f7ee0851aeb30e0588689925e983d5fb84048753eef66ce",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "1c1f27a3e33cae2d2eb22833454b9bbb2be353cd4dc794daa194a89a123de795",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "84e9d2206e2353554e42eb04af9e6cf7a8ff02f88b6a9a9e841048edd083acb7",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "913d3459bcd2b47b8df4c8154e2cd9288a9c8c476f5cb1b201609246f73d5453",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "01f7aec6272791a7ba6d8aa8a3da0502912cffed55c6ed9a812f4d9149f8ec4c",
-      "summary": "TypeError: Iterator result undefined is not an object"
+      "fingerprint": "dc35434483bc60b600068159d7db8ae7734cc4ccc7d009693a26ff4436e81684",
+      "summary": "Error: sloppy: expected success, got runtime TypeError: Iterator result undefined is not an object"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "84e9d2206e2353554e42eb04af9e6cf7a8ff02f88b6a9a9e841048edd083acb7",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "913d3459bcd2b47b8df4c8154e2cd9288a9c8c476f5cb1b201609246f73d5453",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elision-iter-abpt.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4fbf06eb5761f3df2f7ee0851aeb30e0588689925e983d5fb84048753eef66ce",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "1c1f27a3e33cae2d2eb22833454b9bbb2be353cd4dc794daa194a89a123de795",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close-skip.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-elision-iter-nrml-close.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-iteration.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "344d867b3761bf0864560da95aa834795ad48ff15a0b52cd08168b0d5b9a064e",
-      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-before-element.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-before-elision.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-before-rest.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-elision-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "47cab09b8aa1d2cd6151e59615291b9287d8cdefe18baea8a25de16d1cd6bc84",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «2») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-rest-nested-array-yield-ident-valid.js",
@@ -1228,36 +479,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (52..57, WithLabel { inner: Error { error: (52..57, TS1109) }, span: 46..49, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/array-rest-nested-obj-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "dd344ccaf4681915f606130148c2a72704bd6cd40142396f50c13ccdf6bad951",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (44..49, WithLabel { inner: Error { error: (44..49, TS1109) }, span: 38..41, note: \"An expression should follow '...'\" }) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/array-rest-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/statements/for-of/dstr/array-rest-yield-ident-valid.js",
@@ -1269,195 +496,51 @@
     },
     {
       "path": "test/language/statements/for-of/dstr/const-ary-ptrn-elem-ary-elision-init.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/const-ary-ptrn-elision-step-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "7ce23ed0ba4433b03f986bee6b0d6c85af8ca80fe1895b02c58755cbd31a1638",
-      "summary": "Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
+      "fingerprint": "e015f1b1050dc7a63fb2164bc535d7906cef61afcfda070e1ac44643b49f0c57",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/for-of/dstr/const-ary-ptrn-elision.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-init-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-ary-ptrn-rest-not-final-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/const-obj-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/let-ary-ptrn-elem-ary-elision-init.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/let-ary-ptrn-elision-step-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "7ce23ed0ba4433b03f986bee6b0d6c85af8ca80fe1895b02c58755cbd31a1638",
-      "summary": "Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
+      "fingerprint": "e015f1b1050dc7a63fb2164bc535d7906cef61afcfda070e1ac44643b49f0c57",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/for-of/dstr/let-ary-ptrn-elision.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-ary-ptrn-rest-not-final-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/let-obj-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-expr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/obj-id-identifier-yield-ident-valid.js",
@@ -1468,44 +551,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (68..73, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/obj-id-init-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-id-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/obj-id-init-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "aba5886e06b2aa502962f977bf5b466118fb848f7b6e22f2838ed8c8450ed82b",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (40..45, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-id-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/statements/for-of/dstr/obj-prop-elem-init-yield-ident-valid.js",
@@ -1516,52 +567,12 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (42..47, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/obj-prop-elem-target-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
       "kind": "sloppy-only-strict-ident",
       "fingerprint": "ef67070c6bfd5c1a7b0f62413ca92574d8d81f845a62c9ea49027134b9d7ffeb",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (50..55, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     },
     {
       "path": "test/language/statements/for-of/dstr/obj-prop-nested-array-yield-ident-valid.js",
@@ -1572,22 +583,6 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (44..49, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/obj-prop-nested-obj-yield-ident-valid.js",
       "variant": "case",
       "status": "unsupported",
@@ -1596,116 +591,36 @@
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (50..55, TS1109) }; <stdin>:1:5: InvalidIdentInStrict(\"yield\")"
     },
     {
-      "path": "test/language/statements/for-of/dstr/obj-rest-not-last-element-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/for-of/dstr/var-ary-ptrn-elem-ary-elision-init.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-of/dstr/var-ary-ptrn-elision-step-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "7ce23ed0ba4433b03f986bee6b0d6c85af8ca80fe1895b02c58755cbd31a1638",
-      "summary": "Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
+      "fingerprint": "e015f1b1050dc7a63fb2164bc535d7906cef61afcfda070e1ac44643b49f0c57",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/for-of/dstr/var-ary-ptrn-elision.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-init-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-ary-ptrn-rest-not-final-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/for-of/dstr/var-obj-ptrn-init-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-ary-elision-init.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-static-init-await-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-static-init-await-valid.js",
@@ -1717,75 +632,19 @@
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elision-step-err.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "7ce23ed0ba4433b03f986bee6b0d6c85af8ca80fe1895b02c58755cbd31a1638",
-      "summary": "Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
+      "fingerprint": "e015f1b1050dc7a63fb2164bc535d7906cef61afcfda070e1ac44643b49f0c57",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elision.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "9985d7ec3b890d6aee5898037f1fda1c4d3ea8ff161100c363c8b980a2d727b0",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/obj-ptrn-elem-id-static-init-await-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     }
   ]
 }

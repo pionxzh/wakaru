@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "test262": {
     "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "harness": {
+    "version": 2
   },
   "environment": {
     "nodeMajor": 22
@@ -61,117 +64,69 @@
   },
   "totals": {
     "discovered": 2200,
-    "runnable": 2011,
-    "skipped": 189,
+    "runnable": 2200,
+    "skipped": 0,
     "unsupported": 93,
     "rejected": 38,
-    "passed": 1880,
+    "passed": 2069,
     "failed": 0
   },
   "outcomes": [
     {
       "path": "test/language/expressions/assignment/11.13.1-4-1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "8388ce1f625cd9206b4d64094cac9b6cea7259ea866f34553f0437963d52ff39",
-      "summary": "TypeError: Cannot read properties of undefined (reading 'value')"
+      "fingerprint": "1babac742c1fcd0af6cd2c3503330141939a5e4bdb132f99c9ed1acb6a1da489",
+      "summary": "Error: sloppy: expected success, got runtime TypeError: Cannot read properties of undefined (reading 'value')"
     },
     {
       "path": "test/language/expressions/assignment/11.13.1-4-27-s.js",
-      "variant": "case",
+      "variant": "strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
-      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+      "fingerprint": "5d3c9d8497827d9b0fd7aa227e606a4ad7e8e15ada8b087e00f541228d422784",
+      "summary": "Error: strict: expected success, got runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/expressions/assignment/11.13.1-4-3-s.js",
-      "variant": "case",
+      "variant": "strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
-      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
+      "fingerprint": "5d3c9d8497827d9b0fd7aa227e606a4ad7e8e15ada8b087e00f541228d422784",
+      "summary": "Error: strict: expected success, got runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-init-fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
-      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-put-const.js",
@@ -182,172 +137,76 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:21:7: ERROR: Cannot assign to \"c\" because it is a constant"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-target-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-elem-target-yield-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-abpt.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "27bd5db1ff847b5aabbda834c1e9419e79b92f27f40b2fe576bef4b7e14bdd2d",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "97a04bf8ed5347cce8fa8904e0c8bfe71b761c6683b11c71e34699f192430c0a",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "cdadf63f5159e92a4f9091ace5536fb937d573aea28b6eb913f4672a2f76d2cc",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "0dec5ab72c5ae8f5093280a29ceb58619a75f9875845268d70b50fed83b0c34d",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "4606c0634d4086885d45260cc1eff632681e23bd16a61cba5f6ccbfbd3d54427",
-      "summary": "TypeError: Iterator result undefined is not an object"
+      "fingerprint": "724ce7072ea49dbd482a087fbdf2ddfb81116f7845148e880f35870af4653ddd",
+      "summary": "Error: sloppy: expected success, got runtime TypeError: Iterator result undefined is not an object"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "f73249fb2a21a711014c057348a9cce813adf862456cc3e598742dd86d6e4aee",
-      "summary": "Test262Error: Expected SameValue(«1», «2») to be true"
+      "fingerprint": "626cd664f9f16e22cfba3f9359c48251042e377e9e68cbf7fee78d6df5ab71ce",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-abpt.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "c443359814b34ade1be52a474fa64c5ea3a55cf8910bdbb585e6168e3f31b06f",
-      "summary": "Test262Error: Expected a Test262Error but got a TypeError"
+      "fingerprint": "24f27a772be5fb425d9aefded570f89126ca8c4cc303dc3a058f4df8a0d52917",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a Test262Error but got a TypeError"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-err.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "e080eb49168b6254398dca7d16146d757c9c4acc911ce675fafc8c005e5efa01",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "9ce8b8ae1ae137f314e6733025d6cb74a1a94f016e6f2db3fd10bec159692e39",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "a04f062522cfcb259496eb8521829147a71b71a573ffa3ba2f8f728c9a7b1f62",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "50ceda2bab0cea1d3076121ccb76c5f65c80ce1816cfe1c53f228f3df414a22b",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "9165ebbb3d881d6100790a880625837aeba166d768fd60dfae9dc4e3b2892770",
-      "summary": "Test262Error: Expected SameValue(«0», «1») to be true"
+      "fingerprint": "34f82b99b01d4ee509604fea40c332da679389db3fb551d553363050b1c07b7c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-iteration.js",
       "variant": "case",
       "status": "rejected",
       "kind": "swc-array-binding-elision",
-      "fingerprint": "a390fa77397bca813fc1d8d37e14f350451fb604812d8bf589cf01f37dcdacb3",
-      "summary": "Test262Error: Expected SameValue(«0», «2») to be true"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-element.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-elision.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-before-rest.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-elision-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/array-rest-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "681f2ec1db5a841e97cc5956ea7e18316b7f1eb1b2b1ff2f5f105cbee2589f61",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «2») to be true"
     },
     {
       "path": "test/language/expressions/assignment/dstr/array-rest-put-const.js",
@@ -358,76 +217,36 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:21:10: ERROR: Cannot assign to \"c\" because it is a constant"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/array-rest-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-expr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-identifier-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
-      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+      "fingerprint": "1c5863a4376c9c13576e6b4d8c58163db72489eeb0e387c9cc7f3c82e24180f7",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
-      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+      "fingerprint": "c8d12dc25dce3c9d61ae80c885d058919fa9515e405f43284074306692d9d81e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-init-fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
-      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-init-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-id-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-id-put-const.js",
@@ -438,108 +257,36 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:21:7: ERROR: Cannot assign to \"c\" because it is a constant"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-id-simple-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
-      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+      "fingerprint": "1c5863a4376c9c13576e6b4d8c58163db72489eeb0e387c9cc7f3c82e24180f7",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
-      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+      "fingerprint": "c8d12dc25dce3c9d61ae80c885d058919fa9515e405f43284074306692d9d81e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
-      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-init-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-memberexpr-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-optchain-prop-ref-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-elem-target-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-array-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/obj-prop-nested-obj-yield-ident-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/dstr/obj-prop-put-const.js",
@@ -550,14 +297,6 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:21:10: ERROR: Cannot assign to \"c\" because it is a constant"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/obj-rest-not-last-element-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/dstr/obj-rest-put-const.js",
       "variant": "case",
       "status": "rejected",
@@ -566,1500 +305,644 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:21:9: ERROR: Cannot assign to \"rest\" because it is a constant"
     },
     {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-break-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-case-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-catch-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-class-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-const-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-continue-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-debugger-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped-ext.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-default.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-delete-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-do-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-else-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-enum-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-export-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped-ext.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-extends.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-finally-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-for-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-function-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-if-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-implements-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-import-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-in-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-instanceof-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-interface-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-let-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-new-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-package-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-private-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-protected-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-public-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-return-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-static-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-super-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-switch-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-this-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-throw-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-try-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-typeof-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-var-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-void-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-while-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/dstr/syntax-error-ident-ref-with-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/assignment/fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/expressions/assignment/fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/assignment/fn-name-lhs-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "765c5e246f17c8dfa501c7c18e84e6d53f3c99caee5a0498990613d6df4e6c62",
-      "summary": "Test262Error: name descriptor value should be ; name value should be "
-    },
-    {
-      "path": "test/language/expressions/assignment/id-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/id-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/non-simple-target.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "ac08578444a37a636397e105f0ec44b3a62363e654bf95ad48ebfba8cd37b148",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: name descriptor value should be ; name value should be "
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
-      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A6_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "c8ddbf89dff117347e7438c46c013e66cfc7810ca51d30ede22d2b7c83867d45",
-      "summary": "Test262Error: #1: innerX === undefined. Actual: 1"
+      "fingerprint": "58d02e73da29d37acf7a1ca0e697f52a5e09f0570155ed3faf68283bed3974f9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === undefined. Actual: 1"
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A6_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "cd0826cb6eb613e3d5d7d1f4517986ebd1863acb500d66696354242c40232bf6",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 1"
+      "fingerprint": "b51d7150f384e6fb8daf6bf35b66c642667b1ca2fcb8f1cb302706b21637ff78",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 1"
     },
     {
       "path": "test/language/expressions/assignment/S11.13.1_A6_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "9e013c25f0fbba1d457e3b35e086e747035e09e3ba7b96a7a67d205584dda5f4",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: 1"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-assignment-inside-function.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-assignment.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-boolean.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-cover-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-cover-yieldexpr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-null.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-number.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/assignment/target-string.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/11.13.2-6-1gs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/add-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/add-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/add-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/and-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/and-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/btws-and-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/btws-or-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/btws-xor-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "f1688e70388a0253fd26262f40cc4418b67c9af77c8f1c1e5c7d515377c0175f",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: 1"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--11.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--13.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--15.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--17.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--19.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--21.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--5.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--7.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--9.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/div-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/div-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/div-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/left-shift-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/lshift-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/lshift-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mod-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mod-div-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mod-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mult-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mult-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/mult-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/or-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/or-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/right-shift-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
-      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
-      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.1_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7540c2c373e30b333b4579c846e670bc4a2349321a7bfde4e1a74a504e6b19de",
-      "summary": "Test262Error: #1: innerScope.x === 6. Actual: undefined"
+      "fingerprint": "1a64b800c0e5f04b588d9cde7aab2321ac00b14e271b2506d1fe45e5b27c41ac",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.10_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
-      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+      "fingerprint": "519a3c2bf44558cc0583e5fd0e9660ea8d59434ae16e146db2a96b4f1294b824",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
-      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "685092d52a4c1d9790cc3e414fa2e40482e1773fee136d38ea079a463d79433e",
-      "summary": "Test262Error: #1: scope.x === 6. Actual: undefined"
+      "fingerprint": "c15f2a6aaa8b739431f975dca6aa5a8bc42550cbd3e9f81b3d91133878869f37",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.11_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7540c2c373e30b333b4579c846e670bc4a2349321a7bfde4e1a74a504e6b19de",
-      "summary": "Test262Error: #1: innerScope.x === 6. Actual: undefined"
+      "fingerprint": "1a64b800c0e5f04b588d9cde7aab2321ac00b14e271b2506d1fe45e5b27c41ac",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 6. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.2_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
-      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.3_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
-      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.4_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
-      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+      "fingerprint": "005385b23d000eb836d05eb4f0893247c2c1b49327979eaa48d4540c2223d50c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
-      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+      "fingerprint": "519a3c2bf44558cc0583e5fd0e9660ea8d59434ae16e146db2a96b4f1294b824",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d537c17cf0f317264b73305e7dd88d208e73f9dcfc53ea949eaca5235c11c704",
-      "summary": "Test262Error: #1: scope.x === 16. Actual: undefined"
+      "fingerprint": "a0e2f988838c5dd1eae179ee18e457e374e2890de2bec219c749849a9cf0d989",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 16. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d537c17cf0f317264b73305e7dd88d208e73f9dcfc53ea949eaca5235c11c704",
-      "summary": "Test262Error: #1: scope.x === 16. Actual: undefined"
+      "fingerprint": "a0e2f988838c5dd1eae179ee18e457e374e2890de2bec219c749849a9cf0d989",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 16. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.6_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "2b4495cb544464b8b01d8a4fab1f2785d8ff779c8c98cd64f7eb222a48137351",
-      "summary": "Test262Error: #1: innerScope.x === 16. Actual: undefined"
+      "fingerprint": "06ff5b976a08d602ecbee94c7b7bbbbe5a552a8e31347454ee26183ff6c3db3a",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 16. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.7_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
-      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aca1d1b4a19cf231e9d8be148b8ff63cf8202f1d006c3eddf824b020e4691b6c",
-      "summary": "Test262Error: #1: scope.x === 2. Actual: undefined"
+      "fingerprint": "eac6366b7eeba2d6c51a5827d5b0c0dd49dad528ee5a10b1b269fd20ba8f008e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.8_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "aef11e84236aacadfd7df6b3540ad1465cbc0535c245f7e5f98d45cab2bacc08",
-      "summary": "Test262Error: #1: innerScope.x === 2. Actual: undefined"
+      "fingerprint": "2bb1df0045463eb7e008a861ce31b3ee255ab034be0eb82eadb9151e13c5cfba",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 2. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A5.9_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
-      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+      "fingerprint": "519a3c2bf44558cc0583e5fd0e9660ea8d59434ae16e146db2a96b4f1294b824",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.1_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "0053d39dd4b91599f1c732b952083f1c854d8c4a1309350990bf18a5cfaa2021",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 12"
+      "fingerprint": "032181daafa7bc7db1b7cc6004cd3653359582acddff30ce5f3cb684e52f292e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 12"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.10_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+      "fingerprint": "f685c3e7f9d19b92c09eda69320418324926c7ab66c91f5a61404ef3d5f5d1ec",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 5"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.11_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+      "fingerprint": "f685c3e7f9d19b92c09eda69320418324926c7ab66c91f5a61404ef3d5f5d1ec",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 5"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.2_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "2ccb392c970f65b6d03f9c942e1c9eb5fe80e603e65f5ea6195a8913ab8b3c19",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 5"
+      "fingerprint": "f685c3e7f9d19b92c09eda69320418324926c7ab66c91f5a61404ef3d5f5d1ec",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 5"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.3_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "b071c5a7e728a54a4deb1428731b0c724db7c7afb6296bc1f3eaa222321d4da0",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 3"
+      "fingerprint": "c2f3e1037715f81427bbe0f5e9fda93e7e5de7618e03d936a11662cdfcf066df",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 3"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.4_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+      "fingerprint": "771cb657b4722908617b8bf640499eb39090d3fef4d1682668f9eb11b434aaf3",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 4"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+      "fingerprint": "771cb657b4722908617b8bf640499eb39090d3fef4d1682668f9eb11b434aaf3",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 4"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.6_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a7b462db73443d5bf7c364250194a8fe8422ccafd0ab810d2d806ef9da49909e",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 8"
+      "fingerprint": "6a525043cb0e0f1ac6dbb53eaa49a1c3741da9ff9607797299c2c9ab975279eb",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 8"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.7_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+      "fingerprint": "771cb657b4722908617b8bf640499eb39090d3fef4d1682668f9eb11b434aaf3",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 4"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.8_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "576dc23c3dad3e3a45f0f7d57e95434d3e4413b0bea14ac2de61ae2244b1ef3b",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 4"
+      "fingerprint": "771cb657b4722908617b8bf640499eb39090d3fef4d1682668f9eb11b434aaf3",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 4"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A6.9_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "cd0826cb6eb613e3d5d7d1f4517986ebd1863acb500d66696354242c40232bf6",
-      "summary": "Test262Error: #1: innerX === 2. Actual: 1"
+      "fingerprint": "b51d7150f384e6fb8daf6bf35b66c642667b1ca2fcb8f1cb302706b21637ff78",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerX === 2. Actual: 1"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.10_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.11_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.2_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.3_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.4_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.5_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.6_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.7_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.8_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/compound-assignment/S11.13.2_A7.9_T4.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/srshift-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/srshift-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/sub-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/sub-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/subtract-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/u-right-shift-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/urshift-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/urshift-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/xor-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/compound-assignment/xor-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/delete/11.4.1-4.a-8-s.js",
-      "variant": "case",
+      "variant": "strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "25fc9a70b8172feaa276bcc9dece8486a0b99c1548b34a3efa980bf6c8841b41",
-      "summary": "Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
-    },
-    {
-      "path": "test/language/expressions/delete/identifier-strict-recursive.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/delete/identifier-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "5d3c9d8497827d9b0fd7aa227e606a4ad7e8e15ada8b087e00f541228d422784",
+      "summary": "Error: strict: expected success, got runtime Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
     },
     {
       "path": "test/language/expressions/delete/S11.4.1_A3.1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "c568fcdc1d66ce84833c8d6c9b2b6e9e49a5f5d6bba8ad1140d7f6a62536e567",
-      "summary": "Test262Error: #2: var y = 1; delete this.y === false"
+      "fingerprint": "d271899dfb4e4288651d52e51d25c18f009ce78993a1ec666ef9f427d2071e75",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: var y = 1; delete this.y === false"
     },
     {
       "path": "test/language/expressions/delete/super-property-uninitialized-this.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "71d10b97af45ab9f12a66b5d0e8b2c42bc4c7c27ff0a63f269e56fdc2a8e368e",
-      "summary": "Test262Error: Expected a ReferenceError but got a Test262Error"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-bitnot-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-delete-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-logical-not-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-negate-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-plus-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-typeof-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/exponentiation/exp-operator-syntax-error-void-unary-expression-base.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-in-nested.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-in.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-invalid-assignment-reference.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-invalid-assignment-target.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-invalid-identifier-complex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-invalid-identifier-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-invalid-rhs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "d5fcd5e658bd32056101a910a4d212db880a4f28d30520d8c158384424e145e3",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a Test262Error"
     },
     {
       "path": "test/language/expressions/in/private-field-rhs-await-absent.js",
@@ -2070,564 +953,172 @@
       "summary": "Error: Transform failed with 1 error:\n<stdin>:23:9: ERROR: Cannot use \"await\" as an identifier here:"
     },
     {
-      "path": "test/language/expressions/in/private-field-rhs-await-present.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "flag:async",
-      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
-      "summary": "flag:async"
-    },
-    {
-      "path": "test/language/expressions/in/private-field-rhs-yield-absent.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/in/rhs-yield-absent-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-and-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-and-assignment-operator-non-simple-lhs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-and-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-and-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-nullish-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-nullish-assignment-operator-non-simple-lhs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-nullish-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-nullish-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-or-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-or-assignment-operator-non-simple-lhs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-or-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/logical-assignment/lgcl-or-non-simple.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/arguments.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/eval.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/line-terminator-carriage-return.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/line-terminator-line-feed.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/line-terminator-line-separator.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/line-terminator-paragraph-separator.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/expressions/postfix-decrement/operator-x-postfix-decrement-calls-putvalue-lhs-newvalue--1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-decrement/S11.3.2_A5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
-      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+      "fingerprint": "519a3c2bf44558cc0583e5fd0e9660ea8d59434ae16e146db2a96b4f1294b824",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-decrement/S11.3.2_A6_T3.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/target-cover-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/target-cover-yieldexpr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/target-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-decrement/this.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/11.3.1-2-1gs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/arguments.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/eval.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/line-terminator-carriage-return.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/line-terminator-line-feed.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/line-terminator-line-separator.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/line-terminator-paragraph-separator.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/postfix-increment/operator-x-postfix-increment-calls-putvalue-lhs-newvalue--1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-increment/S11.3.1_A5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
-      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+      "fingerprint": "005385b23d000eb836d05eb4f0893247c2c1b49327979eaa48d4540c2223d50c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/postfix-increment/S11.3.1_A6_T3.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/target-cover-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/target-cover-yieldexpr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/target-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/postfix-increment/this.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/11.4.5-2-2gs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/arguments.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/eval.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/prefix-decrement/operator-prefix-decrement-x-calls-putvalue-lhs-newvalue--1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "7637cf2fca884b1abb813d20af1280b02084396c6e38802b5c77d8714b5c8bb4",
-      "summary": "Test262Error: #1: scope.x === 1. Actual: undefined"
+      "fingerprint": "dac0484ff3a41b26167e6ff6484a9da1e2bda351087a24a4e4ee287150632ecc",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-decrement/S11.4.5_A5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "ee93bb7ac0cf718b3459502c1e249cf19d9eba88e6f1da44914932476fc77c90",
-      "summary": "Test262Error: #1: innerScope.x === 1. Actual: undefined"
+      "fingerprint": "519a3c2bf44558cc0583e5fd0e9660ea8d59434ae16e146db2a96b4f1294b824",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 1. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-decrement/S11.4.5_A6_T3.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/target-cover-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/target-cover-yieldexpr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/target-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-decrement/this.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/arguments.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/eval.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/prefix-increment/operator-prefix-increment-x-calls-putvalue-lhs-newvalue--1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "545f5dae13f7627b374312bf436d8aa4a65de6797c4a0e27a808a6f8160055a8",
-      "summary": "Test262Error: Expected a ReferenceError but got a TypeError"
+      "fingerprint": "15cb014fce15868785cccd51ff01f09a457e3dca5c501faba50bb90e23000b9e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected a ReferenceError but got a TypeError"
     },
     {
       "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T1.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "6d3d610f589a0a4b122264b916bb9e0568aa535a149f56c7d155dd18e9106914",
-      "summary": "Test262Error: #1: scope.x === 3. Actual: undefined"
+      "fingerprint": "e3f54deea3ce07552ed46bb4f2534c24c8613fdc995659ba9394de0745d91269",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: scope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-increment/S11.4.4_A5_T3.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "848a2308a83b2afe4931187dcdf883b6f0e6c80f12f1b46e719b757b7964a39e",
-      "summary": "Test262Error: #1: innerScope.x === 3. Actual: undefined"
+      "fingerprint": "005385b23d000eb836d05eb4f0893247c2c1b49327979eaa48d4540c2223d50c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: innerScope.x === 3. Actual: undefined"
     },
     {
       "path": "test/language/expressions/prefix-increment/S11.4.4_A6_T3.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "f46bd69b775b2bdc2f51113ee3a5168174f98619540b246ebf270626e746a996",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/target-cover-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/target-cover-yieldexpr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/target-newtarget.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/prefix-increment/this.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "2aebac7c38f259fa244742b7b886b253406cf549259e41f18a7712bbb08d4e45",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/expressions/typeof/get-value.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "0f4b2b970839340199d6fa8e5bc7d9ec7699da7889b259164c1940a76a2e73c0",
-      "summary": "Test262Error: typeof x === \"number\" Expected SameValue(«\"undefined\"», «\"number\"») to be true"
+      "fingerprint": "e0bf6ffa1b2ac9841d318111014a45d8afb69aaa8297ec9333e3ae23794fdfa8",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: typeof x === \"number\" Expected SameValue(«\"undefined\"», «\"number\"») to be true"
     }
   ]
 }

@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 0.23.1
 - producerConfigHash: 5cc7678984b5d2f567c58fa41b6aef47740bd1d8d00a72443d6b759eeeaf1a6f
@@ -22,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2200 | 2011 | 189 | 93 | 38 | 1880 | 0 |
+| 2200 | 2200 | 0 | 93 | 38 | 2069 | 0 |
 
 ## Reasons
 
@@ -32,8 +33,6 @@
 | rejected | transform-reject | 6 |
 | rejected | transform-runtime | 13 |
 | rejected | transform-runtime-inferred-name | 10 |
-| skipped | flag:async | 1 |
-| skipped | negative | 188 |
 | unsupported | node-vm-baseline | 93 |
 
 ## Failures

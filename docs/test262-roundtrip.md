@@ -110,6 +110,24 @@ Babel is an input producer, not the correctness oracle. The Test262 harness
 remains the oracle: the original source, produced source, and Wakaru output must
 all pass the same test.
 
+## Execution semantics
+
+The runner treats Test262 metadata as executable expectations:
+
+- positive scripts must succeed in every selected sloppy/strict variant;
+- `negative.phase: parse` and `early` tests run in a parser-boundary lane and
+  must fail with the declared error type; they are not sent through a producer
+  or Wakaru because invalid programs are not round-trip inputs;
+- runtime and module-resolution negatives must preserve both phase and error
+  type in the original, produced, and decompiled programs;
+- `async` tests wait for `$DONE` (including `doneprintHandle.js` output), bound
+  by the case timeout;
+- `raw` tests do not receive the default `assert.js` and `sta.js` harness;
+- script realms provide fresh `$262.createRealm()` contexts,
+  `$262.evalScript()`, and ArrayBuffer detachment. Agent coordination,
+  `IsHTMLDDA`, non-deterministic tests, and unavailable runtime features are
+  classified from metadata as explicit unsupported capabilities.
+
 ## Module Graphs
 
 `--preset modules` runs Test262 files with `flags: [module]` as module graphs
@@ -143,7 +161,9 @@ node scripts\correctness\test262-roundtrip.mjs --rerun-from target\before.json -
 
 ## Status Buckets
 
-- `passed`: original, transformed, and decompiled code all pass.
+- `passed`: the typed metadata expectation is preserved. For positive and
+  runtime/resolution-negative round trips this covers original, transformed,
+  and decompiled code; parse/early negatives pass in the parser-boundary lane.
 - `unsupported`: the local Node/vm/SWC parser setup cannot run this input.
 - `rejected`: the transform/minifier or known SWC print fidelity issue blocks
   the case before it can be treated as a Wakaru semantic failure.
@@ -151,7 +171,11 @@ node scripts\correctness\test262-roundtrip.mjs --rerun-from target\before.json -
 
 Known non-Wakaru reasons currently classified:
 
+- `node-parse-baseline`
 - `node-vm-baseline`
+- `node-module-baseline`
+- `module-graph-baseline`
+- `runtime-capability` with a typed host/feature reason
 - `transform-reject`
 - `transform-runtime`
 - `sloppy-only-strict-ident`
@@ -212,8 +236,9 @@ CLI first or set `WAKARU` before calling it directly.
 
 The `Test262 Correctness` workflow runs the tooling tests and corpus-wide
 metadata audit first, then compares all canonical baselines in one isolated CI
-job per producer. It is path-gated for correctness-related changes, can be run
-manually, and also runs weekly to catch runtime or infrastructure drift.
+job per producer on Node 22, matching the tracked baseline identity. It is
+path-gated for correctness-related changes, can be run manually, and also runs
+weekly to catch runtime or infrastructure drift.
 
 Both runners use parallel decompilation internally: the roundtrip runner batches
 all wakaru invocations and runs them concurrently (bounded by `cpus - 2`), and

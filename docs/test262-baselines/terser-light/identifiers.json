@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "test262": {
     "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "harness": {
+    "version": 2
   },
   "environment": {
     "nodeMajor": 22
@@ -25,11 +28,11 @@
   },
   "totals": {
     "discovered": 268,
-    "runnable": 152,
-    "skipped": 116,
+    "runnable": 268,
+    "skipped": 0,
     "unsupported": 8,
     "rejected": 112,
-    "passed": 32,
+    "passed": 148,
     "failed": 0
   },
   "outcomes": [
@@ -291,195 +294,195 @@
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-17.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-5.2.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-5.2.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-5.2.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-5.2.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.1.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.1.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.1.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-6.1.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-7.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-7.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-7.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-7.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-8.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-8.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-8.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-8.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/part-unicode-9.0.0-class-escaped.js",
@@ -771,195 +774,195 @@
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-17.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "d958227a3da349756f8fb46c962076764ce380d97d52976c24b27fd7f0b6c517",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "e20774165b865006e4974cdfba4eb145dc46c71809ff90a665205f9cd68e2cb8",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-5.2.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-5.2.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-5.2.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-5.2.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.1.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.1.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.1.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-6.1.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-7.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-7.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-7.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-7.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-8.0.0-class-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-8.0.0-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-8.0.0-escaped.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-8.0.0.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b99652b74c8e3ca05ee832094a4d7cf2568814d492962a54796276b74109ebea",
-      "summary": "SyntaxError: Invalid or unexpected token"
+      "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
+      "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
     },
     {
       "path": "test/language/identifiers/start-unicode-9.0.0-class-escaped.js",
@@ -992,934 +995,6 @@
       "kind": "transform-reject",
       "fingerprint": "1de9808ebb65a3e96492dd94f09b433a38bab7effa4b3e2dd65fd793bf8fb346",
       "summary": "SyntaxError: Unexpected character 'ࢶ'"
-    },
-    {
-      "path": "test/language/identifiers/start-zwj-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/start-zwnj-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/unicode-escape-nls-err.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-break-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-break-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-break.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-case-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-case-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-case.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-catch-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-catch-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-catch.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-class-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-class-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-class.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-const-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-const-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-const.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-continue-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-continue-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-continue.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-debugger-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-debugger-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-debugger.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-default-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-default-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-default.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-delete-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-delete-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-delete.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-do-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-do-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-do.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-else-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-else-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-else.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-enum-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-enum-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-enum.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-export-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-export-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-export.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-extends-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-extends-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-extends.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-false-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-false-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-false.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-finally-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-finally-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-finally.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-for-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-for-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-for.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-function-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-function-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-function.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-if-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-if-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-if.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-import-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-import-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-import.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-in-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-in-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-in.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-instanceof-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-instanceof-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-instanceof.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-new-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-new-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-new.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-null-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-null-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-null.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-return-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-return-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-return.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-super-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-super-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-super.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-switch-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-switch-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-switch.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-this-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-this-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-this.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-throw-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-throw-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-throw.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-true-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-true-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-true.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-try-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-try-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-try.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-typeof-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-typeof-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-typeof.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-var-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-var-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-var.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-void-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-void-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-void.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-while-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-while-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-while.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-with-via-escape-hex.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-with-via-escape-hex4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-with.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/val-yield-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/vertical-tilde-continue-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/vertical-tilde-continue.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/vertical-tilde-start-escaped.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/identifiers/vertical-tilde-start.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
     }
   ]
 }

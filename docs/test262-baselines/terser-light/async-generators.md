@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 5.31.6
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
@@ -22,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2963 | 674 | 2289 | 21 | 7 | 646 | 0 |
+| 2963 | 2963 | 0 | 44 | 7 | 2903 | 9 |
 
 ## Reasons
 
@@ -30,15 +31,20 @@
 |---|---|---:|
 | rejected | transform-reject | 3 |
 | rejected | transform-runtime | 4 |
-| skipped | flag:async | 1909 |
-| skipped | host-api | 2 |
-| skipped | negative | 378 |
-| unsupported | node-vm-baseline | 5 |
-| unsupported | sloppy-only-strict-ident | 6 |
+| unsupported | node-vm-baseline | 10 |
+| unsupported | sloppy-only-strict-ident | 24 |
 | unsupported | swc-parse-async-ident | 7 |
 | unsupported | swc-parse-static-init-await | 1 |
 | unsupported | swc-parse-yield-ident | 2 |
 
 ## Failures
 
-No Wakaru correctness failures.
+- test/language/expressions/async-arrow-function/arrow-returns-promise.js (decompiled-runtime)
+- test/language/statements/async-generator/return-undefined-implicit-and-explicit.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-func-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-err.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-skip.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close-skip.js (decompiled-runtime)
+- test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close.js (decompiled-runtime)

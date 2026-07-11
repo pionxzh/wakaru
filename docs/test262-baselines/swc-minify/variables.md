@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 1.7.26
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
@@ -22,14 +23,13 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 178 | 130 | 48 | 3 | 3 | 123 | 1 |
+| 178 | 178 | 0 | 3 | 3 | 171 | 1 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-runtime | 3 |
-| skipped | negative | 48 |
 | unsupported | node-vm-baseline | 1 |
 | unsupported | swc-parse-async-ident | 2 |
 

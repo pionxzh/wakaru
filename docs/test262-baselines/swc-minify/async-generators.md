@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 1.7.26
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
@@ -22,23 +23,21 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2963 | 674 | 2289 | 20 | 22 | 632 | 0 |
+| 2963 | 2963 | 0 | 43 | 71 | 2847 | 2 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-reject | 4 |
-| rejected | transform-runtime | 18 |
-| skipped | flag:async | 1909 |
-| skipped | host-api | 2 |
-| skipped | negative | 378 |
-| unsupported | node-vm-baseline | 5 |
-| unsupported | sloppy-only-strict-ident | 7 |
+| rejected | transform-runtime | 67 |
+| unsupported | node-vm-baseline | 10 |
+| unsupported | sloppy-only-strict-ident | 25 |
 | unsupported | swc-parse-async-ident | 4 |
 | unsupported | swc-parse-yield-function-name | 2 |
 | unsupported | swc-parse-yield-ident | 2 |
 
 ## Failures
 
-No Wakaru correctness failures.
+- test/language/expressions/async-arrow-function/arrow-returns-promise.js (decompiled-runtime)
+- test/language/statements/async-generator/return-undefined-implicit-and-explicit.js (decompiled-runtime)

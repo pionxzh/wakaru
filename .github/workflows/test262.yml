@@ -42,7 +42,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 22
       - name: Test correctness tooling
         run: node --test --test-concurrency=1 scripts/correctness/*.test.mjs
       - name: Cache pinned Test262 corpus
@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Cache pinned Test262 corpus

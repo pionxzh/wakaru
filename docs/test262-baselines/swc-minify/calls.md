@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 1.7.26
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
@@ -22,16 +23,13 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 193 | 185 | 8 | 7 | 0 | 178 | 0 |
+| 193 | 193 | 0 | 9 | 0 | 184 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| skipped | flag:async | 1 |
-| skipped | host-api | 2 |
-| skipped | negative | 5 |
-| unsupported | node-vm-baseline | 7 |
+| unsupported | node-vm-baseline | 9 |
 
 ## Failures
 

@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "test262": {
     "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "harness": {
+    "version": 2
   },
   "environment": {
     "nodeMajor": 22
@@ -30,133 +33,85 @@
   },
   "totals": {
     "discovered": 193,
-    "runnable": 185,
-    "skipped": 8,
-    "unsupported": 7,
+    "runnable": 193,
+    "skipped": 0,
+    "unsupported": 9,
     "rejected": 0,
-    "passed": 178,
+    "passed": 184,
     "failed": 0
   },
   "outcomes": [
     {
       "path": "test/language/expressions/call/eval-realm-indirect.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "host-api",
-      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
-      "summary": "host-api"
+      "variant": "sloppy",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "9430d800289276bb55fb41bdd557d8bfb3f75ddf78201cad2d5eecd1425e4dfc",
+      "summary": "Error: sloppy: expected success, got runtime TypeError: eval is not a function"
     },
     {
       "path": "test/language/expressions/call/eval-spread.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "eb52e7dbdc421df114538b9cd0073cc31ed97d8619d3fc310fac8456e1a8cf04",
-      "summary": "Test262Error: Expected SameValue(«\"local\"», «1») to be true"
-    },
-    {
-      "path": "test/language/expressions/call/S11.2.4_A1.3_T1.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "4d409c17073fa45bd2e23ce24e05d4d674c08d0a2150ff7303211be3ae19896e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"local\"», «1») to be true"
     },
     {
       "path": "test/language/expressions/call/tco-call-args.js",
-      "variant": "case",
+      "variant": "strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
+      "fingerprint": "dab150e79c2be1e33d95d382a85804072f56202df86fa619447bccda631f5ab4",
+      "summary": "Error: strict: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/call/tco-member-args.js",
-      "variant": "case",
+      "variant": "strict",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
+      "fingerprint": "dab150e79c2be1e33d95d382a85804072f56202df86fa619447bccda631f5ab4",
+      "summary": "Error: strict: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/call/tco-non-eval-function-dynamic.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
+      "fingerprint": "30b5d007776d25725ef44281b3bf763865f69116616b0b752b1a1657b8594643",
+      "summary": "Error: sloppy: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/call/tco-non-eval-function.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
+      "fingerprint": "30b5d007776d25725ef44281b3bf763865f69116616b0b752b1a1657b8594643",
+      "summary": "Error: sloppy: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/call/tco-non-eval-global.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
+      "fingerprint": "30b5d007776d25725ef44281b3bf763865f69116616b0b752b1a1657b8594643",
+      "summary": "Error: sloppy: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/call/tco-non-eval-with.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "a9cb8b57485e34394ce5135bc81d5e94bd053edd2cc679ffc25c967289164e51",
-      "summary": "RangeError: Maximum call stack size exceeded"
-    },
-    {
-      "path": "test/language/expressions/new.target/escaped-new.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/new.target/escaped-target.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/new.target/unary-expr.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "flag:async",
-      "fingerprint": "73befc4f08239c6535035efffd85481b781cd92e91d3e049f5754da83d48498b",
-      "summary": "flag:async"
+      "fingerprint": "30b5d007776d25725ef44281b3bf763865f69116616b0b752b1a1657b8594643",
+      "summary": "Error: sloppy: expected success, got runtime RangeError: Maximum call stack size exceeded"
     },
     {
       "path": "test/language/expressions/new/non-ctor-err-realm.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "host-api",
-      "fingerprint": "f2014dca973049956d3ba2a0fb7d98dee83cc85ca669f8639f5a0d5e732e1b21",
-      "summary": "host-api"
-    },
-    {
-      "path": "test/language/expressions/property-accessors/non-identifier-name.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/expressions/this/S11.1.1_A1.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "variant": "sloppy,strict",
+      "status": "unsupported",
+      "kind": "node-vm-baseline",
+      "fingerprint": "eb6597c7776ac8ca9a784ec4ded6eacd74e3b4c16261a233717da8d38ace26b5",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"undefined\"», «\"function\"») to be true"
     }
   ]
 }

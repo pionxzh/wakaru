@@ -4,6 +4,7 @@
 
 - complete: true
 - test262Revision: 05bb032907160d66c212589d345fa0e335e2738c
+- harnessVersion: 2
 - nodeMajor: 22
 - producerVersion: 5.31.6
 - producerConfigHash: 845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad
@@ -22,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1396 | 1146 | 250 | 19 | 8 | 1118 | 1 |
+| 1396 | 1396 | 0 | 19 | 8 | 1368 | 1 |
 
 ## Reasons
 
@@ -31,7 +32,6 @@
 | rejected | swc-array-binding-elision | 6 |
 | rejected | swc-print-new-arrow-parens | 1 |
 | rejected | transform-runtime | 1 |
-| skipped | negative | 250 |
 | unsupported | node-vm-baseline | 10 |
 | unsupported | sloppy-only-strict-ident | 3 |
 | unsupported | swc-parse-async-ident | 3 |

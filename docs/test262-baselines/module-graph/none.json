@@ -10,9 +10,9 @@
     "nodeMajor": 22
   },
   "producer": {
-    "name": "terser-light",
-    "version": "5.31.6",
-    "configHash": "845e39e180dd998ad60988ef83becf636083a7110da4e297c266d72a770ac7ad"
+    "name": "none",
+    "version": "builtin",
+    "configHash": "e120e019753b4151fe08f6e1bc7a188f80feb455ad9416656f6bc275440941be"
   },
   "wakaru": {
     "level": "minimal",
@@ -31,8 +31,8 @@
     "runnable": 599,
     "skipped": 156,
     "unsupported": 39,
-    "rejected": 29,
-    "passed": 531,
+    "rejected": 1,
+    "passed": 559,
     "failed": 0
   },
   "outcomes": [
@@ -237,22 +237,6 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/eval-export-dflt-cls-anon-semi.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "4d9e3d52b07ae9c560ffab462df93c04416fd68a26a89b4db9a215714ecce54d",
-      "summary": "SyntaxError: Unexpected token: keyword (if)"
-    },
-    {
-      "path": "test/language/module-code/eval-export-dflt-fun-anon-semi.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "4d9e3d52b07ae9c560ffab462df93c04416fd68a26a89b4db9a215714ecce54d",
-      "summary": "SyntaxError: Unexpected token: keyword (if)"
-    },
-    {
       "path": "test/language/module-code/eval-gtbndng-indirect-trlng-comma_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -307,14 +291,6 @@
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/eval-rqstd-once.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "a989346c3b404252cc12e83e78402e5cad0b902d17ea94cc45077ba4c9efcc56",
-      "summary": "SyntaxError: Name or string expected"
     },
     {
       "path": "test/language/module-code/eval-rqstd-order-1_FIXTURE.js",
@@ -459,14 +435,6 @@
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/import-attributes/import-attribute-empty.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "338bde3d6da281e0da227d229255f60ef0de1f8946f237a87d2e5b46b1101261",
-      "summary": "SyntaxError: Unexpected token: keyword (with)"
     },
     {
       "path": "test/language/module-code/import-attributes/import-attribute-key-identifiername.js",
@@ -621,28 +589,12 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-iee-err-not-found-as.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
-    },
-    {
       "path": "test/language/module-code/instn-iee-err-not-found-empty_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/instn-iee-err-not-found.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
     },
     {
       "path": "test/language/module-code/instn-iee-iee-cycle-2_FIXTURE.js",
@@ -680,8 +632,8 @@
       "path": "test/language/module-code/instn-named-bndng-dflt-expr.js",
       "variant": "case",
       "status": "rejected",
-      "kind": "transform-runtime",
-      "fingerprint": "1c469a1d6b5ab16549fc2af84c7071d053abfd46a37947030b89cf42e54d8c88",
+      "kind": "swc-print-export-default-function-expression",
+      "fingerprint": "42c082d508a08c410b06e1dd9519547f028846cd878cf9b0962db6aecde02393",
       "summary": "Error: module: expected success, got runtime Test262Error: binding is created but not initialized Expected a ReferenceError to be thrown but no exception was thrown at all"
     },
     {
@@ -701,36 +653,12 @@
       "summary": "fixture"
     },
     {
-      "path": "test/language/module-code/instn-named-err-not-found-as.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
-    },
-    {
-      "path": "test/language/module-code/instn-named-err-not-found-dflt.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
-    },
-    {
       "path": "test/language/module-code/instn-named-err-not-found-empty_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/instn-named-err-not-found.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
     },
     {
       "path": "test/language/module-code/instn-named-iee-cycle-2_FIXTURE.js",
@@ -915,14 +843,6 @@
       "kind": "fixture",
       "fingerprint": "4ad92a4133e840789d143c04148896029c5c8282c41e9eb22b64e96b71e667a4",
       "summary": "fixture"
-    },
-    {
-      "path": "test/language/module-code/instn-star-err-not-found.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "b136f8abd6f1ebebe226cd3eeb433eed4a85fc77f7d3ef2be88c47d81fb3aac7",
-      "summary": "Error: terser produced empty output"
     },
     {
       "path": "test/language/module-code/instn-star-id-name.js",
@@ -1333,14 +1253,6 @@
       "summary": "Error: module: expected success, got resolution Error: Cannot find module '<tmp> imported from <tmp>"
     },
     {
-      "path": "test/language/module-code/top-level-await/await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
       "path": "test/language/module-code/top-level-await/dfs-invariant-async_FIXTURE.js",
       "variant": "case",
       "status": "skipped",
@@ -1529,8 +1441,8 @@
       "variant": "case",
       "status": "unsupported",
       "kind": "swc-parse-async-ident",
-      "fingerprint": "a2eb0d237623900e90807e1f1c9cae92ec524f388198aa1ece9866bdf81fba36",
-      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (7..12, InvalidIdentInAsync) }"
+      "fingerprint": "af3435e2df09e65c96ba33a058057449a31767cbcbe7946ee5046643830b56aa",
+      "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (259..264, InvalidIdentInAsync) }"
     },
     {
       "path": "test/language/module-code/top-level-await/pending-async-dep-from-cycle_cycle-leaf_FIXTURE.js",
@@ -1611,142 +1523,6 @@
       "kind": "node-module-baseline",
       "fingerprint": "924b45e8b8b15ab1a95651a7cb182cf01d9bad66c88c352f38ba2927b9b294cf",
       "summary": "Error: module: expected success, got runtime Error: module worker produced no outcome: Warning: Detected unsettled top-level await at file://<tmp>:26\n  if (true) await donePromise;"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/block-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/export-class-decl-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/export-dflt-assign-expr-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/export-dft-class-decl-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/export-lex-decl-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/export-var-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/for-await-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/for-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/for-in-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/for-of-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/if-block-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/if-expr-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/top-level-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/try-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/typeof-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/void-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
-    },
-    {
-      "path": "test/language/module-code/top-level-await/syntax/while-await-expr-regexp.js",
-      "variant": "case",
-      "status": "rejected",
-      "kind": "transform-reject",
-      "fingerprint": "35d93155059520cf3a28ff02ad9e71c79dfc92c8aaa87bb311c8e97c0fdec301",
-      "summary": "SyntaxError: Unexpected token: operator (/)"
     },
     {
       "path": "test/language/module-code/top-level-await/tla_FIXTURE.js",

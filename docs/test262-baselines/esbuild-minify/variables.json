@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "test262": {
     "revision": "05bb032907160d66c212589d345fa0e335e2738c"
+  },
+  "harness": {
+    "version": 2
   },
   "environment": {
     "nodeMajor": 22
@@ -25,541 +28,157 @@
   },
   "totals": {
     "discovered": 178,
-    "runnable": 130,
-    "skipped": 48,
+    "runnable": 178,
+    "skipped": 0,
     "unsupported": 1,
     "rejected": 17,
-    "passed": 112,
+    "passed": 160,
     "failed": 0
   },
   "outcomes": [
     {
-      "path": "test/language/statements/variable/12.2.1-1gs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/12.2.1-4gs.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-final-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-final.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-first-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-first.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-middle-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-middle.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-list-repeated.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-single-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-fn-strict-single.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-final-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-final.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-first-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-first.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-middle-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-middle.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-list-repeated.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-single-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/arguments-strict-single.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
       "path": "test/language/statements/variable/binding-resolution.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "unsupported",
       "kind": "node-vm-baseline",
-      "fingerprint": "b5fc990e3f8fcd5fe57162d7f92f532d5351ec802cc6d10dbf3bc0ca54f0a9f4",
-      "summary": "Test262Error: Expected SameValue(«undefined», «true») to be true"
+      "fingerprint": "84a23beb64d51ca2f92cf26b8672585d60ac18f8c71125b197ebb32ec8d84612",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«undefined», «true») to be true"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-init-fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-init-fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
-      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+      "fingerprint": "1c5863a4376c9c13576e6b4d8c58163db72489eeb0e387c9cc7f3c82e24180f7",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-init-fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
-      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+      "fingerprint": "c8d12dc25dce3c9d61ae80c885d058919fa9515e405f43284074306692d9d81e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-init-fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
-      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-elem-id-static-init-await-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-init-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-ary.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-id.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/ary-ptrn-rest-not-final-obj.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/dstr/obj-ptrn-elem-id-static-init-await-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/obj-ptrn-id-init-fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/obj-ptrn-id-init-fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "3bce6bb0132b319cdebd2f9c0a73b5892798a3ed0fb41fd518a291221e72325b",
-      "summary": "Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
+      "fingerprint": "1c5863a4376c9c13576e6b4d8c58163db72489eeb0e387c9cc7f3c82e24180f7",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCover\"», «\"xCover\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/obj-ptrn-id-init-fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "47fb1e628c5780e678c8f7c8e2409a85c959ffb80d2d23bd77f3d4f025485a3f",
-      "summary": "Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
+      "fingerprint": "c8d12dc25dce3c9d61ae80c885d058919fa9515e405f43284074306692d9d81e",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xFn\"», «\"xFn\"») to be false"
     },
     {
       "path": "test/language/statements/variable/dstr/obj-ptrn-id-init-fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "0d7674d7a6e1d9c2f11c0d8404ad761da05bd08e0bf9d05a6b737ce69a1247e9",
-      "summary": "Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-final-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-final.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-first-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-first.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-middle-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-middle.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-list-repeated.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-single-init.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/eval-strict-single.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "87e14f19ab86dd4eddcc317bed1eaaf81fbbc2c3a4dc7b0030e19b26e33fceb9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xGen\"», «\"xGen\"») to be false"
     },
     {
       "path": "test/language/statements/variable/fn-name-class.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime-inferred-name",
-      "fingerprint": "da44a0bbd0c26f20cbe2c9c5ec86695d6205fe00eaf4595c1c1576219b445713",
-      "summary": "Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
+      "fingerprint": "33f8ce38e81d6b891a51da398fd01cc708c5e0acffa4dc7f79e27a5d39f8eced",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/variable/fn-name-cover.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/statements/variable/fn-name-fn.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/statements/variable/fn-name-gen.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "db08428b5556e94ca01d5f0044ec9012b980f10d33fadcd294f70aedaf0a1b33",
-      "summary": "Test262Error: Expected true but got false"
-    },
-    {
-      "path": "test/language/statements/variable/id-arguments-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/id-eval-strict.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "82a4e1c6891c50846d49fbc2dd343ab074e778c61428e45ba5e5ab1d24c97f54",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected true but got false"
     },
     {
       "path": "test/language/statements/variable/S12.2_A11.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "94cc95d5edf6a728e60aacacc42ff7fd0c586a1b8adb39f9cf9052af7d14d40d",
-      "summary": "Test262Error: #2: __declared__var === \"baloon\". Actual:  __declared__var ===undefined"
+      "fingerprint": "60848782dbb65a9f0f79ba3c3cccc5bd1c08558c1843c8654f447c50032d8050",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: __declared__var === \"baloon\". Actual:  __declared__var ===undefined"
     },
     {
       "path": "test/language/statements/variable/S12.2_A2.js",
-      "variant": "case",
+      "variant": "sloppy",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4726af65294a0e5cce8260bc5a26d52b321e60bebeb98cc44ea4c6845254b135",
-      "summary": "Test262Error: #2: delete(this[\"__variable\"])===false"
+      "fingerprint": "58b9c1def2ba27f5433dfab3e16f0e149959b1fb47104dc8f8425daf8e7c273c",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #2: delete(this[\"__variable\"])===false"
     },
     {
       "path": "test/language/statements/variable/S12.2_A6_T1.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "b546670ec7dfd9676229c2a1982f8a4f658747d5bab3fc0b1bd427867ef706bd",
-      "summary": "Test262Error: #1: Variable declaration inside \"try\" block is admitted"
+      "fingerprint": "c12be3473d3bc8a5ed23b1aa83c1cada1ae771ad43aa1135f962dfe8eca5c5c4",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try\" block is admitted"
     },
     {
       "path": "test/language/statements/variable/S12.2_A6_T2.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "4ea6af1f2402cc6f6a030350d227d789c96a7b077e4fab9734166b2acbfebd11",
-      "summary": "Test262Error: #1: Variable declaration inside \"try-catch\" block is admitted"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T1.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T2.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T3.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T4.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T5.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T6.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T7.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
-    },
-    {
-      "path": "test/language/statements/variable/S12.2_A8_T8.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "9cadfca6dafdcb88505ebb337d67328868a3b2f4da262bb50aaf8b435ad1a990",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: Variable declaration inside \"try-catch\" block is admitted"
     },
     {
       "path": "test/language/statements/variable/S12.2_A9.js",
-      "variant": "case",
+      "variant": "sloppy,strict",
       "status": "rejected",
       "kind": "transform-runtime",
-      "fingerprint": "7f39c4ba93a9b9f655b3bd315f0cb24a1e9bb801e9bd056e97671eef3e617cce",
-      "summary": "Test262Error: #1: When using property attributes, {DontEnum} not used"
-    },
-    {
-      "path": "test/language/statements/variable/static-init-await-binding-invalid.js",
-      "variant": "case",
-      "status": "skipped",
-      "kind": "negative",
-      "fingerprint": "f7ba2d770b48b4144a1b31f17ef6607d66a0a9a50cea31d02091869e33016c2f",
-      "summary": "negative"
+      "fingerprint": "f27628204a27a3d21f5738fdbe3f32a784f2530cdd7c20e1feb6193f2a0e9cf9",
+      "summary": "Error: sloppy: expected success, got runtime Test262Error: #1: When using property attributes, {DontEnum} not used"
     }
   ]
 }
