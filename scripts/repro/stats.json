@@ -1,10 +1,10 @@
 {
-  "commit": "4aff713b",
-  "date": "2026-07-10",
+  "commit": "7902e615",
+  "date": "2026-07-11",
   "aggregate": {
-    "yes": 1630,
+    "yes": 1648,
     "total": 1707,
-    "pct": 95.5
+    "pct": 96.5
   },
   "matrices": [
     {
@@ -49,11 +49,11 @@
     },
     {
       "name": "object-rest-spread",
-      "yes": 160,
-      "no": 18,
+      "yes": 178,
+      "no": 0,
       "error": 0,
       "total": 178,
-      "pct": 89.9
+      "pct": 100
     },
     {
       "name": "optional-nullish",

@@ -6,10 +6,11 @@ use swc_core::common::{Mark, Span, Spanned};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
-    BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, CondExpr, Decl, Expr,
-    ExprStmt, FnDecl, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp,
-    Module, ModuleItem, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, ComputedPropName, CondExpr,
+    Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, JSXElementName,
+    KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
+    ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -22,6 +23,7 @@ use super::cross_module_helper_refs::{
 };
 use super::helper_matcher::{
     binding_key, member_prop_name, remaining_refs_outside_declarations,
+    remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
     remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
 };
 use super::transpiler_helper_utils::{
@@ -189,6 +191,19 @@ fn run_un_object_rest(
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let swc_numeric_helper_namespaces =
         collect_swc_numeric_helper_namespaces(module, unresolved_mark);
+
+    let property_key_helpers =
+        collect_property_key_coercion_helpers(module, local_helpers, unresolved_mark);
+    let computed_context = ComputedObjectRestContext {
+        named_helpers: &named_helpers,
+        tslib_namespaces,
+        swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
+        cross_module_namespaces: &cross_module_helpers.namespaces,
+        property_key_helpers: &property_key_helpers,
+    };
+    let collapsed_key_aliases = recover_computed_object_rest(module, &computed_context);
+    remove_unused_computed_key_aliases(module, &collapsed_key_aliases);
+    remove_unused_property_key_helpers(module, &property_key_helpers);
 
     if named_helpers.is_empty()
         && cross_module_helpers.namespaces.is_empty()
@@ -361,6 +376,957 @@ fn run_un_object_rest(
             remove_unused_esbuild_object_rest_builtin_aliases(module, &esbuild_rest_aliases);
         }
     }
+}
+
+fn remove_unused_property_key_helpers(module: &mut Module, helpers: &HashSet<BindingKey>) {
+    if helpers.is_empty() {
+        return;
+    }
+    let remaining = remaining_refs_outside_declarations(module, helpers, helpers);
+    let removable: HashSet<_> = helpers.difference(&remaining).cloned().collect();
+    if removable.is_empty() {
+        return;
+    }
+    remove_fn_decls_from_body_by_binding(&mut module.body, &removable);
+    remove_var_declarators_by_binding(&mut module.body, &removable);
+    remove_import_specifiers_by_binding(&mut module.body, &removable);
+}
+
+const PROPERTY_KEY_HELPER_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/toPropertyKey",
+    "@babel/runtime/helpers/esm/toPropertyKey",
+    "@swc/helpers/_/_to_property_key",
+];
+
+fn collect_property_key_coercion_helpers(
+    module: &Module,
+    local_helpers: &LocalHelperContext,
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
+    let mut typeof_helpers: HashSet<_> = local_helpers
+        .helpers_of_kind(TranspilerHelperKind::Typeof)
+        .into_keys()
+        .collect();
+    collect_property_key_typeof_helpers(module, unresolved_mark, &mut typeof_helpers);
+    let mut helpers = HashSet::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if PROPERTY_KEY_HELPER_PATHS.contains(&import.src.value.as_str().unwrap_or("")) =>
+            {
+                for specifier in &import.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Named(specifier) => &specifier.local,
+                        ImportSpecifier::Default(specifier) => &specifier.local,
+                        ImportSpecifier::Namespace(specifier) => &specifier.local,
+                    };
+                    helpers.insert(binding_key(local));
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(decl)))
+                if property_key_coercion_function_matches(
+                    &decl.function,
+                    &typeof_helpers,
+                    unresolved_mark,
+                ) =>
+            {
+                helpers.insert(binding_key(&decl.ident));
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                collect_property_key_var_helpers(
+                    var,
+                    &typeof_helpers,
+                    unresolved_mark,
+                    &mut helpers,
+                );
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Fn(decl)
+                    if property_key_coercion_function_matches(
+                        &decl.function,
+                        &typeof_helpers,
+                        unresolved_mark,
+                    ) =>
+                {
+                    helpers.insert(binding_key(&decl.ident));
+                }
+                Decl::Var(var) => collect_property_key_var_helpers(
+                    var,
+                    &typeof_helpers,
+                    unresolved_mark,
+                    &mut helpers,
+                ),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    helpers
+}
+
+fn collect_property_key_typeof_helpers(
+    module: &Module,
+    unresolved_mark: Mark,
+    helpers: &mut HashSet<BindingKey>,
+) {
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if matches!(
+                    import.src.value.as_str(),
+                    Some("@babel/runtime/helpers/typeof")
+                        | Some("@babel/runtime/helpers/esm/typeof")
+                        | Some("@swc/helpers/_/_type_of")
+                ) =>
+            {
+                for specifier in &import.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Named(specifier) => &specifier.local,
+                        ImportSpecifier::Default(specifier) => &specifier.local,
+                        ImportSpecifier::Namespace(specifier) => &specifier.local,
+                    };
+                    helpers.insert(binding_key(local));
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(decl)))
+                if swc_typeof_function_matches(&decl.function, unresolved_mark) =>
+            {
+                helpers.insert(binding_key(&decl.ident));
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Some(key) = var_declarator_binding_key(decl) else {
+                        continue;
+                    };
+                    if decl
+                        .init
+                        .as_deref()
+                        .is_some_and(|init| swc_typeof_callable_matches(init, unresolved_mark))
+                    {
+                        helpers.insert(key);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn swc_typeof_callable_matches(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match strip_parens(expr) {
+        Expr::Fn(function) => swc_typeof_function_matches(&function.function, unresolved_mark),
+        Expr::Arrow(arrow) if arrow.params.len() == 1 => {
+            let Pat::Ident(param) = &arrow.params[0] else {
+                return false;
+            };
+            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+                return false;
+            };
+            swc_typeof_block_matches(&block.stmts, &param.id, unresolved_mark)
+        }
+        _ => false,
+    }
+}
+
+fn swc_typeof_function_matches(function: &Function, unresolved_mark: Mark) -> bool {
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(param) = &function.params[0].pat else {
+        return false;
+    };
+    function
+        .body
+        .as_ref()
+        .is_some_and(|body| swc_typeof_block_matches(&body.stmts, &param.id, unresolved_mark))
+}
+
+fn swc_typeof_block_matches(stmts: &[Stmt], param: &Ident, unresolved_mark: Mark) -> bool {
+    let Some(Stmt::Return(return_stmt)) = stmts.last() else {
+        return false;
+    };
+    let Some(Expr::Cond(cond)) = return_stmt.arg.as_deref().map(strip_parens) else {
+        return false;
+    };
+    if !matches!(cond.cons.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("symbol"))
+    {
+        return false;
+    }
+    if !matches!(strip_parens(&cond.alt), Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::TypeOf && matches!(strip_parens(&unary.arg), Expr::Ident(id) if binding_key(id) == binding_key(param)))
+    {
+        return false;
+    }
+
+    let mut signals = SwcTypeofTestSignals {
+        param: binding_key(param),
+        unresolved_mark,
+        saw_symbol_typeof: false,
+        saw_constructor_symbol: false,
+    };
+    cond.test.visit_with(&mut signals);
+    signals.saw_symbol_typeof && signals.saw_constructor_symbol
+}
+
+struct SwcTypeofTestSignals {
+    param: BindingKey,
+    unresolved_mark: Mark,
+    saw_symbol_typeof: bool,
+    saw_constructor_symbol: bool,
+}
+
+impl Visit for SwcTypeofTestSignals {
+    fn visit_bin_expr(&mut self, binary: &swc_core::ecma::ast::BinExpr) {
+        if matches!(binary.op, BinaryOp::NotEq | BinaryOp::NotEqEq) {
+            let left_symbol_typeof = is_global_symbol_typeof(&binary.left, self.unresolved_mark);
+            let right_symbol_typeof = is_global_symbol_typeof(&binary.right, self.unresolved_mark);
+            let left_undefined = matches!(binary.left.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("undefined"));
+            let right_undefined = matches!(binary.right.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("undefined"));
+            self.saw_symbol_typeof |=
+                (left_symbol_typeof && right_undefined) || (right_symbol_typeof && left_undefined);
+        }
+        if matches!(binary.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+            self.saw_constructor_symbol |= constructor_symbol_comparison_matches(
+                &binary.left,
+                &binary.right,
+                &self.param,
+                self.unresolved_mark,
+            ) || constructor_symbol_comparison_matches(
+                &binary.right,
+                &binary.left,
+                &self.param,
+                self.unresolved_mark,
+            );
+        }
+        binary.visit_children_with(self);
+    }
+}
+
+fn is_global_symbol_typeof(expr: &Expr, unresolved_mark: Mark) -> bool {
+    matches!(
+        strip_parens(expr),
+        Expr::Unary(unary)
+            if unary.op == swc_core::ecma::ast::UnaryOp::TypeOf
+                && matches!(strip_parens(&unary.arg), Expr::Ident(id) if id.sym.as_ref() == "Symbol" && id.ctxt.outer() == unresolved_mark)
+    )
+}
+
+fn constructor_symbol_comparison_matches(
+    member_expr: &Expr,
+    symbol_expr: &Expr,
+    param: &BindingKey,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Member(member) = strip_parens(member_expr) else {
+        return false;
+    };
+    member_prop_name(&member.prop, "constructor")
+        && matches!(strip_parens(member.obj.as_ref()), Expr::Ident(id) if binding_key(id) == *param)
+        && matches!(strip_parens(symbol_expr), Expr::Ident(id) if id.sym.as_ref() == "Symbol" && id.ctxt.outer() == unresolved_mark)
+}
+
+fn collect_property_key_var_helpers(
+    var: &VarDecl,
+    typeof_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+    helpers: &mut HashSet<BindingKey>,
+) {
+    for decl in &var.decls {
+        let Some(key) = var_declarator_binding_key(decl) else {
+            continue;
+        };
+        let Some(init) = decl.init.as_deref() else {
+            continue;
+        };
+        if property_key_coercion_callable_matches(init, typeof_helpers, unresolved_mark)
+            || property_key_runtime_require_matches(init, unresolved_mark)
+        {
+            helpers.insert(key);
+        }
+    }
+}
+
+fn property_key_runtime_require_matches(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let expr = strip_parens(expr);
+    let call = match expr {
+        Expr::Call(call) => call,
+        Expr::Member(member) if member_prop_name(&member.prop, "default") => {
+            let Expr::Call(call) = strip_parens(member.obj.as_ref()) else {
+                return false;
+            };
+            call
+        }
+        _ => return false,
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark)
+    {
+        return false;
+    }
+    matches!(
+        call.args[0].expr.as_ref(),
+        Expr::Lit(Lit::Str(path))
+            if path.value.as_str().is_some_and(|path| PROPERTY_KEY_HELPER_PATHS.contains(&path))
+    )
+}
+
+fn property_key_coercion_callable_matches(
+    expr: &Expr,
+    typeof_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    match strip_parens(expr) {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(param) = &arrow.params[0] else {
+                return false;
+            };
+            match arrow.body.as_ref() {
+                BlockStmtOrExpr::Expr(expr) => {
+                    property_key_cond_candidate(expr, typeof_helpers, unresolved_mark)
+                        .is_some_and(|candidate| candidate == binding_key(&param.id))
+                }
+                BlockStmtOrExpr::BlockStmt(block) => property_key_block_matches(
+                    &block.stmts,
+                    &param.id,
+                    typeof_helpers,
+                    unresolved_mark,
+                ),
+            }
+        }
+        Expr::Fn(function) => property_key_coercion_function_matches(
+            &function.function,
+            typeof_helpers,
+            unresolved_mark,
+        ),
+        _ => false,
+    }
+}
+
+fn property_key_coercion_function_matches(
+    function: &Function,
+    typeof_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(param) = &function.params[0].pat else {
+        return false;
+    };
+    let Some(body) = &function.body else {
+        return false;
+    };
+    property_key_block_matches(&body.stmts, &param.id, typeof_helpers, unresolved_mark)
+}
+
+fn property_key_block_matches(
+    stmts: &[Stmt],
+    param: &Ident,
+    typeof_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    let Some(Stmt::Return(return_stmt)) = stmts.last() else {
+        return false;
+    };
+    let Some(returned) = return_stmt.arg.as_deref() else {
+        return false;
+    };
+    let Some(candidate) = property_key_cond_candidate(returned, typeof_helpers, unresolved_mark)
+    else {
+        return false;
+    };
+    if candidate == binding_key(param) {
+        return true;
+    }
+
+    stmts[..stmts.len() - 1].iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
+        var.decls.iter().any(|decl| {
+            let Some(binding) = var_declarator_binding_key(decl) else {
+                return false;
+            };
+            binding == candidate
+                && decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| property_key_candidate_init_matches(init, param))
+        })
+    })
+}
+
+fn property_key_candidate_init_matches(expr: &Expr, param: &Ident) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    call.args.len() == 2
+        && call.args.iter().all(|arg| arg.spread.is_none())
+        && matches!(strip_parens(call.args[0].expr.as_ref()), Expr::Ident(id) if binding_key(id) == binding_key(param))
+        && matches!(call.args[1].expr.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("string"))
+}
+
+fn property_key_cond_candidate(
+    expr: &Expr,
+    typeof_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<BindingKey> {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return None;
+    };
+    let candidate = property_key_symbol_test_candidate(&cond.test, typeof_helpers)?;
+    if !matches!(strip_parens(&cond.cons), Expr::Ident(id) if binding_key(id) == candidate) {
+        return None;
+    }
+    property_key_string_fallback_matches(&cond.alt, &candidate, unresolved_mark)
+        .then_some(candidate)
+}
+
+fn property_key_symbol_test_candidate(
+    expr: &Expr,
+    typeof_helpers: &HashSet<BindingKey>,
+) -> Option<BindingKey> {
+    let Expr::Bin(binary) = strip_parens(expr) else {
+        return None;
+    };
+    if !matches!(binary.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+        return None;
+    }
+    if matches!(binary.right.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("symbol"))
+    {
+        return property_key_type_test_candidate(&binary.left, typeof_helpers);
+    }
+    if matches!(binary.left.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("symbol"))
+    {
+        return property_key_type_test_candidate(&binary.right, typeof_helpers);
+    }
+    None
+}
+
+fn property_key_type_test_candidate(
+    expr: &Expr,
+    typeof_helpers: &HashSet<BindingKey>,
+) -> Option<BindingKey> {
+    match strip_parens(expr) {
+        Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::TypeOf => {
+            let Expr::Ident(candidate) = strip_parens(&unary.arg) else {
+                return None;
+            };
+            Some(binding_key(candidate))
+        }
+        Expr::Call(call) if call.args.len() == 1 && call.args[0].spread.is_none() => {
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            let Expr::Ident(helper) = strip_parens(callee) else {
+                return None;
+            };
+            if !typeof_helpers.contains(&binding_key(helper)) {
+                return None;
+            }
+            let Expr::Ident(candidate) = strip_parens(call.args[0].expr.as_ref()) else {
+                return None;
+            };
+            Some(binding_key(candidate))
+        }
+        _ => None,
+    }
+}
+
+fn property_key_string_fallback_matches(
+    expr: &Expr,
+    candidate: &BindingKey,
+    unresolved_mark: Mark,
+) -> bool {
+    match strip_parens(expr) {
+        Expr::Bin(binary) if binary.op == BinaryOp::Add => {
+            let candidate_on_left = matches!(strip_parens(&binary.left), Expr::Ident(id) if binding_key(id) == *candidate)
+                && matches!(binary.right.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some(""));
+            let candidate_on_right = matches!(strip_parens(&binary.right), Expr::Ident(id) if binding_key(id) == *candidate)
+                && matches!(binary.left.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some(""));
+            candidate_on_left || candidate_on_right
+        }
+        Expr::Call(call) if call.args.len() == 1 && call.args[0].spread.is_none() => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "String" && id.ctxt.outer() == unresolved_mark)
+                && matches!(strip_parens(call.args[0].expr.as_ref()), Expr::Ident(id) if binding_key(id) == *candidate)
+        }
+        _ => false,
+    }
+}
+
+struct ComputedObjectRestContext<'a> {
+    named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
+    cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
+    property_key_helpers: &'a HashSet<BindingKey>,
+}
+
+fn recover_computed_object_rest(
+    module: &mut Module,
+    context: &ComputedObjectRestContext<'_>,
+) -> HashSet<BindingKey> {
+    let mut collapsed_key_aliases = HashSet::new();
+    let mut processor = ComputedObjectRestProcessor {
+        context,
+        collapsed_key_aliases: &mut collapsed_key_aliases,
+    };
+    module.visit_mut_children_with(&mut processor);
+    recover_computed_object_rest_in_module_items(
+        &mut module.body,
+        context,
+        &mut collapsed_key_aliases,
+    );
+    collapsed_key_aliases
+}
+
+struct ComputedObjectRestProcessor<'a, 'b, 'c> {
+    context: &'a ComputedObjectRestContext<'b>,
+    collapsed_key_aliases: &'c mut HashSet<BindingKey>,
+}
+
+impl VisitMut for ComputedObjectRestProcessor<'_, '_, '_> {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        recover_computed_object_rest_in_stmts(stmts, self.context, self.collapsed_key_aliases);
+    }
+}
+
+fn recover_computed_object_rest_in_module_items(
+    items: &mut Vec<ModuleItem>,
+    context: &ComputedObjectRestContext<'_>,
+    collapsed_key_aliases: &mut HashSet<BindingKey>,
+) {
+    let mut statements = Vec::new();
+    let mut rebuilt = Vec::with_capacity(items.len());
+    for item in std::mem::take(items) {
+        match item {
+            ModuleItem::Stmt(stmt) => statements.push(stmt),
+            declaration => {
+                recover_computed_object_rest_in_stmts(
+                    &mut statements,
+                    context,
+                    collapsed_key_aliases,
+                );
+                rebuilt.extend(statements.drain(..).map(ModuleItem::Stmt));
+                rebuilt.push(declaration);
+            }
+        }
+    }
+    recover_computed_object_rest_in_stmts(&mut statements, context, collapsed_key_aliases);
+    rebuilt.extend(statements.into_iter().map(ModuleItem::Stmt));
+    *items = rebuilt;
+}
+
+fn recover_computed_object_rest_in_stmts(
+    stmts: &mut Vec<Stmt>,
+    context: &ComputedObjectRestContext<'_>,
+    collapsed_key_aliases: &mut HashSet<BindingKey>,
+) {
+    let mut rebuilt = Vec::with_capacity(stmts.len());
+    for stmt in std::mem::take(stmts) {
+        let Some(extraction) = extract_computed_object_rest(&stmt, context) else {
+            rebuilt.push(stmt);
+            continue;
+        };
+
+        let preceding_access = if extraction.picked_index.is_none() {
+            rebuilt
+                .last()
+                .and_then(|stmt| computed_access_from_single_stmt(stmt, &extraction))
+        } else {
+            None
+        };
+        let picked = extraction.picked.clone().or(preceding_access);
+        let Some(picked) = picked else {
+            rebuilt.push(stmt);
+            continue;
+        };
+        let pattern_key = if binding_key(&extraction.pattern_key) == binding_key(&extraction.key) {
+            resolve_computed_key_alias_in_stmts(&rebuilt, &extraction.key)
+        } else {
+            extraction.pattern_key.clone()
+        };
+        if binding_key(&pattern_key) != binding_key(&extraction.key) {
+            collapsed_key_aliases.insert(binding_key(&extraction.key));
+        }
+        if extraction.picked_index.is_none() {
+            rebuilt.pop();
+        }
+
+        if !extraction.before.is_empty() {
+            rebuilt.push(var_decl_stmt(
+                extraction.span,
+                extraction.kind,
+                extraction.before,
+            ));
+        }
+        rebuilt.push(build_computed_rest_destructuring(
+            extraction.span,
+            &extraction.rest,
+            &extraction.source,
+            &pattern_key,
+            &picked,
+        ));
+        if !extraction.after.is_empty() {
+            rebuilt.push(var_decl_stmt(
+                extraction.span,
+                extraction.kind,
+                extraction.after,
+            ));
+        }
+    }
+    *stmts = rebuilt;
+}
+
+fn remove_unused_computed_key_aliases(module: &mut Module, aliases: &HashSet<BindingKey>) {
+    if aliases.is_empty() {
+        return;
+    }
+    let remaining = remaining_refs_outside_declarations(module, aliases, aliases);
+    let removable: HashSet<_> = aliases.difference(&remaining).cloned().collect();
+    if removable.is_empty() {
+        return;
+    }
+
+    let mut remover = UnusedComputedKeyAliasRemover {
+        removable: &removable,
+    };
+    module.visit_mut_children_with(&mut remover);
+    remove_var_declarators_by_binding(&mut module.body, &removable);
+}
+
+struct UnusedComputedKeyAliasRemover<'a> {
+    removable: &'a HashSet<BindingKey>,
+}
+
+impl VisitMut for UnusedComputedKeyAliasRemover<'_> {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        for stmt in stmts.iter_mut() {
+            let Stmt::Decl(Decl::Var(var)) = stmt else {
+                continue;
+            };
+            var.decls.retain(|decl| {
+                var_declarator_binding_key(decl).is_none_or(|key| !self.removable.contains(&key))
+            });
+        }
+        stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
+    }
+}
+
+fn resolve_computed_key_alias_in_stmts(stmts: &[Stmt], key: &Ident) -> Ident {
+    for stmt in stmts.iter().rev() {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        if let Some(original) = resolve_computed_key_alias_from_decls(&var.decls, key) {
+            return original;
+        }
+    }
+    key.clone()
+}
+
+struct ComputedObjectRestExtraction {
+    span: Span,
+    kind: VarDeclKind,
+    rest: BindingIdent,
+    source: Box<Expr>,
+    key: Ident,
+    pattern_key: Ident,
+    picked: Option<BindingIdent>,
+    picked_index: Option<usize>,
+    before: Vec<VarDeclarator>,
+    after: Vec<VarDeclarator>,
+}
+
+fn extract_computed_object_rest(
+    stmt: &Stmt,
+    context: &ComputedObjectRestContext<'_>,
+) -> Option<ComputedObjectRestExtraction> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    let (rest_index, rest, source, key) =
+        var.decls.iter().enumerate().find_map(|(index, decl)| {
+            let Pat::Ident(rest) = &decl.name else {
+                return None;
+            };
+            let init = decl.init.as_deref()?;
+            let (source, key) = extract_computed_named_owp_args(init, context)?;
+            Some((index, rest.clone(), source, key))
+        })?;
+
+    let picked_match = var.decls[..rest_index]
+        .iter()
+        .enumerate()
+        .find_map(|(index, decl)| {
+            computed_access_from_declarator(decl, &source, &key).map(|picked| (index, picked))
+        });
+    let pattern_key = resolve_computed_key_alias(&var.decls[..rest_index], &key);
+    let (picked_index, picked) = picked_match
+        .map(|(index, picked)| (Some(index), Some(picked)))
+        .unwrap_or((None, None));
+    let before = var.decls[..rest_index]
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| Some(*index) != picked_index)
+        .map(|(_, decl)| decl.clone())
+        .collect();
+    let after = var.decls[rest_index + 1..].to_vec();
+
+    Some(ComputedObjectRestExtraction {
+        span: var.span,
+        kind: var.kind,
+        rest,
+        source,
+        key,
+        pattern_key,
+        picked,
+        picked_index,
+        before,
+        after,
+    })
+}
+
+fn resolve_computed_key_alias(decls: &[VarDeclarator], key: &Ident) -> Ident {
+    resolve_computed_key_alias_from_decls(decls, key).unwrap_or_else(|| key.clone())
+}
+
+fn resolve_computed_key_alias_from_decls(decls: &[VarDeclarator], key: &Ident) -> Option<Ident> {
+    decls.iter().find_map(|decl| {
+        let Pat::Ident(binding) = &decl.name else {
+            return None;
+        };
+        if binding_key(&binding.id) != binding_key(key) {
+            return None;
+        }
+        let Expr::Ident(original) = strip_parens(decl.init.as_deref()?) else {
+            return None;
+        };
+        Some(original.clone())
+    })
+}
+
+fn extract_computed_named_owp_args(
+    expr: &Expr,
+    context: &ComputedObjectRestContext<'_>,
+) -> Option<(Box<Expr>, Ident)> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_named_owp_callee(
+        callee,
+        context.named_helpers,
+        context.tslib_namespaces,
+        context.swc_numeric_helper_namespaces,
+        context.cross_module_namespaces,
+    ) || call.args.len() != 2
+        || call.args.iter().any(|arg| arg.spread.is_some())
+    {
+        return None;
+    }
+    let key =
+        extract_computed_exclusion_key(call.args[1].expr.as_ref(), context.property_key_helpers)?;
+    Some((call.args[0].expr.clone(), key))
+}
+
+fn extract_computed_exclusion_key(
+    expr: &Expr,
+    property_key_helpers: &HashSet<BindingKey>,
+) -> Option<Ident> {
+    if let Expr::Array(array) = strip_parens(expr) {
+        if array.elems.len() != 1 {
+            return None;
+        }
+        let element = array.elems[0].as_ref()?;
+        if element.spread.is_some() {
+            return None;
+        }
+        return extract_property_key_coercion(&element.expr, property_key_helpers);
+    }
+    extract_property_key_coercion(expr, property_key_helpers)
+}
+
+fn extract_property_key_coercion(
+    expr: &Expr,
+    property_key_helpers: &HashSet<BindingKey>,
+) -> Option<Ident> {
+    if let Expr::Cond(_) = strip_parens(expr) {
+        let candidate = property_key_cond_candidate(expr, &HashSet::new(), Mark::root())?;
+        return Some(Ident::new(candidate.0, DUMMY_SP, candidate.1));
+    }
+
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+
+    if call.args.len() == 1 && call.args[0].spread.is_none() {
+        if let Expr::Ident(helper) = strip_parens(callee) {
+            if !property_key_helpers.contains(&binding_key(helper)) {
+                return None;
+            }
+            let Expr::Ident(key) = strip_parens(call.args[0].expr.as_ref()) else {
+                return None;
+            };
+            return Some(key.clone());
+        }
+    }
+
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !member_prop_name(&member.prop, "map")
+        || call.args.len() != 1
+        || call.args[0].spread.is_some()
+    {
+        return None;
+    }
+    let Expr::Ident(helper) = strip_parens(call.args[0].expr.as_ref()) else {
+        return None;
+    };
+    if !property_key_helpers.contains(&binding_key(helper)) {
+        return None;
+    }
+    let Expr::Array(keys) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    if keys.elems.len() != 1 {
+        return None;
+    }
+    let key = keys.elems[0].as_ref()?;
+    if key.spread.is_some() {
+        return None;
+    }
+    let Expr::Ident(key) = strip_parens(&key.expr) else {
+        return None;
+    };
+    Some(key.clone())
+}
+
+fn computed_access_from_single_stmt(
+    stmt: &Stmt,
+    extraction: &ComputedObjectRestExtraction,
+) -> Option<BindingIdent> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    computed_access_from_declarator(&var.decls[0], &extraction.source, &extraction.key)
+}
+
+fn computed_access_from_declarator(
+    decl: &VarDeclarator,
+    source: &Expr,
+    key: &Ident,
+) -> Option<BindingIdent> {
+    if let Pat::Ident(binding) = &decl.name {
+        let Expr::Member(member) = strip_parens(decl.init.as_deref()?) else {
+            return None;
+        };
+        if !same_ident_expr(member.obj.as_ref(), source) {
+            return None;
+        }
+        let MemberProp::Computed(computed) = &member.prop else {
+            return None;
+        };
+        if same_ident_expr(computed.expr.as_ref(), &Expr::Ident(key.clone())) {
+            return Some(binding.clone());
+        }
+        return None;
+    }
+
+    let Pat::Object(pattern) = &decl.name else {
+        return None;
+    };
+    if pattern.props.len() != 1 || !same_ident_expr(decl.init.as_deref()?, source) {
+        return None;
+    }
+    let ObjectPatProp::KeyValue(property) = &pattern.props[0] else {
+        return None;
+    };
+    let PropName::Computed(computed) = &property.key else {
+        return None;
+    };
+    if !same_ident_expr(computed.expr.as_ref(), &Expr::Ident(key.clone())) {
+        return None;
+    }
+    let Pat::Ident(binding) = property.value.as_ref() else {
+        return None;
+    };
+    Some(binding.clone())
+}
+
+fn same_ident_expr(left: &Expr, right: &Expr) -> bool {
+    matches!((strip_parens(left), strip_parens(right)), (Expr::Ident(left), Expr::Ident(right)) if binding_key(left) == binding_key(right))
+}
+
+fn var_decl_stmt(span: Span, kind: VarDeclKind, decls: Vec<VarDeclarator>) -> Stmt {
+    Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind,
+        declare: false,
+        decls,
+    })))
+}
+
+fn build_computed_rest_destructuring(
+    span: Span,
+    rest: &BindingIdent,
+    source: &Expr,
+    key: &Ident,
+    picked: &BindingIdent,
+) -> Stmt {
+    var_decl_stmt(
+        span,
+        VarDeclKind::Const,
+        vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Object(ObjectPat {
+                span: DUMMY_SP,
+                props: vec![
+                    ObjectPatProp::KeyValue(KeyValuePatProp {
+                        key: PropName::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(key.clone())),
+                        }),
+                        value: Box::new(Pat::Ident(picked.clone())),
+                    }),
+                    ObjectPatProp::Rest(RestPat {
+                        span: DUMMY_SP,
+                        dot3_token: DUMMY_SP,
+                        arg: Box::new(Pat::Ident(rest.clone())),
+                        type_ann: None,
+                    }),
+                ],
+                optional: false,
+                type_ann: None,
+            }),
+            init: Some(Box::new(source.clone())),
+            definite: false,
+        }],
+    )
 }
 
 #[derive(Default)]
@@ -1346,7 +2312,30 @@ fn extract_named_owp_args(
     else {
         return None;
     };
-    let is_helper = match callee.as_ref() {
+    if !is_named_owp_callee(
+        callee,
+        helpers,
+        tslib_namespaces,
+        swc_numeric_helper_namespaces,
+        cross_module_namespaces,
+    ) {
+        return None;
+    }
+    if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {
+        return None;
+    }
+    let keys = extract_exclusion_keys(args[1].expr.as_ref(), exclusion_arrays)?;
+    Some((args[0].expr.clone(), keys))
+}
+
+fn is_named_owp_callee(
+    callee: &Expr,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
+) -> bool {
+    match callee {
         Expr::Ident(id) => helpers.contains_key(&(id.sym.clone(), id.ctxt)),
         Expr::Member(_) => {
             matches!(
@@ -1357,15 +2346,7 @@ fn extract_named_owp_args(
                     == Some(TranspilerHelperKind::ObjectWithoutProperties)
         }
         _ => false,
-    };
-    if !is_helper {
-        return None;
     }
-    if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {
-        return None;
-    }
-    let keys = extract_exclusion_keys(args[1].expr.as_ref(), exclusion_arrays)?;
-    Some((args[0].expr.clone(), keys))
 }
 
 fn extract_exclusion_keys(

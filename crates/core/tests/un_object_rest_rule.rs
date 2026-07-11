@@ -1445,3 +1445,185 @@ use(name, rest_info);
         "unrelated defineProperty import should survive: {output}"
     );
 }
+
+#[test]
+fn computed_key_uses_body_proven_coercion_helper() {
+    let input = r#"
+import owp from "@babel/runtime/helpers/objectWithoutProperties";
+function coerce(input) {
+    return typeof input === "symbol" ? input : input + "";
+}
+const key = getKey();
+const { [key]: picked } = source;
+const rest = owp(source, [key].map(coerce));
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [key]: picked, ...rest } = source;"),
+        "renamed body-proven helper should recover computed object rest: {output}"
+    );
+}
+
+#[test]
+fn computed_key_rejects_helper_name_without_provenance() {
+    let input = r#"
+import owp from "@babel/runtime/helpers/objectWithoutProperties";
+function _toPropertyKey(input) {
+    return input;
+}
+const key = getKey();
+const { [key]: picked } = source;
+const rest = owp(source, [key].map(_toPropertyKey));
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        !output.contains("...rest"),
+        "a helper-like name without matching provenance must not recover: {output}"
+    );
+}
+
+#[test]
+fn computed_key_uses_runtime_import_path_provenance() {
+    let input = r#"
+import { _ as omit } from "@swc/helpers/_/_object_without_properties";
+import { _ as coerce } from "@swc/helpers/_/_to_property_key";
+const key = getKey();
+const picked = source[key];
+const rest = omit(source, [coerce(key)]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [key]: picked, ...rest } = source;"),
+        "runtime helper path should prove the renamed coercion binding: {output}"
+    );
+    assert!(
+        !output.contains("_to_property_key"),
+        "the unused pure runtime helper import should be removed: {output}"
+    );
+}
+
+#[test]
+fn computed_key_recovers_typescript_inline_coercion() {
+    let input = r#"
+var __rest = (this && this.__rest) || function(source, excluded) {
+    var target = {};
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    return target;
+};
+var propertyKey = getKey(), sourceAlias = source, keyAlias = propertyKey,
+    picked = sourceAlias[keyAlias],
+    rest = __rest(sourceAlias, [typeof keyAlias === "symbol" ? keyAlias : keyAlias + ""]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [propertyKey]: picked, ...rest } = sourceAlias;"),
+        "TypeScript's inline property-key coercion should recover: {output}"
+    );
+}
+
+#[test]
+fn computed_key_preserves_typescript_key_alias_with_remaining_use() {
+    let input = r#"
+var __rest = (this && this.__rest) || function(source, excluded) {
+    var target = {};
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    return target;
+};
+var propertyKey = getKey(), sourceAlias = source, keyAlias = propertyKey,
+    picked = sourceAlias[keyAlias],
+    rest = __rest(sourceAlias, [typeof keyAlias === "symbol" ? keyAlias : keyAlias + ""]);
+use(picked, rest, keyAlias);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("keyAlias = propertyKey"),
+        "a key alias with a remaining use must be preserved: {output}"
+    );
+    assert!(
+        output.contains("use(picked, rest, keyAlias);"),
+        "the remaining alias reference must survive: {output}"
+    );
+}
+
+#[test]
+fn computed_key_recovers_esbuild_rest_key_body_shape() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+const restKey = key => typeof key === "symbol" ? key : key + "";
+const key = getKey();
+const sourceAlias = source, { [key]: picked } = sourceAlias,
+    rest = omit(sourceAlias, [restKey(key)]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [key]: picked, ...rest } = sourceAlias;"),
+        "esbuild's renamed rest-key helper should recover by body shape: {output}"
+    );
+}
+
+#[test]
+fn computed_key_uses_body_proven_swc_typeof_dependency() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+function inspect(value) {
+    return value && typeof Symbol !== "undefined" && value.constructor === Symbol
+        ? "symbol"
+        : typeof value;
+}
+function primitive(value, hint) {
+    return value;
+}
+function coerce(value) {
+    const key = primitive(value, "string");
+    return inspect(key) === "symbol" ? key : String(key);
+}
+const key = getKey();
+const picked = source[key];
+const rest = omit(source, [coerce(key)]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        output.contains("const { [key]: picked, ...rest } = source;"),
+        "SWC's renamed nested typeof helper should be proven by body: {output}"
+    );
+}
+
+#[test]
+fn computed_key_rejects_unproven_swc_typeof_dependency() {
+    let input = r#"
+import omit from "@babel/runtime/helpers/objectWithoutProperties";
+function _type_of(value) {
+    return "symbol";
+}
+function primitive(value, hint) {
+    return value;
+}
+function _to_property_key(value) {
+    const key = primitive(value, "string");
+    return _type_of(key) === "symbol" ? key : String(key);
+}
+const key = getKey();
+const picked = source[key];
+const rest = omit(source, [_to_property_key(key)]);
+use(picked, rest);
+"#;
+    let output = render_rule(input, UnObjectRest::new);
+    assert!(
+        !output.contains("...rest"),
+        "SWC-like names cannot substitute for nested helper provenance: {output}"
+    );
+}
