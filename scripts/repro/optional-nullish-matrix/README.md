@@ -11,7 +11,10 @@ different recoverable shape after minification. The nullish-assignment rows
 cover identifier, static-member, and side-effectful computed-member targets.
 The computed-member rows verify that compiler object/key temporaries are folded
 back into `getTarget()[getKey()] ??= make()` when those temporaries prove the
-receiver and key are each evaluated once.
+receiver and key are each evaluated once. The nullish-assignment rows also opt
+into the execution-equivalence check (see `docs/testing.md`), which enforces
+that contract behaviorally: a recovery that calls `getTarget()` or `getKey()`
+twice produces a different effect log and fails the row.
 
 The logical-AND rows include issue #166-style boolean prefixes, such as a
 lowered optional chain followed by ordinary suffix conditions or a second

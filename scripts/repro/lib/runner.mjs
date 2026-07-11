@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+const execHarnessPath = fileURLToPath(new URL("./exec-harness.mjs", import.meta.url));
 
 // Decompile results keyed by `${level}\0${source}`, populated in parallel before
 // the (synchronous) comparison loop so each shape's wakaru run is amortized.
@@ -117,6 +118,13 @@ async function runMatrixAsync(config) {
       await prewarm(rows);
     }
 
+    const execVerdicts = await runExecutionChecks(
+      filteredSnippets,
+      shapesBySnippet,
+      rewriteLevel,
+      wakaruArgs,
+    );
+
     for (const snippet of filteredSnippets) {
       for (const shape of shapesBySnippet.get(snippet)) {
         const result = runShape(
@@ -127,6 +135,7 @@ async function runMatrixAsync(config) {
           expectedNeedles,
           validateRecovered,
           wakaruArgs,
+          execVerdicts,
         );
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
@@ -316,6 +325,7 @@ function runShape(
   expectedNeedles,
   validateRecovered,
   wakaruArgs,
+  execVerdicts = new Map(),
 ) {
   if (shape.transformError) {
     return { recovered: false, status: "transform-failed", notes: shape.transformError.message };
@@ -328,6 +338,29 @@ function runShape(
     return { recovered: false, status: "wakaru-failed", notes: error.message, lowered: shape.lowered };
   }
 
+  // Substring/structural checks accept a *shape*; the execution verdict then
+  // rejects recoveries whose observable behavior diverged from the lowered
+  // program (wrong declaration kind, extra evaluation, stale key, …).
+  const applyExecVerdict = (success) => {
+    const verdict = execVerdicts.get(execKey(snippet, shape));
+    if (!verdict || verdict.status === "equivalent") {
+      const note = verdict ? `${success.notes}; execution-equivalent` : success.notes;
+      return { ...success, notes: note };
+    }
+    if (verdict.status === "skipped") {
+      return { ...success, notes: `${success.notes}; exec skipped (${verdict.reason})` };
+    }
+    return {
+      recovered: false,
+      notes: `behavior diverged: ${verdict.reason}`,
+      code: recovered,
+      lowered: shape.lowered,
+      missing: [],
+      leaked: [],
+      failure: { snippet: snippet.name, shape: shape.label, tools: shape.tools, lowered: shape.lowered, recovered },
+    };
+  };
+
   const leaked = (snippet.rejected ?? []).filter((needle) => recovered.includes(needle));
   const customResult = validateRecovered?.({
     snippet,
@@ -338,7 +371,7 @@ function runShape(
     runWakaru,
   });
   if (customResult?.recovered && leaked.length === 0) {
-    return { ...customResult, code: recovered, lowered: shape.lowered };
+    return applyExecVerdict({ ...customResult, code: recovered, lowered: shape.lowered });
   }
   if (customResult && customResult.recovered === false) {
     return {
@@ -354,7 +387,12 @@ function runShape(
   );
   const missing = missingGroups.reduce((best, next) => (next.length < best.length ? next : best));
   if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
-    return { recovered: true, notes: "expected syntax present", code: recovered, lowered: shape.lowered };
+    return applyExecVerdict({
+      recovered: true,
+      notes: "expected syntax present",
+      code: recovered,
+      lowered: shape.lowered,
+    });
   }
 
   const loweredShape = summarize(shape.lowered);
@@ -482,6 +520,48 @@ async function decompileAll(sources, rewriteLevel, wakaruArgs = []) {
       decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+// ── Execution-equivalence checks ──────────────────────────────
+//
+// Rows opt in with `execute: true` or `execute: { env, returns }`:
+// `env` binds JSON values as globals, `returns` makes named stubs return a
+// given JSON value (fresh clone per call); every other free identifier is
+// auto-stubbed as a deterministic recording function. The lowered program and
+// wakaru's recovery run in isolated `node:vm` contexts (see exec-harness.mjs)
+// and must produce the same effect log.
+
+function execKey(snippet, shape) {
+  return `${snippet.name}\0${shape.lowered}`;
+}
+
+async function runExecutionChecks(snippets, shapesBySnippet, rewriteLevel, wakaruArgs) {
+  const verdicts = new Map();
+  const jobs = [];
+  for (const snippet of snippets) {
+    if (!snippet.execute) continue;
+    const spec = snippet.execute === true ? {} : snippet.execute;
+    for (const shape of shapesBySnippet.get(snippet)) {
+      if (shape.transformError) continue;
+      const recovered = decompileCache.get(decompileKey(rewriteLevel, shape.lowered, wakaruArgs));
+      if (typeof recovered !== "string") continue;
+      jobs.push({ key: execKey(snippet, shape), spec, lowered: shape.lowered, recovered });
+    }
+  }
+  await runPool(jobs, async (job) => {
+    try {
+      const raw = await spawnCapture("node", [execHarnessPath], JSON.stringify({
+        env: job.spec.env ?? {},
+        returns: job.spec.returns ?? {},
+        programs: [job.lowered, job.recovered],
+      }));
+      const { status, reason } = JSON.parse(raw);
+      verdicts.set(job.key, { status, reason });
+    } catch (error) {
+      verdicts.set(job.key, { status: "skipped", reason: `harness failed: ${error.message}` });
+    }
+  });
+  return verdicts;
 }
 
 function spawnCapture(command, args, input) {

@@ -13,45 +13,65 @@ const snippets = [
     name: "spread-basic",
     source: "const out = { ...app_info, name: value, ...base_info };\nuse(out);\n",
     expected: ["...app_info", "name: value", "...base_info"],
+    execute: { env: { app_info: { name: "app", size: 2 }, base_info: { name: "base", tag: 3 }, value: "mid" } },
   },
   {
     name: "spread-leading-property",
     source: "const out = { id: app_id, ...app_info };\nuse(out);\n",
     expected: ["id: app_id", "...app_info"],
+    execute: { env: { app_id: 7, app_info: { id: 1, size: 2 } } },
   },
   {
     name: "spread-nullish-source",
     source: "const out = { ...app_info };\nuse(out);\n",
     expected: ["...app_info"],
+    execute: { env: { app_info: { size: 2 } } },
   },
   {
     name: "rest-basic",
     source: "const { name, ...rest_info } = app_info;\nuse(name, rest_info);\n",
     expected: ["const {", "name", "...rest_info"],
+    execute: { env: { app_info: { name: "app", size: 2, tag: 3 } } },
   },
   {
     name: "rest-rename-default",
     source:
       "const { name: app_name, version = fallback_version, ...rest_info } = app_info;\nuse(app_name, version, rest_info);\n",
     expected: ["name: app_name", "version = fallback_version", "...rest_info"],
+    execute: { env: { app_info: { name: "app", size: 2 }, fallback_version: 9 } },
   },
   {
     name: "rest-string-key",
     source:
       'const { "app-id": app_id, name, ...rest_info } = app_info;\nuse(app_id, name, rest_info);\n',
     expected: ['"app-id": app_id', "name", "...rest_info"],
+    execute: { env: { app_info: { "app-id": 7, name: "app", size: 2 } } },
   },
   {
     name: "rest-computed-key",
     source:
       "const property_key = get_key();\nconst { [property_key]: picked, ...rest_info } = app_info;\nuse(picked, rest_info);\n",
     expected: ["[property_key]: picked", "...rest_info", "use(picked, rest_info)"],
+    execute: {
+      env: { app_info: { size: 2, name: "app" } },
+      returns: { get_key: "size" },
+    },
   },
   {
     name: "spread-rest-combined",
     source:
       "const { name, ...rest_info } = app_info;\nconst out = { ...rest_info, name };\nuse(out);\n",
     expected: ["...rest_info", "name"],
+    execute: { env: { app_info: { name: "app", size: 2 } } },
+  },
+  {
+    name: "rest-mutated-binding",
+    // Pins the declaration-kind contract end to end: the recovered
+    // destructuring must stay writable when the rest binding is reassigned.
+    source:
+      "let { name, ...rest_info } = app_info;\nrest_info = mutate(rest_info);\nuse(name, rest_info);\n",
+    expected: ["...rest_info", "rest_info = mutate(rest_info)"],
+    execute: { env: { app_info: { name: "app", size: 2 } } },
   },
 ];
 

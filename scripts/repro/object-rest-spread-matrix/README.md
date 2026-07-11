@@ -20,6 +20,14 @@ Add `--details` to print full lowered and recovered code for missed cases.
 Add `--level minimal`, `--level standard`, or `--level aggressive` to run
 wakaru with a specific rewrite level.
 
+Every snippet also opts into the execution-equivalence check (see
+`docs/testing.md`): the lowered program and the recovery run under `node:vm`
+with identical stub environments and must produce the same effect log. The
+`rest-mutated-binding` row exists specifically to pin the declaration-kind
+contract — a recovery that emits `const` for a later-reassigned rest binding
+fails there with `behavior diverged` even though every needle matches. Shapes
+lowered to module syntax (helper imports) skip the execution check.
+
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
 shape is still preserved while duplicate tool outputs are collapsed.

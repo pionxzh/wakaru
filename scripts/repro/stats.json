@@ -1,9 +1,9 @@
 {
-  "commit": "5a188022",
+  "commit": "cf2e3d1b",
   "date": "2026-07-11",
   "aggregate": {
-    "yes": 1661,
-    "total": 1723,
+    "yes": 1680,
+    "total": 1743,
     "pct": 96.4
   },
   "matrices": [
@@ -49,11 +49,11 @@
     },
     {
       "name": "object-rest-spread",
-      "yes": 178,
-      "no": 0,
+      "yes": 197,
+      "no": 1,
       "error": 0,
-      "total": 178,
-      "pct": 100
+      "total": 198,
+      "pct": 99.5
     },
     {
       "name": "optional-nullish",

@@ -333,6 +333,40 @@ For snippets with legitimate structural variants in the output, add
 expected needle has multiple acceptable forms, use `expectedAny` (array of
 needle-arrays — passes if any group is fully present).
 
+### Execution equivalence (`execute`)
+
+Substring and structural checks accept a *shape*; they cannot see a recovery
+that assigns to a `const`, evaluates a receiver twice, or reads a stale key.
+Rows that opt in with `execute` also run the lowered program and wakaru's
+recovery in isolated `node:vm` contexts (`lib/exec-harness.mjs`) with identical
+deterministic environments, and must produce the same effect log — otherwise
+the row reports `behavior diverged` and counts as `no`.
+
+```js
+{
+  name: "rest-computed-key",
+  source: "...",
+  expected: [...],
+  execute: {
+    env: { app_info: { size: 2, name: "app" } },  // JSON globals, cloned per run
+    returns: { get_key: "size" },                  // stubs with fixed return values
+  },
+}
+```
+
+Every other free identifier is auto-stubbed as a deterministic recording
+function, so sinks like `use(...)` need no declaration — their calls (with
+deeply serialized arguments) *are* the observable behavior. Stub call order
+and count are part of the log, which also pins single-evaluation contracts:
+a recovery that calls `get_key()` twice diverges even if the result is right.
+Shapes containing module syntax (e.g. `@swc/helpers` imports) skip the check
+and keep their substring verdict, noted as `exec skipped` in the row.
+
+Use `execute` on rows whose semantics have bitten before: declaration-kind
+(mutated bindings), evaluation-count, evaluation-order, and enumeration-order
+shapes. The check needs the debug binary to be current (`cargo build -p
+wakaru-cli`) like every other matrix run.
+
 ## Test Pitfalls
 
 - Don't use bare literal expression statements as test inputs (e.g. `65536;`) -- `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.

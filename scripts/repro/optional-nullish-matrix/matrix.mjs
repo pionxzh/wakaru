@@ -78,17 +78,22 @@ const snippets = [
     name: "nullish-assignment-ident",
     source: "let cache;\nconst out = cache ??= make();\n",
     expected: ["cache ??= make()"],
+    execute: { returns: { make: 5 } },
   },
   {
     name: "nullish-assignment-member",
     source:
       "const target = getTarget();\nconst out = target.value ??= make();\nuse(out, target);\n",
     expected: ["target.value ??= make()"],
+    execute: { returns: { getTarget: { value: null }, make: 5 } },
   },
   {
     name: "nullish-assignment-computed",
+    // The execution check also pins single evaluation: a recovery that calls
+    // getTarget() or getKey() twice produces a different effect log.
     source: "const out = getTarget()[getKey()] ??= make();\nuse(out);\n",
     expected: ["getTarget()[getKey()] ??= make()"],
+    execute: { returns: { getTarget: { size: 2 }, getKey: "value", make: 5 } },
   },
   {
     name: "nullish-with-optional-middle",
