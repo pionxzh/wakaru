@@ -252,6 +252,52 @@ test("fingerprints ignore unstable VM source carets", () => {
   assert.equal(left, right);
 });
 
+test("fingerprints and summaries scrub cross-platform temporary paths", () => {
+  const aliceError = String.raw`Error: Cannot find module 'C:\Users\Alice\AppData\Local\Temp\wakaru-test262-one\module.mjs'`;
+  const bobError = String.raw`Error: Cannot find module 'D:\Users\Bob\AppData\Local\Temp\wakaru-test262-two\module.mjs'`;
+  const macError = "Error: Cannot find module '/private/var/folders/ab/random/T/wakaru-test262-three/module.mjs'";
+  const left = fingerprintTest262Outcome({
+    status: "failed",
+    phase: "decompiled-runtime",
+    error: aliceError,
+  });
+  const right = fingerprintTest262Outcome({
+    status: "failed",
+    phase: "decompiled-runtime",
+    error: bobError,
+  });
+  const mac = fingerprintTest262Outcome({
+    status: "failed",
+    phase: "decompiled-runtime",
+    error: macError,
+  });
+  const unixFileUrl = fingerprintTest262Outcome({
+    status: "failed",
+    phase: "decompiled-runtime",
+    error: "Error: worker failed at file:///tmp/wakaru-test262-four/module.mjs:26",
+  });
+  const windowsFileUrl = fingerprintTest262Outcome({
+    status: "failed",
+    phase: "decompiled-runtime",
+    error: "Error: worker failed at file:///C:/Users/Alice/AppData/Local/Temp/wakaru-test262-five/module.mjs:26",
+  });
+  const baseline = createTest262Baseline(
+    report([
+      {
+        path: "module.js",
+        status: "failed",
+        phase: "decompiled-runtime",
+        error: aliceError,
+      },
+    ]),
+  );
+
+  assert.equal(left, right);
+  assert.equal(left, mac);
+  assert.equal(unixFileUrl, windowsFileUrl);
+  assert.doesNotMatch(baseline.outcomes[0].summary, /Alice|wakaru-test262-one/);
+});
+
 function report(results, optionOverrides = {}) {
   const counts = {
     skipped: 0,

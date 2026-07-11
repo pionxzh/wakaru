@@ -952,7 +952,17 @@ export async function runRoundTrip(options) {
         );
         continue;
       }
-      const harnessSource = buildHarnessSource(options.test262Root, metadata);
+      let harnessSource;
+      try {
+        harnessSource = buildHarnessSource(options.test262Root, metadata);
+      } catch (error) {
+        recordResult(
+          report,
+          failure(relativePath, "harness-configuration", error),
+          options,
+        );
+        continue;
+      }
       const isModule = variants.some((v) => v.module);
 
       const prepPromise = isModule
@@ -1296,7 +1306,12 @@ export function parseSourceOutcome({
       );
     }
     const errorMatches = [...diagnostic.matchAll(/\b([A-Za-z_$][\w$]*Error)\b/g)];
-    const errorName = errorMatches.at(-1)?.[1] ?? "SyntaxError";
+    const errorName = errorMatches.at(-1)?.[1];
+    if (!errorName) {
+      throw new Error(
+        `module parse check exited ${result.status} without a typed error diagnostic for ${filename}: ${diagnostic}`,
+      );
+    }
     return { phase: "parse", error: new Error(diagnostic), errorName };
   }
   try {

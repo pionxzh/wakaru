@@ -90,6 +90,20 @@ test("module parser checks reject infrastructure failures and use the final erro
       }),
     /terminated by SIGKILL/,
   );
+  assert.throws(
+    () =>
+      parseSourceOutcome({
+        ...base,
+        spawnSyncImpl: () => ({
+          error: null,
+          signal: null,
+          status: 1,
+          stderr: "node check failed without a JavaScript diagnostic",
+          stdout: "",
+        }),
+      }),
+    /without a typed error diagnostic/,
+  );
 
   let receivedOptions;
   const outcome = parseSourceOutcome({
@@ -1206,6 +1220,38 @@ test("runRoundTrip reports malformed metadata without aborting the corpus", asyn
     assert.equal(report.results[0].phase, "harness-configuration");
     assert.match(report.results[0].error, /unknown Test262 flag/);
     assert.equal(report.results[1].reason, "fixture");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip records missing harness includes without aborting", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      join(testDir, "missing-include.js"),
+      "/*---\nincludes: [does-not-exist.js]\n---*/\nvoid 0;\n",
+    );
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: Number.POSITIVE_INFINITY,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 1000,
+    });
+
+    assert.equal(report.complete, true);
+    assert.equal(report.totals.failed, 1);
+    assert.equal(report.results[0].phase, "harness-configuration");
+    assert.match(report.results[0].error, /missing Test262 harness file/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -61,6 +61,7 @@ test("rejects missing, malformed, and unknown metadata", () => {
     ["/*---\nnegative: { phase: future, type: Error }\n---*/", /unknown Test262 negative phase/],
     ["/*---\nnegative:\n  phase: parse\n---*/", /requires phase and type/],
     ["/*---\nflags: onlyStrict\n---*/", /must be a YAML sequence/],
+    ["/*---\nesid: # pending\n---*/", /esid must be a non-empty string/],
   ]) {
     assert.throws(() => parseTestMetadata(source), pattern);
   }

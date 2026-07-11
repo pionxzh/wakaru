@@ -288,7 +288,7 @@ function parseScalar(source, label) {
       throw new Test262MetadataError(`${label} has an invalid quoted string`);
     }
   } else {
-    value = value.replace(/\s+#.*$/, "").trim();
+    value = value.replace(/(?:^|\s+)#.*$/, "").trim();
   }
   if (!value || typeof value !== "string" || /^(?:null|~)$/i.test(value)) {
     throw new Test262MetadataError(`${label} must be a non-empty string`);

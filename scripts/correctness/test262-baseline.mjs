@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 
 export const test262BaselineSchemaVersion = 3;
+const runtimeTempRoot = tmpdir().replaceAll("\\", "/").replace(/\/$/, "");
+const runtimeTempPathPattern = new RegExp(
+  `${escapeRegExp(runtimeTempRoot)}(?:/[^\\s:]+)?`,
+  "g",
+);
 
 export function createTest262Baseline(report) {
   if (!report.complete) {
@@ -172,7 +178,15 @@ function stableDiagnostic(value) {
     .filter((line) => !/^\s+at\s/.test(line))
     .map((line) => line.replaceAll("\\", "/"))
     .map((line) => line.replace(/\/(?:private\/)?var\/folders\/[^\s:]+/g, "<tmp>"))
-    .map((line) => line.replace(/\/tmp\/[^\s:]+/g, "<tmp>"));
+    .map((line) => line.replace(/\/tmp\/[^\s:]+/g, "<tmp>"))
+    .map((line) =>
+      line.replace(
+        /[A-Za-z]:\/Users\/[^/\s:]+\/AppData\/Local\/Temp(?:\/[^\s:]+)?/gi,
+        "<tmp>",
+      ),
+    )
+    .map((line) => line.replace(runtimeTempPathPattern, "<tmp>"))
+    .map((line) => line.replace(/file:\/{2,3}<tmp>/g, "file://<tmp>"));
   const typedError = lines.find((line) => /^[A-Za-z_$][\w$]*Error(?::|$)/.test(line));
   if (typedError) {
     return typedError;
@@ -181,6 +195,10 @@ function stableDiagnostic(value) {
     .filter((line) => line.trim().length > 0 && !/^\s*\^+\s*$/.test(line))
     .slice(0, 3)
     .join("\n");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function hashEvidence(value) {
