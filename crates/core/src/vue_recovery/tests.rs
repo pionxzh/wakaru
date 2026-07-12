@@ -814,6 +814,134 @@ export default component;
 }
 
 #[test]
+fn folds_rehydrated_props_alias_into_define_props_binding() {
+    let input = r#"
+const component = {
+  __name: "Example",
+  props: { active: Boolean, count: Number },
+  emits: ["increment"],
+  setup(__props, { expose: __expose, emit: __emit }) {
+    __expose();
+    const props = void 0;
+    const emit = __emit;
+    function increment() {
+      emit("increment");
+    }
+    const returned = { props: __props, emit, increment };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+import { normalizeClass, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("button", {
+    class: normalizeClass(["counter", { active: $setup.props.active }]),
+    onClick: $setup.increment
+  }, toDisplayString($setup.props.count), 3);
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("const props = defineProps("),
+        "{recovered}"
+    );
+    assert!(
+        !recovered.contains("const __props = defineProps("),
+        "{recovered}"
+    );
+    assert!(!recovered.contains("const props = __props;"), "{recovered}");
+}
+
+#[test]
+fn folds_non_default_returned_props_alias_without_dangling_template_refs() {
+    let input = r#"
+const component = {
+  __name: "Example",
+  props: { active: Boolean, count: Number },
+  setup(__props, { expose: __expose }) {
+    __expose();
+    const returned = { myProps: __props };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+import { normalizeClass, openBlock, createElementBlock, toDisplayString } from "vue";
+export function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("button", {
+    class: normalizeClass(["counter", { active: $setup.myProps.active }])
+  }, toDisplayString($setup.myProps.count), 3);
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("const props = defineProps("),
+        "{recovered}"
+    );
+    assert!(recovered.contains(":class=\"{ active }\""), "{recovered}");
+    assert!(recovered.contains("{{ count }}"), "{recovered}");
+    assert!(!recovered.contains("myProps"), "{recovered}");
+}
+
+#[test]
+fn preserves_non_default_returned_emit_alias_used_by_template() {
+    let input = r#"
+const component = {
+  __name: "Example",
+  emits: ["increment"],
+  setup(__props, { expose: __expose, emit: __emit }) {
+    __expose();
+    const returned = { fire: __emit };
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("button", {
+    onClick: $setup.fire
+  }, "Increment");
+}
+component.render = render;
+export default component;
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        recovered.contains("const fire = defineEmits("),
+        "{recovered}"
+    );
+    assert!(recovered.contains("@click=\"fire\""), "{recovered}");
+    assert!(
+        !recovered.contains("const emit = defineEmits("),
+        "{recovered}"
+    );
+}
+
+#[test]
 fn preserves_order_of_initializers_moved_into_setup_return_object() {
     let input = r#"
 const component = {

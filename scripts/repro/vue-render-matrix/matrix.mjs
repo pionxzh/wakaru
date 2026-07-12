@@ -90,14 +90,6 @@ function increment() {
         ":class=\"{ active }\"",
         "{{ count }}",
       ],
-      [
-        "<script setup>",
-        "const __props = defineProps(",
-        "const props = __props;",
-        "defineEmits(",
-        ":class=\"{ active: props.active }\"",
-        "{{ props.count }}",
-      ],
     ],
   },
   {

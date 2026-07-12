@@ -1,10 +1,12 @@
 use super::super::VueRecoveryContext;
 use super::{
-    binding_renames, is_vue_helper_candidate_source, setup_alias_renames, setup_props_renames,
+    binding_renames, is_vue_helper_candidate_source, record_compiled_setup_alias,
+    setup_alias_renames, setup_props_renames,
 };
 use std::collections::HashMap;
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::{Expr, Ident};
 
 #[test]
 fn vue_helper_candidates_exclude_adjacent_bare_packages() {
@@ -103,4 +105,36 @@ fn setup_props_renames_key_on_recorded_props_source_contexts() {
     assert!(renames
         .iter()
         .any(|rename| rename.old == (Atom::from("propsAlias"), param_ctxt)));
+}
+
+#[test]
+fn returned_object_keys_register_props_emit_and_slots_aliases() {
+    let mut ctx = VueRecoveryContext {
+        setup_props_context: Some(Atom::from("__props")),
+        setup_emit_context: Some(Atom::from("__emit")),
+        ..Default::default()
+    };
+    ctx.slot_bindings.insert(Atom::from("__slots"));
+
+    for (binding, source) in [
+        ("myProps", "__props"),
+        ("fire", "__emit"),
+        ("mySlots", "__slots"),
+    ] {
+        let expr = Expr::Ident(Ident::new(
+            Atom::from(source),
+            DUMMY_SP,
+            SyntaxContext::empty(),
+        ));
+        assert!(record_compiled_setup_alias(
+            &Atom::from(binding),
+            None,
+            &expr,
+            &mut ctx,
+        ));
+    }
+
+    assert!(ctx.setup_props_aliases.contains(&Atom::from("myProps")));
+    assert!(ctx.setup_emit_aliases.contains(&Atom::from("fire")));
+    assert!(ctx.slot_bindings.contains(&Atom::from("mySlots")));
 }

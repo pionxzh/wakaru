@@ -2157,16 +2157,12 @@ pub(super) fn collect_setup_context(
                     let consumed = match decl.init.as_deref() {
                         Some(init) => match &decl.name {
                             Pat::Ident(binding) => {
-                                if is_setup_props_alias(init, ctx) {
-                                    ctx.setup_props_aliases.insert(binding.id.sym.clone());
-                                    ctx.setup_props_alias_ctxts
-                                        .insert(binding.id.sym.clone(), binding.id.ctxt);
-                                    true
-                                } else if is_setup_emit_alias(init, ctx) {
-                                    ctx.setup_emit_aliases.insert(binding.id.sym.clone());
-                                    true
-                                } else if is_setup_slot_alias(init, ctx) {
-                                    ctx.slot_bindings.insert(binding.id.sym.clone());
+                                if record_compiled_setup_alias(
+                                    &binding.id.sym,
+                                    Some(binding.id.ctxt),
+                                    init,
+                                    ctx,
+                                ) {
                                     true
                                 } else if preserve_side_effects {
                                     if is_ref_like_value_expr(init, ctx) {
@@ -2425,6 +2421,9 @@ pub(super) fn collect_setup_context(
         .flat_map(|candidate| candidate.bindings.iter().cloned())
         .collect::<HashSet<_>>();
     for (binding, init, setup_order) in compiled_return_values {
+        if record_compiled_setup_alias(&binding, None, init.as_ref(), ctx) {
+            continue;
+        }
         if candidate_bindings.contains(&binding)
             || ctx.top_level_binding_ctxts.contains_key(&binding)
         {
@@ -2916,6 +2915,30 @@ fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         .as_ref()
         .is_some_and(|setup_props| setup_props == &ident.sym)
         || ctx.setup_props_aliases.contains(&ident.sym)
+}
+
+fn record_compiled_setup_alias(
+    binding: &Atom,
+    binding_ctxt: Option<SyntaxContext>,
+    expr: &Expr,
+    ctx: &mut VueRecoveryContext,
+) -> bool {
+    if is_setup_props_alias(expr, ctx) {
+        ctx.setup_props_aliases.insert(binding.clone());
+        if let Some(ctxt) = binding_ctxt {
+            ctx.setup_props_alias_ctxts.insert(binding.clone(), ctxt);
+        }
+        return true;
+    }
+    if is_setup_emit_alias(expr, ctx) {
+        ctx.setup_emit_aliases.insert(binding.clone());
+        return true;
+    }
+    if is_setup_slot_alias(expr, ctx) {
+        ctx.slot_bindings.insert(binding.clone());
+        return true;
+    }
+    false
 }
 
 fn is_setup_emit_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
