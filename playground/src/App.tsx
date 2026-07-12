@@ -5,7 +5,6 @@ import { Controls } from "./components/Controls";
 import { Editor } from "./components/Editor";
 import type { EditorDecoration } from "./components/Editor";
 import { OutputViewer } from "./components/OutputViewer";
-import type { OutputView } from "./components/OutputViewer";
 import { SplitLayout } from "./components/SplitLayout";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { WasmBridge } from "./wasm/bridge";
@@ -15,6 +14,8 @@ import { DEFAULT_EXAMPLE } from "./lib/examples";
 import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share";
 import { parseMappings, lineColorClass, lineColorActiveClass, generateMappingCSS, LINE_COLORS_RGB } from "./lib/sourcemap";
 import type { MappingData } from "./lib/sourcemap";
+import { applyVuePreviewResult, resetVuePreview } from "./lib/vuePreview";
+import type { OutputView } from "./lib/vuePreview";
 
 const WAKARU_VERSION = import.meta.env.VITE_WAKARU_VERSION;
 const WAKARU_GIT_HASH = import.meta.env.VITE_WAKARU_GIT_HASH;
@@ -37,12 +38,13 @@ function getAutoRunDelay(elapsed: number) {
 export function App() {
   const [source, setSource] = useState(INITIAL_SHARE_STATE?.source ?? DEFAULT_EXAMPLE);
   const [output, setOutput] = useState("");
-  const [vueSfc, setVueSfc] = useState<string | null>(null);
+  const [vuePreview, setVuePreview] = useState(() => resetVuePreview(
+    INITIAL_SHARE_STATE?.vueSfc ?? false
+  ));
+  const vueSfc = vuePreview.sfc;
+  const outputView = vuePreview.view;
   const [vueSfcEnabled, setVueSfcEnabled] = useState(
     INITIAL_SHARE_STATE?.vueSfc ?? false
-  );
-  const [outputView, setOutputView] = useState<OutputView>(
-    INITIAL_SHARE_STATE?.vueSfc ? "vue" : "javascript"
   );
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
   const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
@@ -97,7 +99,7 @@ export function App() {
       const duration = performance.now() - start;
       autoRunDelayRef.current = getAutoRunDelay(duration);
       setOutput(result.code);
-      setVueSfc(result.vueSfc ?? null);
+      setVuePreview((current) => applyVuePreviewResult(current, result.vueSfc ?? null));
       setSourceMapJson(result.sourceMap);
       setWarnings(result.warnings);
       setElapsed(duration);
@@ -106,7 +108,7 @@ export function App() {
       autoRunDelayRef.current = getAutoRunDelay(performance.now() - start);
       setError(e instanceof Error ? e.message : String(e));
       setOutput("");
-      setVueSfc(null);
+      setVuePreview((current) => applyVuePreviewResult(current, null));
       setWarnings([]);
     } finally {
       activeRunRef.current = false;
@@ -146,9 +148,6 @@ export function App() {
       vueSfc: vueSfcEnabled,
     };
     inputVersionRef.current += 1;
-    if (vueSfcEnabled) {
-      setVueSfc(null);
-    }
   }, [source, level, formatterEnabled, vueSfcEnabled]);
 
   useEffect(() => {
@@ -213,8 +212,7 @@ export function App() {
 
   const handleVueSfcChange = useCallback((enabled: boolean) => {
     setVueSfcEnabled(enabled);
-    setVueSfc(null);
-    setOutputView(enabled ? "vue" : "javascript");
+    setVuePreview(resetVuePreview(enabled));
   }, []);
 
   useEffect(() => {
@@ -437,7 +435,9 @@ export function App() {
             vueSfcEnabled={vueSfcEnabled}
             vueSfc={vueSfc}
             view={outputView}
-            onViewChange={setOutputView}
+            onViewChange={(view: OutputView) => {
+              setVuePreview((current) => ({ ...current, view }));
+            }}
             isLoading={isLoading}
             decorations={outputDecorations}
             onHoverLine={handleOutputHover}

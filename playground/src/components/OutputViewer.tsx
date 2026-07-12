@@ -2,6 +2,7 @@ import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useRef } from "react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
 import type { EditorDecoration } from "./Editor";
+import type { OutputView } from "../lib/vuePreview";
 
 interface OutputViewerProps {
   javascriptValue: string;
@@ -14,8 +15,6 @@ interface OutputViewerProps {
   onHoverLine?: (line: number | null) => void;
   onEditorReady?: (editor: MonacoEditorNS.IStandaloneCodeEditor) => void;
 }
-
-export type OutputView = "javascript" | "vue";
 
 export function OutputViewer({
   javascriptValue,
