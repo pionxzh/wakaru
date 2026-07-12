@@ -40,15 +40,13 @@ import {
   unsupportedTest262Capability,
 } from "./test262-roundtrip.mjs";
 
-test("runWakaruAsync rejects empty output and decodes split UTF-8 chunks", async () => {
-  await assert.rejects(
-    runWakaruAsync("void 0;", {
-      level: "minimal",
-      timeoutMs: 1000,
-      wakaruCmd: { command: process.execPath, prefix: ["-e", "", "--"] },
-    }),
-    /produced empty output/,
-  );
+test("runWakaruAsync accepts an empty program and decodes split UTF-8 chunks", async () => {
+  const emptyOutput = await runWakaruAsync("void 0;", {
+    level: "minimal",
+    timeoutMs: 1000,
+    wakaruCmd: { command: process.execPath, prefix: ["-e", "", "--"] },
+  });
+  assert.equal(emptyOutput, "");
 
   const output = await runWakaruAsync("void 0;", {
     level: "minimal",

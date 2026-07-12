@@ -776,9 +776,7 @@ export function runWakaruAsync(source, { level, timeoutMs, wakaruCmd }) {
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", (err) => finish(err));
     child.on("close", (code) => {
-      if (code === 0 && stdout.trim().length === 0) {
-        finish(new Error("wakaru exited successfully but produced empty output"));
-      } else if (code === 0) {
+      if (code === 0) {
         finish(null, stdout);
       } else {
         finish(new Error(`wakaru exited ${code}\n${stderr || stdout}`));
