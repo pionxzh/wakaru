@@ -572,6 +572,35 @@ fn preserves_tdz_read_nested_in_void_expression() {
 }
 
 #[test]
+fn preserves_tdz_read_in_nested_block_before_outer_declaration() {
+    let input = r#"
+{
+  {
+    void x;
+  }
+  let x;
+}
+let initialized;
+{
+  void initialized;
+}
+"#;
+    let expected = r#"
+{
+  {
+    void x;
+  }
+  let x;
+}
+let initialized;
+{
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn drops_safe_void_literal_no_op_statement() {
     let input = r#"
 void 0;

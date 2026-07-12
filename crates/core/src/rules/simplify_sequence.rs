@@ -23,6 +23,7 @@ pub struct SimplifySequence {
     source_import_reads_are_observable: bool,
     observable_ident_reads: HashSet<BindingId>,
     nested_observable_ident_reads: HashSet<BindingId>,
+    future_lexical_scopes: Vec<HashSet<BindingId>>,
 }
 
 impl SimplifySequence {
@@ -45,6 +46,7 @@ impl SimplifySequence {
             source_import_reads_are_observable,
             observable_ident_reads: HashSet::new(),
             nested_observable_ident_reads: HashSet::new(),
+            future_lexical_scopes: Vec::new(),
         }
     }
 }
@@ -72,14 +74,14 @@ impl VisitMut for SimplifySequence {
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        items.visit_mut_children_with(self);
-
         let old_items = std::mem::take(items);
         let mut new_items = Vec::with_capacity(old_items.len());
+        self.future_lexical_scopes
+            .push(collect_lexical_decl_ids_from_module_items(&old_items));
 
-        let mut future_lexical = collect_lexical_decl_ids_from_module_items(&old_items);
+        for mut item in old_items {
+            item.visit_mut_children_with(self);
 
-        for item in old_items {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     let declared = collect_lexical_decl_ids_from_stmt(&stmt);
@@ -87,50 +89,52 @@ impl VisitMut for SimplifySequence {
                         if !is_pure_no_op_stmt(
                             &stmt,
                             self.unresolved_mark,
-                            &future_lexical,
+                            &self.future_lexical_scopes,
                             &self.observable_ident_reads,
                             &self.nested_observable_ident_reads,
                         ) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
                     }
-                    remove_ids(&mut future_lexical, &declared);
+                    remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
                 }
                 ModuleItem::ModuleDecl(decl) => {
                     let declared = collect_lexical_decl_ids_from_module_decl(&decl);
                     new_items.push(ModuleItem::ModuleDecl(decl));
-                    remove_ids(&mut future_lexical, &declared);
+                    remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
                 }
             }
         }
 
+        self.future_lexical_scopes.pop();
         *items = new_items;
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        stmts.visit_mut_children_with(self);
-
         let old_stmts = std::mem::take(stmts);
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
+        self.future_lexical_scopes
+            .push(collect_lexical_decl_ids_from_stmts(&old_stmts));
 
-        let mut future_lexical = collect_lexical_decl_ids_from_stmts(&old_stmts);
+        for mut stmt in old_stmts {
+            stmt.visit_mut_children_with(self);
 
-        for stmt in old_stmts {
             let declared = collect_lexical_decl_ids_from_stmt(&stmt);
             for s in split_stmt(stmt, self.level) {
                 if !is_pure_no_op_stmt(
                     &s,
                     self.unresolved_mark,
-                    &future_lexical,
+                    &self.future_lexical_scopes,
                     &self.observable_ident_reads,
                     &self.nested_observable_ident_reads,
                 ) {
                     new_stmts.push(s);
                 }
             }
-            remove_ids(&mut future_lexical, &declared);
+            remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
         }
 
+        self.future_lexical_scopes.pop();
         *stmts = new_stmts;
     }
 }
@@ -141,7 +145,7 @@ impl VisitMut for SimplifySequence {
 fn is_pure_no_op_stmt(
     stmt: &Stmt,
     unresolved_mark: Mark,
-    future_lexical: &HashSet<BindingId>,
+    future_lexical_scopes: &[HashSet<BindingId>],
     observable_ident_reads: &HashSet<BindingId>,
     nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
@@ -162,7 +166,7 @@ fn is_pure_no_op_stmt(
     if is_observable_ident_read(
         expr,
         unresolved_mark,
-        future_lexical,
+        future_lexical_scopes,
         observable_ident_reads,
         nested_observable_ident_reads,
     ) {
@@ -232,7 +236,7 @@ fn is_fn_arrow_or_class(expr: &Expr) -> bool {
 fn is_observable_ident_read(
     expr: &Expr,
     unresolved_mark: Mark,
-    future_lexical: &HashSet<BindingId>,
+    future_lexical_scopes: &[HashSet<BindingId>],
     observable_ident_reads: &HashSet<BindingId>,
     nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
@@ -240,13 +244,15 @@ fn is_observable_ident_read(
         let binding = (ident.sym.clone(), ident.ctxt);
         return (ident.ctxt == SyntaxContext::empty().apply_mark(unresolved_mark)
             && ident.sym.as_ref() != "undefined")
-            || future_lexical.contains(&binding)
+            || future_lexical_scopes
+                .iter()
+                .any(|scope| scope.contains(&binding))
             || observable_ident_reads.contains(&binding);
     }
 
     let mut detector = ObservableIdentReadDetector {
         unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
-        future_lexical,
+        future_lexical_scopes,
         observable_ident_reads: nested_observable_ident_reads,
         found: false,
     };
@@ -256,7 +262,7 @@ fn is_observable_ident_read(
 
 struct ObservableIdentReadDetector<'a> {
     unresolved_ctxt: SyntaxContext,
-    future_lexical: &'a HashSet<BindingId>,
+    future_lexical_scopes: &'a [HashSet<BindingId>],
     observable_ident_reads: &'a HashSet<BindingId>,
     found: bool,
 }
@@ -268,7 +274,10 @@ impl Visit for ObservableIdentReadDetector<'_> {
         }
         let binding = (ident.sym.clone(), ident.ctxt);
         self.found = (ident.ctxt == self.unresolved_ctxt && ident.sym.as_ref() != "undefined")
-            || self.future_lexical.contains(&binding)
+            || self
+                .future_lexical_scopes
+                .iter()
+                .any(|scope| scope.contains(&binding))
             || self.observable_ident_reads.contains(&binding);
     }
 
@@ -463,9 +472,11 @@ fn collect_binding_ids_from_pat(pat: &Pat, ids: &mut HashSet<BindingId>) {
     }
 }
 
-fn remove_ids(ids: &mut HashSet<BindingId>, remove: &HashSet<BindingId>) {
-    for id in remove {
-        ids.remove(id);
+fn remove_ids_from_current_scope(scopes: &mut [HashSet<BindingId>], remove: &HashSet<BindingId>) {
+    if let Some(current) = scopes.last_mut() {
+        for id in remove {
+            current.remove(id);
+        }
     }
 }
 
