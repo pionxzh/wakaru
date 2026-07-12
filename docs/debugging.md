@@ -54,7 +54,10 @@ Rule names are the names returned by `rule_names()`, for example
 `debug trace` is intentionally single-file only. Bundle decompile uses the
 two-phase fact-system pipeline, so tracing a full bundle would be misleading.
 For bundle regressions, trace the extracted raw module or reduce the issue to a
-single-file reproduction.
+single-file reproduction. Keep in mind that trace treats the parsed file as a
+source module: original ESM import reads and link checks are preserved, while
+the unpack pipeline may remove unused imports that Wakaru recovered from bundle
+edges.
 
 ## Snapshot Layers
 
