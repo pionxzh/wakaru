@@ -41,6 +41,10 @@ impl DeadImports {
             preserved_spans: Some(preserved_spans.clone()),
         }
     }
+
+    pub(crate) fn preserve_currently_dead(module: &Module) -> Self {
+        Self::delta(&compute_pre_dead_import_spans(module))
+    }
 }
 
 impl VisitMut for DeadImports {

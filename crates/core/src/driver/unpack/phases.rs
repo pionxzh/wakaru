@@ -31,9 +31,9 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_rules, apply_rules_to_recovered_module, ImportDedup, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly,
-    UnImportRename, UnOptionalChaining,
+    apply_rules, apply_rules_to_recovered_module, DeadImports, ImportDedup, RewriteLevel,
+    RulePipelineOptions, SimplifySequence, UnAssignmentMerging, UnConditionals,
+    UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 
@@ -315,6 +315,16 @@ pub(super) fn unpack_multi_module_with_plan(
             // Late pass at the barrier
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
+            // Preserve specifiers that were already dead at the barrier, then
+            // reuse this visitor after the standalone late cleanup to remove
+            // only specifiers whose last use those rewrites eliminated.
+            let mut final_recovered_import_cleanup = match options.dce_mode {
+                crate::DceMode::Off => None,
+                crate::DceMode::TransformOnly => {
+                    Some(DeadImports::preserve_currently_dead(&module))
+                }
+                crate::DceMode::Full => Some(DeadImports::full()),
+            };
             // Late helper-through-UnReturn range.
             apply_rules_to_recovered_module(
                 &mut module,
@@ -354,6 +364,10 @@ pub(super) fn unpack_multi_module_with_plan(
                 module.visit_mut_with(&mut ImportDedup);
                 apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
                 module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
+            }
+
+            if let Some(cleanup) = &mut final_recovered_import_cleanup {
+                module.visit_mut_with(cleanup);
             }
 
             let mut diag_warnings = if options.diagnostics {
@@ -604,6 +618,56 @@ mod tests {
         });
 
         assert_eq!(output, "import \"./module.js\";\n");
+    }
+
+    #[test]
+    fn late_cleanup_removes_newly_dead_recovered_import_specifier() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: r#"import { recovered } from "./module.js";
+(function() {
+    return void recovered;
+})();
+"#
+            .to_string(),
+            filename: "entry.js".to_string(),
+            ..Default::default()
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                dce_mode: DceMode::TransformOnly,
+                ..Default::default()
+            },
+        )
+        .expect("fixture should decompile");
+        assert_eq!(output.modules[0].1, "import \"./module.js\";\n");
+    }
+
+    #[test]
+    fn late_cleanup_preserves_pre_existing_dead_recovered_import_specifier() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: r#"import { alreadyDead } from "./module.js";"#.to_string(),
+            filename: "entry.js".to_string(),
+            ..Default::default()
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                dce_mode: DceMode::TransformOnly,
+                ..Default::default()
+            },
+        )
+        .expect("fixture should decompile");
+        assert_eq!(
+            output.modules[0].1,
+            "import { alreadyDead } from \"./module.js\";\n"
+        );
     }
 
     #[test]

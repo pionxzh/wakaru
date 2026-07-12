@@ -203,6 +203,9 @@ Unpacked bundle modules are the complementary case: their ESM imports are
 Wakaru's recovered representation of bundle edges, not source-level link
 checks. Transform-only cleanup may therefore remove a recovered specifier when
 a later rewrite removes its last use, while retaining the side-effect import.
+The unpack driver snapshots specifiers that were already dead at the phase-2
+barrier and runs a final recovered-import cleanup after the targeted late
+rewrites, so only specifiers made dead by those rewrites are removed.
 
 `DecompileOptions.level` controls rewrite aggressiveness — `minimal` (high
 confidence, semantics-preserving), `standard` (default, readability-oriented),
