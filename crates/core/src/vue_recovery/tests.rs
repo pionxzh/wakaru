@@ -31,6 +31,75 @@ fn resolved_stmts(source: &str) -> Vec<Stmt> {
     })
 }
 
+fn primed_context(source: &str) -> VueRecoveryContext {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module(source, cm.clone()).unwrap();
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let mut ctx = collect_context(&module, cm, HashMap::new(), HashMap::new());
+        ctx.unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+        let render = find_render_source(&module, None).expect("render source");
+        prime_render_context(render, &mut ctx).unwrap();
+        ctx
+    })
+}
+
+#[test]
+fn primes_compiled_script_setup_render_context() {
+    let ctx = primed_context(
+        r#"
+const component = {
+  setup(__props, { emit: fire }) {
+    const returned = {};
+    Object.defineProperty(returned, "__isScriptSetup", {
+      enumerable: false,
+      value: true
+    });
+    return returned;
+  }
+};
+function render(_ctx, _cache, $props, $setup) {
+  return openBlock(), createElementBlock("div");
+}
+component.render = render;
+export default component;
+"#,
+    );
+
+    assert_eq!(ctx.render_context, Some(Atom::from("_ctx")));
+    assert!(ctx.has_compiled_script_setup);
+    assert_eq!(ctx.render_props_context, Some(Atom::from("$props")));
+    assert_eq!(ctx.render_setup_context, Some(Atom::from("$setup")));
+    assert_eq!(ctx.setup_props_context, Some(Atom::from("__props")));
+    assert!(ctx.setup_props_context_ctxt.is_some());
+    assert_eq!(ctx.setup_emit_context, Some(Atom::from("fire")));
+}
+
+#[test]
+fn primes_inline_setup_render_context() {
+    let ctx = primed_context(
+        r#"
+export default {
+  setup(props, { emit: fire }) {
+    return (view, cache) => (
+      openBlock(), createElementBlock("button", { onClick: () => fire("save") })
+    );
+  }
+};
+"#,
+    );
+
+    assert_eq!(ctx.render_context, Some(Atom::from("view")));
+    assert!(!ctx.has_compiled_script_setup);
+    assert_eq!(ctx.render_props_context, None);
+    assert_eq!(ctx.render_setup_context, None);
+    assert_eq!(ctx.setup_props_context, Some(Atom::from("props")));
+    assert!(ctx.setup_props_context_ctxt.is_some());
+    assert_eq!(ctx.setup_emit_context, Some(Atom::from("fire")));
+}
+
 #[test]
 fn stmt_ident_refs_reports_sibling_scope_free_references() {
     // `resolver()` assigns one context per scope, so `sibling` and `handler`

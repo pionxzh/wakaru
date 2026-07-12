@@ -2039,6 +2039,7 @@ fn is_compiled_inline_script_setup(render: RenderSource<'_>) -> bool {
 
 pub(super) fn collect_setup_context(
     render: RenderSource<'_>,
+    compiled_setup: Option<CompiledScriptSetup<'_>>,
     ctx: &mut VueRecoveryContext,
 ) -> Result<()> {
     let owned_setup_stmts: Vec<Stmt>;
@@ -2056,14 +2057,8 @@ pub(super) fn collect_setup_context(
             None,
             preserve_inline_script_setup,
         ),
-        RenderSource::Function {
-            render,
-            component_options,
-        } => {
-            let options = component_options
-                .or(ctx.setup_component_options.as_ref())
-                .or(ctx.component_options.as_ref());
-            let Some(setup) = compiled_script_setup(options) else {
+        RenderSource::Function { render, .. } => {
+            let Some(setup) = compiled_setup else {
                 return Ok(());
             };
             owned_setup_stmts = setup.setup_stmts.to_vec();
@@ -3594,70 +3589,6 @@ pub(super) fn render_props_context_param(render: RenderSource<'_>) -> Option<Ato
             .and_then(param_binding_ident)
             .map(|ident| ident.sym.clone()),
         RenderSource::SetupArrow { .. } => None,
-    }
-}
-
-pub(super) fn setup_props_param(
-    render: RenderSource<'_>,
-    component_options: Option<&ObjectLit>,
-) -> Option<Atom> {
-    match render {
-        RenderSource::Function { .. } => compiled_script_setup(component_options)
-            .and_then(|setup| setup.setup_props)
-            .map(|ident| ident.sym.clone()),
-        RenderSource::SetupArrow {
-            setup_props: Some(setup_props),
-            ..
-        } => Some(setup_props.sym.clone()),
-        _ => None,
-    }
-}
-
-pub(super) fn setup_props_param_ctxt(
-    render: RenderSource<'_>,
-    component_options: Option<&ObjectLit>,
-) -> Option<SyntaxContext> {
-    match render {
-        RenderSource::Function { .. } => {
-            compiled_script_setup(component_options).and_then(|setup| setup.setup_props_ctxt)
-        }
-        RenderSource::SetupArrow {
-            setup_props: Some(setup_props),
-            ..
-        } => Some(setup_props.ctxt),
-        _ => None,
-    }
-}
-
-pub(super) fn setup_context_param(
-    render: RenderSource<'_>,
-    component_options: Option<&ObjectLit>,
-) -> Option<Atom> {
-    match render {
-        RenderSource::Function { .. } => compiled_script_setup(component_options)
-            .and_then(|setup| setup.setup_context)
-            .map(|ident| ident.sym.clone()),
-        RenderSource::SetupArrow {
-            setup_context: Some(setup_context),
-            ..
-        } => Some(setup_context.sym.clone()),
-        _ => None,
-    }
-}
-
-pub(super) fn setup_emit_param(
-    render: RenderSource<'_>,
-    component_options: Option<&ObjectLit>,
-) -> Option<Atom> {
-    match render {
-        RenderSource::Function { .. } => compiled_script_setup(component_options)
-            .and_then(|setup| setup.setup_emit)
-            .map(|ident| ident.sym.clone()),
-        RenderSource::SetupArrow {
-            setup_emit: Some(setup_emit),
-            ..
-        } => Some(setup_emit.sym.clone()),
-        _ => None,
     }
 }
 
