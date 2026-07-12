@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { ensureNodeTool } from "../lib/runner.mjs";
 import {
   assembleCompositionSfc,
+  ensureDocsCheckout,
   hasImportRequirement,
   importRequirements,
   normalizeCompiledTemplate,
@@ -17,6 +21,13 @@ const toolDir = ensureNodeTool("vue-sfc-3.5.35", [
 ]);
 const toolRequire = createRequire(join(toolDir, "package.json"));
 const babelParser = toolRequire("@babel/parser");
+
+function git(cwd, ...args) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
 
 const composition = `import DemoGrid from './Grid.vue'
 import { ref } from 'vue'
@@ -111,4 +122,55 @@ test("renumbers hoists without collapsing distinct bindings", () => {
     normalizeCompiledTemplate(original, babelParser),
     normalizeCompiledTemplate(swapped, babelParser),
   );
+});
+
+test("pins the managed docs checkout without mutating explicit checkouts", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-vue-docs-test-"));
+  const source = join(root, "source");
+  const managed = join(root, "managed");
+  const explicit = join(root, "explicit");
+  try {
+    git(root, "init", source);
+    git(source, "config", "user.name", "Wakaru Test");
+    git(source, "config", "user.email", "wakaru@example.test");
+    writeFileSync(join(source, "fixture.txt"), "first\n");
+    git(source, "add", "fixture.txt");
+    git(source, "commit", "-m", "first");
+    const pinnedCommit = git(source, "rev-parse", "HEAD");
+    writeFileSync(join(source, "fixture.txt"), "second\n");
+    git(source, "commit", "-am", "second");
+    const latestCommit = git(source, "rev-parse", "HEAD");
+
+    ensureDocsCheckout(managed, {
+      commit: pinnedCommit,
+      repository: source,
+    });
+    assert.equal(git(managed, "rev-parse", "HEAD"), pinnedCommit);
+
+    git(managed, "checkout", "--detach", latestCommit);
+    ensureDocsCheckout(managed, {
+      commit: pinnedCommit,
+      repository: source,
+    });
+    assert.equal(git(managed, "rev-parse", "HEAD"), pinnedCommit);
+
+    git(root, "clone", source, explicit);
+    ensureDocsCheckout(explicit, {
+      commit: pinnedCommit,
+      pin: false,
+      repository: source,
+    });
+    assert.equal(git(explicit, "rev-parse", "HEAD"), latestCommit);
+
+    writeFileSync(join(managed, "fixture.txt"), "dirty\n");
+    assert.throws(
+      () => ensureDocsCheckout(managed, {
+        commit: pinnedCommit,
+        repository: source,
+      }),
+      /refusing to update dirty Vue docs checkout/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

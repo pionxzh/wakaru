@@ -25,6 +25,8 @@ const repoRoot = resolve(scriptDir, "../../..");
 const defaultDocsRoot = join(repoRoot, "target", "vue-docs");
 const outputRoot = join(repoRoot, "target", "vue-docs-examples");
 const BABEL_PARSER_VERSION = "7.29.7";
+export const VUE_DOCS_COMMIT = "e4641141026871271e5083c99ad4cd3f4a8e9a68";
+const VUE_DOCS_REPOSITORY = "git@github.com:vuejs/docs.git";
 
 export function toScriptSetup(source, template) {
   const exportDefaultIndex = source.indexOf("export default");
@@ -96,7 +98,7 @@ function deindent(source, tabSize = 2) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const docsRoot = resolve(options.docsRoot ?? defaultDocsRoot);
-  ensureDocsCheckout(docsRoot);
+  ensureDocsCheckout(docsRoot, { pin: options.docsRoot === undefined });
   const examplesRoot = join(docsRoot, "src", "examples", "src");
   if (!existsSync(examplesRoot)) {
     throw new Error(`Vue docs examples not found at ${examplesRoot}`);
@@ -180,10 +182,32 @@ function parseArgs(args) {
   return options;
 }
 
-function ensureDocsCheckout(docsRoot) {
-  if (existsSync(join(docsRoot, ".git"))) return;
-  mkdirSync(dirname(docsRoot), { recursive: true });
-  runChecked(["git", "clone", "--depth", "1", "git@github.com:vuejs/docs.git", docsRoot]);
+export function ensureDocsCheckout(docsRoot, options = {}) {
+  const {
+    commit = VUE_DOCS_COMMIT,
+    pin = true,
+    repository = VUE_DOCS_REPOSITORY,
+  } = options;
+  const exists = existsSync(join(docsRoot, ".git"));
+  if (!exists) {
+    mkdirSync(dirname(docsRoot), { recursive: true });
+    const cloneArgs = pin
+      ? ["git", "clone", "--filter=blob:none", "--no-checkout", repository, docsRoot]
+      : ["git", "clone", repository, docsRoot];
+    runChecked(cloneArgs);
+  }
+  if (!pin) return;
+
+  const currentCommit = runCapture(["git", "-C", docsRoot, "rev-parse", "HEAD"]).trim();
+  if (exists) {
+    const dirty = runCapture(["git", "-C", docsRoot, "status", "--porcelain"]);
+    if (dirty.trim()) {
+      throw new Error(`refusing to update dirty Vue docs checkout at ${docsRoot}`);
+    }
+  }
+  if (exists && currentCommit === commit) return;
+  runChecked(["git", "-C", docsRoot, "fetch", "--depth", "1", "origin", commit]);
+  runChecked(["git", "-C", docsRoot, "checkout", "--detach", commit]);
 }
 
 function resolveWakaru(options) {

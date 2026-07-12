@@ -18,9 +18,12 @@ node scripts/repro/vue-docs-examples/run.mjs --profile prod-inline
 node --test scripts/repro/vue-docs-examples/run.test.mjs
 ```
 
-Use `--docs <path>` for an existing checkout and `--no-build-wakaru` with
-`WAKARU=/path/to/wakaru` to reuse a built binary. If the default checkout is
-missing, the runner clones `git@github.com:vuejs/docs.git` over SSH.
+The harness-managed default checkout is pinned to docs commit
+`e4641141026871271e5083c99ad4cd3f4a8e9a68`. If it is missing, the runner
+clones `git@github.com:vuejs/docs.git` over SSH and checks out that commit; if
+it has moved, the runner updates only a clean checkout. Use `--docs <path>` for
+an intentional custom checkout, which the runner never changes, and
+`--no-build-wakaru` with `WAKARU=/path/to/wakaru` to reuse a built binary.
 
 The available profiles are:
 
