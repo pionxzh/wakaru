@@ -601,6 +601,80 @@ let initialized;
 }
 
 #[test]
+fn preserves_outer_lexical_read_in_hoisted_function_called_before_initialization() {
+    let input = r#"
+f();
+let x;
+function f() {
+  void x;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_like_bodies_conservatively_preserve_outer_lexical_reads() {
+    let input = r#"
+let outer;
+const arrow = () => {
+  void outer;
+};
+const expression = function() {
+  void outer;
+};
+const object = {
+  method() {
+    void outer;
+  },
+  get value() {
+    void outer;
+    return 1;
+  },
+  set value(next) {
+    void outer;
+  }
+};
+class C {
+  constructor() {
+    void outer;
+  }
+  method() {
+    void outer;
+  }
+  get value() {
+    void outer;
+    return 1;
+  }
+  set value(next) {
+    void outer;
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_body_still_drops_initialized_shadowing_lexical_read() {
+    let input = r#"
+let value;
+function f() {
+  let value;
+  void value;
+}
+"#;
+    let expected = r#"
+let value;
+function f() {
+  let value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn drops_safe_void_literal_no_op_statement() {
     let input = r#"
 void 0;

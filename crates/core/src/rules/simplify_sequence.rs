@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, ClassExpr, Decl, Expr,
-    ExprStmt, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid,
-    Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr,
-    SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
-    VarDeclOrExpr, VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, ClassExpr, Constructor, Decl,
+    Expr, ExprStmt, FnExpr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, GetterProp, IfStmt,
+    ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, ReturnStmt,
+    SeqExpr, SetterProp, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryExpr, UnaryOp,
+    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -23,7 +23,25 @@ pub struct SimplifySequence {
     source_import_reads_are_observable: bool,
     observable_ident_reads: HashSet<BindingId>,
     nested_observable_ident_reads: HashSet<BindingId>,
-    future_lexical_scopes: Vec<HashSet<BindingId>>,
+    lexical_scopes: Vec<LexicalScope>,
+    function_lexical_scope_depths: Vec<usize>,
+}
+
+struct LexicalScope {
+    // Retained for deferred function execution: a body may run before an
+    // enclosing lexical binding reaches its initializer.
+    all: HashSet<BindingId>,
+    // Drained in source order for immediately evaluated statements.
+    future: HashSet<BindingId>,
+}
+
+impl LexicalScope {
+    fn new(bindings: HashSet<BindingId>) -> Self {
+        Self {
+            all: bindings.clone(),
+            future: bindings,
+        }
+    }
 }
 
 impl SimplifySequence {
@@ -46,8 +64,19 @@ impl SimplifySequence {
             source_import_reads_are_observable,
             observable_ident_reads: HashSet::new(),
             nested_observable_ident_reads: HashSet::new(),
-            future_lexical_scopes: Vec::new(),
+            lexical_scopes: Vec::new(),
+            function_lexical_scope_depths: Vec::new(),
         }
+    }
+
+    fn visit_function_like_children<T>(&mut self, node: &mut T)
+    where
+        T: VisitMutWith<Self>,
+    {
+        self.function_lexical_scope_depths
+            .push(self.lexical_scopes.len());
+        node.visit_mut_children_with(self);
+        self.function_lexical_scope_depths.pop();
     }
 }
 
@@ -76,8 +105,9 @@ impl VisitMut for SimplifySequence {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         let old_items = std::mem::take(items);
         let mut new_items = Vec::with_capacity(old_items.len());
-        self.future_lexical_scopes
-            .push(collect_lexical_decl_ids_from_module_items(&old_items));
+        self.lexical_scopes.push(LexicalScope::new(
+            collect_lexical_decl_ids_from_module_items(&old_items),
+        ));
 
         for mut item in old_items {
             item.visit_mut_children_with(self);
@@ -89,32 +119,35 @@ impl VisitMut for SimplifySequence {
                         if !is_pure_no_op_stmt(
                             &stmt,
                             self.unresolved_mark,
-                            &self.future_lexical_scopes,
+                            &self.lexical_scopes,
+                            self.function_lexical_scope_depths.last().copied(),
                             &self.observable_ident_reads,
                             &self.nested_observable_ident_reads,
                         ) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
                     }
-                    remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
+                    remove_ids_from_current_scope(&mut self.lexical_scopes, &declared);
                 }
                 ModuleItem::ModuleDecl(decl) => {
                     let declared = collect_lexical_decl_ids_from_module_decl(&decl);
                     new_items.push(ModuleItem::ModuleDecl(decl));
-                    remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
+                    remove_ids_from_current_scope(&mut self.lexical_scopes, &declared);
                 }
             }
         }
 
-        self.future_lexical_scopes.pop();
+        self.lexical_scopes.pop();
         *items = new_items;
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let old_stmts = std::mem::take(stmts);
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
-        self.future_lexical_scopes
-            .push(collect_lexical_decl_ids_from_stmts(&old_stmts));
+        self.lexical_scopes
+            .push(LexicalScope::new(collect_lexical_decl_ids_from_stmts(
+                &old_stmts,
+            )));
 
         for mut stmt in old_stmts {
             stmt.visit_mut_children_with(self);
@@ -124,18 +157,39 @@ impl VisitMut for SimplifySequence {
                 if !is_pure_no_op_stmt(
                     &s,
                     self.unresolved_mark,
-                    &self.future_lexical_scopes,
+                    &self.lexical_scopes,
+                    self.function_lexical_scope_depths.last().copied(),
                     &self.observable_ident_reads,
                     &self.nested_observable_ident_reads,
                 ) {
                     new_stmts.push(s);
                 }
             }
-            remove_ids_from_current_scope(&mut self.future_lexical_scopes, &declared);
+            remove_ids_from_current_scope(&mut self.lexical_scopes, &declared);
         }
 
-        self.future_lexical_scopes.pop();
+        self.lexical_scopes.pop();
         *stmts = new_stmts;
+    }
+
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        self.visit_function_like_children(function);
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        self.visit_function_like_children(arrow);
+    }
+
+    fn visit_mut_constructor(&mut self, constructor: &mut Constructor) {
+        self.visit_function_like_children(constructor);
+    }
+
+    fn visit_mut_getter_prop(&mut self, getter: &mut GetterProp) {
+        self.visit_function_like_children(getter);
+    }
+
+    fn visit_mut_setter_prop(&mut self, setter: &mut SetterProp) {
+        self.visit_function_like_children(setter);
     }
 }
 
@@ -145,7 +199,8 @@ impl VisitMut for SimplifySequence {
 fn is_pure_no_op_stmt(
     stmt: &Stmt,
     unresolved_mark: Mark,
-    future_lexical_scopes: &[HashSet<BindingId>],
+    lexical_scopes: &[LexicalScope],
+    function_lexical_scope_depth: Option<usize>,
     observable_ident_reads: &HashSet<BindingId>,
     nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
@@ -166,7 +221,8 @@ fn is_pure_no_op_stmt(
     if is_observable_ident_read(
         expr,
         unresolved_mark,
-        future_lexical_scopes,
+        lexical_scopes,
+        function_lexical_scope_depth,
         observable_ident_reads,
         nested_observable_ident_reads,
     ) {
@@ -236,7 +292,8 @@ fn is_fn_arrow_or_class(expr: &Expr) -> bool {
 fn is_observable_ident_read(
     expr: &Expr,
     unresolved_mark: Mark,
-    future_lexical_scopes: &[HashSet<BindingId>],
+    lexical_scopes: &[LexicalScope],
+    function_lexical_scope_depth: Option<usize>,
     observable_ident_reads: &HashSet<BindingId>,
     nested_observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
@@ -244,15 +301,21 @@ fn is_observable_ident_read(
         let binding = (ident.sym.clone(), ident.ctxt);
         return (ident.ctxt == SyntaxContext::empty().apply_mark(unresolved_mark)
             && ident.sym.as_ref() != "undefined")
-            || future_lexical_scopes
+            || lexical_scopes
                 .iter()
-                .any(|scope| scope.contains(&binding))
+                .any(|scope| scope.future.contains(&binding))
+            || function_lexical_scope_depth.is_some_and(|depth| {
+                lexical_scopes[..depth]
+                    .iter()
+                    .any(|scope| scope.all.contains(&binding))
+            })
             || observable_ident_reads.contains(&binding);
     }
 
     let mut detector = ObservableIdentReadDetector {
         unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
-        future_lexical_scopes,
+        lexical_scopes,
+        function_lexical_scope_depth,
         observable_ident_reads: nested_observable_ident_reads,
         found: false,
     };
@@ -262,7 +325,8 @@ fn is_observable_ident_read(
 
 struct ObservableIdentReadDetector<'a> {
     unresolved_ctxt: SyntaxContext,
-    future_lexical_scopes: &'a [HashSet<BindingId>],
+    lexical_scopes: &'a [LexicalScope],
+    function_lexical_scope_depth: Option<usize>,
     observable_ident_reads: &'a HashSet<BindingId>,
     found: bool,
 }
@@ -275,9 +339,14 @@ impl Visit for ObservableIdentReadDetector<'_> {
         let binding = (ident.sym.clone(), ident.ctxt);
         self.found = (ident.ctxt == self.unresolved_ctxt && ident.sym.as_ref() != "undefined")
             || self
-                .future_lexical_scopes
+                .lexical_scopes
                 .iter()
-                .any(|scope| scope.contains(&binding))
+                .any(|scope| scope.future.contains(&binding))
+            || self.function_lexical_scope_depth.is_some_and(|depth| {
+                self.lexical_scopes[..depth]
+                    .iter()
+                    .any(|scope| scope.all.contains(&binding))
+            })
             || self.observable_ident_reads.contains(&binding);
     }
 
@@ -472,10 +541,10 @@ fn collect_binding_ids_from_pat(pat: &Pat, ids: &mut HashSet<BindingId>) {
     }
 }
 
-fn remove_ids_from_current_scope(scopes: &mut [HashSet<BindingId>], remove: &HashSet<BindingId>) {
+fn remove_ids_from_current_scope(scopes: &mut [LexicalScope], remove: &HashSet<BindingId>) {
     if let Some(current) = scopes.last_mut() {
         for id in remove {
-            current.remove(id);
+            current.future.remove(id);
         }
     }
 }
