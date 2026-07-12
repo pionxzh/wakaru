@@ -48,8 +48,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build wakaru CLI
+        run: cargo build -p wakaru-cli
       - name: Test correctness tooling
         run: node --test --test-concurrency=1 scripts/correctness/*.test.mjs
+        env:
+          WAKARU: ${{ github.workspace }}/target/debug/wakaru
       - name: Cache pinned Test262 corpus
         uses: actions/cache@v4
         with:
