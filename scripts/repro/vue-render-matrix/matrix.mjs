@@ -5,7 +5,10 @@ import {
 } from "../lib/runner.mjs";
 import { prewarmNormalize, structurallyEqual } from "../lib/compare.mjs";
 import { VUE_SFC_COMPILE_PROFILES } from "../lib/vue-sfc-compiler.mjs";
-import { linkedEventHandlerProgram } from "../lib/vue-sfc-compare.mjs";
+import {
+  linkedEventHandlerProgram,
+  setupDirectiveBinding,
+} from "../lib/vue-sfc-compare.mjs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -78,7 +81,6 @@ function increment() {
         "const props = defineProps(",
         "defineEmits(",
         ":class=\"{ active: props.active }\"",
-        "@click=",
         "{{ props.count }}",
       ],
       [
@@ -86,7 +88,6 @@ function increment() {
         "const props = defineProps(",
         "defineEmits(",
         ":class=\"{ active }\"",
-        "@click=",
         "{{ count }}",
       ],
       [
@@ -95,7 +96,6 @@ function increment() {
         "const props = __props;",
         "defineEmits(",
         ":class=\"{ active: props.active }\"",
-        "@click=",
         "{{ props.count }}",
       ],
     ],
@@ -194,7 +194,7 @@ const visible = true
   <input v-model="value" v-show="visible" />
 </template>
 `,
-    expected: ["<script setup>", "v-model=", "v-show="],
+    expected: ["<script setup>"],
   },
 ];
 
@@ -277,6 +277,19 @@ runMatrix({
   transformers,
   wakaruArgs: ["--vue-sfc"],
   validateRecovered({ snippet, shape, recovered }) {
+    if (snippet.name === "script-setup-event-and-class") {
+      const clickBinding = setupDirectiveBinding(recovered, {
+        ...vueCompareOptions,
+        directiveName: "on",
+        argument: "click",
+      });
+      if (!clickBinding) {
+        return {
+          recovered: false,
+          notes: "click handler is not a plain script-setup binding",
+        };
+      }
+    }
     if (shape.tools.some((tool) => tool.includes("mangle"))) {
       const linked = linkedScopedSlotPrograms(snippet, recovered);
       const eventNeedle = linked && `@click="${linked.sourceProgram.expression}"`;
@@ -295,22 +308,24 @@ runMatrix({
       }
     }
     if (snippet.name === "model-and-directive") {
-      const modelBinding = recovered.match(
-        /v-model(?:\.[^=]+)?="([A-Za-z_$][\w$]*)(?:\.value)?"/,
-      );
-      if (!modelBinding || recovered.includes(`v-model="${modelBinding[1]}.value"`)) {
+      const modelBinding = setupDirectiveBinding(recovered, {
+        ...vueCompareOptions,
+        directiveName: "model",
+      });
+      if (!modelBinding || !["useModel", "defineModel"].includes(modelBinding.initializer)) {
         return {
           recovered: false,
-          notes: "template v-model still contains compiled ref .value access",
+          notes: "v-model is not linked to a recovered useModel/defineModel binding",
         };
       }
-      const declaration = new RegExp(
-        `const\\s+${modelBinding[1]}\\s*=\\s*useModel\\(`,
-      );
-      if (!declaration.test(recovered)) {
+      const showBinding = setupDirectiveBinding(recovered, {
+        ...vueCompareOptions,
+        directiveName: "show",
+      });
+      if (!showBinding && !recovered.includes('v-show="true"')) {
         return {
           recovered: false,
-          notes: `v-model binding ${modelBinding[1]} has no recovered useModel declaration`,
+          notes: "v-show is neither a plain script-setup binding nor folded true",
         };
       }
     }

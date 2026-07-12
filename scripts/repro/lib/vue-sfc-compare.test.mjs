@@ -3,7 +3,10 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
 import { ensureNodeTool } from "./runner.mjs";
-import { linkedEventHandlerProgram } from "./vue-sfc-compare.mjs";
+import {
+  linkedEventHandlerProgram,
+  setupDirectiveBinding,
+} from "./vue-sfc-compare.mjs";
 
 const toolDir = ensureNodeTool("vue-sfc-3.5.35", [
   "@vue/compiler-sfc@3.5.35",
@@ -79,4 +82,61 @@ test("declines events that cannot be linked to a setup declaration", () => {
     ),
     null,
   );
+});
+
+test("accepts only plain directive expressions linked to setup bindings", () => {
+  const source = (event, shown = "visible") => `
+    <script setup>
+    const visible = true
+    function ${event === "onClick" ? "onClick" : "handler"}() {}
+    </script>
+    <template><button @click="${event}" v-show="${shown}" /></template>
+  `;
+
+  assert.deepEqual(
+    setupDirectiveBinding(source("onClick"), {
+      ...options,
+      directiveName: "on",
+      argument: "click",
+    }),
+    { name: "onClick", kind: "function", initializer: null },
+  );
+  assert.deepEqual(
+    setupDirectiveBinding(source("onClick"), {
+      ...options,
+      directiveName: "show",
+    }),
+    { name: "visible", kind: "variable", initializer: null },
+  );
+  assert.equal(
+    setupDirectiveBinding(source("_cache[0]"), {
+      ...options,
+      directiveName: "on",
+      argument: "click",
+    }),
+    null,
+  );
+  assert.equal(
+    setupDirectiveBinding(source("onClick", "_ctx.visible"), {
+      ...options,
+      directiveName: "show",
+    }),
+    null,
+  );
+});
+
+test("reports the setup initializer used by a directive binding", () => {
+  for (const initializer of ["useModel", "defineModel"]) {
+    const source = `
+      <script setup>const value = ${initializer}()</script>
+      <template><input v-model="value" /></template>
+    `;
+    assert.deepEqual(
+      setupDirectiveBinding(source, {
+        ...options,
+        directiveName: "model",
+      }),
+      { name: "value", kind: "variable", initializer },
+    );
+  }
 });

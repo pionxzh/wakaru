@@ -65,6 +65,27 @@ function eventExpression(node, eventName) {
   return null;
 }
 
+function findDirectiveExpression(node, directiveName, argument) {
+  if (node.type === 1) {
+    for (const property of node.props ?? []) {
+      if (
+        property.type === 7
+        && property.name === directiveName
+        && (argument === undefined
+          || (property.arg?.isStatic && property.arg.content === argument))
+        && property.exp?.content
+      ) {
+        return property.exp.content;
+      }
+    }
+  }
+  for (const child of node.children ?? []) {
+    const expression = findDirectiveExpression(child, directiveName, argument);
+    if (expression) return expression;
+  }
+  return null;
+}
+
 function slotBindings(node, babelParser, plugins) {
   if (node.type !== 1) return [];
   const bindings = [];
@@ -113,6 +134,69 @@ function handlerDeclaration(content, ast, handlerName) {
     }
   }
   return null;
+}
+
+function setupDeclaration(ast, bindingName) {
+  for (const statement of ast.program.body) {
+    if (statement.type === "FunctionDeclaration" && statement.id?.name === bindingName) {
+      return { kind: "function", initializer: null };
+    }
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declaration of statement.declarations) {
+      if (declaration.id.type !== "Identifier" || declaration.id.name !== bindingName) continue;
+      const initializer = declaration.init?.type === "CallExpression"
+        && declaration.init.callee.type === "Identifier"
+        ? declaration.init.callee.name
+        : null;
+      return { kind: "variable", initializer };
+    }
+  }
+  return null;
+}
+
+/**
+ * Return a directive's plain identifier binding when that identifier has a
+ * matching top-level declaration in <script setup>. Compiled expressions such
+ * as `_cache[0]` and `_ctx.visible` deliberately return null.
+ */
+export function setupDirectiveBinding(source, options) {
+  const {
+    compiler,
+    babelParser,
+    directiveName,
+    argument,
+    filename = "Compare.vue",
+  } = options;
+  let parsed;
+  try {
+    parsed = compiler.parse(source, { filename });
+  } catch {
+    return null;
+  }
+  if (parsed.errors?.length > 0) return null;
+
+  const { scriptSetup, template } = parsed.descriptor;
+  if (!scriptSetup || !template?.ast) return null;
+  const plugins = parserPlugins(scriptSetup.lang);
+  const directiveExpression = findDirectiveExpression(
+    template.ast,
+    directiveName,
+    argument,
+  );
+  if (!directiveExpression) return null;
+
+  let expression;
+  let scriptAst;
+  try {
+    expression = babelParser.parseExpression(directiveExpression, { plugins });
+    scriptAst = babelParser.parse(scriptSetup.content, { sourceType: "module", plugins });
+  } catch {
+    return null;
+  }
+  if (expression.type !== "Identifier") return null;
+  const declaration = setupDeclaration(scriptAst, expression.name);
+  if (!declaration) return null;
+  return { name: expression.name, ...declaration };
 }
 
 /**

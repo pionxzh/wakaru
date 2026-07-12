@@ -44,10 +44,11 @@ render JavaScript."
 - The official Vue docs Composition API examples: all 27 component fixtures at
   docs commit `e4641141026871271e5083c99ad4cd3f4a8e9a68` recover to parseable,
   template-compilable SFCs with required import specifiers and no leaked
-  script-setup markers. The stricter generated-template comparison is 12/27;
-  it also treats harmless loop-variable renaming and equivalent template syntax
-  as different, so it is a conservative fidelity signal rather than a semantic
-  pass rate.
+  script-setup markers. The stricter token-aware generated-template comparison
+  is 12/27; it ignores generated-code formatting and hoist numbering while
+  preserving string-literal contents. It still treats harmless loop-variable
+  renaming and equivalent template syntax as different, so it is a conservative
+  fidelity signal rather than a semantic pass rate.
 
 ## Known Gaps
 

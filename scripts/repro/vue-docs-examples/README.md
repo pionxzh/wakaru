@@ -34,6 +34,7 @@ The available profiles are:
 
 The report checks SFC parsing/template compilation, restoration of
 `<script setup>`, preserved import specifiers, leaked compiler-only setup markers,
-and normalized template compiler equivalence. Styles are deliberately excluded
-from recovery scoring because normal generated JavaScript does not contain the
-original CSS.
+and token-normalized template compiler equivalence. The token comparison ignores
+generated-code formatting, comments, and hoist numbering while preserving
+string-literal contents. Styles are deliberately excluded from recovery scoring
+because normal generated JavaScript does not contain the original CSS.

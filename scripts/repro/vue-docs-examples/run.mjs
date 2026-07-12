@@ -24,6 +24,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "../../..");
 const defaultDocsRoot = join(repoRoot, "target", "vue-docs");
 const outputRoot = join(repoRoot, "target", "vue-docs-examples");
+const BABEL_PARSER_VERSION = "7.29.7";
 
 export function toScriptSetup(source, template) {
   const exportDefaultIndex = source.indexOf("export default");
@@ -105,10 +106,14 @@ function main() {
   const vueVersion = docsPackage.dependencies.vue.replace(/^[^\d]*/, "");
   const toolDir = ensureNodeTool(
     `vue-docs-examples-sfc-${vueVersion}`,
-    [`@vue/compiler-sfc@${vueVersion}`],
+    [
+      `@vue/compiler-sfc@${vueVersion}`,
+      `@babel/parser@${BABEL_PARSER_VERSION}`,
+    ],
   );
   const require = createRequire(join(toolDir, "package.json"));
   const compiler = require("@vue/compiler-sfc");
+  const babelParser = require("@babel/parser");
   const wakaru = resolveWakaru(options);
   const profiles = options.profile
     ? [vueSfcCompileProfile(options.profile)]
@@ -129,6 +134,7 @@ function main() {
         fixture,
         profile,
         compiler,
+        babelParser,
         wakaru,
         generatedRoot,
         recoveredRoot,
@@ -227,6 +233,7 @@ function runFixture({
   fixture,
   profile,
   compiler,
+  babelParser,
   wakaru,
   generatedRoot,
   recoveredRoot,
@@ -255,7 +262,13 @@ function runFixture({
   const recovered = result.status === 0 && existsSync(recoveredPath)
     ? readFileSync(recoveredPath, "utf8")
     : "";
-  const validation = validateRecovered(fixture.source, recovered, fixture.filename, compiler);
+  const validation = validateRecovered(
+    fixture.source,
+    recovered,
+    fixture.filename,
+    compiler,
+    babelParser,
+  );
   return {
     name: fixture.name,
     profile: profile.name,
@@ -267,7 +280,7 @@ function runFixture({
   };
 }
 
-function validateRecovered(original, recovered, filename, compiler) {
+function validateRecovered(original, recovered, filename, compiler, babelParser) {
   if (!recovered) {
     return {
       parse_ok: false,
@@ -293,8 +306,8 @@ function validateRecovered(original, recovered, filename, compiler) {
     );
     templateOk = recoveredTemplate.errors.length === 0;
     templateEquivalent = templateOk
-      && normalizeCompiledTemplate(recoveredTemplate.code)
-        === normalizeCompiledTemplate(originalTemplate.code);
+      && normalizeCompiledTemplate(recoveredTemplate.code, babelParser)
+        === normalizeCompiledTemplate(originalTemplate.code, babelParser);
   }
   const recoveredScript = [descriptor.script?.content, descriptor.scriptSetup?.content]
     .filter(Boolean)
@@ -325,8 +338,23 @@ function compileTemplateForComparison(source, filename, compiler) {
   });
 }
 
-function normalizeCompiledTemplate(code) {
-  return code.replace(/\/\*[^]*?\*\//g, "").replace(/\s+/g, "").replace(/_hoisted_\d+/g, "_hoisted");
+export function normalizeCompiledTemplate(code, babelParser) {
+  const parsed = babelParser.parse(code, {
+    sourceType: "module",
+    tokens: true,
+  });
+  const hoistNames = new Map();
+  return JSON.stringify(parsed.tokens
+    .filter((token) => typeof token.type !== "string")
+    .map((token) => {
+      const type = token.type.label;
+      let value = token.value ?? type;
+      if (type === "name" && /^_hoisted_\d+$/.test(value)) {
+        if (!hoistNames.has(value)) hoistNames.set(value, `_hoisted_${hoistNames.size}`);
+        value = hoistNames.get(value);
+      }
+      return [type, value];
+    }));
 }
 
 export function importRequirements(source) {
