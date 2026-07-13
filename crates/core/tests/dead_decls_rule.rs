@@ -55,13 +55,7 @@ function load_user(app_id) {
   return app_id;
 }
 "#;
-    let expected = r#"
-function load_user(app_id) {
-  side(undefined);
-  return app_id;
-}
-"#;
-    assert_eq_normalized(&render_default(input), expected.trim());
+    assert_eq_normalized(&render_default(input), input.trim());
 }
 
 #[test]

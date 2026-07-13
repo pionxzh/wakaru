@@ -1223,7 +1223,8 @@ const _a = app_info, { name, version = fallback_version } = _a, rest_info = __ob
 use(name, version, rest_info);
 "#;
     let expected = r#"
-const { name, version = fallback_version, ...rest_info } = app_info;
+const _a = app_info;
+const { name, version = fallback_version, ...rest_info } = _a;
 use(name, version, rest_info);
 "#;
     assert_eq_normalized(&render(input), expected);
@@ -1236,7 +1237,8 @@ fn named_owp_helper_mangled_esbuild_rest_helper() {
 var e=Object.getOwnPropertySymbols,r=Object.prototype.hasOwnProperty,o=Object.prototype.propertyIsEnumerable,t=(t,n)=>{var a={};for(var p in t)r.call(t,p)&&n.indexOf(p)<0&&(a[p]=t[p]);if(null!=t&&e)for(var p of e(t))n.indexOf(p)<0&&o.call(t,p)&&(a[p]=t[p]);return a};const n=app_info,{name:a}=n,p=t(n,["name"]);use(a,p);
 "#;
     let expected = r#"
-const { name, ...rest } = app_info;
+const n = app_info;
+const { name, ...rest } = n;
 use(name, rest);
 "#;
     assert_eq_normalized(&render(input), expected);
@@ -1299,7 +1301,8 @@ const _a = app_info, { name } = _a, rest_info = undefined, out = { ...__objRest(
 use(out);
 "#;
     let expected = r#"
-const { name, ...rest_info } = app_info;
+const _a = app_info;
+const { name, ...rest_info } = _a;
 const out = { ...rest_info, name };
 use(out);
 "#;

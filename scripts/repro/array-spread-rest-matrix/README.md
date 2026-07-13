@@ -22,6 +22,11 @@ rest while leaving the outer index/`slice()` accesses split, and helper-heavy
 the denominator and explain the matrix's lower aggregate rate; they are not
 regressions in previously passing shapes.
 
+`array-rest-basic` also accepts Babel's retained single-read `_items = items`
+capture before the recovered destructuring. `items` is environment-injected in
+the harness, so SmartInline intentionally cannot prove it frozen; preserving
+that capture is faithful recovery rather than a failed array-rest rewrite.
+
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
 shape is still preserved while duplicate tool outputs are collapsed.

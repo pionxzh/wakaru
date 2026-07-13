@@ -1,5 +1,7 @@
 ---
 source: crates/core/tests/un_sliced_to_array_rule.rs
+assertion_line: 670
 expression: output
 ---
-const key = pair[0];
+const _ref = pair;
+const key = _ref[0];

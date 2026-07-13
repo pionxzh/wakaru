@@ -30,6 +30,9 @@ const snippets = [
   {
     name: "rest-basic",
     source: "const { name, ...rest_info } = app_info;\nuse(name, rest_info);\n",
+    acceptForms: [
+      "const o = app_info;\nconst { name, ...rest_info } = o;\nuse(name, rest_info);\n",
+    ],
     expected: ["const {", "name", "...rest_info"],
     execute: { env: { app_info: { name: "app", size: 2, tag: 3 } } },
   },
@@ -37,6 +40,9 @@ const snippets = [
     name: "rest-rename-default",
     source:
       "const { name: app_name, version = fallback_version, ...rest_info } = app_info;\nuse(app_name, version, rest_info);\n",
+    acceptForms: [
+      "const o = app_info;\nconst { name: app_name, version = fallback_version, ...rest_info } = o;\nuse(app_name, version, rest_info);\n",
+    ],
     expected: ["name: app_name", "version = fallback_version", "...rest_info"],
     execute: { env: { app_info: { name: "app", size: 2 }, fallback_version: 9 } },
   },
@@ -44,6 +50,9 @@ const snippets = [
     name: "rest-string-key",
     source:
       'const { "app-id": app_id, name, ...rest_info } = app_info;\nuse(app_id, name, rest_info);\n',
+    acceptForms: [
+      'const o = app_info;\nconst { "app-id": app_id, name, ...rest_info } = o;\nuse(app_id, name, rest_info);\n',
+    ],
     expected: ['"app-id": app_id', "name", "...rest_info"],
     execute: { env: { app_info: { "app-id": 7, name: "app", size: 2 } } },
   },
@@ -51,6 +60,9 @@ const snippets = [
     name: "rest-computed-key",
     source:
       "const property_key = get_key();\nconst { [property_key]: picked, ...rest_info } = app_info;\nuse(picked, rest_info);\n",
+    acceptForms: [
+      "const property_key = get_key();\nconst o = app_info;\nconst { [property_key]: picked, ...rest_info } = o;\nuse(picked, rest_info);\n",
+    ],
     expected: ["[property_key]: picked", "...rest_info", "use(picked, rest_info)"],
     execute: {
       env: { app_info: { size: 2, name: "app" } },
@@ -61,6 +73,9 @@ const snippets = [
     name: "spread-rest-combined",
     source:
       "const { name, ...rest_info } = app_info;\nconst out = { ...rest_info, name };\nuse(out);\n",
+    acceptForms: [
+      "const o = app_info;\nconst { name, ...rest_info } = o;\nconst out = { ...rest_info, name };\nuse(out);\n",
+    ],
     expected: ["...rest_info", "name"],
     execute: { env: { app_info: { name: "app", size: 2 } } },
   },
@@ -70,6 +85,12 @@ const snippets = [
     // destructuring must stay writable when the rest binding is reassigned.
     source:
       "let { name, ...rest_info } = app_info;\nrest_info = mutate(rest_info);\nuse(name, rest_info);\n",
+    // A generated alias of the env-injected global is deliberately outside
+    // SmartInline's frozen-local proof. Accept that single-read producer shape
+    // without teaching the rule that unresolved globals are stable.
+    acceptForms: [
+      "let o = app_info;\nlet { name, ...rest_info } = o;\nrest_info = mutate(rest_info);\nuse(name, rest_info);\n",
+    ],
     expected: ["...rest_info", "rest_info = mutate(rest_info)"],
     execute: { env: { app_info: { name: "app", size: 2 } } },
   },

@@ -540,7 +540,9 @@ var out = __spreadArray([head], items, true);
 "#;
     let output = render(input);
     assert!(
-        output.contains("customSpreadArray([") && !output.contains("...items"),
+        output.contains("const __spreadArray = customSpreadArray;")
+            && output.contains("__spreadArray([")
+            && !output.contains("...items"),
         "non-helper __spreadArray call should be preserved as a call: {output}"
     );
 }

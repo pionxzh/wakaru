@@ -701,6 +701,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
     }
     const p = M(initialIndex, 0, initialEntries.length - 1);
     const h = initialEntries.map((e)=>createLocation(e, undefined, typeof e === "string" ? d() : e.key || d()));
+    const createHref = createPath;
     function y(e) {
         const t = M(g.index + e, 0, g.entries.length - 1);
         const r = g.entries[t];
@@ -722,7 +723,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
         location: h[p],
         index: p,
         entries: h,
-        createHref: createPath,
+        createHref,
         push (e, t) {
             const r = createLocation(e, t, d(), g.location);
             s.confirmTransitionTo(r, "PUSH", getUserConfirmation, (e)=>{

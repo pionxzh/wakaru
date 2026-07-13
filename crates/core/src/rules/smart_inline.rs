@@ -3,15 +3,16 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee,
-    ComputedPropName, Decl, DoWhileStmt, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident,
-    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleExportName,
-    ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator, WhileStmt,
+    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee,
+    CatchClause, ComputedPropName, Constructor, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt,
+    Function, GetterProp, Ident, ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp,
+    Module, ModuleExportName, ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName,
+    SetterProp, SimpleAssignTarget, StaticBlock, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::js_names::is_stable_builtin_alias_root;
+use crate::js_names::{is_likely_generated_alias, is_stable_builtin_alias_root};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 use super::builtin_aliases::{
@@ -29,7 +30,7 @@ pub struct SmartInline {
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     use_state_bindings: HashSet<BindingKey>,
-    for_init_bindings: Vec<HashSet<BindingKey>>,
+    initialized_binding_scopes: Vec<HashSet<BindingKey>>,
 }
 
 impl SmartInline {
@@ -38,7 +39,7 @@ impl SmartInline {
             level,
             unresolved_mark: None,
             use_state_bindings: HashSet::new(),
-            for_init_bindings: Vec::new(),
+            initialized_binding_scopes: Vec::new(),
         }
     }
 
@@ -47,7 +48,7 @@ impl SmartInline {
             level,
             unresolved_mark: Some(unresolved_mark),
             use_state_bindings: HashSet::new(),
-            for_init_bindings: Vec::new(),
+            initialized_binding_scopes: Vec::new(),
         }
     }
 }
@@ -81,13 +82,13 @@ impl VisitMut for SmartInline {
             );
         }
 
-        let context_for_init_bindings = self.context_for_init_bindings();
+        let initialized_bindings = self.initialized_bindings();
         process_module_stmt_runs(
             &mut module.body,
             self.level,
             self.unresolved_mark,
             &self.use_state_bindings,
-            &context_for_init_bindings,
+            &initialized_bindings,
         );
 
         module.visit_mut_children_with(self);
@@ -96,32 +97,249 @@ impl VisitMut for SmartInline {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let taken = std::mem::take(stmts);
-        let context_for_init_bindings = self.context_for_init_bindings();
+        let initialized_bindings = self.initialized_bindings();
         *stmts = process_stmts(
             taken,
             self.level,
             self.unresolved_mark,
             &self.use_state_bindings,
-            &context_for_init_bindings,
+            &initialized_bindings,
         );
         stmts.visit_mut_children_with(self);
     }
 
-    fn visit_mut_for_stmt(&mut self, stmt: &mut ForStmt) {
-        stmt.init.visit_mut_with(self);
-        stmt.test.visit_mut_with(self);
-        stmt.update.visit_mut_with(self);
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let mut bindings = HashSet::new();
+        for param in &function.params {
+            collect_pat_write_ids(&param.pat, &mut bindings);
+        }
+        let mut safety = FunctionEntrySafetyCollector::new(&bindings);
+        function.params.visit_with(&mut safety);
+        function.body.visit_with(&mut safety);
+        let (dynamic_scope, unsafe_bindings) = safety.finish();
+        if dynamic_scope {
+            bindings.clear();
+        } else {
+            bindings.retain(|key| !unsafe_bindings.contains(key));
+        }
+        // Parameters from an enclosing function are outer lexical bindings,
+        // not entry bindings of this function's statement lists.
+        let outer_scopes = std::mem::replace(&mut self.initialized_binding_scopes, vec![bindings]);
+        function.visit_mut_children_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
 
-        self.for_init_bindings
-            .push(collect_for_stmt_init_bindings(stmt));
-        stmt.body.visit_mut_with(self);
-        self.for_init_bindings.pop();
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let mut bindings = HashSet::new();
+        for param in &arrow.params {
+            collect_pat_write_ids(param, &mut bindings);
+        }
+        let mut safety = FunctionEntrySafetyCollector::new(&bindings);
+        arrow.params.visit_with(&mut safety);
+        arrow.body.visit_with(&mut safety);
+        let (dynamic_scope, unsafe_bindings) = safety.finish();
+        if dynamic_scope {
+            bindings.clear();
+        } else {
+            bindings.retain(|key| !unsafe_bindings.contains(key));
+        }
+        let outer_scopes = std::mem::replace(&mut self.initialized_binding_scopes, vec![bindings]);
+        arrow.visit_mut_children_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
+
+    fn visit_mut_catch_clause(&mut self, catch: &mut CatchClause) {
+        let mut bindings = HashSet::new();
+        if let Some(param) = &catch.param {
+            collect_pat_write_ids(param, &mut bindings);
+        }
+        let mut safety = FunctionEntrySafetyCollector::new(&bindings);
+        catch.body.visit_with(&mut safety);
+        let (dynamic_scope, unsafe_bindings) = safety.finish();
+        if dynamic_scope {
+            bindings.clear();
+        } else {
+            bindings.retain(|key| !unsafe_bindings.contains(key));
+        }
+        self.initialized_binding_scopes.push(bindings);
+        catch.visit_mut_children_with(self);
+        self.initialized_binding_scopes.pop();
+    }
+
+    fn visit_mut_constructor(&mut self, constructor: &mut Constructor) {
+        // A constructor executes after its surrounding class is created, so
+        // outer entry bindings cannot be proven frozen from this statement
+        // list alone.
+        let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
+        constructor.visit_mut_children_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
+
+    fn visit_mut_static_block(&mut self, block: &mut StaticBlock) {
+        // Static blocks have their own statement list. Do not inherit a proof
+        // whose write ordering was collected in an enclosing list.
+        let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
+        block.visit_mut_children_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
+
+    fn visit_mut_getter_prop(&mut self, getter: &mut GetterProp) {
+        // The key is evaluated in the enclosing activation, but the body runs
+        // in a later accessor activation and cannot inherit its entry proofs.
+        getter.key.visit_mut_with(self);
+        let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
+        getter.body.visit_mut_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
+
+    fn visit_mut_setter_prop(&mut self, setter: &mut SetterProp) {
+        // Setter parameters and body share the deferred accessor activation;
+        // only the computed key belongs to the enclosing activation.
+        setter.key.visit_mut_with(self);
+        let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
+        setter.this_param.visit_mut_with(self);
+        setter.param.visit_mut_with(self);
+        setter.body.visit_mut_with(self);
+        self.initialized_binding_scopes = outer_scopes;
+    }
+}
+
+/// Function parameters are usable as position-independent alias sources only
+/// when no arbitrarily-timed nested scope can write them. This fact is
+/// function-wide so aliases in nested blocks also see sibling closures.
+/// Any AST body that executes at a time other than its lexical position must
+/// be visited through `visit_nested`; lexical statement order cannot prove
+/// writes inside such a body happen before an alias capture.
+struct FunctionEntrySafetyCollector<'a> {
+    targets: &'a HashSet<BindingKey>,
+    unsafe_bindings: HashSet<BindingKey>,
+    nested_depth: usize,
+    dynamic_scope: bool,
+}
+
+impl<'a> FunctionEntrySafetyCollector<'a> {
+    fn new(targets: &'a HashSet<BindingKey>) -> Self {
+        Self {
+            targets,
+            unsafe_bindings: HashSet::new(),
+            nested_depth: 0,
+            dynamic_scope: false,
+        }
+    }
+
+    fn finish(self) -> (bool, HashSet<BindingKey>) {
+        (self.dynamic_scope, self.unsafe_bindings)
+    }
+
+    fn record_nested_write(&mut self, key: BindingKey) {
+        if self.nested_depth > 0 && self.targets.contains(&key) {
+            self.unsafe_bindings.insert(key);
+        }
+    }
+
+    fn visit_nested<T>(&mut self, node: &T)
+    where
+        T: VisitWith<Self>,
+    {
+        self.nested_depth += 1;
+        node.visit_children_with(self);
+        self.nested_depth -= 1;
+    }
+}
+
+impl Visit for FunctionEntrySafetyCollector<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        self.visit_nested(function);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.visit_nested(arrow);
+    }
+
+    fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        self.visit_nested(class);
+    }
+
+    fn visit_getter_prop(&mut self, prop: &GetterProp) {
+        // The computed key is evaluated with the object literal; the body is
+        // deferred until the property is read.
+        prop.key.visit_with(self);
+        if let Some(body) = &prop.body {
+            self.visit_nested(body);
+        }
+    }
+
+    fn visit_setter_prop(&mut self, prop: &SetterProp) {
+        // The computed key is lexical, while the parameter and body are
+        // evaluated only when the property is assigned.
+        prop.key.visit_with(self);
+        self.nested_depth += 1;
+        prop.this_param.visit_with(self);
+        prop.param.visit_with(self);
+        prop.body.visit_with(self);
+        self.nested_depth -= 1;
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        let mut targets = HashSet::new();
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                targets.insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+            AssignTarget::Pat(pattern) => collect_assign_target_pat_ids(pattern, &mut targets),
+            _ => {}
+        }
+        for key in targets {
+            self.record_nested_write(key);
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(id) = update.arg.as_ref() {
+            self.record_nested_write((id.sym.clone(), id.ctxt));
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        self.record_for_head(&stmt.left);
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        self.record_for_head(&stmt.left);
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if is_direct_eval_call(call) {
+            self.dynamic_scope = true;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_with_stmt(&mut self, stmt: &WithStmt) {
+        self.dynamic_scope = true;
+        stmt.visit_children_with(self);
+    }
+}
+
+impl FunctionEntrySafetyCollector<'_> {
+    fn record_for_head(&mut self, head: &swc_core::ecma::ast::ForHead) {
+        if let swc_core::ecma::ast::ForHead::Pat(pattern) = head {
+            let mut targets = HashSet::new();
+            collect_pat_write_ids(pattern, &mut targets);
+            for key in targets {
+                self.record_nested_write(key);
+            }
+        }
     }
 }
 
 impl SmartInline {
-    fn context_for_init_bindings(&self) -> HashSet<BindingKey> {
-        self.for_init_bindings
+    fn initialized_bindings(&self) -> HashSet<BindingKey> {
+        self.initialized_binding_scopes
             .iter()
             .flat_map(|bindings| bindings.iter().cloned())
             .collect()
@@ -137,7 +355,7 @@ fn process_module_stmt_runs(
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     use_state_bindings: &HashSet<BindingKey>,
-    context_for_init_bindings: &HashSet<BindingKey>,
+    initialized_bindings: &HashSet<BindingKey>,
 ) {
     let mut new_body = Vec::with_capacity(body.len());
     let mut run = Vec::new();
@@ -152,7 +370,7 @@ fn process_module_stmt_runs(
                     level,
                     unresolved_mark,
                     use_state_bindings,
-                    context_for_init_bindings,
+                    initialized_bindings,
                 );
                 new_body.push(other);
             }
@@ -164,7 +382,7 @@ fn process_module_stmt_runs(
         level,
         unresolved_mark,
         use_state_bindings,
-        context_for_init_bindings,
+        initialized_bindings,
     );
 
     *body = new_body;
@@ -176,7 +394,7 @@ fn flush_stmt_run(
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     use_state_bindings: &HashSet<BindingKey>,
-    context_for_init_bindings: &HashSet<BindingKey>,
+    initialized_bindings: &HashSet<BindingKey>,
 ) {
     if run.is_empty() {
         return;
@@ -188,7 +406,7 @@ fn flush_stmt_run(
             level,
             unresolved_mark,
             use_state_bindings,
-            context_for_init_bindings,
+            initialized_bindings,
         )
         .into_iter()
         .map(ModuleItem::Stmt),
@@ -200,7 +418,7 @@ fn process_stmts(
     level: RewriteLevel,
     unresolved_mark: Option<Mark>,
     use_state_bindings: &HashSet<BindingKey>,
-    context_for_init_bindings: &HashSet<BindingKey>,
+    initialized_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
     // Standard+ only; this assumes globals and builtin properties are not patched
@@ -218,7 +436,7 @@ fn process_stmts(
         return stmts;
     }
     // Pass 1: inline single-use const declarations (temp vars)
-    let stmts = inline_temp_vars(stmts, context_for_init_bindings);
+    let stmts = inline_temp_vars(stmts, initialized_bindings, unresolved_mark);
     // Pass 1a: forward adjacent assignment aliases created by async/state-machine
     // recovery: `tmp = expr; target = tmp;` -> `target = expr;`.
     let stmts = forward_adjacent_assignment_aliases(stmts, unresolved_mark);
@@ -414,18 +632,25 @@ impl VisitMut for GlobalIdentInliner<'_> {
 
 fn inline_temp_vars(
     stmts: Vec<Stmt>,
-    context_for_init_bindings: &HashSet<BindingKey>,
+    initialized_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 ) -> Vec<Stmt> {
-    // Collect candidates: `const t = e` (or a never-written `let t = e`, the
-    // shape minifiers emit) where e is a simple expr. Only inline if t is used
-    // exactly once in the rest of the block (not in nested functions).
+    // Collect generated-looking `const t = e` aliases. Existing `let`
+    // declarations remain: SmartRename can recover meaningful names from
+    // their use sites, and predicting that later signal here is not worth a
+    // second naming analysis. The generated-name check is also readability
+    // policy: meaningful names such as `snapshot` or `store` are recovered
+    // signal an unminifier should keep.
     let mut candidates: HashMap<BindingKey, TempCandidate> = HashMap::new();
 
     for (idx, stmt) in stmts.iter().enumerate() {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
-            if var.kind != VarDeclKind::Var && var.decls.len() == 1 {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 let decl = &var.decls[0];
                 if let Pat::Ident(bi) = &decl.name {
+                    if !is_likely_generated_alias(&bi.id.sym) {
+                        continue;
+                    }
                     // A local binding shadowing a builtin name is handled by
                     // the builtin-alias passes; folding it away here would
                     // reshape the fixtures those passes are keyed on.
@@ -440,6 +665,9 @@ fn inline_temp_vars(
                                 TempCandidate {
                                     init: init.clone(),
                                     def_idx: idx,
+                                    source_is_global_undefined: unresolved_mark.is_some_and(|mark| {
+                                        matches!(init.as_ref(), Expr::Ident(id) if id.sym == "undefined" && id.ctxt.outer() == mark)
+                                    }),
                                 },
                             );
                         }
@@ -453,7 +681,7 @@ fn inline_temp_vars(
         return stmts;
     }
 
-    let analysis = TempUsageAnalysis::collect(&stmts, &candidates, context_for_init_bindings);
+    let analysis = TempUsageAnalysis::collect(&stmts, &candidates, initialized_bindings);
 
     // Build set of names to inline (exactly 1 top-level use).
     let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
@@ -475,7 +703,7 @@ fn inline_temp_vars(
     for stmt in stmts {
         // Skip definitions of inlined vars
         if let Stmt::Decl(Decl::Var(var)) = &stmt {
-            if var.kind != VarDeclKind::Var && var.decls.len() == 1 {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
                     if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
                         continue;
@@ -728,75 +956,6 @@ impl Visit for AssignmentAliasUsageCollector<'_> {
     fn visit_prop_name(&mut self, _: &PropName) {}
 }
 
-fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
-    use swc_core::ecma::ast::{
-        AssignExpr, AssignTarget, AwaitExpr, CallExpr, NewExpr, SimpleAssignTarget, UnaryExpr,
-        UpdateExpr,
-    };
-
-    struct SideEffectFinder {
-        found: bool,
-    }
-
-    impl Visit for SideEffectFinder {
-        fn visit_call_expr(&mut self, _: &CallExpr) {
-            self.found = true;
-        }
-
-        fn visit_new_expr(&mut self, _: &NewExpr) {
-            self.found = true;
-        }
-
-        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
-            if !matches!(
-                &assign.left,
-                AssignTarget::Simple(SimpleAssignTarget::Ident(_))
-            ) {
-                self.found = true;
-            }
-            assign.right.visit_with(self);
-        }
-
-        fn visit_update_expr(&mut self, update: &UpdateExpr) {
-            if !matches!(update.arg.as_ref(), Expr::Ident(_)) {
-                self.found = true;
-            }
-        }
-
-        fn visit_await_expr(&mut self, _: &AwaitExpr) {
-            self.found = true;
-        }
-
-        fn visit_yield_expr(&mut self, _: &swc_core::ecma::ast::YieldExpr) {
-            self.found = true;
-        }
-
-        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
-            if unary.op == swc_core::ecma::ast::UnaryOp::Delete {
-                self.found = true;
-            } else {
-                unary.visit_children_with(self);
-            }
-        }
-
-        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
-        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
-        fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
-    }
-
-    let mut finder = SideEffectFinder { found: false };
-    stmt.visit_with(&mut finder);
-    finder.found
-}
-
-fn member_root_ident(member: &MemberExpr) -> Option<&Ident> {
-    match member.obj.as_ref() {
-        Expr::Ident(id) => Some(id),
-        Expr::Member(member) => member_root_ident(member),
-        _ => None,
-    }
-}
-
 fn is_simple_expr(expr: &Expr) -> bool {
     // Only inline identifier aliases (const t = someVar), not literals.
     // Literal constants (const g = 'url', const n = 42) are intentionally named
@@ -807,107 +966,94 @@ fn is_simple_expr(expr: &Expr) -> bool {
 struct TempCandidate {
     init: Box<Expr>,
     def_idx: usize,
+    source_is_global_undefined: bool,
 }
 
 #[derive(Default)]
 struct TempUsageInfo {
     ref_count: usize,
-    use_idx: Option<usize>,
+    use_stmt_idx: Option<usize>,
     used_above_decl: bool,
-    used_in_loop: bool,
     used_in_nested_function: bool,
     source_mutated_after_def: bool,
+    source_written_in_nested_scope: bool,
+    dynamic_scope: bool,
     // The candidate binding itself is a write target somewhere (assignment,
-    // destructuring assignment, update, for-in/of head). Impossible for
-    // `const` candidates in valid code; disqualifies `let` candidates, whose
-    // single reference could otherwise be the write itself.
+    // destructuring assignment, update, for-in/of head). This is invalid for
+    // a `const`, but keep the guard so rewriting malformed or partially
+    // transformed input cannot move the write onto the source binding.
     mutated: bool,
 }
 
 impl TempUsageInfo {
     fn can_inline(&self, candidate: &TempCandidate, analysis: &TempUsageAnalysis) -> bool {
         if self.ref_count != 1
+            // Keep long-lived aliases. Even a short generated name can become
+            // useful recovered signal when SmartRename sees its later use.
+            || self.use_stmt_idx != candidate.def_idx.checked_add(1)
             || self.used_above_decl
             || self.used_in_nested_function
             || self.source_mutated_after_def
+            || self.source_written_in_nested_scope
+            || self.dynamic_scope
             || self.mutated
         {
             return false;
         }
 
-        let Some(use_idx) = self.use_idx else {
+        if candidate.source_is_global_undefined {
+            return true;
+        }
+
+        let Expr::Ident(src_id) = candidate.init.as_ref() else {
+            return false;
+        };
+        let src_key = (src_id.sym.clone(), src_id.ctxt);
+        let Some(source) = analysis.source_binding(&src_key) else {
+            // Imports, unresolved globals, and outer lexical bindings are not
+            // frozen by local write analysis.
             return false;
         };
 
-        if let Expr::Ident(src_id) = candidate.init.as_ref() {
-            let src_key = (src_id.sym.clone(), src_id.ctxt);
-            let Some(source) = analysis.source_binding(&src_key) else {
-                return !self.used_in_loop
-                    && !analysis.has_side_effect_between(candidate.def_idx, use_idx);
-            };
-
-            if !source.is_safe_before(candidate.def_idx)
-                || self.used_in_loop && !source.is_loop_stable()
-            {
-                return false;
-            }
-        } else if self.used_in_loop {
-            return false;
-        }
-
-        if let Expr::Member(member) = candidate.init.as_ref() {
-            if let Some(src_id) = member_root_ident(member) {
-                let src_key = (src_id.sym.clone(), src_id.ctxt);
-                if analysis.property_mutated_between(&src_key, candidate.def_idx, use_idx) {
-                    return false;
-                }
-            }
-        }
-
-        !analysis.has_side_effect_between(candidate.def_idx, use_idx)
+        source.is_safe_before(candidate.def_idx)
     }
 }
 
 struct TempUsageAnalysis {
     usage: HashMap<BindingKey, TempUsageInfo>,
     source_bindings: HashMap<BindingKey, SourceBindingInfo>,
-    property_mutations: HashMap<BindingKey, Vec<usize>>,
-    side_effect_stmts: Vec<usize>,
 }
 
 impl TempUsageAnalysis {
     fn collect(
         stmts: &[Stmt],
         candidates: &HashMap<BindingKey, TempCandidate>,
-        context_for_init_bindings: &HashSet<BindingKey>,
+        initialized_bindings: &HashSet<BindingKey>,
     ) -> Self {
         let mut analysis = Self {
             usage: candidates
                 .keys()
                 .map(|key| (key.clone(), TempUsageInfo::default()))
                 .collect(),
-            source_bindings: context_for_init_bindings
+            source_bindings: initialized_bindings
                 .iter()
                 .map(|key| {
                     (
                         key.clone(),
                         SourceBindingInfo {
-                            declared_in_for_init: true,
-                            ..SourceBindingInfo::default()
+                            origin: Some(SourceBindingOrigin::Entry),
+                            declaration_count: 1,
+                            ..Default::default()
                         },
                     )
                 })
                 .collect(),
-            property_mutations: HashMap::new(),
-            side_effect_stmts: Vec::new(),
         };
 
         let mut source_collector = SourceBindingCollector {
             source_bindings: &mut analysis.source_bindings,
             seen_refs: HashSet::new(),
             stmt_idx: 0,
-            in_for_init: false,
-            var_kind: None,
         };
         for (idx, stmt) in stmts.iter().enumerate() {
             source_collector.stmt_idx = idx;
@@ -919,15 +1065,10 @@ impl TempUsageAnalysis {
                 continue;
             }
 
-            if stmt_has_top_level_side_effect(stmt) {
-                analysis.side_effect_stmts.push(idx);
-            }
-
             let mut collector = TempUsageCollector {
                 analysis: &mut analysis,
                 candidates,
                 stmt_idx: idx,
-                loop_depth: 0,
             };
             stmt.visit_with(&mut collector);
         }
@@ -942,41 +1083,38 @@ impl TempUsageAnalysis {
     fn source_binding(&self, key: &BindingKey) -> Option<&SourceBindingInfo> {
         self.source_bindings.get(key)
     }
-
-    fn property_mutated_between(&self, key: &BindingKey, def_idx: usize, use_idx: usize) -> bool {
-        self.property_mutations
-            .get(key)
-            .is_some_and(|indices| indices.iter().any(|idx| def_idx < *idx && *idx < use_idx))
-    }
-
-    fn has_side_effect_between(&self, def_idx: usize, use_idx: usize) -> bool {
-        self.side_effect_stmts
-            .iter()
-            .any(|idx| def_idx < *idx && *idx < use_idx)
-    }
 }
 
 #[derive(Default)]
 struct SourceBindingInfo {
     decl_idx: Option<usize>,
-    var_kind: Option<VarDeclKind>,
-    declared_in_for_init: bool,
+    origin: Option<SourceBindingOrigin>,
+    declaration_count: usize,
     used_above_decl: bool,
+}
+
+#[derive(Clone, Copy)]
+enum SourceBindingOrigin {
+    Entry,
+    LocalDecl,
+    FunctionDecl,
 }
 
 impl SourceBindingInfo {
     fn is_safe_before(&self, candidate_def_idx: usize) -> bool {
-        !self.used_above_decl
-            && !self.declared_in_for_init
-            && self
-                .decl_idx
-                .is_none_or(|decl_idx| decl_idx <= candidate_def_idx)
-    }
-
-    fn is_loop_stable(&self) -> bool {
-        self.var_kind == Some(VarDeclKind::Const)
-            && !self.declared_in_for_init
-            && !self.used_above_decl
+        if self.declaration_count != 1 {
+            return false;
+        }
+        match self.origin {
+            Some(SourceBindingOrigin::Entry | SourceBindingOrigin::FunctionDecl) => true,
+            Some(SourceBindingOrigin::LocalDecl) => {
+                !self.used_above_decl
+                    && self
+                        .decl_idx
+                        .is_some_and(|decl_idx| decl_idx <= candidate_def_idx)
+            }
+            None => false,
+        }
     }
 }
 
@@ -984,8 +1122,6 @@ struct SourceBindingCollector<'a> {
     source_bindings: &'a mut HashMap<BindingKey, SourceBindingInfo>,
     seen_refs: HashSet<BindingKey>,
     stmt_idx: usize,
-    in_for_init: bool,
-    var_kind: Option<VarDeclKind>,
 }
 
 impl Visit for SourceBindingCollector<'_> {
@@ -996,34 +1132,23 @@ impl Visit for SourceBindingCollector<'_> {
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
         decl.init.visit_with(self);
 
-        let Some(binding) = direct_binding_ident_from_pat(&decl.name) else {
-            return;
-        };
-        let key = (binding.id.sym.clone(), binding.id.ctxt);
-        let info = self.source_bindings.entry(key.clone()).or_default();
-        info.decl_idx.get_or_insert(self.stmt_idx);
-        info.var_kind
-            .get_or_insert(self.var_kind.unwrap_or(VarDeclKind::Var));
-        info.declared_in_for_init |= self.in_for_init;
-        info.used_above_decl |= self.seen_refs.contains(&key);
+        let mut bindings = HashSet::new();
+        collect_pat_write_ids(&decl.name, &mut bindings);
+        for key in bindings {
+            let info = self.source_bindings.entry(key.clone()).or_default();
+            info.decl_idx.get_or_insert(self.stmt_idx);
+            info.origin.get_or_insert(SourceBindingOrigin::LocalDecl);
+            info.declaration_count += 1;
+            info.used_above_decl |= self.seen_refs.contains(&key);
+        }
     }
 
-    fn visit_var_decl(&mut self, var: &VarDecl) {
-        let previous_var_kind = self.var_kind;
-        self.var_kind = Some(var.kind);
-        var.visit_children_with(self);
-        self.var_kind = previous_var_kind;
-    }
-
-    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
-        let previous_in_for_init = self.in_for_init;
-        self.in_for_init = true;
-        stmt.init.visit_with(self);
-        self.in_for_init = previous_in_for_init;
-
-        stmt.test.visit_with(self);
-        stmt.update.visit_with(self);
-        stmt.body.visit_with(self);
+    fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+        let key = (decl.ident.sym.clone(), decl.ident.ctxt);
+        let info = self.source_bindings.entry(key).or_default();
+        info.decl_idx.get_or_insert(0);
+        info.origin.get_or_insert(SourceBindingOrigin::FunctionDecl);
+        info.declaration_count += 1;
     }
 
     fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
@@ -1041,7 +1166,7 @@ fn stmt_is_temp_definition(stmt: &Stmt, candidates: &HashMap<BindingKey, TempCan
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return false;
     };
-    if var.kind == VarDeclKind::Var || var.decls.len() != 1 {
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return false;
     }
     let Pat::Ident(bi) = &var.decls[0].name else {
@@ -1050,26 +1175,10 @@ fn stmt_is_temp_definition(stmt: &Stmt, candidates: &HashMap<BindingKey, TempCan
     candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt))
 }
 
-fn collect_for_stmt_init_bindings(stmt: &ForStmt) -> HashSet<BindingKey> {
-    let mut bindings = HashSet::new();
-    let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(var)) = &stmt.init else {
-        return bindings;
-    };
-
-    for decl in &var.decls {
-        if let Some(binding) = direct_binding_ident_from_pat(&decl.name) {
-            bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
-        }
-    }
-
-    bindings
-}
-
 struct TempUsageCollector<'a> {
     analysis: &'a mut TempUsageAnalysis,
     candidates: &'a HashMap<BindingKey, TempCandidate>,
     stmt_idx: usize,
-    loop_depth: usize,
 }
 
 impl Visit for TempUsageCollector<'_> {
@@ -1078,9 +1187,8 @@ impl Visit for TempUsageCollector<'_> {
         if let Some(candidate) = self.candidates.get(&key) {
             if let Some(usage) = self.analysis.usage.get_mut(&key) {
                 usage.ref_count += 1;
-                usage.use_idx = Some(self.stmt_idx);
+                usage.use_stmt_idx.get_or_insert(self.stmt_idx);
                 usage.used_above_decl |= self.stmt_idx < candidate.def_idx;
-                usage.used_in_loop |= self.loop_depth > 0;
             }
         }
     }
@@ -1093,13 +1201,12 @@ impl Visit for TempUsageCollector<'_> {
                 self.record_direct_mutation(&(id.sym.clone(), id.ctxt));
                 self.record_candidate_mutation(&(id.sym.clone(), id.ctxt));
             }
-            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
-                self.record_property_mutation(member);
-            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(_)) => {}
             AssignTarget::Pat(pat_target) => {
                 let mut targets = HashSet::new();
                 collect_assign_target_pat_ids(pat_target, &mut targets);
                 for key in targets {
+                    self.record_direct_mutation(&key);
                     self.record_candidate_mutation(&key);
                 }
             }
@@ -1115,70 +1222,82 @@ impl Visit for TempUsageCollector<'_> {
                 self.record_direct_mutation(&(id.sym.clone(), id.ctxt));
                 self.record_candidate_mutation(&(id.sym.clone(), id.ctxt));
             }
-            Expr::Member(member) => self.record_property_mutation(member),
+            Expr::Member(_) => {}
             _ => {}
         }
 
         update.visit_children_with(self);
     }
 
-    fn visit_unary_expr(&mut self, unary: &swc_core::ecma::ast::UnaryExpr) {
-        if unary.op == swc_core::ecma::ast::UnaryOp::Delete {
-            if let Expr::Member(member) = unary.arg.as_ref() {
-                self.record_property_mutation(member);
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if declarator.init.is_some() {
+            let mut bindings = HashSet::new();
+            collect_pat_write_ids(&declarator.name, &mut bindings);
+            for key in bindings {
+                self.record_direct_mutation(&key);
             }
-            return;
         }
-
-        unary.visit_children_with(self);
+        declarator.init.visit_with(self);
     }
 
     fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
-        let mut collector = NestedTempRefCollector {
-            usage: &mut self.analysis.usage,
+        let mut collector = NestedTempCollector {
+            analysis: &mut *self.analysis,
             candidates: self.candidates,
         };
         function.visit_children_with(&mut collector);
     }
     fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
-        let mut collector = NestedTempRefCollector {
-            usage: &mut self.analysis.usage,
+        let mut collector = NestedTempCollector {
+            analysis: &mut *self.analysis,
             candidates: self.candidates,
         };
         arrow.visit_children_with(&mut collector);
     }
     fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
-        let mut collector = NestedTempRefCollector {
-            usage: &mut self.analysis.usage,
+        let mut collector = NestedTempCollector {
+            analysis: &mut *self.analysis,
             candidates: self.candidates,
         };
         class.visit_children_with(&mut collector);
     }
-    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
-        stmt.init.visit_with(self);
-        self.visit_within_loop(&stmt.test);
-        self.visit_within_loop(&stmt.update);
-        self.visit_within_loop(&stmt.body);
+    fn visit_getter_prop(&mut self, prop: &GetterProp) {
+        prop.key.visit_with(self);
+        if let Some(body) = &prop.body {
+            let mut collector = NestedTempCollector {
+                analysis: &mut *self.analysis,
+                candidates: self.candidates,
+            };
+            body.visit_with(&mut collector);
+        }
+    }
+    fn visit_setter_prop(&mut self, prop: &SetterProp) {
+        prop.key.visit_with(self);
+        let mut collector = NestedTempCollector {
+            analysis: &mut *self.analysis,
+            candidates: self.candidates,
+        };
+        prop.this_param.visit_with(&mut collector);
+        prop.param.visit_with(&mut collector);
+        prop.body.visit_with(&mut collector);
     }
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
         self.record_for_head_mutations(&stmt.left);
-        stmt.left.visit_with(self);
-        stmt.right.visit_with(self);
-        self.visit_within_loop(&stmt.body);
+        stmt.visit_children_with(self);
     }
     fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
         self.record_for_head_mutations(&stmt.left);
-        stmt.left.visit_with(self);
-        stmt.right.visit_with(self);
-        self.visit_within_loop(&stmt.body);
+        stmt.visit_children_with(self);
     }
-    fn visit_while_stmt(&mut self, stmt: &WhileStmt) {
-        self.visit_within_loop(&stmt.test);
-        self.visit_within_loop(&stmt.body);
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if is_direct_eval_call(call) {
+            self.record_dynamic_scope();
+        }
+        call.visit_children_with(self);
     }
-    fn visit_do_while_stmt(&mut self, stmt: &DoWhileStmt) {
-        self.visit_within_loop(&stmt.body);
-        self.visit_within_loop(&stmt.test);
+    fn visit_with_stmt(&mut self, stmt: &WithStmt) {
+        self.record_dynamic_scope();
+        stmt.visit_children_with(self);
     }
     fn visit_member_prop(&mut self, prop: &MemberProp) {
         if let MemberProp::Computed(c) = prop {
@@ -1200,6 +1319,7 @@ impl TempUsageCollector<'_> {
             let mut targets = HashSet::new();
             collect_pat_write_ids(pat, &mut targets);
             for key in targets {
+                self.record_direct_mutation(&key);
                 self.record_candidate_mutation(&key);
             }
         }
@@ -1218,24 +1338,10 @@ impl TempUsageCollector<'_> {
         }
     }
 
-    fn record_property_mutation(&mut self, member: &MemberExpr) {
-        let Some(root) = member_root_ident(member) else {
-            return;
-        };
-        self.analysis
-            .property_mutations
-            .entry((root.sym.clone(), root.ctxt))
-            .or_default()
-            .push(self.stmt_idx);
-    }
-
-    fn visit_within_loop<N>(&mut self, node: &N)
-    where
-        N: VisitWith<Self>,
-    {
-        self.loop_depth += 1;
-        node.visit_with(self);
-        self.loop_depth -= 1;
+    fn record_dynamic_scope(&mut self) {
+        for usage in self.analysis.usage.values_mut() {
+            usage.dynamic_scope = true;
+        }
     }
 }
 
@@ -1297,19 +1403,96 @@ fn collect_pat_write_ids(pat: &Pat, out: &mut HashSet<BindingKey>) {
     }
 }
 
-struct NestedTempRefCollector<'a> {
-    usage: &'a mut HashMap<BindingKey, TempUsageInfo>,
+struct NestedTempCollector<'a> {
+    analysis: &'a mut TempUsageAnalysis,
     candidates: &'a HashMap<BindingKey, TempCandidate>,
 }
 
-impl Visit for NestedTempRefCollector<'_> {
+impl NestedTempCollector<'_> {
+    fn record_source_write(&mut self, key: &BindingKey) {
+        for (candidate_key, candidate) in self.candidates {
+            let Expr::Ident(source) = candidate.init.as_ref() else {
+                continue;
+            };
+            if (source.sym.clone(), source.ctxt) == *key {
+                if let Some(usage) = self.analysis.usage.get_mut(candidate_key) {
+                    usage.source_written_in_nested_scope = true;
+                }
+            }
+        }
+    }
+
+    fn record_dynamic_scope(&mut self) {
+        for usage in self.analysis.usage.values_mut() {
+            usage.dynamic_scope = true;
+        }
+    }
+}
+
+impl Visit for NestedTempCollector<'_> {
     fn visit_ident(&mut self, id: &Ident) {
         let key = (id.sym.clone(), id.ctxt);
         if self.candidates.contains_key(&key) {
-            if let Some(usage) = self.usage.get_mut(&key) {
+            if let Some(usage) = self.analysis.usage.get_mut(&key) {
                 usage.used_in_nested_function = true;
             }
         }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        let mut targets = HashSet::new();
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                targets.insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+            AssignTarget::Pat(pattern) => collect_assign_target_pat_ids(pattern, &mut targets),
+            _ => {}
+        }
+        for key in targets {
+            self.record_source_write(&key);
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        if let Expr::Ident(id) = update.arg.as_ref() {
+            self.record_source_write(&(id.sym.clone(), id.ctxt));
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        if let swc_core::ecma::ast::ForHead::Pat(pattern) = &stmt.left {
+            let mut targets = HashSet::new();
+            collect_pat_write_ids(pattern, &mut targets);
+            for key in targets {
+                self.record_source_write(&key);
+            }
+        }
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        if let swc_core::ecma::ast::ForHead::Pat(pattern) = &stmt.left {
+            let mut targets = HashSet::new();
+            collect_pat_write_ids(pattern, &mut targets);
+            for key in targets {
+                self.record_source_write(&key);
+            }
+        }
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if is_direct_eval_call(call) {
+            self.record_dynamic_scope();
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_with_stmt(&mut self, stmt: &WithStmt) {
+        self.record_dynamic_scope();
+        stmt.visit_children_with(self);
     }
 
     fn visit_member_prop(&mut self, prop: &MemberProp) {

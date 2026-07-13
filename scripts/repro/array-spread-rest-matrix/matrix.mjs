@@ -88,8 +88,12 @@ const snippets = [
     source: "const [first, ...rest_items] = items;\nuse(first, rest_items);\n",
     acceptForms: [
       "const unused = undefined;\nconst [first, ...rest_items] = items;\nuse(first, rest_items);\n",
+      "const source = items;\nconst [first, ...rest_items] = source;\nuse(first, rest_items);\n",
     ],
-    expected: ["const [first, ...rest_items] = items", "use(first, rest_items)"],
+    expectedAny: [
+      ["const [first, ...rest_items] = items", "use(first, rest_items)"],
+      ["const _items = items", "const [first, ...rest_items] = _items", "use(first, rest_items)"],
+    ],
     rejected: ARRAY_HELPER_REJECTED,
     execute: { env: { items: [1, 2, 3] } },
   },

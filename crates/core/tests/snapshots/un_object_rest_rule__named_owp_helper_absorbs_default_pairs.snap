@@ -1,6 +1,8 @@
 ---
 source: crates/core/tests/un_object_rest_rule.rs
+assertion_line: 509
 expression: output
 ---
-const { name = "default", value = 42, ...rest } = t;
+const a = t;
+const { name = "default", value = 42, ...rest } = a;
 use(name, value, rest);

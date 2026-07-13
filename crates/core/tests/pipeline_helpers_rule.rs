@@ -583,7 +583,7 @@ const first = _items2[0];
 const rest = _arrayLikeToArray(_items2).slice(1);
 use(first, rest);
 "#;
-    let expected = "const [first, ...rest] = items;\nuse(first, rest);\n";
+    let expected = "const _items = items;\nconst [first, ...rest] = _items;\nuse(first, rest);\n";
     assert_eq_normalized(&render(input), expected);
 }
 
@@ -603,6 +603,6 @@ const a = _pair2[0];
 const b = _pair2[1];
 use(a, b);
 "#;
-    let expected = "const [a, b] = pair;\nuse(a, b);\n";
+    let expected = "const _pair = pair;\nconst [a, b] = _pair;\nuse(a, b);\n";
     assert_eq_normalized(&render(input), expected);
 }

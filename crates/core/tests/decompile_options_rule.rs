@@ -425,8 +425,10 @@ function readBeforeInit() {
 #[test]
 fn standard_keeps_smart_inline_temp_var_inlining() {
     let input = r#"
-const t = foo;
-bar(t);
+function read(foo) {
+  const t = foo;
+  return t.value;
+}
 "#;
 
     let output = decompile(
@@ -441,7 +443,9 @@ bar(t);
     .code;
 
     let expected = r#"
-bar(foo);
+function read(foo) {
+  return foo.value;
+}
 "#;
     assert_eq_normalized(&output, expected.trim());
 }
@@ -779,8 +783,8 @@ function foo(options) {
 fn standard_keeps_object_alias_default_param_recovery() {
     let input = r#"
 function foo(options) {
-  const opts = options === undefined ? {} : options;
-  return opts.name;
+  const o = options === undefined ? {} : options;
+  return o.name;
 }
 "#;
 

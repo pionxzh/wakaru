@@ -1,5 +1,6 @@
 ---
 source: crates/core/tests/un_esm_rule.rs
+assertion_line: 824
 expression: output
 ---
 import _i from "./react.js";

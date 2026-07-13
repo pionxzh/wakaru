@@ -1432,10 +1432,11 @@ function Qt(e, t, n) {
                 if (!D) {
                     L();
                 }
+                const o = Kt;
                 const i = D;
                 D = true;
                 try {
-                    A(Kt, e, t, n, r);
+                    A(o, e, t, n, r);
                 } finally{
                     if (!(D = i)) {
                         z();
@@ -6162,10 +6163,11 @@ function lu(e, t, n) {
                     do {
                         const n = e.destroy;
                         if (n !== undefined) {
+                            const o = t;
                             try {
                                 n();
                             } catch (e) {
-                                Ol(t, e);
+                                Ol(o, e);
                             }
                         }
                         e = e.next;

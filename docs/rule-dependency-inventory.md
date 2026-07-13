@@ -275,9 +275,14 @@ rationale, or level gating appear.
 - **SmartInline** — needs stable import/export bindings, so it runs after
   the rename rules. It removes alias declarations (`var h = p`) — any rule
   that needs aliases intact must run earlier. It can create new IIFEs, so
-  UnIife2 must follow. Gating: temp-var inlining, useState tuple folding,
-  property-destructuring grouping, and builtin/global alias inlining
-  (`const E = TypeError` → inline) are `standard` (assumes
+  UnIife2 must follow. Generic temp-var inlining is limited to generated-looking
+  `const` aliases of proven-frozen local sources whose sole use is in the
+  immediately following statement. Existing `let` and long-lived aliases
+  remain available for SmartRename to recover use-site names; imports,
+  unresolved globals, outer lexicals, dynamic scope, later same-scope writes,
+  and any nested/deferred-body write are rejected. Gating: temp-var inlining,
+  useState tuple folding, property-destructuring grouping, and builtin/global
+  alias inlining (`const E = TypeError` → inline) are `standard` (assumes
   `stable_builtins`); index-based destructuring grouping (`obj[0]`, `obj[1]`
   → array destructuring) is `aggressive`.
 - **SmartRename** — after SmartInline (aliases removed, names stabilized).

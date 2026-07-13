@@ -31,33 +31,346 @@ fn apply_pipeline_with_level(input: &str, level: RewriteLevel) -> String {
 }
 
 #[test]
-fn inline_single_use_temp_var() {
+fn inline_generated_temp_from_local_parameter() {
     let input = r#"
-const t = foo;
-bar(t);
+function read(foo) {
+    const t = foo;
+    const { value } = t;
+    use(value);
+}
 "#;
     let expected = r#"
-bar(foo);
+function read(foo) {
+    const { value } = foo;
+    use(value);
+}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn inline_single_read_let_temp_var() {
-    // A `let` with one read and no writes is as safe to inline as a `const`.
-    // Minifier output declares temps with `let`, and VarDeclToLetConst never
-    // narrows an existing `let`, so const-only matching leaves the alias.
+fn no_inline_when_nested_function_can_write_source() {
     let input = r#"
-let o = app_info;
-let { name, ...rest } = o;
-rest = mutate(rest);
-use(name, rest);
+let source = first;
+function mutateSource() {
+    source = second;
+}
+const t = source;
+consume(mutateSource(), t);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_outer_parameter_in_nested_function() {
+    let input = r#"
+function outer(source) {
+    function inner() {
+        const t = source;
+        consume(t);
+    }
+    return inner;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_parameter_in_block_when_sibling_closure_writes_it() {
+    let input = r#"
+function read(source) {
+    function mutateSource() {
+        source = other;
+    }
+    {
+        const t = source;
+        consume(mutateSource(), t);
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_catch_parameter_when_sibling_closure_writes_it() {
+    let input = r#"
+function run() {
+    try {
+        throw first;
+    } catch (e) {
+        function mutate() {
+            e = second;
+        }
+        {
+            const o = e;
+            consume(mutate(), o);
+        }
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_parameter_written_by_default_closure() {
+    let input = r#"
+function run(p, q = () => {
+    p = second;
+}) {
+    const o = p;
+    consume(q(), o);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_arrow_parameter_written_by_default_closure() {
+    let input = r#"
+const run = (p, q = () => {
+    p = second;
+}) => {
+    const o = p;
+    consume(q(), o);
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_outer_parameter_inside_constructor() {
+    // The yielded class can be instantiated after the generator resumes and
+    // changes `p`; a constructor is not ordered with its class declaration.
+    let input = r#"
+function* make(p) {
+    class C {
+        constructor() {
+            const o = p;
+            consume(o);
+        }
+    }
+    yield C;
+    p = second;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_outer_parameter_inside_static_block() {
+    // A separately analyzed statement list must not inherit write-order facts
+    // from its containing function.
+    let input = r#"
+function run(p) {
+    class C {
+        static {
+            const o = p;
+            consume(o);
+        }
+    }
+    p = second;
+    return C;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_source_written_by_object_getter() {
+    let input = r#"
+function run(s) {
+    const obj = {
+        get x() {
+            s = second;
+            return 0;
+        }
+    };
+    const o = s;
+    consume(obj.x, o);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_source_written_by_object_setter() {
+    let input = r#"
+function run(s) {
+    const obj = {
+        set x(value) {
+            s = value;
+        }
+    };
+    const o = s;
+    consume(obj.x = second, o);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_outer_parameter_inside_object_getter() {
+    let input = r#"
+function* outer(p) {
+    const obj = {
+        get x() {
+            const o = p;
+            return consume(fire(), o);
+        }
+    };
+    yield obj;
+    p = 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_outer_parameter_inside_object_setter() {
+    let input = r#"
+function* outer(p) {
+    const obj = {
+        set x(value) {
+            const o = p;
+            consume(fire(value), o);
+        }
+    };
+    yield obj;
+    p = 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_with_direct_eval_in_statement_list() {
+    let input = r#"
+function read(source) {
+    const t = source;
+    eval("source = other");
+    consume(t);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn inline_frozen_parameter_after_call() {
+    let input = r#"
+function read(source) {
+    const t = source;
+    consume(observe(), t);
+}
 "#;
     let expected = r#"
-let { name, ...rest } = app_info;
-rest = mutate(rest);
-use(name, rest);
+function read(source) {
+    consume(observe(), source);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inline_local_function_binding_after_call() {
+    let input = r#"
+function read() {
+    function source() {}
+    const t = source;
+    consume(observe(), t);
+}
+"#;
+    let expected = r#"
+function read() {
+    function source() {}
+    consume(observe(), source);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn meaningful_alias_is_preserved() {
+    let input = r#"
+function read(source) {
+    const snapshot = source;
+    return snapshot;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn long_lived_generated_const_alias_is_preserved() {
+    // SmartRename can recover intent from a later use even though the source
+    // is frozen. Generic temp inlining is deliberately statement-local.
+    let input = r#"
+function read(source) {
+    const t = source;
+    observe();
+    consume(t);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn generated_alias_of_live_import_is_preserved() {
+    let input = r#"
+import { value } from "./state.js";
+const t = value;
+const result = t;
+consume(result);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn single_read_let_temp_var_is_preserved() {
+    // SmartRename may recover a meaningful name for an existing `let` after
+    // SmartInline. Preserve it instead of predicting that later naming pass.
+    let input = r#"
+function transform(app_info) {
+    let o = app_info;
+    let { name, ...rest } = o;
+    rest = mutate(rest);
+    use(name, rest);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn inline_temp_when_plain_assignment_target_precedes_use() {
+    let input = r#"
+function run(handler, value) {
+    const t = handler;
+    result = t(value);
+}
+"#;
+    let expected = r#"
+function run(handler, value) {
+    result = handler(value);
+}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -363,9 +676,9 @@ for (let source = value; active; source = next()) {
 }
 
 #[test]
-fn no_inline_ident_alias_used_in_loop_body() {
-    // `t` captures source once before the loop. Replacing it with `source`
-    // would re-read source on every iteration; `source` is not a const binding.
+fn inline_frozen_local_alias_used_in_loop_body() {
+    // The local binding has no writes after capture, including in closures, so
+    // re-reading it on each iteration cannot change the value.
     let input = r#"
 let source = value;
 const t = source;
@@ -374,14 +687,19 @@ for (let i = 0; i < 3; i++) {
     mutateSource();
 }
 "#;
+    let expected = r#"
+let source = value;
+for (let i = 0; i < 3; i++) {
+    consume(source);
+    mutateSource();
+}
+"#;
     let output = apply(input);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn inline_loop_alias_when_source_is_prior_const() {
-    // Re-reading a prior local const binding inside the loop is stable, even
-    // when other calls happen in the loop body.
+fn inline_frozen_loop_alias_without_expression_order_analysis() {
     let input = r#"
 const source = value;
 const t = source;
@@ -812,13 +1130,13 @@ returnValue(t);
 }
 
 #[test]
-fn inline_when_only_shadowed_source_ident_is_mutated() {
+fn inline_when_nested_write_is_to_shadowed_binding() {
     let input = r#"
 let foo = value;
-const t = foo;
 function mutate(foo) {
     foo = other;
 }
+const t = foo;
 consume(t);
 "#;
     let expected = r#"
@@ -846,36 +1164,58 @@ try { doWork(); } finally { Nu = n; check(Nu); }
 }
 
 #[test]
-fn inline_still_works_when_source_not_mutated() {
-    // Normal case: source ident is never mutated, inlining is safe
+fn no_inline_unresolved_source() {
     let input = r#"
 const t = foo;
 bar(t);
 "#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn global_undefined_alias_can_inline_after_callee_read() {
+    // The unresolved global `undefined` is the one stable global source allowed
+    // by generic temp inlining, but the alias must still look generated.
+    let input = r#"
+const t = undefined;
+side(t);
+"#;
     let expected = r#"
-bar(foo);
+side(undefined);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn inline_ident_snapshot_across_unrelated_local_assignment() {
+fn shadowed_undefined_parameter_can_inline_as_frozen_local() {
     let input = r#"
-function f() {
+function read(undefined) {
+    const t = undefined;
+    side(t);
+}
+"#;
+    let expected = r#"
+function read(undefined) {
+    side(undefined);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn long_lived_alias_across_unrelated_assignment_is_preserved() {
+    let input = r#"
+function f(foo) {
   const t = foo;
   flag = true;
   return t;
 }
 "#;
-    let expected = r#"
-function f() {
-  flag = true;
-  return foo;
-}
-"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -1153,8 +1493,7 @@ try {
 }
 
 #[test]
-fn inline_when_source_mutated_only_before_def() {
-    // Mutation happens before def, not after — safe to inline.
+fn inline_when_source_mutated_only_before_capture() {
     let input = r#"
 let e = first;
 e = second;

@@ -162,6 +162,32 @@ console.log(_tmp);
 This is a hard rule, not a level-gated policy. It prevents the assumption
 system from becoming a mechanism to skip safety checks.
 
+`SmartInline` applies a separate, position-independent proof to generic
+single-read `const` aliases. It only removes generated-looking names used in
+the immediately following statement whose identifier source is definitely
+initialized in the current function/statement-list
+context: a parameter or catch binding, a local function declaration, or a
+same-list declaration above the capture. The source must have no same-scope
+writes after capture and no writes in any deferred body, including parameter
+defaults and object accessors. Imports (live bindings), unresolved globals, and
+outer lexical bindings are excluded; direct `eval` or `with` also blocks the
+rewrite. The unresolved global `undefined` is the only global exception.
+An entry-binding proof may flow into nested lexical blocks in the same
+activation, but never into a constructor, static block, or object accessor
+statement list analyzed under a different activation/order domain.
+
+Existing `let` aliases stay even when never written: `SmartRename` runs later
+and may recover a meaningful name from their use sites, which SmartInline
+cannot predict cheaply. The generated-name check for `const` is readability
+policy as well as a safety gate.
+Wakaru removes `const o = source` when proven safe, but preserves names such as
+`const snapshot = source` or `const store = importedBinding` because those names
+carry useful recovered intent. It also preserves long-lived short aliases
+because SmartRename may recover intent from their later use. This rule
+deliberately does not simulate
+expression evaluation order: once the local source is proven frozen, delaying
+its read is harmless; otherwise the alias stays.
+
 ## Dynamic Scope Limits
 
 wakaru does not fully model `eval`, `with`, or host-level observation of
