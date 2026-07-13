@@ -117,6 +117,99 @@ const x = { ...app_info, app_name: name };
 }
 
 #[test]
+fn restores_non_empty_branch_first_in_terser_conditional_spread() {
+    // SWC externalizes the object-spread helper, then Terser flips
+    // `!saveOnBlur ? { value } : {}` to remove the negation. Recover the
+    // readability-oriented branch order without changing evaluation count.
+    let input = r#"
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+const S = _object_spread(
+    {},
+    saveOnBlur ? {} : { value },
+    saveOnBlur ? { value: value_1 } : {}
+);
+use(S);
+"#;
+    let expected = r#"
+const S = {
+    ...!saveOnBlur ? { value } : {},
+    ...saveOnBlur ? { value: value_1 } : {}
+};
+use(S);
+"#;
+
+    assert_eq_normalized(&render_rule(input, UnObjectSpread::new_with_mark), expected);
+}
+
+#[test]
+fn restores_each_terser_flipped_conditional_spread_independently() {
+    let input = r#"
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+const S = _object_spread(
+    {},
+    saveOnBlur ? {} : { value },
+    saveOnBlur ? {} : { value: value_1 }
+);
+use(S);
+"#;
+    let expected = r#"
+const S = {
+    ...!saveOnBlur ? { value } : {},
+    ...!saveOnBlur ? { value: value_1 } : {}
+};
+use(S);
+"#;
+
+    assert_eq_normalized(&render_rule(input, UnObjectSpread::new_with_mark), expected);
+}
+
+#[test]
+fn conditional_spread_does_not_flip_without_empty_consequent() {
+    let input = r#"
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+const props = _object_spread({}, condition ? { enabled: true } : { enabled: false });
+use(props);
+"#;
+    let expected = r#"
+const props = {
+    ...condition ? { enabled: true } : { enabled: false }
+};
+use(props);
+"#;
+
+    assert_eq_normalized(&render_rule(input, UnObjectSpread::new_with_mark), expected);
+}
+
+#[test]
+fn conditional_spread_does_not_flip_two_empty_branches() {
+    let input = r#"
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+const props = _object_spread({}, condition ? {} : {});
+use(props);
+"#;
+    let expected = r#"
+const props = {
+    ...condition ? {} : {}
+};
+use(props);
+"#;
+
+    assert_eq_normalized(&render_rule(input, UnObjectSpread::new_with_mark), expected);
+}
+
+#[test]
+fn source_authored_conditional_spread_is_not_reoriented() {
+    let input = r#"
+const props = {
+    ...condition ? {} : { value }
+};
+use(props);
+"#;
+
+    assert_eq_normalized(&render_rule(input, UnObjectSpread::new_with_mark), input);
+}
+
+#[test]
 fn preserves_shadowed_require_runtime_object_spread_helper() {
     let input = r#"
 function require(path) {

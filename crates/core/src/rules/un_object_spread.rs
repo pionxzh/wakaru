@@ -6,7 +6,7 @@ use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
     ForInStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
     ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    SpreadElement, Stmt,
+    SpreadElement, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1090,7 +1090,7 @@ impl VisitMut for SpreadReplacer<'_> {
             if arg.spread.is_some() {
                 properties.push(PropOrSpread::Spread(SpreadElement {
                     dot3_token: DUMMY_SP,
-                    expr: arg.expr.clone(),
+                    expr: restore_conditional_spread_branch_order(arg.expr.clone()),
                 }));
                 continue;
             }
@@ -1102,7 +1102,7 @@ impl VisitMut for SpreadReplacer<'_> {
                 _ => {
                     properties.push(PropOrSpread::Spread(SpreadElement {
                         dot3_token: DUMMY_SP,
-                        expr: arg.expr.clone(),
+                        expr: restore_conditional_spread_branch_order(arg.expr.clone()),
                     }));
                 }
             }
@@ -1112,6 +1112,44 @@ impl VisitMut for SpreadReplacer<'_> {
             span: DUMMY_SP,
             props: properties,
         });
+    }
+}
+
+/// Terser removes a leading negation by swapping conditional branches:
+/// `!condition ? { value } : {}` becomes `condition ? {} : { value }`.
+/// Restore the non-empty branch to the consequent when the empty branch is a
+/// literal object. This preserves the condition's single evaluation.
+fn restore_conditional_spread_branch_order(expr: Box<Expr>) -> Box<Expr> {
+    let mut cond = match *expr {
+        Expr::Cond(cond) => cond,
+        expr => return Box::new(expr),
+    };
+
+    if !is_empty_object_literal(&cond.cons) || is_empty_object_literal(&cond.alt) {
+        return Box::new(Expr::Cond(cond));
+    }
+
+    cond.test = negate_conditional_test(cond.test);
+    std::mem::swap(&mut cond.cons, &mut cond.alt);
+    Box::new(Expr::Cond(cond))
+}
+
+fn is_empty_object_literal(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Object(object) if object.props.is_empty())
+}
+
+fn negate_conditional_test(test: Box<Expr>) -> Box<Expr> {
+    match *test {
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Bang,
+            arg,
+            ..
+        }) => arg,
+        expr => Box::new(Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(expr),
+        })),
     }
 }
 
