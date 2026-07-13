@@ -4,7 +4,6 @@
   "routes": [
     { "src": "/playground$", "dest": "https://wakaru-playground.vercel.app/playground" },
     { "src": "/playground/(.*)", "dest": "https://wakaru-playground.vercel.app/playground/$1" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+    { "handle": "filesystem" }
   ]
 }

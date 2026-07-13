@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -6.5 241 241" role="img" aria-labelledby="title description">
+  <title id="title">Wakaru icon</title>
+  <desc id="description">An abstract four-part organic mark with a violet-to-cyan gradient.</desc>
+  <defs>
+    <linearGradient id="upper" gradientUnits="userSpaceOnUse" x1="178" y1="34" x2="127" y2="163">
+      <stop offset="0" stop-color="#2e21ff"/>
+      <stop offset=".25" stop-color="#4d49ff"/>
+      <stop offset=".5" stop-color="#475fff"/>
+      <stop offset=".75" stop-color="#4588ff"/>
+      <stop offset="1" stop-color="#3fb5ff"/>
+    </linearGradient>
+    <linearGradient id="upperRight" gradientUnits="userSpaceOnUse" x1="187" y1="24" x2="135" y2="82">
+      <stop offset="0" stop-color="#3e42ff"/>
+      <stop offset=".25" stop-color="#4350ff"/>
+      <stop offset=".5" stop-color="#475fff"/>
+      <stop offset=".75" stop-color="#4862ff"/>
+      <stop offset="1" stop-color="#475aff"/>
+    </linearGradient>
+    <linearGradient id="left" gradientUnits="userSpaceOnUse" x1="36" y1="37" x2="136" y2="233">
+      <stop offset="0" stop-color="#362dff"/>
+      <stop offset=".25" stop-color="#4759ff"/>
+      <stop offset=".5" stop-color="#4893fe"/>
+      <stop offset=".75" stop-color="#45c7ff"/>
+      <stop offset="1" stop-color="#43c3ff"/>
+    </linearGradient>
+    <linearGradient id="lowerLeft" gradientUnits="userSpaceOnUse" x1="79" y1="147" x2="66" y2="221">
+      <stop offset="0" stop-color="#46a2ff"/>
+      <stop offset=".25" stop-color="#4bbaff"/>
+      <stop offset=".5" stop-color="#49ccff"/>
+      <stop offset=".75" stop-color="#48d4ff"/>
+      <stop offset="1" stop-color="#39dbff"/>
+    </linearGradient>
+  </defs>
+
+  <path fill="url(#upper)" d="M195.5 187.5Q193 183 181.5 168Q170 153 163 139Q156 125 151 119.5Q146 114 138.5 110Q131 106 119.5 104Q108 102 103.5 99.5Q99 97 96 93.5Q93 90 89.5 83Q86 76 81.5 57Q77 38 73.5 30Q70 22 69.5 17Q69 12 70.5 10Q72 8 83 4.5Q94 1 96.5 1.5Q99 2 102.5 21Q106 40 107.5 56.5Q109 73 112.5 79.5Q116 86 120 89Q124 92 150.5 96.5Q177 101 204.5 100.5Q232 100 233.5 101Q235 102 235.5 114.5Q236 127 235 129.5Q234 132 231.5 132.5Q229 133 220.5 129Q212 125 204 125Q196 125 191 128Q186 131 185.5 134.5Q185 138 203 154Q221 170 220 173Q219 176 210.5 185Q202 194 200 193Q198 192 195.5 187.5Z"/>
+
+  <path fill="url(#upperRight)" d="M211 45.5Q216 52 219 57Q222 62 222.5 65.5Q223 69 218.5 71Q214 73 183 77Q152 81 143 81Q134 81 131 79.5Q128 78 125.5 74Q123 70 123 66Q123 62 128 48.5Q133 35 133.5 19Q134 3 137.5 2Q141 1 148.5 2.5Q156 4 163 8.5Q170 13 164 20.5Q158 28 155 35Q152 42 152 48.5Q152 55 154 57Q156 59 160.5 59Q165 59 172.5 56Q180 53 186 48.5Q192 44 194.5 40.5Q197 37 201.5 38Q206 39 211 45.5Z"/>
+
+  <path fill="url(#left)" d="M38.5 81Q27 70 23 67Q19 64 18 61.5Q17 59 21 52Q25 45 28 42Q31 39 34.5 38.5Q38 38 46.5 48.5Q55 59 66 79Q77 99 78.5 104.5Q80 110 83 114Q86 118 94 122.5Q102 127 114.5 129Q127 131 134 136.5Q141 142 147 153Q153 164 160.5 185Q168 206 168.5 211Q169 216 167 218Q165 220 158 222.5Q151 225 145 225.5Q139 226 133 191.5Q127 157 121.5 149Q116 141 109.5 139.5Q103 138 91.5 137.5Q80 137 69 133.5Q58 130 32.5 131Q7 132 5 130.5Q3 129 2 119.5Q1 110 2.5 105.5Q4 101 7.5 101Q11 101 20.5 104Q30 107 37 107Q44 107 49 104Q54 101 52 96.5Q50 92 38.5 81Z"/>
+
+  <path fill="url(#lowerLeft)" d="M84 224Q74 221 71.5 219.5Q69 218 68.5 215.5Q68 213 72.5 209.5Q77 206 80.5 201Q84 196 85.5 191Q87 186 86.5 181Q86 176 83 174Q80 172 74 173Q68 174 52 184Q36 194 30 188Q24 182 20 176Q16 170 16 167.5Q16 165 18.5 162Q21 159 56.5 155Q92 151 97.5 151Q103 151 107 154Q111 157 112 161Q113 165 109 185.5Q105 206 104.5 216.5Q104 227 99 227Q94 227 84 224Z"/>
+</svg>

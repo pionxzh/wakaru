@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -6.5 241 241" role="img" aria-labelledby="title description">
+  <title id="title">Wakaru icon</title>
+  <desc id="description">A refined four-part organic mark with a violet-to-cyan gradient.</desc>
+  <defs>
+    <linearGradient id="spectrum" gradientUnits="userSpaceOnUse" x1="126" y1="0" x2="73" y2="228">
+      <stop offset="0" stop-color="#3226ff"/>
+      <stop offset=".32" stop-color="#414fff"/>
+      <stop offset=".58" stop-color="#438dff"/>
+      <stop offset=".8" stop-color="#40c2fd"/>
+      <stop offset="1" stop-color="#39ddf8"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#spectrum)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M84 15C90 39 92 66 101 84C109 97 127 101 150 106"/>
+    <path d="M149 106C174 112 200 110 224 109"/>
+    <path d="M150 106C163 120 173 139 183 153C191 164 199 173 206 179"/>
+    <path d="M31 53C48 67 58 84 66 101C72 114 83 123 99 129"/>
+    <path d="M99 129C74 124 42 122 14 122"/>
+    <path d="M99 129C127 135 137 158 143 181C148 199 152 211 155 215"/>
+    <path d="M147 15C148 31 145 45 140 59C136 69 145 68 160 67C180 65 195 57 205 50"/>
+    <path d="M30 174C51 167 76 163 96 164C104 165 101 181 98 195C96 205 92 211 87 214"/>
+  </g>
+</svg>

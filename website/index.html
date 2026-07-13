@@ -3,343 +3,333 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wakaru — JavaScript Decompiler</title>
-  <meta name="description" content="Fast JavaScript decompiler and bundle splitter for modern frontend. Unpack webpack, esbuild, and Browserify bundles. Reverse Terser, Babel, SWC, and TypeScript transforms.">
+  <title>Wakaru — JavaScript Decompiler &amp; Bundle Unpacker</title>
+  <meta name="description" content="Unminify JavaScript and unpack webpack, esbuild, and Browserify bundles into readable modules. Free, open-source decompiler — CLI and in-browser playground.">
+  <meta property="og:title" content="Wakaru — The JavaScript decompiler">
+  <meta property="og:site_name" content="Wakaru">
+  <meta property="og:description" content="Turn production JavaScript — bundled, transpiled, minified — back into readable modules. Free, open source, runs in your browser.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://wakaru.vercel.app/">
+  <meta property="og:image" content="https://wakaru.vercel.app/public/og.png">
+  <meta property="og:image:alt" content="Wakaru — the JavaScript decompiler">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Wakaru — The JavaScript decompiler">
+  <meta name="twitter:description" content="Turn production JavaScript — bundled, transpiled, minified — back into readable modules. Free, open source, runs in your browser.">
+  <meta name="twitter:image" content="https://wakaru.vercel.app/public/og.png">
+  <meta name="twitter:image:alt" content="Wakaru — the JavaScript decompiler">
+  <link rel="canonical" href="https://wakaru.vercel.app/">
+  <link rel="icon" type="image/svg+xml" href="/public/icon.svg">
   <link rel="icon" type="image/png" href="/public/icon.png">
-  <style>
-    :root {
-      --bg: #0a0a0a;
-      --bg-card: #141414;
-      --text: #e5e5e5;
-      --text-secondary: #a0a0a0;
-      --accent: #3b82f6;
-      --accent-hover: #60a5fa;
-      --border: #262626;
-      --code-bg: #1a1a2e;
-    }
-
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.6;
-      text-autospace: normal;
-    }
-
-    a { color: var(--accent); text-decoration: none; transition: color 0.15s; }
-    a:hover { color: var(--accent-hover); }
-
-    .container {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    /* Nav */
-    nav {
-      border-bottom: 1px solid var(--border);
-      padding: 16px 0;
-    }
-    nav .container {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .nav-brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 600;
-      font-size: 18px;
-      color: var(--text);
-    }
-    .nav-brand img { width: 28px; height: 28px; }
-    .nav-links { display: flex; gap: 24px; font-size: 14px; }
-    .nav-links a { color: var(--text-secondary); }
-    .nav-links a:hover { color: var(--text); }
-
-    /* Hero */
-    .hero {
-      text-align: center;
-      padding: 96px 0 64px;
-    }
-    .hero-logo {
-      width: 80px;
-      height: 80px;
-      margin-bottom: 24px;
-    }
-    .hero h1 {
-      font-size: 48px;
-      font-weight: 700;
-      letter-spacing: -1px;
-      margin-bottom: 12px;
-    }
-    .hero-tagline {
-      font-size: 20px;
-      color: var(--accent);
-      font-weight: 500;
-      margin-bottom: 16px;
-    }
-    .hero-desc {
-      font-size: 18px;
-      color: var(--text-secondary);
-      max-width: 560px;
-      margin: 0 auto 40px;
-    }
-    .hero-actions {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 500;
-      transition: background 0.15s, color 0.15s;
-    }
-    .btn-primary {
-      background: var(--accent);
-      color: #fff;
-    }
-    .btn-primary:hover { background: var(--accent-hover); color: #fff; }
-    .btn-secondary {
-      background: var(--bg-card);
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .btn-secondary:hover { border-color: var(--text-secondary); color: #fff; }
-
-    /* Install */
-    .install {
-      text-align: center;
-      padding: 0 0 64px;
-    }
-    .install-code {
-      display: inline-block;
-      background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 24px;
-      font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
-      font-size: 15px;
-      color: var(--text);
-      user-select: all;
-    }
-    .install-code .prompt { color: var(--text-secondary); user-select: none; }
-
-    /* Features */
-    .features {
-      padding: 64px 0;
-      border-top: 1px solid var(--border);
-    }
-    .features h2 {
-      text-align: center;
-      font-size: 28px;
-      font-weight: 600;
-      margin-bottom: 48px;
-    }
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
-    }
-    .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-    }
-    .feature-card h3 {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-    .feature-card p {
-      font-size: 14px;
-      color: var(--text-secondary);
-      line-height: 1.5;
-    }
-
-    /* Why */
-    .why {
-      padding: 64px 0;
-      border-top: 1px solid var(--border);
-    }
-    .why h2 {
-      text-align: center;
-      font-size: 28px;
-      font-weight: 600;
-      margin-bottom: 16px;
-    }
-    .why-desc {
-      text-align: center;
-      color: var(--text-secondary);
-      max-width: 640px;
-      margin: 0 auto 40px;
-      font-size: 16px;
-    }
-    .why-steps {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 20px;
-      max-width: 720px;
-      margin: 0 auto;
-    }
-    .why-step {
-      text-align: center;
-      padding: 20px;
-    }
-    .why-step-icon {
-      font-size: 32px;
-      margin-bottom: 12px;
-    }
-    .why-step h3 {
-      font-size: 15px;
-      font-weight: 600;
-      margin-bottom: 6px;
-    }
-    .why-step p {
-      font-size: 13px;
-      color: var(--text-secondary);
-    }
-
-    /* Footer */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 32px 0;
-      text-align: center;
-      font-size: 13px;
-      color: var(--text-secondary);
-    }
-    footer a { color: var(--text-secondary); }
-    footer a:hover { color: var(--text); }
-    .footer-links {
-      display: flex;
-      gap: 24px;
-      justify-content: center;
-      margin-bottom: 12px;
-    }
-
-    @media (max-width: 600px) {
-      .hero h1 { font-size: 32px; }
-      .hero-tagline { font-size: 17px; }
-      .hero-desc { font-size: 16px; }
-      .hero { padding: 64px 0 48px; }
-    }
-  </style>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Wakaru",
+    "url": "https://wakaru.vercel.app/"
+  }
+  </script>
 </head>
 <body>
-  <nav>
-    <div class="container">
-      <a href="/" class="nav-brand">
-        <img src="/public/icon.png" alt="Wakaru">
-        Wakaru
-      </a>
-      <div class="nav-links">
-        <a href="/playground/">Playground</a>
-        <a href="https://github.com/pionxzh/wakaru">GitHub</a>
-        <a href="https://www.npmjs.com/package/@wakaru/cli">npm</a>
-        <a href="https://t.me/wakarujs">Telegram</a>
-      </div>
-    </div>
-  </nav>
 
-  <main>
-    <section class="hero">
-      <img src="/public/icon.png" alt="Wakaru" class="hero-logo">
-      <h1>Wakaru</h1>
-      <p class="hero-tagline">Unpack. Unminify. Understand.</p>
-      <p class="hero-desc">
-        Fast JavaScript decompiler and bundle splitter for modern frontend.
-        Feed it a bundle, get back readable modules.
+<nav class="nav">
+  <div class="container nav-inner">
+    <a href="/" class="brand"><img src="/public/icon.svg" class="brand-icon" width="24" height="24" alt="" aria-hidden="true">wakaru<span class="cursor" aria-hidden="true"></span></a>
+    <div class="nav-links">
+      <a href="/playground/">Playground</a>
+      <a href="https://github.com/pionxzh/wakaru" class="nav-github" aria-label="GitHub">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+  <!-- ============ 1. Hero ============ -->
+  <header class="hero">
+    <img class="hero-mark" src="/public/icon.svg" alt="" aria-hidden="true">
+    <div class="container">
+      <p class="eyebrow">Unpack. Unminify. Understand.</p>
+      <h1>The JavaScript<br>decompiler.</h1>
+      <p class="lede">
+        Wakaru unpacks webpack, esbuild, and other production bundles, then reverses
+        minifier and transpiler output into readable modern JavaScript.
       </p>
       <div class="hero-actions">
-        <a href="/playground/" class="btn btn-primary">Try Playground</a>
-        <a href="https://github.com/pionxzh/wakaru" class="btn btn-secondary">View on GitHub</a>
+        <a href="/playground/" class="btn btn-primary">Try the playground</a>
+        <a href="https://github.com/pionxzh/wakaru" class="btn btn-secondary">
+          <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
       </div>
-    </section>
 
-    <section class="install">
-      <div class="install-code"><span class="prompt">$ </span>npx @wakaru/cli input.js -o output.js</div>
-    </section>
-
-    <section class="features">
-      <div class="container">
-        <h2>Features</h2>
-        <div class="features-grid">
-          <div class="feature-card">
-            <h3>Bundle Splitting</h3>
-            <p>Unpack webpack 4/5, esbuild, Bun, and Browserify bundles back into individual modules.</p>
-          </div>
-          <div class="feature-card">
-            <h3>Transpiler Recovery</h3>
-            <p>Reverse transforms from Terser, Babel, SWC, and TypeScript. Recover modern syntax like optional chaining and nullish coalescing.</p>
-          </div>
-          <div class="feature-card">
-            <h3>Source Map Support</h3>
-            <p>Use source maps for better identifier names and import deduplication.</p>
-          </div>
-          <div class="feature-card">
-            <h3>Rewrite Levels</h3>
-            <p>Choose minimal, standard, or aggressive — from safe-only transforms to full intent-recovery heuristics.</p>
-          </div>
-          <div class="feature-card">
-            <h3>Blazing Fast</h3>
-            <p>Written in Rust. Handles large bundles in seconds, not minutes.</p>
-          </div>
-          <div class="feature-card">
-            <h3>CLI &amp; WASM</h3>
-            <p>Use from the command line, or run in the browser via WebAssembly in the playground.</p>
+      <!-- Animated demo pane -->
+      <figure class="demo" id="demo">
+        <div class="demo-head">
+          <span class="demo-cmd"><span class="cmd-prompt">$</span> npx @wakaru/cli profile.min.js -o profile.js</span>
+          <span class="demo-tag">step through the pipeline</span>
+        </div>
+        <pre class="demo-code" id="demo-code" aria-live="off"></pre>
+        <div class="demo-status">
+          <span class="status-text" id="demo-status">input · minified Babel output</span>
+          <div class="stepper">
+            <button class="step-btn" id="step-prev" type="button" aria-label="Previous step" disabled>&#9666;</button>
+            <div class="step-dots" id="step-dots" aria-label="Pipeline steps"></div>
+            <button class="step-btn" id="step-next" type="button" aria-label="Next step">&#9656;</button>
           </div>
         </div>
-      </div>
-    </section>
-
-    <section class="why">
-      <div class="container">
-        <h2>Why Wakaru?</h2>
-        <p class="why-desc">
-          Production JavaScript is hard to read because multiple tools have transformed it.
-          Wakaru handles all three layers in a single command.
-        </p>
-        <div class="why-steps">
-          <div class="why-step">
-            <div class="why-step-icon">📦</div>
-            <h3>Bundlers</h3>
-            <p>Collapse modules into one file with runtime wrappers</p>
-          </div>
-          <div class="why-step">
-            <div class="why-step-icon">🔄</div>
-            <h3>Transpilers</h3>
-            <p>Downgrade modern syntax and insert helper functions</p>
-          </div>
-          <div class="why-step">
-            <div class="why-step-icon">🗜️</div>
-            <h3>Minifiers</h3>
-            <p>Erase names, fold constants, and compress control flow</p>
-          </div>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer>
-    <div class="container">
-      <div class="footer-links">
-        <a href="https://github.com/pionxzh/wakaru">GitHub</a>
-        <a href="https://www.npmjs.com/package/@wakaru/cli">npm</a>
-        <a href="https://t.me/wakarujs">Telegram</a>
-        <a href="https://github.com/pionxzh/wakaru/blob/main/LICENSE">Apache-2.0</a>
-      </div>
-      <p>Wakaru — Fast JavaScript decompiler and bundle splitter</p>
+      </figure>
+      <p class="demo-caveat">
+        Real, unedited output. Wakaru recovers structure deterministically.
+      </p>
     </div>
-  </footer>
+  </header>
+
+  <!-- ============ 2. What it handles ============ -->
+  <section class="section" id="handles">
+    <div class="container">
+      <p class="section-eyebrow">// what it handles</p>
+      <h2>Three layers of transformation, reversed</h2>
+      <div class="cols-3">
+        <div class="col">
+          <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>bundlers</h3>
+          <p>webpack 4/5, esbuild, Bun, Browserify, SystemJS, AMD/UMD, scope-hoisted
+             ESM output (Rollup, Vite).</p>
+        </div>
+        <div class="col">
+          <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>transpilers</h3>
+          <p>Babel, TypeScript/tslib, and SWC helper recovery: async/await from generator
+             state machines, classes, spread/rest, enums, JSX, optional chaining, nullish
+             coalescing, default parameters, and more.</p>
+        </div>
+        <div class="col">
+          <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M19 7l-5 5 5 5"/></svg>minifiers</h3>
+          <p>Terser, SWC, and esbuild artifact reversal: sequence expressions, flipped
+             comparisons, <code>!0</code>/<code>void 0</code> literal tricks, IIFE flattening,
+             alias inlining.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. Receipts ============ -->
+  <section class="section section-alt" id="receipts">
+    <div class="container">
+      <p class="section-eyebrow">// receipts</p>
+      <h2>Tested like a compiler</h2>
+      <p class="section-lede">Wakaru restores structure while respecting JavaScript semantics.</p>
+      <div class="stats">
+        <a class="stat" href="https://github.com/pionxzh/wakaru/blob/main/scripts/correctness/test262-stats.json">
+          <span class="stat-value">62,000+</span>
+          <span class="stat-label">passing Test262 semantic round trips, with zero Wakaru correctness failures</span>
+          <span class="stat-src">&rarr; test262-stats.json</span>
+        </a>
+        <a class="stat" href="https://github.com/pionxzh/wakaru/blob/main/scripts/repro/stats.json">
+          <span class="stat-value">96.4%</span>
+          <span class="stat-label">pattern recovery across 1,743 transpiler/minifier test shapes</span>
+          <span class="stat-src">&rarr; scripts/repro/stats.json</span>
+        </a>
+        <a class="stat" href="https://github.com/pionxzh/wakaru#tested-like-a-compiler">
+          <span class="stat-value">4,500+</span>
+          <span class="stat-label">modules unpacked and decompiled from a 10+&nbsp;MB production bundle in seconds</span>
+          <span class="stat-src">&rarr; real-world production bundle</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. Rewrite levels ============ -->
+  <section class="section" id="levels">
+    <div class="container">
+      <p class="section-eyebrow">// rewrite levels</p>
+      <h2>Choose how far it rewrites</h2>
+      <p class="section-lede">
+        One dial, three positions — from behavioral fidelity to maximum readability.
+        Every level has a
+        <a href="https://github.com/pionxzh/wakaru/blob/main/docs/rewrite-assumptions.md">documented semantic contract</a>,
+        evaluated by the canonical Test262 round-trip harness.
+      </p>
+      <div class="levels-axis" aria-hidden="true">
+        <span>behavioral fidelity</span><span class="axis-line"></span><span>readability</span>
+      </div>
+      <div class="levels-grid">
+        <div class="level-card">
+          <div class="level-head"><code class="level-name level-minimal">minimal</code></div>
+          <p>Highest-confidence, semantics-preserving transforms. For auditing, diffing, and
+             malware triage, where behavioral fidelity matters most.</p>
+          <pre class="level-cmd"><span class="cmd-prompt">$</span> wakaru --level minimal</pre>
+        </div>
+        <div class="level-card level-card-default">
+          <div class="level-head"><code class="level-name level-standard">standard</code><span class="level-badge">default</span></div>
+          <p>The balanced default: full helper and syntax recovery under the documented
+             assumptions. What you get when you pass no flag at all.</p>
+          <pre class="level-cmd"><span class="cmd-prompt">$</span> wakaru input.js</pre>
+        </div>
+        <div class="level-card">
+          <div class="level-head"><code class="level-name level-aggressive">aggressive</code></div>
+          <p>You just want to read the code. Enables stronger intent-recovery heuristics that
+             produce cleaner output but may alter edge-case behavior.</p>
+          <pre class="level-cmd"><span class="cmd-prompt">$</span> wakaru --level aggressive</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 5. Agents ============ -->
+  <section class="section section-alt" id="agents">
+    <div class="container">
+      <p class="section-eyebrow">// for coding agents</p>
+      <h2>Give your agent eyes</h2>
+      <p class="compare-note">
+        Coding agents hit unreadable minified JS constantly. Wakaru ships a
+        <a href="https://github.com/pionxzh/wakaru/blob/main/SKILL.md"><code>SKILL.md</code></a> —
+        drop it into Claude Code, Codex, Grok, or any agent that reads skills, and your agent
+        can unpack the bundle it just choked on, read the recovered modules like ordinary
+        source, and pick the rewrite level that fits the task.
+      </p>
+      <pre class="pipeline"><code><span class="tok-com"># agent hits dist/main.js — one line, unreadable</span>
+<span class="cmd-prompt">$</span> npx @wakaru/cli dist/main.js --unpack -o out/
+<span class="tok-com"># readable modules the agent can actually work with</span>
+<span class="cmd-prompt">$</span> ls out/</code></pre>
+    </div>
+  </section>
+
+  <!-- ============ 6. Use cases ============ -->
+  <section class="section" id="use-cases">
+    <div class="container">
+      <p class="section-eyebrow">// use cases</p>
+      <h2>What people use it for</h2>
+      <div class="cases">
+        <div class="case">
+          <h3>Security review &amp; bug bounty</h3>
+          <p>Read what a site actually ships instead of scrolling one 5&nbsp;MB line. Split the
+             bundle, find the first-party code, audit it as modules.</p>
+        </div>
+        <div class="case">
+          <h3>Incident response &amp; malware triage</h3>
+          <p>Unminify a suspicious script into something a human can diff and reason about,
+             using <code>minimal</code> level to favor behavioral fidelity.</p>
+        </div>
+        <div class="case">
+          <h3>Recover lost source code</h3>
+          <p>The vendor vanished, the laptop died, and all that's left is <code>dist/</code>.
+             Reconstruct a workable codebase from the bundle — <code>wakaru extract</code> recovers
+             originals when the source map includes <code>sourcesContent</code>.</p>
+        </div>
+        <div class="case">
+          <h3>Debug a third-party SDK</h3>
+          <p>Turn the vendored blob into readable modules so the stack trace points at code
+             you can actually understand.</p>
+        </div>
+        <div class="case">
+          <h3>Supply-chain inspection</h3>
+          <p>See what's inside a dependency's shipped bundle rather than trusting the repo it
+             claims to be built from.</p>
+        </div>
+        <div class="case case-cta">
+          <h3>Something we missed?</h3>
+          <p>Tell us how you use Wakaru — or what's stopping you. Share real-world bundles,
+             bugs, and feature requests on
+             <a href="https://github.com/pionxzh/wakaru/issues">GitHub</a> or in the
+             <a href="https://t.me/wakarujs">Telegram group</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 7. FAQ ============ -->
+  <section class="section section-alt" id="faq">
+    <div class="container container-narrow">
+      <p class="section-eyebrow">// faq</p>
+      <h2>Questions</h2>
+      <details>
+        <summary>How is Wakaru different from a formatter or beautifier?</summary>
+        <p>A formatter only changes whitespace and layout. Wakaru rewrites the JavaScript AST to
+           reverse minifier artifacts, restore transpiled syntax, remove bundler runtime patterns,
+           and split bundles back into modules.</p>
+      </details>
+      <details>
+        <summary>How do I unminify JavaScript?</summary>
+        <p>Run <code>npx @wakaru/cli input.js -o output.js</code>, or paste the code into the
+           <a href="/playground/">playground</a>. Wakaru reverses minifier artifacts (sequence
+           expressions, <code>!0</code>/<code>void 0</code> literal tricks, flipped comparisons) and
+           transpiler helpers (Babel, TypeScript, SWC) to recover readable modern JavaScript.</p>
+      </details>
+      <details>
+        <summary>How do I decompile a webpack bundle and extract its modules?</summary>
+        <p>Run <code>npx @wakaru/cli bundle.js --unpack -o out/</code>. Wakaru detects webpack 4/5,
+           esbuild, Bun, Browserify, SystemJS, and AMD/UMD, splits the bundle into individual
+           modules, and decompiles each one.</p>
+      </details>
+      <details>
+        <summary>Can Wakaru deobfuscate JavaScript?</summary>
+        <p>No — heavy obfuscation such as string arrays, control-flow flattening, and VM-based
+           protectors is a different problem. Strip it first with a dedicated tool like
+           <a href="https://github.com/j4k0xb/webcrack">webcrack</a>, then use Wakaru to recover
+           readable modules:</p>
+        <pre class="pipeline"><code><span class="tok-com"># 1. strip the obfuscation</span>
+<span class="cmd-prompt">$</span> npx webcrack --no-unpack --no-unminify obfuscated.js &gt; deobfuscated.js
+<span class="tok-com"># 2. recover readable modules</span>
+<span class="cmd-prompt">$</span> npx @wakaru/cli deobfuscated.js --unpack -o out/</code></pre>
+      </details>
+      <details>
+        <summary>Can it recover original variable names?</summary>
+        <p>When the source map includes original names, yes — Wakaru recovers them and deduplicates
+           imports. Without one, it applies conservative renaming heuristics where the code gives
+           evidence, but most mangled names stay short. Pair it with an LLM renamer like
+           <a href="https://github.com/jehna/humanify">humanify</a> if you want guessed names.</p>
+      </details>
+      <details>
+        <summary>Is the output guaranteed to behave the same?</summary>
+        <p>Wakaru is designed to preserve behavior while recovering readable structure. Its
+           <a href="https://github.com/pionxzh/wakaru/blob/main/docs/rewrite-assumptions.md">three rewrite levels</a>
+           let you choose between behavioral fidelity and stronger readability-oriented recovery;
+           use <code>minimal</code> when fidelity matters most. Semantic preservation is continuously
+           measured with the Test262 round-trip harness.</p>
+      </details>
+      <details>
+        <summary>Does it run in the browser?</summary>
+        <p>Yes — the <a href="/playground/">playground</a> is the WebAssembly build of the same
+           Rust engine, running entirely in your browser. No code leaves your machine.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============ 8. Closing CTA ============ -->
+  <section class="section" id="get-started">
+    <div class="container">
+      <h2 class="cta-title">The bundle isn't a wall.<br>It's a door.</h2>
+      <p class="section-lede">
+        Drop a minified file in the playground, or point the CLI at your bundle.
+      </p>
+      <div class="cta-actions">
+        <a href="/playground/" class="btn btn-primary">Try the playground</a>
+        <code class="cta-cmd"><span class="cmd-prompt">$</span> <span class="cmd-select">npx @wakaru/cli bundle.js --unpack -o out/</span></code>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container footer-inner">
+    <div class="footer-links">
+      <a href="/playground/">Playground</a>
+      <a href="https://github.com/pionxzh/wakaru">GitHub</a>
+      <a href="https://t.me/wakarujs">Telegram</a>
+    </div>
+    <p class="footer-note">Wakaru — turn production JavaScript back into readable modules.</p>
+    <p class="footer-legal">&copy; 2026 pionxzh &middot;
+       <a href="https://github.com/pionxzh/wakaru/blob/main/LICENSE">Apache-2.0</a></p>
+    <p class="footer-legal">Usage of Wakaru for attacking targets without prior mutual consent is illegal.
+       End users are responsible for complying with all applicable laws.</p>
+  </div>
+</footer>
+
+<script src="/demo.js"></script>
 </body>
 </html>

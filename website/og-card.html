@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!-- Source for public/og.png (the og:image social card).
+     Edit this file, then regenerate from website/:
+       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+         --headless=new --disable-gpu --hide-scrollbars \
+         --window-size=1200,630 --screenshot=public/og.png og-card.html
+     (any Chromium works; keep 1200x630) -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background: linear-gradient(160deg, #171d29 0%, #141924 55%, #11151f 100%);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+    color: #e8ecf3;
+    position: relative;
+  }
+  .frame {
+    position: absolute;
+    inset: 0;
+    padding: 64px 72px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .brand-row { display: flex; align-items: center; gap: 18px; }
+  .brand-row img { width: 56px; height: 56px; }
+  .brand {
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .cursor {
+    display: inline-block;
+    width: 15px;
+    height: 28px;
+    margin-left: 8px;
+    background: #8ddb8c;
+    vertical-align: -3px;
+  }
+  .middle { margin-bottom: 24px; }
+  .eyebrow {
+    font-size: 21px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #6e7a8d;
+    margin-bottom: 26px;
+  }
+  h1 {
+    font-size: 92px;
+    font-weight: 600;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    margin-bottom: 48px;
+  }
+  .lede {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 30px;
+    color: #9da8ba;
+    max-width: 760px;
+  }
+  .bottom {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 22px;
+    color: #6e7a8d;
+  }
+  .code-hint { color: #6e7a8d; }
+  .code-hint .kw { color: #c4a0f5; }
+  .code-hint .fn { color: #82b4ff; }
+  .code-hint .str { color: #8ddb8c; }
+  .watermark {
+    position: absolute;
+    right: -140px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 560px;
+    height: 560px;
+    opacity: 0.09;
+  }
+  .icon-right {
+    position: absolute;
+    right: 84px;
+    top: 72px;
+    width: 120px;
+    height: 120px;
+    opacity: 0.9;
+  }
+</style>
+</head>
+<body>
+  <img class="watermark" src="./public/icon.svg">
+  <div class="frame">
+    <div class="brand-row">
+      <img src="./public/icon.svg">
+      <span class="brand">wakaru<span class="cursor"></span></span>
+    </div>
+    <div class="middle">
+      <div class="eyebrow">Unpack. Unminify. Understand.</div>
+      <h1>The JavaScript<br>decompiler.</h1>
+      <div class="lede">Turn production JavaScript back into readable modules.</div>
+    </div>
+    <div class="bottom">
+      <span>wakaru.vercel.app</span>
+    </div>
+  </div>
+</body>
+</html>
