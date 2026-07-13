@@ -1006,7 +1006,7 @@ var read = alias;
 }
 
 #[test]
-fn pipeline_cjs_default_function_callback_before_var_declaration_stays_var() {
+fn pipeline_cjs_default_interop_recovers_import_before_callback_use() {
     let input = r#"
 "use strict";
 Object.defineProperty(exports, "__esModule", {
@@ -1018,16 +1018,13 @@ exports.default = function(target, values) {
 var dep, read = (dep = require("./dep.js")) && dep.__esModule ? dep : {
     default: dep
 };
-module.exports = exports.default;
+    module.exports = exports.default;
 "#;
     let expected = r#"
-import _dep from "./dep.js";
+import read from "./dep.js";
 export default function(target, values) {
-    return values.map((value) => read.default(target, value)).filter(Boolean);
+    return values.map((value) => read(target, value)).filter(Boolean);
 };
-let dep;
-dep = _dep;
-var read = dep;
 "#;
     let output = render_pipeline(input);
     assert_eq_normalized(&output, expected);

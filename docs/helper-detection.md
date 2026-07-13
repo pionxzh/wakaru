@@ -156,6 +156,25 @@ For example, `UnInteropRequireDefault`:
 - `_a.default` becomes `_a` (at all reference sites)
 - The helper function declaration is removed
 
+`UnEsm` also handles Babel's equivalent helper body when it is inlined directly
+at a `require()` site:
+
+```js
+var wrapped = (temp = require("a")) && temp.__esModule
+  ? temp
+  : { default: temp };
+use(wrapped.default);
+```
+
+It recovers a default import only when every use of `wrapped` is a read through
+`.default` and the assigned `temp` is an uninitialized local used exclusively
+by that exact helper expression. Bare, computed, written, or otherwise escaping
+wrapper uses bail out. This matcher stays rule-local because the proof combines
+the producer shape with module-wide binding-use facts; helper names alone carry
+no provenance. Calling a recovered `.default` binding also relies on the
+`call_receiver_independence` assumption documented in
+[rewrite-assumptions.md](rewrite-assumptions.md).
+
 ### Where it runs in the pipeline
 
 Helper detection and restoration runs within **Stage 2** of the `apply_rules()` pipeline, after Stage 1 syntax normalization. Stage 1 rules like `UnIndirectCall` and `UnBracketNotation` must run first to normalize patterns like `(0, x.default)()` and `["default"]` before helper detection can match reliably.

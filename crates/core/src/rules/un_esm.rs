@@ -7,13 +7,14 @@ use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportDecl, ExportDefaultExpr,
     ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName,
     ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryOp,
-    VarDecl, VarDeclKind, VarDeclarator,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp,
+    OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
+    Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
-use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
@@ -1576,6 +1577,10 @@ fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Ve
 /// 2. `const a = (i = require("./a.js")) && i.__esModule ? i : { default: i }`
 ///    → `const i = require("./a.js"); const a = i;`
 ///    (inline conditional interop)
+///
+/// When every use of `a` is a read through `a.default` and `i` is private to
+/// the helper expression, the pre-pass instead emits
+/// `const a = require("./a.js").default` and rewrites those reads to `a`.
 fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
     items.iter().any(|item| match item {
         ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export_default)) => {
@@ -1606,6 +1611,13 @@ fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
 fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
     if !has_hoistable_require(&module.body, unresolved_mark) {
         return;
+    }
+    let default_only_interop_bindings =
+        collect_default_only_inline_interop_bindings(module, unresolved_mark);
+    if !default_only_interop_bindings.is_empty() {
+        module.visit_mut_with(&mut DefaultInteropMemberRewriter {
+            bindings: &default_only_interop_bindings,
+        });
     }
     let mut new_body = Vec::with_capacity(module.body.len());
     let mut used_names = collect_all_declared_names(module);
@@ -1673,6 +1685,23 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
                     if let Some((require_local, source_expr)) =
                         try_extract_inline_conditional_interop(init, unresolved_mark)
                     {
+                        if let Pat::Ident(wrapper) = &decl.name {
+                            if default_only_interop_bindings.contains(&binding_id(&wrapper.id)) {
+                                let require_default = Box::new(Expr::Member(MemberExpr {
+                                    span: DUMMY_SP,
+                                    obj: source_expr,
+                                    prop: MemberProp::Ident(IdentName::new(
+                                        "default".into(),
+                                        DUMMY_SP,
+                                    )),
+                                }));
+                                new_body.push(make_require_var_item(
+                                    wrapper.id.clone(),
+                                    require_default,
+                                ));
+                                continue;
+                            }
+                        }
                         let (import_local, assign_after_require) =
                             import_local_for_assignment(require_local.clone(), &mut used_names);
                         new_body.push(make_require_var_item(import_local.clone(), source_expr));
@@ -1699,6 +1728,91 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
     }
 
     module.body = new_body;
+}
+
+fn binding_id(ident: &Ident) -> BindingId {
+    (ident.sym.clone(), ident.ctxt)
+}
+
+/// Find inline Babel interop wrappers that are observably just default-import
+/// aliases. Both bindings must be closed over by the matched helper shape:
+///
+/// - every wrapper use is a read through `.default`; and
+/// - the assigned require temp is an uninitialized local with exactly the four
+///   uses proven by the matcher (assignment, marker read, and both branches).
+///
+/// The second condition matters because replacing the helper also removes the
+/// original `temp = require(...)` assignment.
+fn collect_default_only_inline_interop_bindings(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingId> {
+    let uses = BindingUseIndex::collect(module);
+    let uninitialized = uses.uninitialized_bindings();
+    let mut bindings = HashSet::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            continue;
+        };
+        if var_decl.decls.len() != 1 {
+            continue;
+        }
+        let decl = &var_decl.decls[0];
+        let Pat::Ident(wrapper) = &decl.name else {
+            continue;
+        };
+        let Some(init) = &decl.init else {
+            continue;
+        };
+        let Some((require_local, _)) =
+            try_extract_inline_conditional_interop(init, unresolved_mark)
+        else {
+            continue;
+        };
+
+        let wrapper_id = binding_id(&wrapper.id);
+        let require_id = binding_id(&require_local);
+        if wrapper_id != require_id
+            && uses.has_only_static_member_reads(&wrapper_id, "default")
+            && uninitialized.contains(&require_id)
+            && uses.use_count(&require_id) == 4
+        {
+            bindings.insert(wrapper_id);
+        }
+    }
+
+    bindings
+}
+
+struct DefaultInteropMemberRewriter<'a> {
+    bindings: &'a HashSet<BindingId>,
+}
+
+impl VisitMut for DefaultInteropMemberRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let member = match expr {
+            Expr::Member(member) => member,
+            Expr::OptChain(chain) => {
+                let OptChainBase::Member(member) = chain.base.as_mut() else {
+                    return;
+                };
+                member
+            }
+            _ => return,
+        };
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            return;
+        };
+        let MemberProp::Ident(property) = &member.prop else {
+            return;
+        };
+        if property.sym.as_ref() == "default" && self.bindings.contains(&binding_id(object)) {
+            *expr = Expr::Ident(object.clone());
+        }
+    }
 }
 
 /// Check if any expression in a sequence contains a require() call.

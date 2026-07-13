@@ -1,6 +1,8 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline_until, render_pipeline_until_with_level};
+use common::{
+    assert_eq_normalized, render_pipeline, render_pipeline_until, render_pipeline_until_with_level,
+};
 use wakaru_core::RewriteLevel;
 
 // Stop before DeadImports (the final cleanup pass) so that synthetic inputs
@@ -822,6 +824,128 @@ console.log(a);
 "#;
     let output = apply(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn inline_conditional_interop_default_only_to_default_import() {
+    let input = r#"
+let n;
+const r = (n = require("./base.js")) && n.__esModule ? n : { default: n };
+function build() {
+  return factory(r.default);
+}
+"#;
+    let expected = r#"
+import r from "./base.js";
+let n;
+function build() {
+  return factory(r);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+
+    let expected_final = r#"
+import r from "./base.js";
+function build() {
+  return factory(r);
+}
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected_final);
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_is_binding_aware() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+function read(r) {
+  return r.default;
+}
+consume(r.default, read(other));
+"#;
+    let expected = r#"
+import r from "./dep.js";
+let n;
+function read(r) {
+  return r.default;
+}
+consume(r, read(other));
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_handles_optional_member_read() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+consume(r?.default);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains(".default") || !output.contains("import r from"),
+        "default-only recovery must rewrite every accepted access: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_rejects_mixed_wrapper_uses() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+consume(r.default, r);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(r.default, r)"),
+        "a wrapper that escapes must keep its Babel interop semantics: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_rejects_writes() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+r.default = replacement;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains(".default = replacement") && !output.contains("import r from"),
+        "a written wrapper property must not use the default-only recovery: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_rejects_dynamic_properties() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+consume(r[key]);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("[key]") && !output.contains("import r from"),
+        "a dynamically accessed wrapper must not use the default-only recovery: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_default_recovery_rejects_used_require_temp() {
+    let input = r#"
+let n;
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+consume(r.default, n);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("n = _n")
+            && output.contains("consume(n.default, n)")
+            && !output.contains("import r from"),
+        "a require temp used outside the helper must keep its assignment: {output}"
+    );
 }
 
 #[test]

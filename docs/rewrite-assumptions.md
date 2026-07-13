@@ -39,6 +39,35 @@ transform is not provable from the AST alone.
 Rules should reference these names in code comments or test names when
 applicable, so the dependency is grep-able.
 
+### `call_receiver_independence`
+
+A callable recovered from generated helper or module syntax does not depend on
+the incidental receiver that the lowered representation introduces or removes.
+
+For example, these call shapes differ in ordinary JavaScript because their
+`this` values differ:
+
+```js
+(0, namespace.fn)(); // `this` is undefined
+namespace.fn();      // `this` is namespace
+
+wrapped.default();   // `this` is wrapped
+defaultImport();     // `this` is undefined
+```
+
+Transpilers deliberately emit some of these receiver forms while lowering ESM,
+and interop wrappers introduce others as an implementation detail. Recovering
+the pre-transpile import call may therefore change the behavior of a callable
+that observes `this`, even though the recovered form matches the original ESM
+source shape.
+
+Affects: `UnIndirectCall` (member-callee forms), `UnInteropRequireDefault`
+(call sites rewritten from `.default`), and `UnEsm` (default interop recovery).
+
+Level: receiver-changing `UnIndirectCall` and `UnEsm` forms require `standard`
+or above. Explicit transpiler-helper recovery in `UnInteropRequireDefault`
+applies whenever that helper is recognized.
+
 ### `no_document_all`
 
 The input does not depend on the legacy `document.all` falsy-object behavior.

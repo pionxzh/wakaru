@@ -122,6 +122,18 @@ impl BindingUseIndex {
         })
     }
 
+    pub(crate) fn has_only_static_member_reads(&self, binding: &BindingId, property: &str) -> bool {
+        self.bindings.get(binding).is_some_and(|info| {
+            !info.uses.is_empty()
+                && info.uses.iter().all(|site| {
+                    matches!(
+                        &site.kind,
+                        UseKind::StaticMemberRead(name) if name.as_ref() == property
+                    )
+                })
+        })
+    }
+
     pub(crate) fn has_declaration(&self, binding: &BindingId) -> bool {
         self.bindings
             .get(binding)
