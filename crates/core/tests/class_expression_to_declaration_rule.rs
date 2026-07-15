@@ -126,6 +126,20 @@ fn preserves_anonymous_class_with_later_binding_write() {
 }
 
 #[test]
+fn preserves_anonymous_class_written_from_nested_function() {
+    let input = r#"
+function outer() {
+  const Foo = class {};
+  function replace() {
+    Foo = replacement;
+  }
+  return Foo;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn preserves_anonymous_class_observable_through_direct_eval() {
     let input = "const Foo = class {}; eval('Foo = replacement');";
     assert_eq_normalized(&apply(input), input);

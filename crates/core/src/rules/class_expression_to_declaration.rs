@@ -20,36 +20,49 @@ pub struct ClassExpressionToDeclaration;
 
 impl VisitMut for ClassExpressionToDeclaration {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        module.visit_mut_children_with(&mut ClassExpressionToDeclarationVisitor);
+        if !contains_promotion_candidate(module) {
+            return;
+        }
+
+        let uses = BindingUseIndex::collect(module);
+        let direct_eval = analyze_direct_eval(module);
+        module.visit_mut_children_with(&mut ClassExpressionToDeclarationVisitor {
+            uses: &uses,
+            direct_eval: &direct_eval,
+        });
     }
 }
 
-struct ClassExpressionToDeclarationVisitor;
+struct ClassExpressionToDeclarationVisitor<'a> {
+    uses: &'a BindingUseIndex,
+    direct_eval: &'a DirectEvalAnalyzer,
+}
 
-impl VisitMut for ClassExpressionToDeclarationVisitor {
+impl VisitMut for ClassExpressionToDeclarationVisitor<'_> {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
-        promote_in_module_items(items);
+        promote_in_module_items(items, self.uses, self.direct_eval);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        promote_in_stmts(stmts);
+        promote_in_stmts(stmts, self.uses, self.direct_eval);
     }
 }
 
-fn promote_in_module_items(items: &mut Vec<ModuleItem>) {
-    let uses = BindingUseIndex::collect_module_items(items);
-    let direct_eval = analyze_direct_eval(items);
-
+fn promote_in_module_items(
+    items: &mut Vec<ModuleItem>,
+    uses: &BindingUseIndex,
+    direct_eval: &DirectEvalAnalyzer,
+) {
     for item in items.iter_mut() {
         let class_decl = match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                try_promote_var_decl(var_decl, &uses, &direct_eval)
+                try_promote_var_decl(var_decl, uses, direct_eval)
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
                 if let Decl::Var(var_decl) = &export_decl.decl {
-                    try_promote_var_decl(var_decl, &uses, &direct_eval)
+                    try_promote_var_decl(var_decl, uses, direct_eval)
                 } else {
                     None
                 }
@@ -72,18 +85,53 @@ fn promote_in_module_items(items: &mut Vec<ModuleItem>) {
     }
 }
 
-fn promote_in_stmts(stmts: &mut Vec<Stmt>) {
-    let uses = BindingUseIndex::collect_stmts(stmts);
-    let direct_eval = analyze_direct_eval(stmts);
-
+fn promote_in_stmts(
+    stmts: &mut Vec<Stmt>,
+    uses: &BindingUseIndex,
+    direct_eval: &DirectEvalAnalyzer,
+) {
     for stmt in stmts.iter_mut() {
         let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
             continue;
         };
-        if let Some(class_decl) = try_promote_var_decl(var_decl, &uses, &direct_eval) {
+        if let Some(class_decl) = try_promote_var_decl(var_decl, uses, direct_eval) {
             *stmt = Stmt::Decl(Decl::Class(class_decl));
         }
     }
+}
+
+fn contains_promotion_candidate(module: &Module) -> bool {
+    #[derive(Default)]
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_var_decl(&mut self, var_decl: &VarDecl) {
+            if self.found {
+                return;
+            }
+            if is_promotion_candidate(var_decl) {
+                self.found = true;
+                return;
+            }
+            var_decl.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder::default();
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+fn is_promotion_candidate(var_decl: &VarDecl) -> bool {
+    if var_decl.kind != VarDeclKind::Const || var_decl.decls.len() != 1 {
+        return false;
+    }
+
+    let declarator = &var_decl.decls[0];
+    matches!(&declarator.name, Pat::Ident(_))
+        && matches!(declarator.init.as_deref(), Some(Expr::Class(class)) if class.ident.is_none())
 }
 
 fn try_promote_var_decl(
@@ -91,7 +139,7 @@ fn try_promote_var_decl(
     uses: &BindingUseIndex,
     direct_eval: &DirectEvalAnalyzer,
 ) -> Option<ClassDecl> {
-    if var_decl.kind != VarDeclKind::Const || var_decl.decls.len() != 1 {
+    if !is_promotion_candidate(var_decl) {
         return None;
     }
 
@@ -102,10 +150,6 @@ fn try_promote_var_decl(
     let Expr::Class(class_expr) = declarator.init.as_deref()? else {
         return None;
     };
-
-    if class_expr.ident.is_some() {
-        return None;
-    }
 
     let binding = (binding_ident.sym.clone(), binding_ident.ctxt);
     if uses.has_direct_write(&binding)
