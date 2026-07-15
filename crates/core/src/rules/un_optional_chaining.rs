@@ -116,7 +116,9 @@ impl VisitMut for UnOptionalChaining {
             }
         }
 
-        if let Some(result) = try_optional_call_short_circuit_stmt(stmt, self.unresolved_mark) {
+        if let Some(result) =
+            try_optional_call_short_circuit_stmt(stmt, self.unresolved_mark, self.policy)
+        {
             self.record_consumed_stmt_bindings(stmt, &result);
             *stmt = result;
             return;
@@ -221,7 +223,11 @@ fn try_optional_call_if_stmt(stmt: &Stmt, unresolved_mark: Mark) -> Option<Stmt>
     build_optional_call_stmt(DUMMY_SP, &checked, &real_rhs, call_expr, unresolved_mark)
 }
 
-fn try_optional_call_short_circuit_stmt(stmt: &Stmt, unresolved_mark: Mark) -> Option<Stmt> {
+fn try_optional_call_short_circuit_stmt(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> Option<Stmt> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
@@ -235,18 +241,96 @@ fn try_optional_call_short_circuit_stmt(stmt: &Stmt, unresolved_mark: Mark) -> O
         return None;
     };
 
-    let NullCheckResult {
+    if let Some(NullCheckResult {
         value: checked,
         real_value,
-    } = extract_null_check(left, unresolved_mark)?;
-    let real_rhs = real_value?;
-    build_optional_call_stmt(
-        expr_stmt.span,
-        &checked,
-        &real_rhs,
-        right.as_ref(),
-        unresolved_mark,
-    )
+    }) = extract_null_check(left, unresolved_mark)
+    {
+        return match real_value {
+            Some(real_rhs) => build_optional_call_stmt(
+                expr_stmt.span,
+                &checked,
+                &real_rhs,
+                right.as_ref(),
+                unresolved_mark,
+            ),
+            None => build_direct_optional_call_stmt(expr_stmt.span, *checked, right),
+        };
+    }
+
+    try_loose_direct_optional_call_stmt(expr_stmt.span, left, right, unresolved_mark, policy)
+}
+
+/// Recover the statement-only form emitted by esbuild and Terser:
+/// `handler == null || handler(value)` -> `handler?.(value)`.
+///
+/// The loose check relies on `no_document_all`. Keeping this statement-only is
+/// also essential: the original expression yields `true` for a missing handler,
+/// while the optional call yields `undefined`.
+fn try_loose_direct_optional_call_stmt(
+    stmt_span: Span,
+    null_check: &Expr,
+    call_expr: &Expr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> Option<Stmt> {
+    if !policy.assumptions.no_document_all {
+        return None;
+    }
+
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::EqEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(null_check)
+    else {
+        return None;
+    };
+    let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+    build_direct_optional_call_stmt(stmt_span, checked, call_expr)
+}
+
+fn build_direct_optional_call_stmt(
+    stmt_span: Span,
+    checked: Expr,
+    call_expr: &Expr,
+) -> Option<Stmt> {
+    let Expr::Ident(checked_ident) = strip_parens(&checked) else {
+        return None;
+    };
+    // Optional-call syntax makes eval indirect, unlike the guarded direct call.
+    if checked_ident.sym == "eval" {
+        return None;
+    }
+    let Expr::Call(CallExpr {
+        callee: Callee::Expr(callee),
+        args,
+        type_args,
+        span,
+        ctxt,
+    }) = strip_parens(call_expr)
+    else {
+        return None;
+    };
+    if !exprs_structurally_equal(&checked, callee) {
+        return None;
+    }
+
+    Some(Stmt::Expr(swc_core::ecma::ast::ExprStmt {
+        span: stmt_span,
+        expr: Box::new(Expr::OptChain(OptChainExpr {
+            span: *span,
+            optional: true,
+            base: Box::new(OptChainBase::Call(OptCall {
+                span: *span,
+                ctxt: *ctxt,
+                callee: Box::new(checked),
+                args: args.clone(),
+                type_args: type_args.clone(),
+            })),
+        })),
+    }))
 }
 
 fn extract_single_call_expr(stmt: &Stmt) -> Option<&Expr> {
@@ -1363,7 +1447,7 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
             Some(make_required_member_tail(replaced_obj, prop.clone()))
         }
 
-        // x.method(...) → x?.method(...)
+        // x(...) → x?.(...)
         Expr::Call(CallExpr {
             callee: Callee::Expr(callee_expr),
             args,
@@ -1371,6 +1455,23 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
             span,
             ctxt,
         }) => {
+            if matches!(&base, Expr::Ident(ident) if ident.sym != "eval")
+                && exprs_structurally_equal(callee_expr, &base)
+            {
+                return Some(Expr::OptChain(OptChainExpr {
+                    span: DUMMY_SP,
+                    optional: true,
+                    base: Box::new(OptChainBase::Call(OptCall {
+                        span: *span,
+                        ctxt: *ctxt,
+                        callee: Box::new(base),
+                        args: args.clone(),
+                        type_args: type_args.clone(),
+                    })),
+                }));
+            }
+
+            // x.method(...) → x?.method(...)
             if let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr {
                 if exprs_structurally_equal(obj, &base) {
                     if prop.is_ident_with("call")

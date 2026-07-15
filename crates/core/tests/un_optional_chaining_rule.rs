@@ -148,6 +148,86 @@ fn standard_transforms_short_circuit_babel_optional_call_statement() {
 }
 
 #[test]
+fn standard_transforms_loose_direct_optional_call_statement() {
+    // Emitted by esbuild and Terser for `handler?.(value)`.
+    let input = r#"handler == null || handler(value)"#;
+    let expected = r#"handler?.(value)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_strict_direct_optional_call_expression() {
+    let input = r#"handler === null || handler === undefined ? undefined : handler(value)"#;
+    let expected = r#"handler?.(value)"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_loose_direct_optional_call_expression() {
+    let input = r#"handler == null ? undefined : handler(value)"#;
+    let expected = r#"handler?.(value)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_preserves_loose_direct_optional_call_expression() {
+    let input = r#"handler == null ? undefined : handler(value)"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_strict_direct_optional_call_statement() {
+    let input = r#"handler === null || handler === undefined || handler(value)"#;
+    let expected = r#"handler?.(value)"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_null_first_loose_direct_optional_call_statement() {
+    // Terser commonly flips the loose null check while minifying.
+    let input = r#"null == handler || handler(value)"#;
+    let expected = r#"handler?.(value)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_preserves_loose_direct_optional_call_statement() {
+    // `document.all` makes loose null checks observably different from `?.`.
+    let input = r#"handler == null || handler(value)"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_loose_direct_optional_call_with_mismatched_callee() {
+    let input = r#"handler == null || other(value)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_loose_direct_optional_eval_call() {
+    // `eval?.(source)` is indirect eval, unlike `eval(source)`.
+    let input = r#"eval == null || eval(source)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_loose_optional_call_when_expression_value_is_observed() {
+    // The guarded expression yields `true` when absent; optional call yields `undefined`.
+    let input = r#"const result = handler == null || handler(value)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_transforms_declared_scratch_temp_assignment_form() {
     let input = r#"
 let n;
