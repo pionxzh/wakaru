@@ -139,13 +139,47 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     let saved_stmts = body.stmts.clone();
     if try_transform_awaiter(body, helpers) {
         try_transform_generator(body, helpers);
-        if stmts_contain_state_opcode_return(&body.stmts, OpcodeReturnScan::SkipNestedFunctions) {
+        if stmts_contain_state_opcode_return(&body.stmts, OpcodeReturnScan::SkipNestedFunctions)
+            || contains_unresolved_generator_wrapper(body, helpers)
+        {
             body.stmts = saved_stmts;
         } else {
             func.is_async = true;
             apply_unused_param_hints(func, awaiter_param_hints);
         }
     }
+}
+
+/// An awaiter wrapper is only safe to remove when its nested generator wrapper
+/// was decoded too. Otherwise the async function would return the generator
+/// iterator itself instead of awaiting the state machine's result.
+fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelperContext) -> bool {
+    struct Finder<'a> {
+        helpers: &'a AsyncHelperContext,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.helpers.is_generator_call(call)
+                && call
+                    .args
+                    .get(1)
+                    .is_some_and(|arg| matches!(strip_parens(&arg.expr), Expr::Fn(_)))
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        helpers,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 // ============================================================
@@ -1450,6 +1484,9 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     let Some(body) = &fn_expr.function.body else {
         return;
     };
+    if contains_unresolved_generator_wrapper(body, helpers) {
+        return;
+    }
     let fn_span = fn_expr.function.span;
 
     let mut stmts = body.stmts.clone();

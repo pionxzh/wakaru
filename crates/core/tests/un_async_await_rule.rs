@@ -611,6 +611,31 @@ function load(items) {
 }
 
 #[test]
+fn async_transform_rolls_back_when_generator_state_machine_is_unsupported() {
+    let input = r#"
+function load() {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [9, work()];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function()"),
+        "failed generator decoding must preserve the awaiter wrapper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function load"),
+        "an unresolved generator wrapper must not be marked async, got:\n{output}"
+    );
+}
+
+#[test]
 fn async_with_yield_arg_consuming_previous_sent() {
     // Terser can fold TypeScript output so one yield argument consumes the
     // previous _a.sent() value: return [4, (response = _a.sent()).json()].
