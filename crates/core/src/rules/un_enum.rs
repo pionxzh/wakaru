@@ -1,21 +1,46 @@
+use std::collections::HashSet;
+
 use swc_core::atoms::{Atom, Wtf8Atom};
-use swc_core::common::{Span, Spanned, DUMMY_SP};
+use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr,
-    Callee, ComputedPropName, Decl, Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit,
-    MemberProp, ModuleDecl, ModuleItem, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread,
+    Callee, ComputedPropName, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, FnExpr,
+    Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, ModuleDecl, ModuleExportName,
+    ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread,
     SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::utils::paren::strip_parens;
 
-pub struct UnEnum;
+pub struct UnEnum {
+    unresolved_mark: Option<Mark>,
+}
+
+impl UnEnum {
+    pub fn new() -> Self {
+        Self {
+            unresolved_mark: None,
+        }
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark) -> Self {
+        Self {
+            unresolved_mark: Some(unresolved_mark),
+        }
+    }
+}
+
+impl Default for UnEnum {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl VisitMut for UnEnum {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
-        process_module_items_for_enum(items);
+        process_module_items_for_enum(items, self.unresolved_mark);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -48,7 +73,8 @@ enum EnumKey {
 // Processing logic
 // ============================================================
 
-fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
+fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: Option<Mark>) {
+    let mut exported_names = collect_exported_names(items);
     let old: Vec<ModuleItem> = std::mem::take(items);
     let mut iter = old.into_iter().peekable();
 
@@ -64,11 +90,25 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
                 // Check if this is a bare var decl like `var Direction;`
                 if let Some(bare_var_ident) = get_bare_var_decl_ident(&stmt) {
                     if let Some(ModuleItem::Stmt(next_stmt)) = iter.peek() {
-                        if let Some(members) = parse_enum_iife(next_stmt, &bare_var_ident.sym) {
+                        if let Some(members) = parse_enum_iife(next_stmt, &bare_var_ident) {
                             // Consume the IIFE statement
                             iter.next();
                             let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                             items.push(ModuleItem::Stmt(new_stmt));
+                            continue;
+                        }
+
+                        if let Some((public_name, members)) = unresolved_mark
+                            .and_then(|mark| {
+                                parse_exported_enum_iife(next_stmt, &bare_var_ident, mark)
+                            })
+                            .filter(|(public_name, _)| !exported_names.contains(public_name))
+                        {
+                            iter.next();
+                            let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
+                            items.push(ModuleItem::Stmt(new_stmt));
+                            exported_names.insert(public_name.clone());
+                            items.push(build_named_enum_export(&bare_var_ident, public_name));
                             continue;
                         }
                     }
@@ -78,6 +118,26 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
                 if let Some((ident, members)) = parse_enum_iife_standalone(&stmt) {
                     let new_stmt = build_enum_assign_stmt(ident, members, stmt.span());
                     items.push(ModuleItem::Stmt(new_stmt));
+                    continue;
+                }
+
+                if let Some((local_ident, public_name, members)) = unresolved_mark
+                    .and_then(|mark| parse_exported_enum_iife_standalone(&stmt, mark))
+                    .filter(|(_, public_name, _)| !exported_names.contains(public_name))
+                    .filter(|(local_ident, public_name, _)| {
+                        has_safe_prior_bare_var(
+                            items,
+                            local_ident,
+                            public_name,
+                            unresolved_mark.expect("exported enum parsing requires a mark"),
+                        )
+                    })
+                {
+                    let new_stmt =
+                        build_enum_assign_stmt(local_ident.clone(), members, stmt.span());
+                    items.push(ModuleItem::Stmt(new_stmt));
+                    exported_names.insert(public_name.clone());
+                    items.push(build_named_enum_export(&local_ident, public_name));
                     continue;
                 }
 
@@ -108,7 +168,7 @@ fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
 
         if let Some(bare_var_ident) = get_bare_var_decl_ident(&stmt) {
             if let Some(peeked) = iter.peek() {
-                if let Some(members) = parse_enum_iife(peeked, &bare_var_ident.sym) {
+                if let Some(members) = parse_enum_iife(peeked, &bare_var_ident) {
                     iter.next(); // consume the IIFE
                     let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                     stmts.push(new_stmt);
@@ -154,7 +214,7 @@ fn rewrite_enum_var_decl(var: &mut VarDecl) -> bool {
         let Some(init) = &mut declarator.init else {
             continue;
         };
-        let Some(members) = parse_enum_iife_expr(init, Some(&id.sym)) else {
+        let Some(members) = parse_enum_iife_expr(init, Some(id)) else {
             continue;
         };
         **init = build_enum_object(members);
@@ -189,11 +249,187 @@ fn get_bare_var_decl_ident(stmt: &Stmt) -> Option<Ident> {
 /// Parse an enum IIFE where the inner function param name matches `expected_name`.
 /// Also handles mangled enums where the param name differs from `expected_name`
 /// (the arg `expected_name || (expected_name = {})` determines the enum name).
-fn parse_enum_iife(stmt: &Stmt, expected_name: &Atom) -> Option<Vec<EnumMember>> {
+fn parse_enum_iife(stmt: &Stmt, expected_ident: &Ident) -> Option<Vec<EnumMember>> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
-    parse_enum_iife_expr(expr, Some(expected_name))
+    parse_enum_iife_expr(expr, Some(expected_ident))
+}
+
+/// Parse the TypeScript CommonJS form:
+///
+/// `var Local; (function (e) { ... })(Local = exports.Public || (exports.Public = {}));`
+///
+/// A second emitted form, `Local || (exports.Public = Local = {})`, is also
+/// accepted. The exported variant is intentionally stricter than local enum
+/// recovery: the body may contain only literal enum values, so replacing the
+/// early CommonJS publication with an ESM binding cannot hide observable work.
+fn parse_exported_enum_iife(
+    stmt: &Stmt,
+    local_ident: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Atom, Vec<EnumMember>)> {
+    let (parsed_local, public_name, members) =
+        parse_exported_enum_iife_standalone(stmt, unresolved_mark)?;
+    same_binding(&parsed_local, local_ident).then_some((public_name, members))
+}
+
+fn parse_exported_enum_iife_standalone(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(Ident, Atom, Vec<EnumMember>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = strip_unary_bang(expr) else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    let (local_ident, public_name) = parse_exported_enum_arg(&call.args[0].expr, unresolved_mark)?;
+
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let members = if let Some((param, body)) = extract_enum_iife_expr_body(callee) {
+        parse_enum_expr_body(body, param)?
+    } else {
+        let (param, body) = extract_enum_iife_body(callee)?;
+        parse_enum_body(body, param)?
+    };
+    if !members.iter().all(enum_member_is_literal_only) {
+        return None;
+    }
+
+    Some((local_ident, public_name, members))
+}
+
+fn parse_exported_enum_arg(expr: &Expr, unresolved_mark: Mark) -> Option<(Ident, Atom)> {
+    let expr = strip_parens(expr);
+
+    // `Local = exports.Public || (exports.Public = {})`
+    if let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    {
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(left_ident)) = left else {
+            return None;
+        };
+        let local_ident = left_ident.id.clone();
+        let Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) = strip_parens(right)
+        else {
+            return None;
+        };
+        let Expr::Member(left_member) = strip_parens(left) else {
+            return None;
+        };
+        let public_name = unresolved_exports_member(left_member, unresolved_mark)?;
+        if assign_member_empty_object(right, &public_name, unresolved_mark) {
+            return Some((local_ident, public_name));
+        }
+        return None;
+    }
+
+    // `Local || (exports.Public = Local = {})`
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+    let Expr::Ident(left_ident) = strip_parens(left) else {
+        return None;
+    };
+    let local_ident = left_ident.clone();
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = strip_parens(right)
+    else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(export_member)) = left else {
+        return None;
+    };
+    let public_name = unresolved_exports_member(export_member, unresolved_mark)?;
+    if is_assign_empty_obj(right, &local_ident) {
+        Some((local_ident, public_name))
+    } else {
+        None
+    }
+}
+
+fn assign_member_empty_object(expr: &Expr, public_name: &Atom, unresolved_mark: Mark) -> bool {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = left else {
+        return false;
+    };
+    unresolved_exports_member(member, unresolved_mark).as_ref() == Some(public_name)
+        && matches!(strip_parens(right), Expr::Object(object) if object.props.is_empty())
+}
+
+fn unresolved_exports_member(member: &MemberExpr, unresolved_mark: Mark) -> Option<Atom> {
+    let Expr::Ident(object) = strip_parens(&member.obj) else {
+        return None;
+    };
+    if object.sym != *"exports" || object.ctxt.outer() != unresolved_mark {
+        return None;
+    }
+    match &member.prop {
+        MemberProp::Ident(property) if is_valid_identifier(property.sym.as_ref()) => {
+            Some(property.sym.clone())
+        }
+        MemberProp::Computed(property) => {
+            let Expr::Lit(Lit::Str(value)) = strip_parens(&property.expr) else {
+                return None;
+            };
+            let value = value.value.as_str()?;
+            is_valid_identifier(value).then(|| Atom::from(value))
+        }
+        _ => None,
+    }
+}
+
+fn enum_member_is_literal_only(member: &EnumMember) -> bool {
+    literal_enum_value(&member.value)
+        && member
+            .reverse
+            .as_ref()
+            .is_none_or(|(key, value)| literal_enum_value(key) && literal_enum_value(value))
+}
+
+fn literal_enum_value(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Lit(_) => true,
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Plus | UnaryOp::Minus,
+            arg,
+            ..
+        }) => matches!(strip_parens(arg), Expr::Lit(Lit::Num(_))),
+        _ => false,
+    }
 }
 
 /// Parse a standalone enum IIFE (no preceding bare var).
@@ -210,35 +446,31 @@ fn parse_enum_iife_standalone(stmt: &Stmt) -> Option<(Ident, Vec<EnumMember>)> {
     let enum_ident = extract_enum_name_from_arg(&call.args)?;
 
     // Validate that there is no preceding bare var (this is for standalone)
-    parse_enum_iife_expr_inner(call, &enum_ident.sym, None).map(|members| (enum_ident, members))
+    parse_enum_iife_expr_inner(call, &enum_ident).map(|members| (enum_ident, members))
 }
 
-fn parse_enum_iife_expr(expr: &Expr, expected_name: Option<&Atom>) -> Option<Vec<EnumMember>> {
+fn parse_enum_iife_expr(expr: &Expr, expected_ident: Option<&Ident>) -> Option<Vec<EnumMember>> {
     let expr = strip_unary_bang(expr);
     let Expr::Call(call) = expr else {
         return None;
     };
 
-    let enum_name = if let Some(n) = expected_name {
-        n.clone()
+    let enum_ident = if let Some(ident) = expected_ident {
+        ident.clone()
     } else {
-        extract_enum_name_from_arg(&call.args)?.sym
+        extract_enum_name_from_arg(&call.args)?
     };
 
-    if let Some(n) = expected_name {
-        if !validate_enum_iife_arg(&call.args, n) {
+    if let Some(ident) = expected_ident {
+        if !validate_enum_iife_arg(&call.args, ident) {
             return None;
         }
     }
 
-    parse_enum_iife_expr_inner(call, &enum_name, expected_name)
+    parse_enum_iife_expr_inner(call, &enum_ident)
 }
 
-fn parse_enum_iife_expr_inner(
-    call: &CallExpr,
-    enum_name: &Atom,
-    _expected_name: Option<&Atom>,
-) -> Option<Vec<EnumMember>> {
+fn parse_enum_iife_expr_inner(call: &CallExpr, enum_ident: &Ident) -> Option<Vec<EnumMember>> {
     // Callee must be a function or block-bodied arrow expression (possibly paren-wrapped)
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -247,7 +479,7 @@ fn parse_enum_iife_expr_inner(
     if call.args.len() != 1 {
         return None;
     }
-    if !validate_enum_iife_arg(&call.args, enum_name) {
+    if !validate_enum_iife_arg(&call.args, enum_ident) {
         return None;
     }
 
@@ -260,7 +492,7 @@ fn parse_enum_iife_expr_inner(
     parse_enum_body(body_stmts, inner_param_name)
 }
 
-fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Atom, &Expr)> {
+fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Ident, &Expr)> {
     match expr {
         Expr::Arrow(arrow) => {
             if arrow.params.len() != 1 {
@@ -272,14 +504,14 @@ fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Atom, &Expr)> {
             let BlockStmtOrExpr::Expr(body) = arrow.body.as_ref() else {
                 return None;
             };
-            Some((&param_ident.id.sym, body.as_ref()))
+            Some((&param_ident.id, body.as_ref()))
         }
         Expr::Paren(paren) => extract_enum_iife_expr_body(&paren.expr),
         _ => None,
     }
 }
 
-fn extract_enum_iife_body(expr: &Expr) -> Option<(&Atom, &[Stmt])> {
+fn extract_enum_iife_body(expr: &Expr) -> Option<(&Ident, &[Stmt])> {
     match expr {
         Expr::Fn(fn_expr) => extract_fn_expr_body(fn_expr),
         Expr::Arrow(arrow) => {
@@ -292,14 +524,14 @@ fn extract_enum_iife_body(expr: &Expr) -> Option<(&Atom, &[Stmt])> {
             let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
                 return None;
             };
-            Some((&param_ident.id.sym, &body.stmts))
+            Some((&param_ident.id, &body.stmts))
         }
         Expr::Paren(paren) => extract_enum_iife_body(&paren.expr),
         _ => None,
     }
 }
 
-fn extract_fn_expr_body(fn_expr: &FnExpr) -> Option<(&Atom, &[Stmt])> {
+fn extract_fn_expr_body(fn_expr: &FnExpr) -> Option<(&Ident, &[Stmt])> {
     if fn_expr.function.params.len() != 1 {
         return None;
     }
@@ -307,7 +539,7 @@ fn extract_fn_expr_body(fn_expr: &FnExpr) -> Option<(&Atom, &[Stmt])> {
         return None;
     };
     let body = fn_expr.function.body.as_ref()?;
-    Some((&param_ident.id.sym, &body.stmts))
+    Some((&param_ident.id, &body.stmts))
 }
 
 fn strip_unary_bang(expr: &Expr) -> &Expr {
@@ -341,15 +573,15 @@ fn extract_enum_name_from_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Opt
     Some(id.clone())
 }
 
-fn validate_enum_iife_arg(args: &[swc_core::ecma::ast::ExprOrSpread], name: &Atom) -> bool {
+fn validate_enum_iife_arg(args: &[swc_core::ecma::ast::ExprOrSpread], ident: &Ident) -> bool {
     if args.len() != 1 {
         return false;
     }
-    is_enum_iife_arg(&args[0].expr, name)
+    is_enum_iife_arg(&args[0].expr, ident)
 }
 
 /// Check that expr is `Name || (Name = {})`, `Name || {}`, or an initialized `{}`.
-fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
+fn is_enum_iife_arg(expr: &Expr, ident: &Ident) -> bool {
     let expr = strip_parens(expr);
     match expr {
         // Standard: Name || (Name = {})
@@ -359,11 +591,11 @@ fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
             right,
             ..
         }) => {
-            if !matches!(left.as_ref(), Expr::Ident(i) if &i.sym == name) {
+            if !matches!(left.as_ref(), Expr::Ident(i) if same_binding(i, ident)) {
                 return false;
             }
             let right = strip_parens(right);
-            is_assign_empty_obj(right, name)
+            is_assign_empty_obj(right, ident)
                 || matches!(right, Expr::Object(o) if o.props.is_empty())
         }
         Expr::Object(o) => o.props.is_empty(),
@@ -371,7 +603,7 @@ fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
     }
 }
 
-fn is_assign_empty_obj(expr: &Expr, name: &Atom) -> bool {
+fn is_assign_empty_obj(expr: &Expr, ident: &Ident) -> bool {
     let Expr::Assign(AssignExpr {
         op: AssignOp::Assign,
         left,
@@ -384,7 +616,7 @@ fn is_assign_empty_obj(expr: &Expr, name: &Atom) -> bool {
     let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = left else {
         return false;
     };
-    if &id.id.sym != name {
+    if !same_binding(&id.id, ident) {
         return false;
     }
     matches!(right.as_ref(), Expr::Object(o) if o.props.is_empty())
@@ -395,7 +627,7 @@ fn is_assign_empty_obj(expr: &Expr, name: &Atom) -> bool {
 // ============================================================
 
 /// Parse enum body statements. Returns None if any statement is unrecognized.
-fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>> {
+fn parse_enum_body(stmts: &[Stmt], enum_param: &Ident) -> Option<Vec<EnumMember>> {
     let mut members = Vec::new();
 
     for stmt in stmts {
@@ -406,7 +638,7 @@ fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>>
                 let Some(expr) = &return_stmt.arg else {
                     continue;
                 };
-                if matches!(strip_parens(expr), Expr::Ident(id) if &id.sym == enum_param) {
+                if matches!(strip_parens(expr), Expr::Ident(id) if same_binding(id, enum_param)) {
                     continue;
                 }
                 members.extend(parse_enum_expr_body(expr, enum_param)?);
@@ -422,14 +654,14 @@ fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>>
     Some(members)
 }
 
-fn parse_enum_expr_body(expr: &Expr, enum_param: &Atom) -> Option<Vec<EnumMember>> {
+fn parse_enum_expr_body(expr: &Expr, enum_param: &Ident) -> Option<Vec<EnumMember>> {
     let mut members = Vec::new();
 
     match strip_parens(expr) {
         Expr::Seq(seq) => {
             for expr in &seq.exprs {
                 let expr = strip_parens(expr);
-                if matches!(expr, Expr::Ident(id) if &id.sym == enum_param) {
+                if matches!(expr, Expr::Ident(id) if same_binding(id, enum_param)) {
                     continue;
                 }
                 members.push(parse_enum_member_expr(expr, enum_param)?);
@@ -449,7 +681,7 @@ fn parse_enum_expr_body(expr: &Expr, enum_param: &Atom) -> Option<Vec<EnumMember
 
 /// Parse a single enum member expression.
 /// Returns None if unrecognized.
-fn parse_enum_member_expr(expr: &Expr, enum_param: &Atom) -> Option<EnumMember> {
+fn parse_enum_member_expr(expr: &Expr, enum_param: &Ident) -> Option<EnumMember> {
     let Expr::Assign(AssignExpr {
         op: AssignOp::Assign,
         left,
@@ -516,7 +748,7 @@ fn parse_enum_member_expr(expr: &Expr, enum_param: &Atom) -> Option<EnumMember> 
 
 /// Parse `Enum["Key"] = numVal` (forward assignment in numeric member pattern)
 /// Returns `(EnumKey, Box<Expr> for num_val)` if matched.
-fn parse_numeric_forward_assign(expr: &Expr, enum_param: &Atom) -> Option<(EnumKey, Box<Expr>)> {
+fn parse_numeric_forward_assign(expr: &Expr, enum_param: &Ident) -> Option<(EnumKey, Box<Expr>)> {
     let Expr::Assign(AssignExpr {
         op: AssignOp::Assign,
         left,
@@ -536,8 +768,12 @@ fn parse_numeric_forward_assign(expr: &Expr, enum_param: &Atom) -> Option<(EnumK
     Some((key, right.clone()))
 }
 
-fn is_enum_ident(expr: &Expr, enum_param: &Atom) -> bool {
-    matches!(expr, Expr::Ident(id) if &id.sym == enum_param)
+fn is_enum_ident(expr: &Expr, enum_param: &Ident) -> bool {
+    matches!(expr, Expr::Ident(id) if same_binding(id, enum_param))
+}
+
+fn same_binding(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
 }
 
 fn extract_member_key(prop: &MemberProp) -> Option<EnumKey> {
@@ -583,9 +819,113 @@ fn is_valid_identifier(s: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
+fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for item in items {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
+                if let Decl::Var(var) = &export_decl.decl {
+                    for declarator in &var.decls {
+                        if let Pat::Ident(binding) = &declarator.name {
+                            names.insert(binding.id.sym.clone());
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
+                for specifier in &named.specifiers {
+                    let ExportSpecifier::Named(specifier) = specifier else {
+                        continue;
+                    };
+                    let name = specifier.exported.as_ref().unwrap_or(&specifier.orig);
+                    if let ModuleExportName::Ident(ident) = name {
+                        names.insert(ident.sym.clone());
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(_)) => {
+                names.insert("default".into());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// A minifier can split `var Enum, other = 1` into separate declarations,
+/// leaving other statements between the enum binding and its IIFE. Keep the
+/// assignment at the IIFE's original position, and accept the split form only
+/// when the intervening items mention neither the local binding nor its public
+/// `exports` property.
+fn has_safe_prior_bare_var(
+    items: &[ModuleItem],
+    local_ident: &Ident,
+    public_name: &Atom,
+    unresolved_mark: Mark,
+) -> bool {
+    let Some(index) = items.iter().rposition(|item| {
+        let ModuleItem::Stmt(stmt) = item else {
+            return false;
+        };
+        get_bare_var_decl_ident(stmt)
+            .as_ref()
+            .is_some_and(|ident| same_binding(ident, local_ident))
+    }) else {
+        return false;
+    };
+
+    items[index + 1..].iter().all(|item| {
+        let mut finder = BindingUseFinder {
+            binding: local_ident,
+            public_name,
+            unresolved_mark,
+            found: false,
+        };
+        item.visit_with(&mut finder);
+        !finder.found
+    })
+}
+
+struct BindingUseFinder<'a> {
+    binding: &'a Ident,
+    public_name: &'a Atom,
+    unresolved_mark: Mark,
+    found: bool,
+}
+
+impl Visit for BindingUseFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.found |= same_binding(ident, self.binding);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        self.found |= unresolved_exports_member(member, self.unresolved_mark).as_ref()
+            == Some(self.public_name);
+        member.visit_children_with(self);
+    }
+}
+
 // ============================================================
 // Building output
 // ============================================================
+
+fn build_named_enum_export(local_ident: &Ident, public_name: Atom) -> ModuleItem {
+    let exported = (local_ident.sym != public_name)
+        .then(|| ModuleExportName::Ident(IdentName::new(public_name, DUMMY_SP).into()));
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: DUMMY_SP,
+        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+            span: DUMMY_SP,
+            orig: ModuleExportName::Ident(local_ident.clone()),
+            exported,
+            is_type_only: false,
+        })],
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
 
 /// Build `var Name = { ... }` using the original var stmt's structure
 fn build_enum_var_decl(ident: &Ident, members: Vec<EnumMember>, original_stmt: &Stmt) -> Stmt {

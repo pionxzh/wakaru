@@ -9,6 +9,14 @@ use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::rules::UnEnum;
 
 fn apply(input: &str) -> String {
+    apply_rule(input, false)
+}
+
+fn apply_resolved(input: &str) -> String {
+    apply_rule(input, true)
+}
+
+fn apply_rule(input: &str, resolve_bindings: bool) -> String {
     GLOBALS.set(&Default::default(), || {
         use swc_core::common::{sync::Lrc, FileName, SourceMap};
         use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
@@ -31,7 +39,14 @@ fn apply(input: &str) -> String {
         let mut parser = Parser::new_from(lexer);
         let mut module = parser.parse_module().expect("parse failed");
 
-        module.visit_mut_with(&mut UnEnum);
+        if resolve_bindings {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            module.visit_mut_with(&mut UnEnum::new_with_mark(unresolved_mark));
+        } else {
+            module.visit_mut_with(&mut UnEnum::new());
+        }
 
         let mut output = Vec::new();
         {
@@ -45,6 +60,149 @@ fn apply(input: &str) -> String {
         }
         String::from_utf8(output).expect("utf-8")
     })
+}
+
+#[test]
+fn recovers_exported_commonjs_enum() {
+    let input = r#"
+var LocalMode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+  e["Prod"] = "prod";
+})(LocalMode = exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var LocalMode = {
+  Dev: 0,
+  Prod: "prod",
+  0: "Dev"
+};
+export { LocalMode as Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn recovers_alternate_exported_commonjs_enum_form() {
+    let input = r#"
+var Mode;
+(function (e) {
+  e[e["Dev"] = -1] = "Dev";
+})(Mode || (exports.Mode = Mode = {}));
+"#;
+    let expected = r#"
+var Mode = {
+  Dev: -1,
+  [-1]: "Dev"
+};
+export { Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn exported_commonjs_enum_preserves_position_after_split_declarations() {
+    let input = r#"
+var Mode;
+var before = "initialized first";
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode;
+var before = "initialized first";
+Mode = {
+  Dev: 0,
+  0: "Dev"
+};
+export { Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_intervening_binding_use() {
+    let input = r#"
+var Mode;
+var before = observe(Mode);
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_intervening_public_export_use() {
+    let input = r#"
+var Mode;
+observe(exports.Mode);
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_effectful_values() {
+    let input = r#"
+var Mode;
+(function (e) {
+  e[e["Dev"] = observe()] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_local_exports_binding() {
+    let input = r#"
+const exports = {};
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_mismatched_public_names() {
+    let input = r#"
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Other = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_duplicate_esm_export() {
+    let input = r#"
+var Existing;
+export { Existing as Mode };
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_is_top_level_only() {
+    let input = r#"
+function make() {
+  var Mode;
+  (function (e) {
+    e[e["Dev"] = 0] = "Dev";
+  })(Mode = exports.Mode || (exports.Mode = {}));
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
 }
 
 #[test]
@@ -337,7 +495,7 @@ fn enum_var_binding_context(input: &str) -> (SyntaxContext, SyntaxContext) {
 
         let original_ctxt = first_var_decl_context(&module);
 
-        module.visit_mut_with(&mut UnEnum);
+        module.visit_mut_with(&mut UnEnum::new_with_mark(unresolved_mark));
 
         let output_ctxt = first_var_decl_context(&module);
 
@@ -367,7 +525,7 @@ fn standalone_enum_binding_context(input: &str) -> (SyntaxContext, SyntaxContext
 
         let original_ctxt = iife_arg_ident_context(&module);
 
-        module.visit_mut_with(&mut UnEnum);
+        module.visit_mut_with(&mut UnEnum::new_with_mark(unresolved_mark));
 
         let output_ctxt = first_assign_target_context(&module);
 

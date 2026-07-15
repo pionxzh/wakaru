@@ -351,7 +351,9 @@ runner!(run_un_parameters, |ctx| UnParameters::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_enum, UnEnum);
+runner!(run_un_enum, |ctx| UnEnum::new_with_mark(
+    ctx.unresolved_mark
+));
 runner!(run_un_jsx, |ctx| UnJsx::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
