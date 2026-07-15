@@ -15,10 +15,9 @@ fn promotes_anonymous_class_expression() {
 }
 
 #[test]
-fn promotes_named_class_expression_same_name() {
+fn preserves_named_class_expression_same_name() {
     let input = "const Foo = class Foo { constructor() {} };";
-    let expected = "class Foo {\n    constructor(){}\n}";
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -109,10 +108,40 @@ fn promotes_in_block_scope() {
 }
 
 #[test]
-fn promotes_class_with_static_methods() {
+fn preserves_anonymous_class_referencing_its_outer_binding() {
     let input = "const Foo = class { static create() { return new Foo(); } };";
-    let expected = "class Foo {\n    static create() {\n        return new Foo();\n    }\n}";
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_anonymous_class_with_eager_outer_binding_reference() {
+    let input = "const Foo = class { static value = Foo; };";
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_anonymous_class_with_later_binding_write() {
+    let input = "const Foo = class {}; Foo = replacement;";
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_anonymous_class_observable_through_direct_eval() {
+    let input = "const Foo = class {}; eval('Foo = replacement');";
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn promotes_anonymous_class_when_direct_eval_cannot_observe_binding() {
+    let input = "const Foo = class {}; eval('Other = replacement');";
+    let expected = "class Foo {}\neval('Other = replacement');";
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_anonymous_class_with_unknown_direct_eval_source() {
+    let input = "const Foo = class {}; eval(source);";
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
