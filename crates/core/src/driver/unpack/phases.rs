@@ -1,7 +1,7 @@
 //! Two-phase multi-module pipeline: fact collection (Phase 1) and output
 //! decompilation with the cross-module late pass (Phase 2).
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rayon::prelude::*;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
@@ -94,6 +94,11 @@ pub(super) fn unpack_multi_module_with_plan(
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
 ) -> Result<UnpackOutput> {
+    if options.sourcemap.is_some() {
+        bail!(
+            "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates; use --emit-source-map for output maps"
+        );
+    }
     let span = tracing::info_span!("unpack_multi_module", count = modules.len());
     let _enter = span.enter();
     let report_import_cycle_warnings = modules.iter().all(|module| module.allow_cycle_premerge);
@@ -955,5 +960,28 @@ export { helper };
             sm.get_token_count() > 0,
             "source map should contain generated-to-input mappings"
         );
+    }
+
+    #[test]
+    fn unpack_rejects_bundle_level_input_source_map() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: "export const value = 1;".to_string(),
+            filename: "entry.js".to_string(),
+            ..Default::default()
+        }];
+
+        let error = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                sourcemap: Some(br#"{"version":3,"sources":[],"names":[],"mappings":""}"#.to_vec()),
+                ..Default::default()
+            },
+        )
+        .expect_err("bundle-level input maps must be rejected before module renaming");
+        assert!(error.to_string().contains(
+            "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates"
+        ));
     }
 }

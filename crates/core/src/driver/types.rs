@@ -24,7 +24,9 @@ impl DceMode {
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
     pub filename: String,
-    /// Raw bytes of a v3 source map. When provided, enables:
+    /// Raw bytes of a v3 source map for single-file decompilation. Input maps
+    /// are rejected in unpack mode because extracted modules no longer use the
+    /// bundle's generated coordinates. When provided, enables:
     /// - Import deduplication (merges repeated imports of the same specifier)
     /// - Source-map-driven identifier rename (recovers original variable names)
     pub sourcemap: Option<Vec<u8>>,

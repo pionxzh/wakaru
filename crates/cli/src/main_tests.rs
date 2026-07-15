@@ -1216,6 +1216,27 @@ fn parses_source_map_aliases() {
 }
 
 #[test]
+fn unpack_rejects_input_source_map() {
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "bundle.js",
+        "--unpack",
+        "--source-map",
+        "bundle.js.map",
+        "-o",
+        "out",
+    ])
+    .expect("arguments should parse");
+    let error = run_default(cli).expect_err("unpack input source maps must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("--source-map is not supported with --unpack"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn decompile_rejects_directory_input() {
     let dir = temp_test_dir("decompile-dir");
     fs::create_dir_all(&dir).expect("create temp dir");

@@ -47,12 +47,15 @@ wakaru input.js --source-map input.js.map -o output.js
 wakaru input.js --emit-source-map -o output.js    # emit output .map alongside decompiled file
 ```
 
-Source maps enable identifier recovery and import deduplication. They are
-currently supported only with a single input file.
+Input source maps enable identifier recovery and import deduplication for
+single-file decompilation. They are rejected with `--unpack`: extracted modules
+have new generated coordinates, so applying the bundle-level map could assign
+incorrect or duplicate binding names.
 
 `--emit-source-map` writes a `.map` file alongside each decompiled JavaScript
 output file, mapping the output back to the input. Vue SFC sidecars from
-`--vue-sfc` do not get source maps.
+`--vue-sfc` do not get source maps. Unlike input `--source-map`, this option is
+supported with `--unpack`.
 
 ## Vue SFC recovery
 

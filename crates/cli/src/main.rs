@@ -99,7 +99,8 @@ struct Cli {
     #[arg(long, requires = "unpack")]
     provenance: bool,
 
-    /// Source map file (.map) for identifier recovery and import deduplication.
+    /// Source map file (.map) for single-file identifier recovery and import deduplication.
+    /// Not supported with --unpack.
     #[arg(
         short = 'm',
         long = "source-map",
@@ -262,6 +263,11 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.vue_sfc && cli.raw {
         bail!("--vue-sfc cannot be combined with --raw");
     }
+    if cli.unpack.is_some() && cli.sourcemap.is_some() {
+        bail!(
+            "--source-map is not supported with --unpack because extracted module coordinates differ from bundle coordinates; --emit-source-map remains available for output maps"
+        );
+    }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
     let js_formatter = selected_formatter(cli.formatter);
@@ -275,9 +281,6 @@ fn run_default(cli: Cli) -> Result<()> {
         let input_set = read_unpack_inputs(&cli.inputs, heuristic_split)?;
         let scan_stats = input_set.scan_stats;
         let inputs = input_set.inputs;
-        if inputs.len() > 1 && cli.sourcemap.is_some() {
-            bail!("--source-map is only supported with a single input file");
-        }
         let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
         let filename = inputs
             .first()

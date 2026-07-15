@@ -89,6 +89,10 @@ wakaru input.js --source-map input.js.map -o output.js   # recover names
 wakaru extract input.js.map -o src/                       # dump sourcesContent
 ```
 
+Input `--source-map` is single-file only and cannot be combined with
+`--unpack`; extracted modules do not retain the bundle's generated coordinates.
+Use `--emit-source-map` when unpacked output maps are needed.
+
 ### 4. Recover Vue 3 components as SFC artifacts
 
 Use `--vue-sfc` when the input is compiled Vue 3 component JavaScript or a
