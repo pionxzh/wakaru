@@ -23,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 8426 | 0 | 45 | 992 | 7387 | 2 |
+| 8426 | 8426 | 0 | 45 | 992 | 7389 | 0 |
 
 ## Reasons
 
@@ -40,5 +40,4 @@
 
 ## Failures
 
-- test/language/expressions/class/elements/class-name-static-initializer-expr.js (decompiled-runtime)
-- test/language/expressions/class/scope-name-lex-open-heritage.js (decompiled-runtime)
+No Wakaru correctness failures.

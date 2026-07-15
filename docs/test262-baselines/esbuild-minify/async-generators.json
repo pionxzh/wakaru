@@ -39,19 +39,11 @@
     "runnable": 2963,
     "skipped": 0,
     "unsupported": 13,
-    "rejected": 229,
-    "passed": 2712,
-    "failed": 9
+    "rejected": 236,
+    "passed": 2714,
+    "failed": 0
   },
   "outcomes": [
-    {
-      "path": "test/language/expressions/async-arrow-function/arrow-returns-promise.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "8b0eabe974813f9fec60af0f670d46f11e1138dab5d047183e1d4c91ae498df2",
-      "summary": "Error: sloppy: expected success, got parse SyntaxError: await is only valid in async functions and the top level bodies of modules"
-    },
     {
       "path": "test/language/expressions/async-arrow-function/unscopables-with-in-nested-fn.js",
       "variant": "sloppy",
@@ -813,14 +805,6 @@
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«[object AsyncGenerator]», «[object AsyncGenerator]») to be false"
     },
     {
-      "path": "test/language/statements/async-generator/return-undefined-implicit-and-explicit.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "d55adf66a31f21ef99f5aa8ca4dba035dcdb3ac795638872322f7023ed2ca2e0",
-      "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Actual [tick 1, g1 ret, g2 ret, g3 ret, g4 ret, tick 2] and expected [tick 1, g1 ret, g2 ret, tick 2, g3 ret, g4 ret] should have the same contents. Ticks for implicit and explicit return undefined"
-    },
-    {
       "path": "test/language/statements/async-generator/unscopables-with-in-nested-fn.js",
       "variant": "sloppy",
       "status": "rejected",
@@ -879,9 +863,9 @@
     {
       "path": "test/language/statements/for-await-of/async-func-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "ee32d5dad686b8a168bb51290bafd052013baa80d6f481005dbc5ea5cf48ce63",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "5b30fc20df98f9c6368d4675641d438e2719e3571ecdc80bb92b9b0d419850e1",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
@@ -1375,49 +1359,49 @@
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-err.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "948c2afe1721c3ca37fdf5b004a97d5e24d108f4e1a823ed0e41ffd3b3b0d6b2",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "feaf35819caf0da1d860fa494e5432d5a2a73918c2053390b3a0f9c7dc599dbb",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "b8be08c61a14c0615ddb5cc7cd22fd22b2b499dbb31398238a6c5ef06a394788",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "7e9b5b6560c778978c4f6bc101b484690feda0b40d4e953c6d801fbcfee60df1",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-skip.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "95c0e84c2da2d81d21f2a3c7ccab4f5914259fe75c3e633f1a57e26dfbf66f5a",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "b2e3e83a0d2c85df1b1b40c5ecf34239e80572ae5bc1d1033406a266202e3eac",
       "summary": "Error: sloppy: expected success, got runtime Error: TypeError: Iterator result undefined is not an object"
     },
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "6a2a2a0e6753de00e91fec23baf39bfafedc7e8ffb191ba0d5d5befa08fb3fc5",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "d91d67d976c27481f8209aa78aed113cd0b11e54510546924861b19570dd9dd6",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«1», «2») to be true"
     },
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close-skip.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "da90b81cb034c383dbd191186c6cf00692d4513b9e63623845e83e7e05f6aa4d",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "8211e6e3aa515f1bc20b4a88df1529bbb4b2a5d71a305822675d6bcf9a45c86d",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {
       "path": "test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close.js",
       "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "a1f1b4b4e306c1fea0bd237943a9d72a1a61cab57f239e66256a65a262b1d957",
+      "status": "rejected",
+      "kind": "swc-array-binding-elision",
+      "fingerprint": "f895c668d2aef5aea5d45c73af505e1e9c778b0fa493392165e2e290dd44079d",
       "summary": "Error: sloppy: expected success, got runtime Error: Test262Error: Expected SameValue(«0», «1») to be true"
     },
     {

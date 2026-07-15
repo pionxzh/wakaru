@@ -32,8 +32,8 @@
     "skipped": 0,
     "unsupported": 4,
     "rejected": 0,
-    "passed": 173,
-    "failed": 1
+    "passed": 174,
+    "failed": 0
   },
   "outcomes": [
     {
@@ -59,14 +59,6 @@
       "kind": "swc-parse-async-ident",
       "fingerprint": "4aea9ef684ff1f0a9978415ecb2ac0bd527df6a5511f6891648d04e916c2b97a",
       "summary": "Error: wakaru exited 1\nError: failed to parse <stdin>: Error { error: (31..36, InvalidIdentInAsync) }"
-    },
-    {
-      "path": "test/language/statements/variable/fn-name-class.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "cc5fa4a4d1627c369f3206734b4a55c68c70bc1f3c64db5ac689d62242fbde7d",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/variable/static-init-await-binding-valid.js",

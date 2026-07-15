@@ -37,8 +37,8 @@
     "skipped": 0,
     "unsupported": 19,
     "rejected": 8,
-    "passed": 1368,
-    "failed": 1
+    "passed": 1369,
+    "failed": 0
   },
   "outcomes": [
     {
@@ -160,14 +160,6 @@
       "kind": "node-vm-baseline",
       "fingerprint": "dab150e79c2be1e33d95d382a85804072f56202df86fa619447bccda631f5ab4",
       "summary": "Error: strict: expected success, got runtime RangeError: Maximum call stack size exceeded"
-    },
-    {
-      "path": "test/language/statements/const/fn-name-class.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "9bf220c74f9835428b1c9eb71771d93fcf6dee882b13a6a0377cac3c1b2d8f31",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/const/static-init-await-binding-valid.js",

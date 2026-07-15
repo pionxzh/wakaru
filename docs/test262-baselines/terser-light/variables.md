@@ -23,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 178 | 178 | 0 | 4 | 0 | 173 | 1 |
+| 178 | 178 | 0 | 4 | 0 | 174 | 0 |
 
 ## Reasons
 
@@ -34,4 +34,4 @@
 
 ## Failures
 
-- test/language/statements/variable/fn-name-class.js (decompiled-runtime)
+No Wakaru correctness failures.

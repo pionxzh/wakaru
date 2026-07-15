@@ -37,8 +37,8 @@
     "skipped": 0,
     "unsupported": 18,
     "rejected": 33,
-    "passed": 1344,
-    "failed": 1
+    "passed": 1345,
+    "failed": 0
   },
   "outcomes": [
     {
@@ -232,14 +232,6 @@
       "kind": "transform-runtime",
       "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/statements/const/fn-name-class.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "9bf220c74f9835428b1c9eb71771d93fcf6dee882b13a6a0377cac3c1b2d8f31",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"xCls\"», «\"xCls\"») to be false"
     },
     {
       "path": "test/language/statements/const/static-init-await-binding-valid.js",

@@ -23,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 8426 | 0 | 38 | 187 | 8200 | 1 |
+| 8426 | 8426 | 0 | 38 | 187 | 8201 | 0 |
 
 ## Reasons
 
@@ -36,4 +36,4 @@
 
 ## Failures
 
-- test/language/expressions/class/elements/class-name-static-initializer-expr.js (decompiled-runtime)
+No Wakaru correctness failures.

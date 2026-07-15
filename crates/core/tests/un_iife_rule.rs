@@ -16,6 +16,13 @@ fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
 }
 
 #[test]
+fn preserves_async_expression_body_iife() {
+    let input = "const promise = (async () => await first() + await second())();";
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn iife_single_char_params_renamed_to_longer_ident_args() {
     let input = r#"
 (function(i, s, o, g, r, a, m) {

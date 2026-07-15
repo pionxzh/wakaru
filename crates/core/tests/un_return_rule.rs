@@ -55,6 +55,38 @@ const bar = ()=>{
 }
 
 #[test]
+fn preserves_value_bearing_returns_in_async_generators() {
+    let input = r#"
+async function* bare() {
+  return;
+}
+async function* explicitUndefined() {
+  return undefined;
+}
+async function* explicitVoid() {
+  return void 0;
+}
+async function* explicitEffect() {
+  return void sideEffect();
+}
+"#;
+    let expected = r#"
+async function* bare() {}
+async function* explicitUndefined() {
+  return undefined;
+}
+async function* explicitVoid() {
+  return void 0;
+}
+async function* explicitEffect() {
+  return void sideEffect();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_non_tail_returns() {
     // Reused from packages/unminify/src/transformations/__tests__/un-return.spec.ts
     let input = r#"

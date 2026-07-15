@@ -1,12 +1,12 @@
 {
-  "commit": "d979a3c2",
-  "date": "2026-07-11",
+  "commit": "f7a95a95",
+  "date": "2026-07-14",
   "aggregate": {
     "producers": 3,
     "entries": 60,
     "runnable": 66729,
-    "passed": 62048,
-    "failed": 27,
+    "passed": 62061,
+    "failed": 0,
     "pct": 100
   },
   "entries": [
@@ -54,9 +54,9 @@
       "runnable": 2963,
       "skipped": 0,
       "unsupported": 13,
-      "rejected": 229,
-      "passed": 2712,
-      "failed": 9
+      "rejected": 236,
+      "passed": 2714,
+      "failed": 0
     },
     {
       "producer": "esbuild-minify",
@@ -295,8 +295,8 @@
       "skipped": 0,
       "unsupported": 43,
       "rejected": 71,
-      "passed": 2847,
-      "failed": 2
+      "passed": 2849,
+      "failed": 0
     },
     {
       "producer": "swc-minify",
@@ -331,8 +331,8 @@
       "skipped": 0,
       "unsupported": 38,
       "rejected": 187,
-      "passed": 8200,
-      "failed": 1
+      "passed": 8201,
+      "failed": 0
     },
     {
       "producer": "swc-minify",
@@ -463,8 +463,8 @@
       "skipped": 0,
       "unsupported": 18,
       "rejected": 33,
-      "passed": 1344,
-      "failed": 1
+      "passed": 1345,
+      "failed": 0
     },
     {
       "producer": "swc-minify",
@@ -487,8 +487,8 @@
       "skipped": 0,
       "unsupported": 3,
       "rejected": 3,
-      "passed": 171,
-      "failed": 1
+      "passed": 172,
+      "failed": 0
     },
     {
       "producer": "terser-light",
@@ -534,9 +534,9 @@
       "runnable": 2963,
       "skipped": 0,
       "unsupported": 44,
-      "rejected": 7,
-      "passed": 2903,
-      "failed": 9
+      "rejected": 14,
+      "passed": 2905,
+      "failed": 0
     },
     {
       "producer": "terser-light",
@@ -571,8 +571,8 @@
       "skipped": 0,
       "unsupported": 45,
       "rejected": 992,
-      "passed": 7387,
-      "failed": 2
+      "passed": 7389,
+      "failed": 0
     },
     {
       "producer": "terser-light",
@@ -703,8 +703,8 @@
       "skipped": 0,
       "unsupported": 19,
       "rejected": 8,
-      "passed": 1368,
-      "failed": 1
+      "passed": 1369,
+      "failed": 0
     },
     {
       "producer": "terser-light",
@@ -727,8 +727,8 @@
       "skipped": 0,
       "unsupported": 4,
       "rejected": 0,
-      "passed": 173,
-      "failed": 1
+      "passed": 174,
+      "failed": 0
     }
   ]
 }

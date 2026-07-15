@@ -33,8 +33,8 @@
     "skipped": 0,
     "unsupported": 38,
     "rejected": 187,
-    "passed": 8200,
-    "failed": 1
+    "passed": 8201,
+    "failed": 0
   },
   "outcomes": [
     {
@@ -596,14 +596,6 @@
       "kind": "transform-runtime",
       "fingerprint": "99d416608a93f6a41913a46933d5ec90d6cc3f8e48e5f58e5d82e08315e40925",
       "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«0», «1») to be true"
-    },
-    {
-      "path": "test/language/expressions/class/elements/class-name-static-initializer-expr.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "b572dd40d82b33bbe69e26bd783dacef4bd160940d874039d1f740aa5ec4ea1b",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"expr\"», «\"C\"») to be true"
     },
     {
       "path": "test/language/expressions/class/elements/syntax/valid/grammar-field-accessor.js",

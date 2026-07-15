@@ -23,12 +23,13 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2963 | 2963 | 0 | 13 | 229 | 2712 | 9 |
+| 2963 | 2963 | 0 | 13 | 236 | 2714 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
+| rejected | swc-array-binding-elision | 7 |
 | rejected | transform-reject | 7 |
 | rejected | transform-runtime | 52 |
 | rejected | transform-runtime-inferred-name | 170 |
@@ -38,12 +39,4 @@
 
 ## Failures
 
-- test/language/expressions/async-arrow-function/arrow-returns-promise.js (decompiled-runtime)
-- test/language/statements/async-generator/return-undefined-implicit-and-explicit.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-func-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-err.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-null.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close-skip.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elem-trlg-iter-elision-iter-nrml-close.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close-skip.js (decompiled-runtime)
-- test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close.js (decompiled-runtime)
+No Wakaru correctness failures.

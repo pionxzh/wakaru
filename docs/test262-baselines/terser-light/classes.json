@@ -33,8 +33,8 @@
     "skipped": 0,
     "unsupported": 45,
     "rejected": 992,
-    "passed": 7387,
-    "failed": 2
+    "passed": 7389,
+    "failed": 0
   },
   "outcomes": [
     {
@@ -1364,14 +1364,6 @@
       "kind": "transform-runtime",
       "fingerprint": "2378c849add37b3be932b13ed2d68798319bd4f822ace1a2472e76927725da6f",
       "summary": "Error: sloppy: expected success, got parse SyntaxError: Invalid or unexpected token"
-    },
-    {
-      "path": "test/language/expressions/class/elements/class-name-static-initializer-expr.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "b572dd40d82b33bbe69e26bd783dacef4bd160940d874039d1f740aa5ec4ea1b",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: Expected SameValue(«\"expr\"», «\"C\"») to be true"
     },
     {
       "path": "test/language/expressions/class/elements/multiple-definitions-grammar-privatename-identifier-semantics-stringvalue.js",
@@ -4196,14 +4188,6 @@
       "kind": "node-vm-baseline",
       "fingerprint": "29713a5b52c3afd4df6d6a0e9499e43102a76a0dc5c8772a0dbb48887566aa00",
       "summary": "Error: sloppy: expected success, got runtime TypeError: _eval is not a function"
-    },
-    {
-      "path": "test/language/expressions/class/scope-name-lex-open-heritage.js",
-      "variant": "case",
-      "status": "failed",
-      "kind": "decompiled-runtime",
-      "fingerprint": "5cc48c66d04aae2675b889ddcb8e2144a47a2b456e8e37817c466ae5894ff4e4",
-      "summary": "Error: sloppy: expected success, got runtime Test262Error: from class heritage Expected SameValue(«\"outside\"», «class cls extends (probeHeritage = function() {\n    return C;\n}, setHeritage = function() {"
     },
     {
       "path": "test/language/expressions/class/static-init-await-reference.js",

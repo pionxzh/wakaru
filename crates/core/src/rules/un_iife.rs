@@ -64,6 +64,12 @@ fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
         },
         _ => return None,
     };
+    // Calling an async arrow wraps its result in a Promise and establishes the
+    // async context required by `await`. Replacing the call with its body loses
+    // both semantics and can emit invalid top-level `await` in a script.
+    if arrow.is_async {
+        return None;
+    }
     // Must have no params
     if !arrow.params.is_empty() {
         return None;

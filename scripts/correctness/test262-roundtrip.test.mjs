@@ -877,6 +877,14 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
   );
   assert.equal(
     knownSwcFidelityIssueReason({
+      path: "test/language/statements/for-await-of/async-gen-decl-dstr-array-elision-iter-nrml-close.js",
+      error: new Error("Test262Error"),
+      decompiled: "for await ([] of [iterable]) {}",
+    }),
+    "swc-array-binding-elision",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
       path: "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
       error: new Error("Test262Error"),
       decompiled: "[x] = iterable;",

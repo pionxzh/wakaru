@@ -23,7 +23,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2963 | 2963 | 0 | 43 | 71 | 2847 | 2 |
+| 2963 | 2963 | 0 | 43 | 71 | 2849 | 0 |
 
 ## Reasons
 
@@ -39,5 +39,4 @@
 
 ## Failures
 
-- test/language/expressions/async-arrow-function/arrow-returns-promise.js (decompiled-runtime)
-- test/language/statements/async-generator/return-undefined-implicit-and-explicit.js (decompiled-runtime)
+No Wakaru correctness failures.
