@@ -684,13 +684,37 @@ fn extract_webpack5_modules(
     }
 
     // Check for trailing IIFE entry point
-    let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
+    let has_synthetic_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body)
+    {
         let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
         let code = emit_webpack5_entry_module(
             entry_body,
             cm.clone(),
             &id_to_filename,
             &str_id_to_filename,
+            Atom::from("__webpack_require__"),
+            Atom::from("__webpack_exports__"),
+        )?;
+        modules.push(UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code,
+            filename: "entry.js".to_string(),
+            source_ranges: entry_ranges,
+            source_input: String::new(),
+            generated_source_map: Vec::new(),
+        });
+        prepared.push(None);
+        true
+    } else if let Some(entry) = extract_ncc_inline_entry(bootstrap_body) {
+        let entry_ranges = spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span()));
+        let code = emit_webpack5_entry_module(
+            entry.body_stmts,
+            cm.clone(),
+            &id_to_filename,
+            &str_id_to_filename,
+            entry.require_sym,
+            entry.exports_sym,
         )?;
         modules.push(UnpackedModule {
             id: "entry".to_string(),
@@ -708,7 +732,7 @@ fn extract_webpack5_modules(
     };
 
     // Fallback: scan bootstrap for entry-module startup calls.
-    if !has_trailing_entry {
+    if !has_synthetic_entry {
         if let Some(entry_id) =
             find_require_s_entry(bootstrap_body).or_else(|| find_require_o_entry(bootstrap_body))
         {
@@ -737,9 +761,16 @@ fn emit_webpack5_entry_module(
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
+    require_sym: Atom,
+    exports_sym: Atom,
 ) -> Option<String> {
-    let (mut synthetic_module, _) =
-        normalize_extracted_webpack_entry_module(body_stmts, id_to_filename, str_id_to_filename);
+    let (mut synthetic_module, _) = normalize_extracted_webpack_entry_module(
+        body_stmts,
+        id_to_filename,
+        str_id_to_filename,
+        require_sym,
+        exports_sym,
+    );
     apply_fixer(&mut synthetic_module).ok()?;
     emit_module(&synthetic_module, cm).ok()
 }
@@ -753,13 +784,14 @@ fn normalize_extracted_webpack_entry_module(
     body_stmts: Vec<Stmt>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
+    require_sym: Atom,
+    exports_sym: Atom,
 ) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
     synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-    let require_sym = Atom::from("__webpack_require__");
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
 
     let mut id_rewriter = RequireIdRewriter {
@@ -786,7 +818,7 @@ fn normalize_extracted_webpack_entry_module(
     );
     replace_ident(
         &mut synthetic_module,
-        (Atom::from("__webpack_exports__"), unresolved_ctxt),
+        (exports_sym, unresolved_ctxt),
         &Ident::new(Atom::from("exports"), Default::default(), unresolved_ctxt),
     );
 
@@ -809,6 +841,95 @@ fn extract_trailing_entry_body(
         .find(|stmt| !matches!(stmt, Stmt::Return(_)))
         .and_then(extract_iife_stmt_body)
         .map(|body| body.stmts.clone())
+}
+
+struct NccInlineEntry {
+    body_stmts: Vec<Stmt>,
+    require_sym: Atom,
+    exports_sym: Atom,
+}
+
+/// Extract ncc's inline startup program.
+///
+/// ncc uses webpack 5's module table but emits the entry directly in the
+/// bootstrap IIFE rather than in a trailing IIFE or a `require.s`/`require.O`
+/// startup. Its post-processing gives the runtime require binding a stable
+/// `nccwpck_require` marker. The entry starts at the declaration of the binding
+/// assigned to `module.exports` by the final bootstrap statement; unlike the
+/// generated variable name, that export assignment survives minification.
+fn extract_ncc_inline_entry(
+    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+) -> Option<NccInlineEntry> {
+    let require_sym = bootstrap_body.stmts.iter().find_map(|stmt| {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(function)) = stmt else {
+            return None;
+        };
+        function
+            .ident
+            .sym
+            .as_ref()
+            .contains("nccwpck_require")
+            .then(|| function.ident.sym.clone())
+    })?;
+
+    let exports_sym = bootstrap_body
+        .stmts
+        .iter()
+        .rev()
+        .find_map(ncc_module_exports_binding)?;
+    let entry_start = bootstrap_body
+        .stmts
+        .iter()
+        .enumerate()
+        .find_map(|(index, stmt)| {
+            let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
+                return None;
+            };
+            var_decl
+                .decls
+                .iter()
+                .any(|decl| matches!(&decl.name, Pat::Ident(binding) if binding.sym == exports_sym))
+                .then_some(index)
+        })?;
+
+    Some(NccInlineEntry {
+        body_stmts: bootstrap_body.stmts[entry_start..].to_vec(),
+        require_sym,
+        exports_sym,
+    })
+}
+
+fn ncc_module_exports_binding(statement: &Stmt) -> Option<Atom> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = statement else {
+        return None;
+    };
+    ncc_module_exports_binding_from_expr(expr)
+}
+
+fn ncc_module_exports_binding_from_expr(expression: &Expr) -> Option<Atom> {
+    match strip_parens(expression) {
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+                return None;
+            };
+            let Expr::Ident(module) = strip_parens(&member.obj) else {
+                return None;
+            };
+            if module.sym.as_ref() != "module" || !member_prop_name_is(&member.prop, "exports") {
+                return None;
+            }
+            let Expr::Ident(exports) = strip_parens(&assign.right) else {
+                return None;
+            };
+            Some(exports.sym.clone())
+        }
+        Expr::Seq(sequence) => sequence
+            .exprs
+            .iter()
+            .rev()
+            .find_map(|expression| ncc_module_exports_binding_from_expr(expression)),
+        _ => None,
+    }
 }
 
 fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool {
@@ -1703,6 +1824,56 @@ const modules = {
             entry.code.contains("entry:"),
             "entry marker should come from require-o-entry.js:\n{}",
             entry.code
+        );
+    }
+
+    #[test]
+    fn detects_ncc_inline_entry() {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/bundles/webpack-gen/dist/wp5-ncc/index.cjs"
+        ))
+        .expect("failed to read generated ncc fixture");
+
+        let result = detect_and_extract(&source).expect("ncc bundle should be detected");
+        let entry = result
+            .modules
+            .iter()
+            .find(|module| module.filename == "entry.js")
+            .expect("ncc inline startup should become entry.js");
+
+        assert!(
+            entry.is_entry,
+            "synthetic ncc entry should be marked as entry"
+        );
+        assert!(
+            entry.code.contains(r#"require("./module-582.js")"#),
+            "ncc runtime require should be normalized:\n{}",
+            entry.code
+        );
+        assert!(
+            !entry.code.contains("__nccwpck_require__"),
+            "ncc runtime name should not survive:\n{}",
+            entry.code
+        );
+    }
+
+    #[test]
+    fn materializes_trailing_iife_entry_with_aligned_prepared_modules() {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/bundles/webpack-gen/dist/wp5-cjs/bundle.js"
+        ))
+        .expect("failed to read generated webpack fixture");
+
+        let result = detect_and_extract(&source)
+            .expect("webpack bundle with a trailing IIFE entry should materialize");
+        assert!(
+            result
+                .modules
+                .iter()
+                .any(|module| module.filename == "entry.js" && module.is_entry),
+            "trailing IIFE should become an entry module"
         );
     }
 

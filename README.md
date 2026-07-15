@@ -64,8 +64,9 @@ Full flag reference: [docs/cli.md](./docs/cli.md).
 
 ## What it handles
 
-- **Bundle splitting** — webpack 4/5, esbuild, Bun, Browserify, SystemJS,
-  AMD/UMD, plus heuristic splitting of scope-hoisted ESM output (Rollup, Vite).
+- **Bundle splitting** — webpack 4/5 (including Vercel ncc CommonJS/IIFE
+  output), esbuild, Bun, Browserify, SystemJS, AMD/UMD, plus
+  heuristic splitting of scope-hoisted ESM output (Rollup, Vite).
 - **Transpiler recovery** — Babel, TypeScript/tslib, and SWC runtime helpers:
   async/await from generator state machines, classes, spread/rest, enums,
   JSX, template literals, optional chaining, nullish coalescing, default

@@ -363,6 +363,55 @@ fn wp5_dynamic_main_bundle() {
 }
 
 // ========================================================================
+// Vercel ncc — webpack 5 module table with inline startup
+// ========================================================================
+
+#[test]
+fn wp5_ncc_inline_entry() {
+    let pairs = unpack_fixture("wp5-ncc/index.cjs");
+    assert_eq!(pairs.len(), 3, "wp5-ncc: {}", filenames(&pairs).join(", "));
+
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("wp5-ncc: inline startup should become entry.js");
+    assert!(
+        entry.contains("./module-582.js") && entry.contains("console.log"),
+        "wp5-ncc: entry should retain startup code and target the extracted module:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__nccwpck_require__"),
+        "wp5-ncc: runtime require should be normalized:\n{entry}"
+    );
+}
+
+#[test]
+fn wp5_ncc_minified_inline_entry() {
+    let pairs = unpack_fixture("wp5-ncc-min/index.cjs");
+    assert_eq!(
+        pairs.len(),
+        3,
+        "wp5-ncc-min: {}",
+        filenames(&pairs).join(", ")
+    );
+
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("wp5-ncc-min: inline startup should become entry.js");
+    assert!(
+        entry.contains("./module-582.js") && entry.contains("console.log"),
+        "wp5-ncc-min: entry should retain startup code and target the extracted module:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__nccwpck_require__"),
+        "wp5-ncc-min: runtime require should be normalized:\n{entry}"
+    );
+}
+
+// ========================================================================
 // Webpack 5 — require.s entry (hand-crafted)
 // ========================================================================
 

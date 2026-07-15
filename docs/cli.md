@@ -31,6 +31,15 @@ Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
 
+Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
+with an IIFE webpack bootstrap), Browserify, SystemJS, esbuild/Bun helper-based
+bundles, and AMD/UMD wrappers. Scope-hoisted Rollup/Vite-style output is handled
+by the default heuristic fallback. For supported ncc output, Wakaru extracts
+the webpack module table and preserves its inline startup as `entry.js`;
+separately emitted asset files remain external to the recovered JavaScript
+modules. ncc `.mjs` output uses a top-level runtime and is not structurally
+split.
+
 ## Formatter
 
 ```bash

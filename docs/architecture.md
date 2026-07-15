@@ -44,8 +44,8 @@ Two main operations:
 
 Each unpacker detects a specific bundle format and extracts individual modules as raw JS strings. Detection is attempted in order — first match wins:
 
-1. **webpack5** — IIFE/arrow with module factory array or object (plus a
-   runtime-entry variant for entry files that only carry the webpack runtime)
+1. **webpack5** — IIFE/arrow with module factory array or object, including
+   runtime-only entry files and Vercel ncc's inline startup variant
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
@@ -64,6 +64,16 @@ unwrapped candidate. Finally, **AMD** (`amd.rs`) detects files consisting of
 top-level `define(id, deps, factory)` calls and splits each define into a
 module.
 
+Vercel ncc CommonJS output with an IIFE webpack bootstrap is handled as a
+webpack5 producer, not as a separate bundle format. Its module table is
+extracted normally, while the statements beginning at the binding ultimately
+assigned to `module.exports` become a synthetic `entry.js`.
+`__nccwpck_require__` calls are normalized to `require()` and numeric module
+IDs are rewritten to the emitted module filenames. This recovers the
+JavaScript module graph; files emitted separately by ncc's asset relocation
+loader are not reconstructed by the unpacker. ncc's `.mjs` output uses a
+top-level runtime rather than this IIFE shape and is not structurally split.
+
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no
 bundle format matches, the driver falls back to heuristic scope-hoisted
@@ -76,10 +86,10 @@ detected modules to break up scope-hoisted chunks nested inside another
 bundle format.
 
 Unpackers emit module code strings. They do not run the normal decompile rule
-pipeline — that's the driver's job. Webpack4 is the exception only for
-webpack-specific normalization (param rename, `require()` rewriting, runtime
-helper removal), because those transforms are tightly coupled to the webpack
-format.
+pipeline — that's the driver's job. Bundler-specific extraction normalization
+(factory parameter renaming, `require()` rewriting, and runtime helper
+removal) remains in the relevant unpacker because those transforms are tightly
+coupled to the bundle format.
 
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
@@ -352,7 +362,7 @@ crates/
       unpacker/
         mod.rs                      — unpack_bundle() dispatch
         webpack4.rs                 — webpack4 splitter + normalization
-        webpack5.rs                 — webpack5 splitter (incl. runtime entry + chunk)
+        webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
         browserify.rs               — browserify splitter
         systemjs.rs                 — System.register splitter + ESM reconstruction
         esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
@@ -368,6 +378,7 @@ crates/
                                       (webpack4 + raw, webpack5 chunk, bundle_unpack
                                       = webpack5 + browserify, esbuild, systemjs,
                                       amd, rollup, bun, multi-file)
+      webpack_fixtures.rs           — generated webpack4/5 + ncc fixture coverage
       noop_pipeline.rs              — stability tests
       snapshots/                    — insta snapshot files
 
