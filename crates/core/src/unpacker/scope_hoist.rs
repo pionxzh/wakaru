@@ -51,7 +51,7 @@ fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult
     apply_merge_signals(&items, &graph, &mut uf);
 
     // Phase 4: extract clusters and identify entry.
-    let clusters = extract_clusters(&items, &mut uf);
+    let clusters = merge_cyclic_clusters(extract_clusters(&items, &mut uf), &graph);
     if clusters.len() < 2 {
         return None;
     }
@@ -118,7 +118,7 @@ fn debug_clusters(source: &str) -> Vec<(Vec<String>, bool)> {
         let graph = build_reference_graph(&items);
         let mut uf = UnionFind::new(items.len());
         apply_merge_signals(&items, &graph, &mut uf);
-        let clusters = extract_clusters(&items, &mut uf);
+        let clusters = merge_cyclic_clusters(extract_clusters(&items, &mut uf), &graph);
         clusters
             .iter()
             .map(|c| {
@@ -1049,6 +1049,119 @@ fn extract_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> 
     }
 
     module_clusters
+}
+
+/// Merge import cycles created by cluster extraction before imports are emitted.
+///
+/// Small item clusters are folded into one synthetic entry. That contraction can
+/// create a cycle even when the original item graph is acyclic. Merging after
+/// emission is too late because emitted module order does not retain source order;
+/// combining the clusters here lets us sort their original item indices instead.
+fn merge_cyclic_clusters(clusters: Vec<Cluster>, graph: &ReferenceGraph) -> Vec<Cluster> {
+    if clusters.len() < 2 {
+        return clusters;
+    }
+
+    let mut item_to_cluster = vec![usize::MAX; graph.references.len()];
+    for (cluster_index, cluster) in clusters.iter().enumerate() {
+        for &item_index in &cluster.item_indices {
+            item_to_cluster[item_index] = cluster_index;
+        }
+    }
+
+    let mut cluster_graph = vec![HashSet::new(); clusters.len()];
+    for (cluster_index, cluster) in clusters.iter().enumerate() {
+        for &item_index in &cluster.item_indices {
+            for &target_item in &graph.references[item_index] {
+                let target_cluster = item_to_cluster[target_item];
+                if target_cluster != usize::MAX && target_cluster != cluster_index {
+                    cluster_graph[cluster_index].insert(target_cluster);
+                }
+            }
+        }
+    }
+
+    let components = strongly_connected_components(&cluster_graph);
+    if components.iter().all(|component| component.len() == 1) {
+        return clusters;
+    }
+
+    let mut merged = Vec::with_capacity(components.len());
+    for component in components {
+        let mut item_indices = Vec::new();
+        let mut is_entry = false;
+        for cluster_index in component {
+            item_indices.extend(clusters[cluster_index].item_indices.iter().copied());
+            is_entry |= clusters[cluster_index].is_entry;
+        }
+        item_indices.sort_unstable();
+        merged.push(Cluster {
+            item_indices,
+            is_entry,
+        });
+    }
+    merged.sort_by_key(|cluster| cluster.item_indices[0]);
+    merged
+}
+
+/// Iterative Kosaraju traversal, avoiding recursion for large scope-hoisted files.
+fn strongly_connected_components(graph: &[HashSet<usize>]) -> Vec<Vec<usize>> {
+    let adjacency: Vec<Vec<usize>> = graph
+        .iter()
+        .map(|neighbors| neighbors.iter().copied().collect())
+        .collect();
+    let mut visited = vec![false; graph.len()];
+    let mut finish_order = Vec::with_capacity(graph.len());
+
+    for start in 0..graph.len() {
+        if visited[start] {
+            continue;
+        }
+        visited[start] = true;
+        let mut stack = vec![(start, 0usize)];
+        while let Some((node, next_neighbor)) = stack.last_mut() {
+            if *next_neighbor < adjacency[*node].len() {
+                let neighbor = adjacency[*node][*next_neighbor];
+                *next_neighbor += 1;
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push((neighbor, 0));
+                }
+            } else {
+                finish_order.push(*node);
+                stack.pop();
+            }
+        }
+    }
+
+    let mut reverse = vec![Vec::new(); graph.len()];
+    for (source, targets) in adjacency.iter().enumerate() {
+        for &target in targets {
+            reverse[target].push(source);
+        }
+    }
+
+    visited.fill(false);
+    let mut components = Vec::new();
+    for &start in finish_order.iter().rev() {
+        if visited[start] {
+            continue;
+        }
+        visited[start] = true;
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        while let Some(node) = stack.pop() {
+            component.push(node);
+            for &neighbor in &reverse[node] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+        components.push(component);
+    }
+    components
 }
 
 // ---------------------------------------------------------------------------

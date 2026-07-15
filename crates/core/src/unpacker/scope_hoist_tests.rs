@@ -174,9 +174,12 @@ fn vite_fixture_clusters() {
     let input = include_str!("../../tests/bundles/vite-gen/dist/es/bundle.mjs");
     let clusters = debug_clusters(input);
     let module_count = clusters.iter().filter(|(_, e)| !e).count();
+    // Logger, Store, and API should still be recognized as logical groups. Some
+    // groups may share an emitted module when separating them would create a
+    // cyclic cluster graph and change eager initialization order.
     assert!(
-        module_count >= 3,
-        "expected at least 3 module clusters from vite fixture, got {module_count}"
+        module_count >= 2,
+        "expected at least 2 safe module clusters from vite fixture, got {module_count}"
     );
 
     // The algorithm should identify at least these modules:
@@ -319,6 +322,48 @@ fn partial_var_export_preserves_declarator_order() {
         exported_pos < kept_pos,
         "partial var export should preserve declarator order, got:\n{}",
         entry.1
+    );
+}
+
+#[test]
+fn cluster_cycle_merge_preserves_original_initialization_order() {
+    // Folding small roots into the synthetic entry can create a cluster-level
+    // cycle even though the original item graph is acyclic. If emitted as two
+    // ESM modules, `result = make()` runs while `A` is still in its TDZ.
+    let input = r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#;
+
+    let modules = split(input).expect("should split");
+    assert_eq!(modules.len(), 5, "entry cycle should be merged");
+
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .expect("should have entry");
+    let class_pos = entry.1.find("class A").expect("entry should contain A");
+    let init_pos = entry
+        .1
+        .find("result = make()")
+        .expect("entry should contain eager initialization");
+    assert!(
+        class_pos < init_pos,
+        "merged entry must retain source initialization order:\n{}",
+        entry.1
+    );
+    assert!(
+        modules
+            .iter()
+            .all(|(_, code, _)| !code.contains("from \"./entry.js\"")),
+        "split output must not retain the synthesized entry cycle"
     );
 }
 
