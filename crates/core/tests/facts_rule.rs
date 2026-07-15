@@ -266,6 +266,15 @@ export { a as default };
     );
 }
 
+#[test]
+fn source_reexport_has_no_local_binding() {
+    let facts = collect_facts(r#"export { value as renamed } from "./dep.js";"#);
+    assert_eq!(
+        facts.exports,
+        vec![export("renamed", None, ExportKind::Named),]
+    );
+}
+
 // ── Helper export detection ───────────────────────────────────────
 
 #[test]

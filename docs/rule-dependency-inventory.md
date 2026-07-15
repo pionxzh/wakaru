@@ -198,7 +198,11 @@ rationale, or level gating appear.
   prerequisite chain is diagrammed above; multi-module unpack extracts
   cross-module facts from its output (see
   [fact-system.md](fact-system.md)). Historical experiments that placed it
-  elsewhere are superseded — treat the registry as authoritative.
+  elsewhere are superseded — treat the registry as authoritative. Static
+  CommonJS live getters (`get: () => dep.member`) become source re-exports
+  only when `dep` is a resolver-proven top-level literal `require()` binding
+  and every use is a static member read; writes, dynamic reads, and escapes
+  preserve the getter form.
 - **UnIife** — two passes; the second catches IIFEs created by SmartInline.
   Exposes class IIFEs for UnEs6Class and enum IIFEs for UnEnum. Gating:
   param cleanup and literal hoisting are `standard+`; `.call()` unwrapping on

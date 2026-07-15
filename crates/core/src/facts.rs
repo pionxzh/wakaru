@@ -592,7 +592,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                             };
                             facts.exports.push(ExportFact {
                                 exported: exported_name,
-                                local: Some(local_name),
+                                local: named.src.is_none().then_some(local_name),
                                 kind,
                             });
                         }

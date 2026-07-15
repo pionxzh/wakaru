@@ -252,6 +252,140 @@ export { rawCache };
 }
 
 #[test]
+fn define_property_member_getter_becomes_live_reexport() {
+    let input = r#"
+const dep = require("./dep.js");
+Object.defineProperty(exports, "renamed", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+"#;
+    let expected = r#"
+export { value as renamed } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_member_arrow_getter_becomes_live_reexport() {
+    let input = r#"
+var dep = require("./dep.js");
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get: () => dep.value
+});
+"#;
+    let expected = r#"
+export { value } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_member_getter_supports_default_reexport() {
+    let input = r#"
+const dep = require("./dep.js");
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get: () => dep.value
+});
+"#;
+    let expected = r#"
+export { value as default } from "./dep.js";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn live_reexport_retains_import_when_require_binding_has_other_reads() {
+    let input = r#"
+const dep = require("./dep.js");
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+consume(dep.other);
+"#;
+    let expected = r#"
+import dep from "./dep.js";
+export { value } from "./dep.js";
+consume(dep.other);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_member_getter_rejects_reassigned_require_binding() {
+    let input = r#"
+let dep = require("./dep.js");
+dep = replacement;
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("Object.defineProperty(exports, \"value\""));
+    assert!(!output.contains("export { value } from"));
+}
+
+#[test]
+fn define_property_member_getter_rejects_member_writes() {
+    let input = r#"
+const dep = require("./dep.js");
+dep.value = replacement;
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("Object.defineProperty(exports, \"value\""));
+    assert!(!output.contains("export { value } from"));
+}
+
+#[test]
+fn define_property_member_getter_rejects_binding_escape() {
+    let input = r#"
+const dep = require("./dep.js");
+consume(dep);
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep.value;
+  }
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("Object.defineProperty(exports, \"value\""));
+    assert!(!output.contains("export { value } from"));
+}
+
+#[test]
+fn define_property_member_getter_rejects_dynamic_property() {
+    let input = r#"
+const dep = require("./dep.js");
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return dep[key];
+  }
+});
+"#;
+    let output = apply(input);
+    assert!(output.contains("Object.defineProperty(exports, \"value\""));
+    assert!(!output.contains("export { value } from"));
+}
+
+#[test]
 fn define_property_getter_on_arbitrary_object_is_not_export() {
     let input = r#"
 Object.defineProperty(moduleExports, "__esModule", {

@@ -74,6 +74,14 @@ enum CjsExportKind {
     },
     /// exports.default = expr → export default expr
     NamedDefault { expr: Box<Expr> },
+    /// `Object.defineProperty(exports, "name", { get: () => dep.member })`
+    /// where `dep` is a stable top-level `require("source")` binding.
+    ReExport {
+        name: Atom,
+        imported: Atom,
+        source: String,
+        binding: BindingId,
+    },
     /// exports.default = expr; module.exports = exports.default → keep the real default
     DefaultMirror,
     /// module.exports.default = module.exports pattern → remove
@@ -140,6 +148,9 @@ impl VisitMut for UnEsm {
         rewrite_webpack_export_getters(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
+        let binding_uses = BindingUseIndex::collect(module);
+        let require_bindings =
+            collect_stable_require_bindings(module, &binding_uses, self.unresolved_mark);
 
         let items = std::mem::take(&mut module.body);
 
@@ -147,7 +158,7 @@ impl VisitMut for UnEsm {
         let mut classified: Vec<Classified> = Vec::with_capacity(items.len());
 
         for item in items {
-            classified.push(classify_item(item, self.unresolved_mark));
+            classified.push(classify_item(item, self.unresolved_mark, &require_bindings));
         }
 
         // Webpack/Babel interop often emits:
@@ -171,7 +182,12 @@ impl VisitMut for UnEsm {
                     CjsExportKind::EsModuleFlag => continue,
                     CjsExportKind::ModuleExportsDefault { .. } => (None, false),
                     CjsExportKind::NamedDefault { .. } => (None, false),
-                    CjsExportKind::Named { name, is_void, .. } => (Some(name.clone()), *is_void),
+                    CjsExportKind::ReExport { name, .. } => {
+                        ((name.as_ref() != "default").then(|| name.clone()), false)
+                    }
+                    CjsExportKind::Named { name, is_void, .. } => {
+                        ((name.as_ref() != "default").then(|| name.clone()), *is_void)
+                    }
                     CjsExportKind::DefaultMirror => {
                         export_entries.push(ExportEntry {
                             classified_idx: idx,
@@ -217,6 +233,30 @@ impl VisitMut for UnEsm {
             }
         }
 
+        // A require binding used exclusively by kept live re-export getters no
+        // longer needs a local import. The export-from declaration itself is
+        // the module evaluation dependency. If any getter is dropped or the
+        // binding has another use, retain the ordinary import.
+        let mut kept_reexport_counts: HashMap<BindingId, usize> = HashMap::new();
+        for (idx, item) in classified.iter().enumerate() {
+            if drop_set.contains(&idx) {
+                continue;
+            }
+            if let Classified::CjsExport {
+                kind: CjsExportKind::ReExport { binding, .. },
+                ..
+            } = item
+            {
+                *kept_reexport_counts.entry(binding.clone()).or_default() += 1;
+            }
+        }
+        let consumed_reexport_bindings: HashSet<BindingId> = kept_reexport_counts
+            .into_iter()
+            .filter_map(|(binding, count)| {
+                (binding_uses.use_count(&binding) == count).then_some(binding)
+            })
+            .collect();
+
         // Phase 3: collect imports — build source_map keyed by String
         let mut source_order: Vec<String> = Vec::new();
         let mut source_map: HashMap<String, SourceEntry> = HashMap::new();
@@ -226,7 +266,12 @@ impl VisitMut for UnEsm {
         for c in classified.iter() {
             let src = match c {
                 Classified::CjsRequire(CjsRequireKind::Bare { source }) => source.clone(),
-                Classified::CjsRequire(CjsRequireKind::Default { source, .. }) => source.clone(),
+                Classified::CjsRequire(CjsRequireKind::Default { local, source }) => {
+                    if consumed_reexport_bindings.contains(&(local.sym.clone(), local.ctxt)) {
+                        continue;
+                    }
+                    source.clone()
+                }
                 Classified::CjsRequire(CjsRequireKind::Named { source, .. }) => source.clone(),
                 Classified::CjsRequire(CjsRequireKind::DefaultProp { source, .. }) => {
                     source.clone()
@@ -315,6 +360,9 @@ impl VisitMut for UnEsm {
                         entry.set_bare();
                     }
                     CjsRequireKind::Default { local, source } => {
+                        if consumed_reexport_bindings.contains(&(local.sym.clone(), local.ctxt)) {
+                            continue;
+                        }
                         let entry =
                             get_or_insert(&mut source_order, &mut source_map, source.clone());
                         entry.has_cjs = true;
@@ -1476,6 +1524,28 @@ fn build_export_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
         CjsExportKind::NamedDefault { expr } => vec![ModuleItem::ModuleDecl(
             ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { span, expr }),
         )],
+        CjsExportKind::ReExport {
+            name,
+            imported,
+            source,
+            ..
+        } => vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+            NamedExport {
+                span,
+                specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                    span: DUMMY_SP,
+                    orig: ModuleExportName::Ident(
+                        IdentName::new(imported.clone(), DUMMY_SP).into(),
+                    ),
+                    exported: (imported != name)
+                        .then(|| ModuleExportName::Ident(IdentName::new(name, DUMMY_SP).into())),
+                    is_type_only: false,
+                })],
+                src: Some(Box::new(make_str(&source))),
+                type_only: false,
+                with: None,
+            },
+        ))],
         CjsExportKind::DefaultMirror => vec![],
         CjsExportKind::Named {
             name,
@@ -1553,6 +1623,7 @@ fn build_dropped_export_side_effect_items(span: Span, kind: CjsExportKind) -> Ve
             ..
         } => expr,
         CjsExportKind::EsModuleFlag
+        | CjsExportKind::ReExport { .. }
         | CjsExportKind::Named { is_void: true, .. }
         | CjsExportKind::DefaultMirror
         | CjsExportKind::SelfRef => return vec![],
@@ -2080,11 +2151,15 @@ fn make_var_item(local: Ident, init: Box<Expr>) -> ModuleItem {
 // Classification helpers
 // ============================================================
 
-fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
+fn classify_item(
+    item: ModuleItem,
+    unresolved_mark: Mark,
+    require_bindings: &HashMap<BindingId, String>,
+) -> Classified {
     match item {
         ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Classified::ExistingImport(import),
         ModuleItem::Stmt(ref stmt) => {
-            if let Some(kind) = try_classify_cjs_export(stmt, unresolved_mark) {
+            if let Some(kind) = try_classify_cjs_export(stmt, unresolved_mark, require_bindings) {
                 let span = match stmt {
                     Stmt::Expr(expr_stmt) => expr_stmt.span,
                     _ => DUMMY_SP,
@@ -2098,6 +2173,37 @@ fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
         }
         other => Classified::Keep(other),
     }
+}
+
+fn collect_stable_require_bindings(
+    module: &Module,
+    uses: &BindingUseIndex,
+    unresolved_mark: Mark,
+) -> HashMap<BindingId, String> {
+    let mut bindings = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        if var.decls.len() != 1 {
+            continue;
+        }
+        let declarator = &var.decls[0];
+        let Pat::Ident(binding) = &declarator.name else {
+            continue;
+        };
+        let Some(Expr::Call(call)) = declarator.init.as_deref().map(strip_parens) else {
+            continue;
+        };
+        let Some(source) = is_require_call(call, unresolved_mark) else {
+            continue;
+        };
+        let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
+        if uses.has_only_static_member_reads_any(&binding_id) {
+            bindings.insert(binding_id, source);
+        }
+    }
+    bindings
 }
 
 fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark: Mark) {
@@ -2399,13 +2505,19 @@ fn try_extract_exports_assign(expr: &Expr, unresolved_mark: Mark) -> Option<(Ato
 }
 
 /// Try to classify as a CJS export statement
-fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExportKind> {
+fn try_classify_cjs_export(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+    require_bindings: &HashMap<BindingId, String>,
+) -> Option<CjsExportKind> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
-    if let Some(kind) =
-        try_classify_define_property_export(expr_stmt.expr.as_ref(), unresolved_mark)
-    {
+    if let Some(kind) = try_classify_define_property_export(
+        expr_stmt.expr.as_ref(),
+        unresolved_mark,
+        require_bindings,
+    ) {
         return Some(kind);
     }
 
@@ -2467,6 +2579,7 @@ fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExpo
 fn try_classify_define_property_export(
     expr: &Expr,
     unresolved_mark: Mark,
+    require_bindings: &HashMap<BindingId, String>,
 ) -> Option<CjsExportKind> {
     let Expr::Call(call) = expr else {
         return None;
@@ -2484,11 +2597,24 @@ fn try_classify_define_property_export(
     }
 
     let export_name = literal_export_name_arg(call.args[1].expr.as_ref())?;
-    let ident = extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)?;
-    Some(CjsExportKind::Named {
+    if let Some(ident) =
+        extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)
+    {
+        return Some(CjsExportKind::Named {
+            name: export_name,
+            expr: Box::new(Expr::Ident(ident)),
+            is_void: false,
+        });
+    }
+
+    let (base, imported) = extract_define_property_getter_member(call.args[2].expr.as_ref())?;
+    let binding = (base.sym.clone(), base.ctxt);
+    let source = require_bindings.get(&binding)?.clone();
+    Some(CjsExportKind::ReExport {
         name: export_name,
-        expr: Box::new(Expr::Ident(ident)),
-        is_void: false,
+        imported,
+        source,
+        binding,
     })
 }
 
@@ -2743,13 +2869,35 @@ fn is_esmodule_descriptor(expr: &Expr) -> bool {
 }
 
 fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> Option<Ident> {
+    let expr = extract_define_property_getter_expr(expr)?;
+    let Expr::Ident(ident) = expr.as_ref() else {
+        return None;
+    };
+    if ident.ctxt.outer() == unresolved_mark {
+        return None;
+    }
+    Some(ident.clone())
+}
+
+fn extract_define_property_getter_member(expr: &Expr) -> Option<(Ident, Atom)> {
+    let expr = extract_define_property_getter_expr(expr)?;
+    let Expr::Member(member) = strip_parens(&expr) else {
+        return None;
+    };
+    let Expr::Ident(base) = strip_parens(&member.obj) else {
+        return None;
+    };
+    Some((base.clone(), is_ident_prop(&member.prop)?))
+}
+
+fn extract_define_property_getter_expr(expr: &Expr) -> Option<Box<Expr>> {
     let Expr::Object(object) = strip_parens(expr) else {
         return None;
     };
     let mut has_enumerable_true = false;
     let mut has_enumerable = false;
     let mut has_configurable = false;
-    let mut getter_ident = None;
+    let mut getter_expr = None;
 
     for prop in &object.props {
         let PropOrSpread::Prop(prop) = prop else {
@@ -2766,10 +2914,10 @@ fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> O
                         matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(value)) if value.value);
                 }
                 Some("get") => {
-                    if getter_ident.is_some() {
+                    if getter_expr.is_some() {
                         return None;
                     }
-                    getter_ident = Some(extract_getter_expr_return_ident(entry.value.as_ref())?);
+                    getter_expr = Some(extract_getter_expr_return_expr(entry.value.as_ref())?);
                 }
                 Some("configurable") => {
                     if has_configurable {
@@ -2784,7 +2932,7 @@ fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> O
             },
             Prop::Method(method) => {
                 if matches!(prop_name_as_atom(&method.key).as_deref(), Some("get")) {
-                    if getter_ident.is_some() {
+                    if getter_expr.is_some() {
                         return None;
                     }
                     if !method.function.params.is_empty()
@@ -2793,8 +2941,7 @@ fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> O
                     {
                         return None;
                     }
-                    getter_ident =
-                        Some(extract_single_return_ident(method.function.body.as_ref()?)?);
+                    getter_expr = Some(extract_single_return_expr(method.function.body.as_ref()?)?);
                 } else {
                     return None;
                 }
@@ -2803,27 +2950,7 @@ fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> O
         }
     }
 
-    let ident = has_enumerable_true.then_some(getter_ident).flatten()?;
-    if ident.ctxt.outer() == unresolved_mark {
-        return None;
-    }
-    Some(ident)
-}
-
-fn extract_getter_expr_return_ident(expr: &Expr) -> Option<Ident> {
-    let expr = extract_getter_expr_return_expr(expr)?;
-    let Expr::Ident(ident) = expr.as_ref() else {
-        return None;
-    };
-    Some(ident.clone())
-}
-
-fn extract_single_return_ident(block: &BlockStmt) -> Option<Ident> {
-    let expr = extract_single_return_expr(block)?;
-    let Expr::Ident(ident) = expr.as_ref() else {
-        return None;
-    };
-    Some(ident.clone())
+    has_enumerable_true.then_some(getter_expr).flatten()
 }
 
 fn is_unresolved_ident(id: &Ident, name: &str, unresolved_mark: Mark) -> bool {
@@ -3058,7 +3185,10 @@ fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
         | CjsExportKind::NamedDefault { expr } => {
             rename_bindings(expr.as_mut(), renames);
         }
-        CjsExportKind::EsModuleFlag | CjsExportKind::DefaultMirror | CjsExportKind::SelfRef => {}
+        CjsExportKind::EsModuleFlag
+        | CjsExportKind::ReExport { .. }
+        | CjsExportKind::DefaultMirror
+        | CjsExportKind::SelfRef => {}
     }
 }
 
