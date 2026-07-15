@@ -132,6 +132,10 @@ pub(crate) fn collect_inline_ts_helpers_deep(module: &Module) -> HashMap<Binding
                 if helper.source == TsHelperSource::Inline {
                     self.helpers.insert(key, helper.kind);
                 }
+            } else if let (Pat::Ident(binding), Some(init)) = (&decl.name, decl.init.as_deref()) {
+                if let Some(kind) = ts_generated_fact_callable_kind(&binding.id, init) {
+                    self.helpers.insert(binding_key(&binding.id), kind);
+                }
             }
             decl.visit_children_with(self);
         }
@@ -140,7 +144,7 @@ pub(crate) fn collect_inline_ts_helpers_deep(module: &Module) -> HashMap<Binding
             if assign.op == AssignOp::Assign {
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left {
                     if let Some(kind) =
-                        ts_generated_values_callable_kind(&target.id, assign.right.as_ref())
+                        ts_generated_fact_callable_kind(&target.id, assign.right.as_ref())
                     {
                         self.helpers.insert(binding_key(&target.id), kind);
                     }
@@ -709,6 +713,35 @@ fn ts_generated_values_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHel
     let signals = collect_ts_helper_body_signals(body);
     (param_len == 1 && signals.symbol_iterator && signals.type_error)
         .then_some(TsHelperKind::Values)
+}
+
+/// Fact extraction may see minified tslib helpers as direct arrow/function
+/// assignments rather than canonical `this && this.__helper || ...` fallbacks.
+/// Require a generated binding plus the full body signature; registration under
+/// the matching public helper name is checked separately by `facts.rs`.
+fn ts_generated_fact_callable_kind(ident: &Ident, expr: &Expr) -> Option<TsHelperKind> {
+    if !is_likely_generated_alias(ident.sym.as_ref())
+        && !is_short_alphanumeric_minified_name(ident.sym.as_ref())
+    {
+        return None;
+    }
+    let (param_len, body) = ts_helper_callable_body(expr)?;
+    let signals = collect_ts_helper_body_signals(body);
+    if param_len >= 4 && signals.generator_apply && signals.next_call {
+        Some(TsHelperKind::Awaiter)
+    } else if param_len >= 2 && signals.label_prop && signals.trys_prop && signals.ops_prop {
+        Some(TsHelperKind::Generator)
+    } else if param_len == 1 && signals.symbol_iterator && signals.type_error {
+        Some(TsHelperKind::Values)
+    } else {
+        None
+    }
+}
+
+fn is_short_alphanumeric_minified_name(name: &str) -> bool {
+    name.len() <= 3
+        && name.chars().all(|ch| ch.is_ascii_alphanumeric())
+        && name.chars().any(|ch| ch.is_ascii_digit())
 }
 fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {
     match kind {

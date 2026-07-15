@@ -383,7 +383,13 @@ fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 fn run_un_async_await(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnAsyncAwait::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+    UnAsyncAwait::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        local_helpers.as_ref(),
+        ctx.module_facts,
+        ctx.current_filename,
+    );
 }
 runner!(run_un_then_catch, |ctx| UnThenCatch::new(
     ctx.unresolved_mark

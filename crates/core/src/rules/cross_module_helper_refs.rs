@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem};
+use swc_core::ecma::ast::{
+    Callee, Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem, Pat, VarDeclarator,
+};
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap, TypeScriptHelperKind};
 
@@ -162,12 +165,17 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
     kind: TypeScriptHelperKind,
 ) -> CrossModuleTsHelperRefs {
     let mut refs = CrossModuleTsHelperRefs::default();
+    let mut namespace_factories: HashMap<BindingKey, HashSet<String>> = HashMap::new();
 
     for item in &module.body {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
         let source = str_to_atom(&import.src.value);
+        let exported_names = ts_helper_export_names(module_facts, current_filename, &source, kind);
+        let Some(source_facts) = module_facts.get_from(current_filename, source.as_ref()) else {
+            continue;
+        };
 
         for specifier in &import.specifiers {
             match specifier {
@@ -181,6 +189,13 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
                     ) {
                         refs.direct
                             .insert((default.local.sym.clone(), default.local.ctxt));
+                    } else if source_facts
+                        .ts_helper_namespace_factory_exports
+                        .iter()
+                        .any(|exported| exported.as_ref() == "default")
+                    {
+                        namespace_factories
+                            .insert(binding_key(&default.local), exported_names.clone());
                     }
                 }
                 ImportSpecifier::Named(named) => {
@@ -198,15 +213,20 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
                     ) {
                         refs.direct
                             .insert((named.local.sym.clone(), named.local.ctxt));
+                    } else if source_facts
+                        .ts_helper_namespace_factory_exports
+                        .iter()
+                        .any(|factory| factory == &imported)
+                    {
+                        namespace_factories
+                            .insert(binding_key(&named.local), exported_names.clone());
                     }
                 }
                 ImportSpecifier::Namespace(namespace) => {
-                    let exported_names =
-                        ts_helper_export_names(module_facts, current_filename, &source, kind);
                     if !exported_names.is_empty() {
                         refs.namespaces.insert(
                             (namespace.local.sym.clone(), namespace.local.ctxt),
-                            exported_names,
+                            exported_names.clone(),
                         );
                     }
                 }
@@ -214,7 +234,54 @@ pub(crate) fn collect_cross_module_ts_helper_refs(
         }
     }
 
+    if !namespace_factories.is_empty() {
+        struct NamespaceFactoryUseCollector<'a, 'b> {
+            namespace_factories: &'a HashMap<BindingKey, HashSet<String>>,
+            refs: &'b mut CrossModuleTsHelperRefs,
+        }
+
+        impl Visit for NamespaceFactoryUseCollector<'_, '_> {
+            fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+                let Pat::Ident(binding) = &declarator.name else {
+                    declarator.visit_children_with(self);
+                    return;
+                };
+                let Some(factory) = declarator.init.as_deref().and_then(zero_arg_call_ident) else {
+                    declarator.visit_children_with(self);
+                    return;
+                };
+                if let Some(exports) = self.namespace_factories.get(&binding_key(factory)) {
+                    self.refs
+                        .namespaces
+                        .insert(binding_key(&binding.id), exports.clone());
+                }
+                declarator.visit_children_with(self);
+            }
+        }
+
+        module.visit_with(&mut NamespaceFactoryUseCollector {
+            namespace_factories: &namespace_factories,
+            refs: &mut refs,
+        });
+    }
+
     refs
+}
+
+fn zero_arg_call_ident(expr: &Expr) -> Option<&swc_core::ecma::ast::Ident> {
+    let Expr::Call(call) = crate::utils::paren::strip_parens(expr) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = crate::utils::paren::strip_parens(callee.as_ref()) else {
+        return None;
+    };
+    Some(id)
 }
 
 pub(crate) fn cross_module_ts_member_helper(

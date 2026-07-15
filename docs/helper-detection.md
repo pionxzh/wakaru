@@ -146,6 +146,14 @@ Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind
 
 - `helper_exports` for semantic transpiler helpers represented by `TranspilerHelperKind` / public `HelperKind`.
 - `ts_helper_exports` for raw TypeScript/tslib helpers such as `__awaiter`, `__generator`, and `__spreadArray`.
+- `ts_helper_namespace_factory_exports` for exported zero-argument CommonJS
+  wrapper functions whose bodies both register raw tslib helpers and return the
+  corresponding namespace object.
+
+Cross-module consumers use both channels. `UnAsyncAwait`, for example, accepts
+named helper imports, namespace members, and proven namespace-factory results;
+it does not infer helper identity from a `.__awaiter` or `.__generator` property
+name alone.
 
 ### Restoration
 

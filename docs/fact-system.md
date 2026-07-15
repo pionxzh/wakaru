@@ -54,7 +54,8 @@ ctxt-sensitive rules.
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
-- `ModuleFacts { imports, exports, helper_exports, passthrough_target }`
+- `ModuleFacts { imports, exports, helper_exports, ts_helper_exports,
+  ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
@@ -82,6 +83,11 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   helpers that were hoisted into their own module and consumed through generated
   `require()`/interop aliases such as `h.default(...)`, but only when the target
   module's helper export fact proves the default export is the async helper.
+- **`UnAsyncAwait`** — recognizes direct imports and namespace members only
+  when raw TypeScript helper facts prove `__awaiter` / `__generator`. For
+  scope-hoisted CommonJS wrappers, a separate provider-side fact proves that
+  the imported zero-argument factory returns the registered helper namespace;
+  consumer-side property spelling alone is never sufficient.
 
 ## Adding a new fact-reading rule
 

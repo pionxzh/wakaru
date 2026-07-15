@@ -4,6 +4,7 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use wakaru_core::ModuleFactsMap;
 use wakaru_core::{
     apply_rules, decompile, trace_rules, DecompileOptions, RewriteLevel, RulePipelineOptions,
     RuleTraceEvent, RuleTraceOptions,
@@ -109,6 +110,36 @@ pub fn render_pipeline_between(source: &str, start_from: &str, stop_after: &str)
             unresolved_mark,
             RulePipelineOptions::between(start_from, stop_after),
         );
+        module.visit_mut_with(&mut fixer(None));
+
+        emit_module(&module, cm)
+    })
+}
+
+/// Run an isolated pipeline span with cross-module facts available.
+#[allow(dead_code)]
+pub fn render_pipeline_between_with_facts(
+    source: &str,
+    start_from: &str,
+    stop_after: &str,
+    module_facts: &ModuleFactsMap,
+    current_filename: Option<&str>,
+) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let filename = current_filename.unwrap_or("fixture.js");
+        let mut module = parse_module_with_filename(source, filename, cm.clone());
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let mut options =
+            RulePipelineOptions::between(start_from, stop_after).with_module_facts(module_facts);
+        if let Some(filename) = current_filename {
+            options = options.with_current_filename(filename);
+        }
+        apply_rules(&mut module, unresolved_mark, options);
         module.visit_mut_with(&mut fixer(None));
 
         emit_module(&module, cm)

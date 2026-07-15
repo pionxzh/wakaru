@@ -691,6 +691,54 @@ export function tslibModule() {
             TypeScriptHelperKind::Values
         )]
     );
+    assert_eq!(
+        facts.ts_helper_namespace_factory_exports,
+        vec!["tslibModule"]
+    );
+}
+
+#[test]
+fn minified_async_helpers_prove_namespace_factory_fact() {
+    let facts = collect_facts(
+        r#"
+export function helperFactory() {
+  const exportsObject = {};
+  const module = { exports: exportsObject };
+  let m2q = (thisArg, args, PromiseImpl, generator) => {
+    return new (PromiseImpl || (PromiseImpl = Promise))((resolve, reject) => {
+      function step(result) {
+        if (result.done) resolve(result.value);
+        else Promise.resolve(result.value).then(fulfilled, rejected);
+      }
+      function fulfilled(value) { step(generator.next(value)); }
+      function rejected(error) { step(generator.throw(error)); }
+      step((generator = generator.apply(thisArg, args || [])).next());
+    });
+  };
+  let p2q = (thisArg, body) => {
+    const state = { label: 0, trys: [], ops: [] };
+    return state;
+  };
+  function register(name, value) {
+    module.exports[name] = value;
+  }
+  register("__awaiter", m2q);
+  register("__generator", p2q);
+  return module.exports;
+}
+"#,
+    );
+
+    assert!(facts.ts_helper_exports.iter().any(|helper| {
+        helper.exported.as_ref() == "__awaiter" && helper.kind == TypeScriptHelperKind::Awaiter
+    }));
+    assert!(facts.ts_helper_exports.iter().any(|helper| {
+        helper.exported.as_ref() == "__generator" && helper.kind == TypeScriptHelperKind::Generator
+    }));
+    assert_eq!(
+        facts.ts_helper_namespace_factory_exports,
+        vec!["helperFactory"]
+    );
 }
 
 #[test]

@@ -16,7 +16,8 @@ use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
     ExportSpecifier, Expr, Function, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, Prop, PropName, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
+    ModuleDecl, ModuleItem, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -148,6 +149,9 @@ pub struct ModuleFacts {
     pub helper_exports: Vec<HelperExportFact>,
     pub default_object_helper_exports: Vec<HelperExportFact>,
     pub ts_helper_exports: Vec<TypeScriptHelperExportFact>,
+    /// Exported zero-argument functions proven to return a CommonJS namespace
+    /// object containing registered TypeScript helpers.
+    pub ts_helper_namespace_factory_exports: Vec<Atom>,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
@@ -406,6 +410,7 @@ impl fmt::Display for ModuleFacts {
             && self.helper_exports.is_empty()
             && self.default_object_helper_exports.is_empty()
             && self.ts_helper_exports.is_empty()
+            && self.ts_helper_namespace_factory_exports.is_empty()
         {
             return write!(f, "(no imports or exports)");
         }
@@ -458,6 +463,22 @@ impl fmt::Display for ModuleFacts {
                 writeln!(f)?;
             }
             write!(f, "{helper}")?;
+        }
+        if !self.ts_helper_namespace_factory_exports.is_empty() {
+            if !self.imports.is_empty()
+                || !self.exports.is_empty()
+                || !self.helper_exports.is_empty()
+                || !self.default_object_helper_exports.is_empty()
+                || !self.ts_helper_exports.is_empty()
+            {
+                writeln!(f)?;
+            }
+            for (i, factory) in self.ts_helper_namespace_factory_exports.iter().enumerate() {
+                if i > 0 {
+                    writeln!(f)?;
+                }
+                write!(f, "ts helper namespace factory export {factory}")?;
+            }
         }
         Ok(())
     }
@@ -604,10 +625,117 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     facts.helper_exports = helper_exports;
     facts.default_object_helper_exports = collect_default_object_helper_exports(module);
     facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
+    facts.ts_helper_namespace_factory_exports = collect_ts_helper_namespace_factory_exports(module);
     facts.is_helper_module = exports_any_helper
         || !facts.default_object_helper_exports.is_empty()
         || !facts.ts_helper_exports.is_empty();
     facts
+}
+
+fn collect_ts_helper_namespace_factory_exports(module: &Module) -> Vec<Atom> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
+                return None;
+            };
+            let Decl::Fn(function) = &export.decl else {
+                return None;
+            };
+            let body = function.function.body.as_ref()?;
+            if !function.function.params.is_empty() || !body_returns_cjs_namespace(&body.stmts) {
+                return None;
+            }
+
+            let nested = Module {
+                span: body.span,
+                body: body.stmts.iter().cloned().map(ModuleItem::Stmt).collect(),
+                shebang: None,
+            };
+            (!collect_ts_helper_exports(&nested, &[]).is_empty())
+                .then(|| function.ident.sym.clone())
+        })
+        .collect()
+}
+
+fn body_returns_cjs_namespace(stmts: &[Stmt]) -> bool {
+    let mut namespace_objects = HashSet::new();
+    let mut declared_bindings = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let Some(binding) = binding_key_from_ident_pat(&declarator.name) else {
+                continue;
+            };
+            declared_bindings.insert(binding.clone());
+            if matches!(declarator.init.as_deref().map(strip_parens), Some(Expr::Object(object)) if object.props.is_empty())
+            {
+                namespace_objects.insert(binding);
+            }
+        }
+    }
+
+    let mut module_objects = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let Some(binding) = binding_key_from_ident_pat(&declarator.name) else {
+                continue;
+            };
+            let Some(Expr::Object(object)) = declarator.init.as_deref().map(strip_parens) else {
+                continue;
+            };
+            let [PropOrSpread::Prop(prop)] = object.props.as_slice() else {
+                continue;
+            };
+            let Prop::KeyValue(property) = prop.as_ref() else {
+                continue;
+            };
+            if static_prop_name(&property.key) != Some("exports") {
+                continue;
+            }
+            let Expr::Ident(exports) = strip_parens(property.value.as_ref()) else {
+                continue;
+            };
+            if namespace_objects.contains(&binding_key(exports)) {
+                module_objects.insert(binding);
+            }
+        }
+    }
+
+    stmts.iter().any(|stmt| {
+        let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = stmt else {
+            return false;
+        };
+        match strip_parens(arg.as_ref()) {
+            Expr::Ident(id) => {
+                namespace_objects.contains(&binding_key(id))
+                    || (id.sym.as_ref() == "exports"
+                        && !declared_bindings.iter().any(|(name, _)| name == &id.sym))
+            }
+            Expr::Member(member) => {
+                static_member_prop_name(&member.prop) == Some("exports")
+                    && matches!(strip_parens(member.obj.as_ref()), Expr::Ident(id)
+                        if module_objects.contains(&binding_key(id))
+                            || (id.sym.as_ref() == "module"
+                                && !declared_bindings.iter().any(|(name, _)| name == &id.sym)))
+            }
+            _ => false,
+        }
+    })
+}
+
+fn static_prop_name(name: &PropName) -> Option<&str> {
+    match name {
+        PropName::Ident(id) => Some(id.sym.as_ref()),
+        PropName::Str(value) => value.value.as_str(),
+        _ => None,
+    }
 }
 
 /// Returns the rewrite-relevant helper exports plus whether the module exports

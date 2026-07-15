@@ -9,6 +9,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::cross_module_helper_refs::{
+    collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
+};
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
 use super::state_machine::{
@@ -16,6 +19,7 @@ use super::state_machine::{
     StateMachineProgram,
 };
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
+use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
 
@@ -26,8 +30,14 @@ impl UnAsyncAwait {
         module: &mut swc_core::ecma::ast::Module,
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
+        module_facts: Option<&ModuleFactsMap>,
+        current_filename: Option<&str>,
     ) {
-        let helpers = AsyncHelperContext::from_local_helpers(local_helpers, Some(unresolved_mark));
+        let mut helpers =
+            AsyncHelperContext::from_local_helpers(local_helpers, Some(unresolved_mark));
+        if let Some(module_facts) = module_facts {
+            helpers.extend_cross_module(module, module_facts, current_filename);
+        }
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
         module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, local_helpers);
@@ -73,7 +83,9 @@ impl VisitMut for AwaiterIifeTransformer<'_> {
 #[derive(Default)]
 struct AsyncHelperContext {
     awaiter_helpers: HashSet<BindingKey>,
+    awaiter_namespaces: HashMap<BindingKey, HashSet<String>>,
     generator_helpers: HashSet<BindingKey>,
+    generator_namespaces: HashMap<BindingKey, HashSet<String>>,
     values_helpers: HashSet<BindingKey>,
     unresolved_mark: Option<Mark>,
 }
@@ -85,34 +97,82 @@ impl AsyncHelperContext {
     ) -> Self {
         Self {
             awaiter_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Awaiter),
+            awaiter_namespaces: HashMap::new(),
             generator_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Generator),
+            generator_namespaces: HashMap::new(),
             values_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Values),
             unresolved_mark,
         }
     }
 
+    fn extend_cross_module(
+        &mut self,
+        module: &Module,
+        module_facts: &ModuleFactsMap,
+        current_filename: Option<&str>,
+    ) {
+        let awaiter = collect_cross_module_ts_helper_refs(
+            module,
+            module_facts,
+            current_filename,
+            TypeScriptHelperKind::Awaiter,
+        );
+        self.awaiter_helpers.extend(awaiter.direct);
+        self.awaiter_namespaces.extend(awaiter.namespaces);
+
+        let generator = collect_cross_module_ts_helper_refs(
+            module,
+            module_facts,
+            current_filename,
+            TypeScriptHelperKind::Generator,
+        );
+        self.generator_helpers.extend(generator.direct);
+        self.generator_namespaces.extend(generator.namespaces);
+    }
+
     fn is_awaiter_call(&self, call: &swc_core::ecma::ast::CallExpr) -> bool {
-        self.matches_helper_call(call, &self.awaiter_helpers, "__awaiter")
+        self.matches_helper_call(
+            call,
+            &self.awaiter_helpers,
+            &self.awaiter_namespaces,
+            "__awaiter",
+        )
     }
 
     fn is_generator_call(&self, call: &swc_core::ecma::ast::CallExpr) -> bool {
-        self.matches_helper_call(call, &self.generator_helpers, "__generator")
+        self.matches_helper_call(
+            call,
+            &self.generator_helpers,
+            &self.generator_namespaces,
+            "__generator",
+        )
     }
 
     fn matches_helper_call(
         &self,
         call: &swc_core::ecma::ast::CallExpr,
         helpers: &HashSet<BindingKey>,
+        namespaces: &HashMap<BindingKey, HashSet<String>>,
         canonical_name: &str,
     ) -> bool {
-        let Some(Expr::Ident(id)) = call.callee.as_expr().map(|expr| expr.as_ref()) else {
+        let Some(callee) = call
+            .callee
+            .as_expr()
+            .map(|expr| strip_parens(expr.as_ref()))
+        else {
             return false;
         };
-        helpers.contains(&binding_key(id))
-            || (id.sym.as_ref() == canonical_name
-                && self
-                    .unresolved_mark
-                    .is_some_and(|unresolved_mark| id.ctxt.outer() == unresolved_mark))
+        match callee {
+            Expr::Ident(id) => {
+                helpers.contains(&binding_key(id))
+                    || (id.sym.as_ref() == canonical_name
+                        && self
+                            .unresolved_mark
+                            .is_some_and(|mark| id.ctxt.outer() == mark))
+            }
+            Expr::Member(_) => cross_module_ts_member_helper(callee, namespaces),
+            _ => false,
+        }
     }
 }
 
@@ -192,7 +252,9 @@ pub(crate) fn try_transform_ts_generator_body(
 ) -> bool {
     let helpers = AsyncHelperContext {
         awaiter_helpers: HashSet::new(),
+        awaiter_namespaces: HashMap::new(),
         generator_helpers: generator_helpers.iter().cloned().collect(),
+        generator_namespaces: HashMap::new(),
         values_helpers: HashSet::new(),
         unresolved_mark: None,
     };

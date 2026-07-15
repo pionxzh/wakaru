@@ -1,6 +1,9 @@
 mod common;
 
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_between_with_facts, render_rule};
+use wakaru_core::facts::{
+    ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+};
 use wakaru_core::rules::UnAsyncAwait;
 
 // ── __generator only ────────────────────────────────────────────────────────
@@ -27,6 +30,42 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
   var _ = { label: 0, sent: function() { return t[1]; }, trys: [], ops: [] }, f, y, t, g;
 };
 "#;
+
+fn cross_module_async_facts() -> ModuleFactsMap {
+    cross_module_async_facts_with_factory(true)
+}
+
+fn cross_module_async_facts_with_factory(include_factory: bool) -> ModuleFactsMap {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![
+                TypeScriptHelperExportFact {
+                    exported: "__awaiter".into(),
+                    local: Some("__awaiter".into()),
+                    kind: TypeScriptHelperKind::Awaiter,
+                },
+                TypeScriptHelperExportFact {
+                    exported: "__generator".into(),
+                    local: Some("__generator".into()),
+                    kind: TypeScriptHelperKind::Generator,
+                },
+            ],
+            ts_helper_namespace_factory_exports: if include_factory {
+                vec!["helperFactory".into()]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        },
+    );
+    facts
+}
+
+fn apply_cross_module_facts(input: &str, facts: &ModuleFactsMap) -> String {
+    render_pipeline_between_with_facts(input, "UnAsyncAwait", "UnAsyncAwait", facts, None)
+}
 
 #[test]
 fn simple_generator_yields() {
@@ -368,6 +407,117 @@ async function func(x) {
 }
 
 // ── __awaiter + __generator combined ────────────────────────────────────────
+
+#[test]
+fn cross_module_namespace_async_helpers_require_proven_facts() {
+    let input = r#"
+import * as helpers from "./helpers.js";
+function func() {
+  return helpers.__awaiter(this, void 0, void 0, function () {
+    return helpers.__generator(this, function (_a) {
+      switch (_a.label) {
+        case 0: return [4, first()];
+        case 1:
+          _a.sent();
+          return [4, second()];
+        case 2:
+          _a.sent();
+          return [2];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+import * as helpers from "./helpers.js";
+async function func() {
+  await first();
+  await second();
+}
+"#;
+
+    let facts = cross_module_async_facts();
+    assert_eq_normalized(&apply_cross_module_facts(input, &facts), expected);
+
+    let no_facts = ModuleFactsMap::new();
+    assert_eq_normalized(&apply_cross_module_facts(input, &no_facts), input);
+}
+
+#[test]
+fn cross_module_named_async_helper_aliases_use_export_facts() {
+    let input = r#"
+import { __awaiter as runAsync, __generator as runGenerator } from "./helpers.js";
+function func() {
+  return runAsync(this, void 0, void 0, function () {
+    return runGenerator(this, function (_a) {
+      switch (_a.label) {
+        case 0: return [4, value()];
+        case 1: return [2, _a.sent()];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+import { __awaiter as runAsync, __generator as runGenerator } from "./helpers.js";
+async function func() {
+  return await value();
+}
+"#;
+
+    assert_eq_normalized(
+        &apply_cross_module_facts(input, &cross_module_async_facts()),
+        expected,
+    );
+}
+
+#[test]
+fn cross_module_async_namespace_factory_requires_factory_fact() {
+    let input = r#"
+import { helperFactory } from "./helpers.js";
+const helpers = helperFactory();
+function func() {
+  return helpers.__awaiter(this, void 0, void 0, function () {
+    return helpers.__generator(this, function (_a) {
+      switch (_a.label) {
+        case 0: return [4, value()];
+        case 1: return [2, _a.sent()];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+import { helperFactory } from "./helpers.js";
+const helpers = helperFactory();
+async function func() {
+  return await value();
+}
+"#;
+
+    let facts = cross_module_async_facts();
+    assert_eq_normalized(&apply_cross_module_facts(input, &facts), expected);
+
+    let missing_factory = cross_module_async_facts_with_factory(false);
+    assert_eq_normalized(&apply_cross_module_facts(input, &missing_factory), input);
+}
+
+#[test]
+fn cross_module_async_namespace_factory_rejects_calls_with_arguments() {
+    let input = r#"
+import { helperFactory } from "./helpers.js";
+const helpers = helperFactory(options);
+function func() {
+  return helpers.__awaiter(this, void 0, void 0, function* () {
+    yield value();
+  });
+}
+"#;
+    assert_eq_normalized(
+        &apply_cross_module_facts(input, &cross_module_async_facts()),
+        input,
+    );
+}
 
 #[test]
 fn empty_async_function() {
