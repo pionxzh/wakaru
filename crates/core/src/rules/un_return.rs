@@ -1,27 +1,42 @@
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, Expr, ExprStmt, Function, Lit, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
+    ArrowExpr, BlockStmtOrExpr, Expr, ExprStmt, Function, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct UnReturn;
+use super::expr_utils::is_unresolved_undefined;
+
+pub struct UnReturn {
+    unresolved_mark: Mark,
+}
+
+impl UnReturn {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnReturn {
     fn visit_mut_function(&mut self, function: &mut Function) {
         function.visit_mut_children_with(self);
         if let Some(body) = &mut function.body {
-            simplify_tail_return(&mut body.stmts, function.is_async && function.is_generator);
+            simplify_tail_return(
+                &mut body.stmts,
+                function.is_async && function.is_generator,
+                self.unresolved_mark,
+            );
         }
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         arrow.visit_mut_children_with(self);
         if let BlockStmtOrExpr::BlockStmt(block) = &mut *arrow.body {
-            simplify_tail_return(&mut block.stmts, false);
+            simplify_tail_return(&mut block.stmts, false, self.unresolved_mark);
         }
     }
 }
 
-fn simplify_tail_return(stmts: &mut Vec<Stmt>, preserve_value_return: bool) {
+fn simplify_tail_return(stmts: &mut Vec<Stmt>, preserve_value_return: bool, unresolved_mark: Mark) {
     let Some(last_stmt) = stmts.pop() else {
         return;
     };
@@ -42,7 +57,7 @@ fn simplify_tail_return(stmts: &mut Vec<Stmt>, preserve_value_return: bool) {
                 arg: Some(expr),
             }));
         }
-        Some(expr) if is_undefined_expr(&expr) => {}
+        Some(expr) if is_unresolved_undefined(&expr, unresolved_mark) => {}
         Some(expr) => {
             if let Expr::Unary(UnaryExpr {
                 op: UnaryOp::Void,
@@ -59,19 +74,4 @@ fn simplify_tail_return(stmts: &mut Vec<Stmt>, preserve_value_return: bool) {
             }
         }
     }
-}
-
-fn is_undefined_expr(expr: &Expr) -> bool {
-    if matches!(expr, Expr::Ident(ident) if ident.sym == "undefined") {
-        return true;
-    }
-
-    matches!(
-        expr,
-        Expr::Unary(UnaryExpr {
-            op: UnaryOp::Void,
-            arg,
-            ..
-        }) if matches!(&**arg, Expr::Lit(Lit::Num(num)) if num.value == 0.0)
-    )
 }

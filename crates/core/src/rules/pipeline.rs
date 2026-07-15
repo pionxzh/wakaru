@@ -500,7 +500,7 @@ fn run_dead_imports(module: &mut Module, ctx: RuleRunContext<'_>) {
         DceMode::Off => {}
     }
 }
-runner!(run_un_return, UnReturn);
+runner!(run_un_return, |ctx| UnReturn::new(ctx.unresolved_mark));
 
 define_rule_registry! {
     ("SimplifySequence", Syntax, run_simplify_sequence, always_enabled),

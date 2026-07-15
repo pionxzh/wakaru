@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnReturn;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnReturn)
+    render_rule(input, UnReturn::new)
 }
 
 #[test]
@@ -52,6 +52,20 @@ const bar = ()=>{
 
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_tail_return_of_shadowed_undefined() {
+    let input = r#"
+function fromParam(undefined) {
+  return undefined;
+}
+function fromLocal(value) {
+  const undefined = value;
+  return undefined;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
