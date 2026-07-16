@@ -78,16 +78,6 @@ code {
 }
 .brand-icon { width: 24px; height: 24px; flex-shrink: 0; }
 .brand:hover { text-decoration: none; }
-.cursor {
-  display: inline-block;
-  width: 8px;
-  height: 15px;
-  margin-left: 4px;
-  background: var(--green);
-  vertical-align: -2px;
-  animation: blink 1.4s steps(1) infinite;
-}
-@keyframes blink { 50% { opacity: 0; } }
 .nav-links { display: flex; align-items: center; gap: 26px; font-size: 14px; font-family: var(--mono); }
 .nav-links a { color: var(--ink-2); }
 .nav-links a:hover { color: var(--ink); text-decoration: none; }
@@ -608,7 +598,6 @@ footer { border-top: 1px solid var(--line-soft); padding: 44px 0 52px; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .cursor { animation: none; }
   .cl, .status-text { transition: none; }
   .step-btn.pulse { animation: none; }
 }
