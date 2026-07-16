@@ -11,6 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::collect_decl_names;
 use crate::utils::paren::strip_parens;
 
 pub struct UnEnum {
@@ -824,22 +825,21 @@ fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
     for item in items {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
-                if let Decl::Var(var) = &export_decl.decl {
-                    for declarator in &var.decls {
-                        if let Pat::Ident(binding) = &declarator.name {
-                            names.insert(binding.id.sym.clone());
-                        }
-                    }
-                }
+                collect_decl_names(&export_decl.decl, &mut names);
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
                 for specifier in &named.specifiers {
-                    let ExportSpecifier::Named(specifier) = specifier else {
-                        continue;
-                    };
-                    let name = specifier.exported.as_ref().unwrap_or(&specifier.orig);
-                    if let ModuleExportName::Ident(ident) = name {
-                        names.insert(ident.sym.clone());
+                    match specifier {
+                        ExportSpecifier::Named(specifier) => {
+                            let name = specifier.exported.as_ref().unwrap_or(&specifier.orig);
+                            names.insert(name.atom().into_owned());
+                        }
+                        ExportSpecifier::Namespace(specifier) => {
+                            names.insert(specifier.name.atom().into_owned());
+                        }
+                        ExportSpecifier::Default(specifier) => {
+                            names.insert(specifier.exported.sym.clone());
+                        }
                     }
                 }
             }

@@ -193,6 +193,67 @@ var Mode;
 }
 
 #[test]
+fn exported_commonjs_enum_rejects_duplicate_exported_function_name() {
+    let input = r#"
+export function Existing() {}
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Existing || (exports.Existing = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_duplicate_exported_class_name() {
+    let input = r#"
+export class Existing {}
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Existing || (exports.Existing = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_duplicate_destructured_export_name() {
+    let input = r#"
+export var { Existing } = source;
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Existing || (exports.Existing = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_duplicate_namespace_export_name() {
+    let input = r#"
+export * as Existing from "./dep.js";
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Existing || (exports.Existing = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_rejects_duplicate_string_export_name() {
+    let input = r#"
+const value = 1;
+export { value as "Existing" };
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Existing || (exports.Existing = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn exported_commonjs_enum_is_top_level_only() {
     let input = r#"
 function make() {
