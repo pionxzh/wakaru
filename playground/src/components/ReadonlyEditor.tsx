@@ -1,33 +1,28 @@
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useRef } from "react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
+import type { EditorDecoration } from "./Editor";
 import { EditorPaneHeader } from "./EditorPaneHeader";
 
-export interface EditorDecoration {
-  line: number;
-  startCol: number;
-  endCol: number;
-  className: string;
-  wholeLine?: boolean;
-}
-
-interface EditorProps {
+interface ReadonlyEditorProps {
   value: string;
-  onChange: (value: string) => void;
-  label?: string;
+  label: string;
+  status?: string;
+  busy?: boolean;
   decorations?: EditorDecoration[];
   onHoverLine?: (line: number | null) => void;
   onEditorReady?: (editor: MonacoEditorNS.IStandaloneCodeEditor) => void;
 }
 
-export function Editor({
+export function ReadonlyEditor({
   value,
-  onChange,
-  label = "Input",
+  label,
+  status,
+  busy = false,
   decorations,
   onHoverLine,
   onEditorReady,
-}: EditorProps) {
+}: ReadonlyEditorProps) {
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const decorationIds = useRef<string[]>([]);
   const hoverRef = useRef(onHoverLine);
@@ -36,8 +31,8 @@ export function Editor({
   const handleMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
     onEditorReady?.(editor);
-    editor.onMouseMove((e) => {
-      const line = e.target.position?.lineNumber ?? null;
+    editor.onMouseMove((event) => {
+      const line = event.target.position?.lineNumber ?? null;
       hoverRef.current?.(line !== null ? line - 1 : null);
     });
     editor.onMouseLeave(() => hoverRef.current?.(null));
@@ -46,36 +41,45 @@ export function Editor({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    if (!decorations || decorations.length === 0) {
-      decorationIds.current = editor.deltaDecorations(decorationIds.current, []);
-      return;
-    }
-    const monacoDecorations: MonacoEditorNS.IModelDeltaDecoration[] = decorations.map((d) => ({
-      range: {
-        startLineNumber: d.line + 1,
-        startColumn: d.startCol + 1,
-        endLineNumber: d.line + 1,
-        endColumn: d.endCol + 1,
-      },
-      options: d.wholeLine
-        ? { className: d.className, isWholeLine: true }
-        : { inlineClassName: d.className },
-    }));
-    decorationIds.current = editor.deltaDecorations(decorationIds.current, monacoDecorations);
+    const nextDecorations: MonacoEditorNS.IModelDeltaDecoration[] = (decorations ?? []).map(
+      (decoration) => ({
+        range: {
+          startLineNumber: decoration.line + 1,
+          startColumn: decoration.startCol + 1,
+          endLineNumber: decoration.line + 1,
+          endColumn: decoration.endCol + 1,
+        },
+        options: decoration.wholeLine
+          ? { className: decoration.className, isWholeLine: true }
+          : { inlineClassName: decoration.className },
+      })
+    );
+    decorationIds.current = editor.deltaDecorations(
+      decorationIds.current,
+      nextDecorations
+    );
   }, [decorations]);
 
   return (
     <div className="editor-pane">
-      <EditorPaneHeader className="editor-pane-label">
-        {label}
+      <EditorPaneHeader>
+        <span className="editor-pane-title">{label}</span>
+        {status && (
+          <span
+            className={`output-status${busy ? " output-status-busy" : ""}`}
+            title={status}
+          >
+            {status}
+          </span>
+        )}
       </EditorPaneHeader>
       <MonacoEditor
         language="javascript"
         theme="vs-dark"
         value={value}
-        onChange={(v) => onChange(v ?? "")}
         onMount={handleMount}
         options={{
+          readOnly: true,
           minimap: { enabled: false },
           fontSize: 14,
           scrollBeyondLastLine: false,

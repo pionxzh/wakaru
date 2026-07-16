@@ -3,9 +3,11 @@ import { useCallback, useEffect, useRef } from "react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
 import type { EditorDecoration } from "./Editor";
 import type { OutputView } from "../lib/vuePreview";
+import { EditorPaneHeader } from "./EditorPaneHeader";
 
 interface OutputViewerProps {
   javascriptValue: string;
+  javascriptLabel?: string;
   vueSfcEnabled: boolean;
   vueSfc: string | null;
   view: OutputView;
@@ -18,6 +20,7 @@ interface OutputViewerProps {
 
 export function OutputViewer({
   javascriptValue,
+  javascriptLabel = "JavaScript",
   vueSfcEnabled,
   vueSfc,
   view,
@@ -68,7 +71,7 @@ export function OutputViewer({
 
   return (
     <div className="editor-pane">
-      <div className="editor-pane-header">
+      <EditorPaneHeader>
         <div className="output-tabs" role="tablist" aria-label="Output format">
           <button
             className="output-tab"
@@ -77,7 +80,7 @@ export function OutputViewer({
             aria-selected={activeView === "javascript"}
             onClick={() => onViewChange("javascript")}
           >
-            JavaScript
+            {javascriptLabel}
           </button>
           {vueSfcEnabled && (
             <button
@@ -97,7 +100,7 @@ export function OutputViewer({
             {vueSfc ? "Experimental" : isLoading ? "Checking…" : "Not recovered"}
           </span>
         )}
-      </div>
+      </EditorPaneHeader>
       <MonacoEditor
         language={activeView === "vue" ? "html" : "javascript"}
         theme="vs-dark"

@@ -10,8 +10,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@babel/standalone": "8.0.4",
     "@monaco-editor/react": "^4.7.0",
+    "@swc/wasm-web": "1.15.46",
     "allotment": "^1.20.2",
+    "esbuild-wasm": "0.28.1",
     "pako": "^2.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

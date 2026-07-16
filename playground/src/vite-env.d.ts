@@ -1,5 +1,16 @@
 /// <reference types="vite/client" />
 
+declare module "@babel/standalone" {
+  interface TransformResult {
+    code?: string | null;
+  }
+
+  export function transform(
+    source: string,
+    options: Record<string, unknown>
+  ): TransformResult;
+}
+
 interface ImportMetaEnv {
   readonly VITE_WAKARU_VERSION: string;
   readonly VITE_WAKARU_GIT_HASH: string;

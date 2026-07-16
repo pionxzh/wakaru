@@ -1,5 +1,11 @@
 import { gzip, ungzip } from "pako";
 import type { Level } from "./constants";
+import {
+  isPlaygroundMode,
+  isProducer,
+  type PlaygroundMode,
+  type Producer,
+} from "./roundTrip";
 
 const SHARE_SCHEMA_VERSION = "1";
 const SHARE_HASH_PREFIX = "state=";
@@ -9,6 +15,8 @@ export const SHARE_LIMIT_MESSAGE = "Input is too large to share";
 
 export interface PlaygroundShareState {
   source: string;
+  mode: PlaygroundMode;
+  producer: Producer;
   level: Level;
   formatter: boolean;
   vueSfc: boolean;
@@ -50,11 +58,15 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
     const parsed = JSON.parse(json) as Partial<PlaygroundShareState>;
     const formatter = normalizeFormatter(parsed.formatter);
     const vueSfc = normalizeVueSfc(parsed.vueSfc);
+    const mode = normalizeMode(parsed.mode);
+    const producer = normalizeProducer(parsed.producer);
     if (
       typeof parsed.source !== "string" ||
       !isLevel(parsed.level) ||
       formatter === null ||
       vueSfc === null ||
+      mode === null ||
+      producer === null ||
       typeof parsed.version !== "string"
     ) {
       return null;
@@ -66,6 +78,8 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
 
     return {
       source: parsed.source,
+      mode,
+      producer,
       level: parsed.level,
       formatter,
       vueSfc,
@@ -74,6 +88,16 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
   } catch {
     return null;
   }
+}
+
+function normalizeMode(value: unknown): PlaygroundMode | null {
+  if (value === undefined) return "decompile";
+  return isPlaygroundMode(value) ? value : null;
+}
+
+function normalizeProducer(value: unknown): Producer | null {
+  if (value === undefined) return "babel";
+  return isProducer(value) ? value : null;
 }
 
 export function createShareUrl(state: PlaygroundShareState, href = window.location.href): string {

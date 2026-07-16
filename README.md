@@ -11,7 +11,9 @@ minifier and transpiler output into readable modern JavaScript.
 [![npm](https://img.shields.io/npm/v/@wakaru/cli?label=npm)](https://www.npmjs.com/package/@wakaru/cli)
 [![Telegram](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
 
-[**Try it in the playground**](https://wakaru.vercel.app/playground) — paste minified JavaScript, get readable code back.
+[**Try it in the playground**](https://wakaru.vercel.app/playground) — paste
+minified JavaScript, or compare pinned Babel, SWC, and esbuild output with
+Wakaru's restoration.
 
 </div>
 

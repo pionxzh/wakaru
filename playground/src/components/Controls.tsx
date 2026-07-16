@@ -1,4 +1,9 @@
 import { LEVELS, type Level } from "../lib/constants";
+import {
+  PRODUCERS,
+  type PlaygroundMode,
+  type Producer,
+} from "../lib/roundTrip";
 
 function ShareIcon() {
   return (
@@ -13,11 +18,15 @@ function ShareIcon() {
 }
 
 interface ControlsProps {
+  mode: PlaygroundMode;
+  producer: Producer;
   level: Level;
   formatter: boolean;
   formatterDisabled: boolean;
   mapping: boolean;
   vueSfc: boolean;
+  onModeChange: (mode: PlaygroundMode) => void;
+  onProducerChange: (producer: Producer) => void;
   onLevelChange: (level: Level) => void;
   onFormatterChange: (formatter: boolean) => void;
   onMappingChange: (mapping: boolean) => void;
@@ -31,11 +40,15 @@ interface ControlsProps {
 }
 
 export function Controls({
+  mode,
+  producer,
   level,
   formatter,
   formatterDisabled,
   mapping,
   vueSfc,
+  onModeChange,
+  onProducerChange,
   onLevelChange,
   onFormatterChange,
   onMappingChange,
@@ -50,6 +63,38 @@ export function Controls({
   return (
     <div className="controls">
       <div className="controls-left">
+        <div className="controls-mode" role="group" aria-label="Playground mode">
+          <button
+            className="controls-mode-button"
+            type="button"
+            aria-pressed={mode === "decompile"}
+            onClick={() => onModeChange("decompile")}
+          >
+            Decompile
+          </button>
+          <button
+            className="controls-mode-button"
+            type="button"
+            aria-pressed={mode === "roundtrip"}
+            onClick={() => onModeChange("roundtrip")}
+          >
+            Compile &amp; Restore
+          </button>
+        </div>
+        {mode === "roundtrip" && (
+          <label className="controls-label">
+            Producer
+            <select
+              className="controls-select"
+              value={producer}
+              onChange={(event) => onProducerChange(event.target.value as Producer)}
+            >
+              {PRODUCERS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="controls-label">
           Level
           <select
@@ -90,11 +135,13 @@ export function Controls({
           </button>
         </label>
         <label
-          className="controls-label"
+          className="controls-label controls-vue-label"
           title="Best-effort Vue 3 SFC recovery from generated render JavaScript"
         >
-          Vue SFC
-          <span className="controls-experimental">Experimental</span>
+          <span className="controls-vue-copy">
+            <span className="controls-experimental">Experimental</span>
+            <span>Vue SFC</span>
+          </span>
           <button
             className="controls-switch"
             type="button"

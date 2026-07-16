@@ -3,6 +3,8 @@ import { createShareUrl, readShareState, type PlaygroundShareState } from "./sha
 
 const sharedState: PlaygroundShareState = {
   source: "const value = 1;",
+  mode: "roundtrip",
+  producer: "swc",
   level: "minimal",
   formatter: false,
   vueSfc: true,
@@ -35,6 +37,22 @@ describe("playground share state", () => {
     expect(readShareState(new URL(url).hash)).toEqual({
       ...legacyState,
       vueSfc: false,
+    });
+  });
+
+  it("defaults older shared links to decompile mode with Babel selected", () => {
+    const legacyState = { ...sharedState } as Partial<PlaygroundShareState>;
+    delete legacyState.mode;
+    delete legacyState.producer;
+    const url = createShareUrl(
+      legacyState as PlaygroundShareState,
+      "https://wakaru.vercel.app/playground/"
+    );
+
+    expect(readShareState(new URL(url).hash)).toEqual({
+      ...legacyState,
+      mode: "decompile",
+      producer: "babel",
     });
   });
 });

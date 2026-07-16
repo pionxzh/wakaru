@@ -5,6 +5,7 @@ import { Controls } from "./components/Controls";
 import { Editor } from "./components/Editor";
 import type { EditorDecoration } from "./components/Editor";
 import { OutputViewer } from "./components/OutputViewer";
+import { ReadonlyEditor } from "./components/ReadonlyEditor";
 import { SplitLayout } from "./components/SplitLayout";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { WasmBridge } from "./wasm/bridge";
@@ -16,6 +17,13 @@ import { parseMappings, lineColorClass, lineColorActiveClass, generateMappingCSS
 import type { MappingData } from "./lib/sourcemap";
 import { applyVuePreviewResult, resetVuePreview } from "./lib/vuePreview";
 import type { OutputView } from "./lib/vuePreview";
+import {
+  getProducerDescriptor,
+  ROUND_TRIP_EXAMPLE,
+  type PlaygroundMode,
+  type Producer,
+} from "./lib/roundTrip";
+import { ProducerBridge } from "./producer/bridge";
 
 const WAKARU_VERSION = import.meta.env.VITE_WAKARU_VERSION;
 const WAKARU_GIT_HASH = import.meta.env.VITE_WAKARU_GIT_HASH;
@@ -36,7 +44,26 @@ function getAutoRunDelay(elapsed: number) {
 }
 
 export function App() {
-  const [source, setSource] = useState(INITIAL_SHARE_STATE?.source ?? DEFAULT_EXAMPLE);
+  const [mode, setMode] = useState<PlaygroundMode>(
+    INITIAL_SHARE_STATE?.mode ?? "decompile"
+  );
+  const [producer, setProducer] = useState<Producer>(
+    INITIAL_SHARE_STATE?.producer ?? "babel"
+  );
+  const [decompileSource, setDecompileSource] = useState(
+    INITIAL_SHARE_STATE?.mode === "decompile"
+      ? INITIAL_SHARE_STATE.source
+      : DEFAULT_EXAMPLE
+  );
+  const [roundTripSource, setRoundTripSource] = useState(
+    INITIAL_SHARE_STATE?.mode === "roundtrip"
+      ? INITIAL_SHARE_STATE.source
+      : ROUND_TRIP_EXAMPLE
+  );
+  const [compiledSource, setCompiledSource] = useState("");
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [producerError, setProducerError] = useState<string | null>(null);
+  const [producerElapsed, setProducerElapsed] = useState<number | null>(null);
   const [output, setOutput] = useState("");
   const [vuePreview, setVuePreview] = useState(() => resetVuePreview(
     INITIAL_SHARE_STATE?.vueSfc ?? false
@@ -67,16 +94,51 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const editorWrapRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<WasmBridge | null>(null);
+  const producerBridgeRef = useRef<ProducerBridge | null>(null);
   const activeRunRef = useRef(false);
+  const activeCompileRef = useRef(false);
   const autoRunDelayRef = useRef(INITIAL_AUTO_RUN_DELAY_MS);
   const inputVersionRef = useRef(0);
+  const compileVersionRef = useRef(0);
+  const latestCompileInputRef = useRef({ source: roundTripSource, producer });
+  const wakaruSource = mode === "roundtrip" ? compiledSource : decompileSource;
   const latestInputRef = useRef({
-    source,
+    source: wakaruSource,
     level,
     formatter: formatterEnabled,
     vueSfc: vueSfcEnabled,
   });
   const shareStatusTimeoutRef = useRef<number | null>(null);
+
+  const runCompile = useCallback(async () => {
+    if (!producerBridgeRef.current || activeCompileRef.current) return;
+    activeCompileRef.current = true;
+    const input = latestCompileInputRef.current;
+    const inputVersion = compileVersionRef.current;
+    setIsCompiling(true);
+    setProducerError(null);
+    const start = performance.now();
+    try {
+      const code = await producerBridgeRef.current.compile(input.source, input.producer);
+      if (inputVersion !== compileVersionRef.current) return;
+      setCompiledSource(code);
+      setProducerElapsed(performance.now() - start);
+    } catch (compileError) {
+      if (inputVersion !== compileVersionRef.current) return;
+      setCompiledSource("");
+      setProducerElapsed(null);
+      setProducerError(
+        compileError instanceof Error ? compileError.message : String(compileError)
+      );
+    } finally {
+      activeCompileRef.current = false;
+      if (inputVersion !== compileVersionRef.current) {
+        void runCompile();
+      } else {
+        setIsCompiling(false);
+      }
+    }
+  }, []);
 
   const runDecompile = useCallback(async () => {
     if (!bridgeRef.current || activeRunRef.current) return;
@@ -141,14 +203,33 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const bridge = new ProducerBridge();
+    producerBridgeRef.current = bridge;
+    return () => bridge.terminate();
+  }, []);
+
+  useEffect(() => {
+    latestCompileInputRef.current = { source: roundTripSource, producer };
+    compileVersionRef.current += 1;
+  }, [roundTripSource, producer]);
+
+  useEffect(() => {
+    if (mode !== "roundtrip" || activeCompileRef.current) return;
+    const timeoutId = window.setTimeout(() => {
+      void runCompile();
+    }, autoRunDelayRef.current);
+    return () => window.clearTimeout(timeoutId);
+  }, [mode, producer, roundTripSource, runCompile]);
+
+  useEffect(() => {
     latestInputRef.current = {
-      source,
+      source: wakaruSource,
       level,
       formatter: formatterEnabled,
       vueSfc: vueSfcEnabled,
     };
     inputVersionRef.current += 1;
-  }, [source, level, formatterEnabled, vueSfcEnabled]);
+  }, [wakaruSource, level, formatterEnabled, vueSfcEnabled]);
 
   useEffect(() => {
     if (!wasmReady) return;
@@ -157,7 +238,7 @@ export function App() {
       void runDecompile();
     }, autoRunDelayRef.current);
     return () => window.clearTimeout(timeoutId);
-  }, [source, level, formatterEnabled, vueSfcEnabled, wasmReady, runDecompile]);
+  }, [wakaruSource, level, formatterEnabled, vueSfcEnabled, wasmReady, runDecompile]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -186,7 +267,9 @@ export function App() {
     let shareUrl: string;
     try {
       shareUrl = createShareUrl({
-        source,
+        source: mode === "roundtrip" ? roundTripSource : decompileSource,
+        mode,
+        producer,
         level,
         formatter: formatterEnabled,
         vueSfc: vueSfcEnabled,
@@ -208,7 +291,7 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [formatterEnabled, level, showShareStatus, source, vueSfcEnabled]);
+  }, [decompileSource, formatterEnabled, level, mode, producer, roundTripSource, showShareStatus, vueSfcEnabled]);
 
   const handleVueSfcChange = useCallback((enabled: boolean) => {
     setVueSfcEnabled(enabled);
@@ -236,6 +319,7 @@ export function App() {
     ? "vue"
     : "javascript";
   const mappingActive = mappingEnabled && activeOutputView === "javascript";
+  const producerDescriptor = getProducerDescriptor(producer);
 
   // Determine which output line is "active" (hovered directly, or via input hover)
   const activeOutputLine = useMemo(() => {
@@ -369,20 +453,31 @@ export function App() {
     const srcY = inputRect.top - wrapRect.top + srcPos.top + srcPos.height / 2;
     const genX = outputRect.left - wrapRect.left + outputLayout.contentLeft - gap;
     const genY = outputRect.top - wrapRect.top + genPos.top + genPos.height / 2;
-    const midX = (srcX + genX) / 2;
+    const verticallyStacked = outputRect.top >= inputRect.bottom;
 
     ctx.beginPath();
     ctx.moveTo(genX, genY);
-    ctx.bezierCurveTo(midX, genY, midX, srcY, srcX, srcY);
+    if (verticallyStacked) {
+      const midY = (srcY + genY) / 2;
+      ctx.bezierCurveTo(genX, midY, srcX, midY, srcX, srcY);
+    } else {
+      const midX = (srcX + genX) / 2;
+      ctx.bezierCurveTo(midX, genY, midX, srcY, srcX, srcY);
+    }
     ctx.strokeStyle = `rgba(${color},0.7)`;
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Arrow pointing left (toward input)
+    // Arrow pointing toward the generated input pane.
     ctx.beginPath();
     ctx.moveTo(srcX, srcY);
-    ctx.lineTo(srcX + 5, srcY - 4);
-    ctx.lineTo(srcX + 5, srcY + 4);
+    if (verticallyStacked) {
+      ctx.lineTo(srcX - 4, srcY + 5);
+      ctx.lineTo(srcX + 4, srcY + 5);
+    } else {
+      ctx.lineTo(srcX + 5, srcY - 4);
+      ctx.lineTo(srcX + 5, srcY + 4);
+    }
     ctx.closePath();
     ctx.fillStyle = `rgba(${color},0.7)`;
     ctx.fill();
@@ -401,11 +496,15 @@ export function App() {
         gitHash={WAKARU_GIT_HASH}
       />
       <Controls
+        mode={mode}
+        producer={producer}
         level={level}
         formatter={formatterEnabled}
         formatterDisabled={mappingEnabled}
         mapping={mappingEnabled}
         vueSfc={vueSfcEnabled}
+        onModeChange={setMode}
+        onProducerChange={setProducer}
         onLevelChange={setLevel}
         onFormatterChange={setFormatter}
         onMappingChange={setMappingEnabled}
@@ -423,15 +522,40 @@ export function App() {
           style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}
         />
         <SplitLayout>
-          <Editor
-            value={source}
-            onChange={setSource}
-            decorations={inputDecorations}
-            onHoverLine={handleInputHover}
-            onEditorReady={(ed) => { inputEditorRef.current = ed; }}
-          />
+          {mode === "decompile" && (
+            <Editor
+              value={decompileSource}
+              onChange={setDecompileSource}
+              decorations={inputDecorations}
+              onHoverLine={handleInputHover}
+              onEditorReady={(ed) => { inputEditorRef.current = ed; }}
+            />
+          )}
+          {mode === "roundtrip" && (
+            <Editor
+              value={roundTripSource}
+              onChange={setRoundTripSource}
+              label="Original"
+            />
+          )}
+          {mode === "roundtrip" && (
+            <ReadonlyEditor
+              value={compiledSource}
+              label={`${producerDescriptor.label} output`}
+              status={isCompiling
+                ? "Loading / compiling…"
+                : producerElapsed === null
+                  ? producerDescriptor.recipe
+                  : `${producerDescriptor.recipe} · ${producerElapsed.toFixed(0)}ms`}
+              busy={isCompiling}
+              decorations={inputDecorations}
+              onHoverLine={handleInputHover}
+              onEditorReady={(ed) => { inputEditorRef.current = ed; }}
+            />
+          )}
           <OutputViewer
             javascriptValue={output}
+            javascriptLabel={mode === "roundtrip" ? "Wakaru restored" : "JavaScript"}
             vueSfcEnabled={vueSfcEnabled}
             vueSfc={vueSfc}
             view={outputView}
@@ -445,7 +569,7 @@ export function App() {
           />
         </SplitLayout>
       </div>
-      <WarningsPanel warnings={warnings} error={error} />
+      <WarningsPanel warnings={warnings} error={producerError ?? error} />
     </div>
   );
 }
