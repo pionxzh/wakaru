@@ -221,7 +221,12 @@ same-list declaration above the capture. The source must have no same-scope
 writes after capture and no writes in any deferred body, including parameter
 defaults and object accessors. Imports (live bindings), unresolved globals, and
 outer lexical bindings are excluded; direct `eval` or `with` also blocks the
-rewrite. The unresolved global `undefined` is the only global exception.
+rewrite. Parameters are also excluded when their containing function observes
+`arguments`, because sloppy-mode mapped arguments can write a parameter without
+an identifier assignment. A replacement is rejected when a different binding
+with the same emitted name occurs in the use statement, preventing the printed
+identifier from being captured after `SyntaxContext` is erased. The unresolved
+global `undefined` is the only global exception.
 An entry-binding proof may flow into nested lexical blocks in the same
 activation, but never into a constructor, static block, or object accessor
 statement list analyzed under a different activation/order domain.
@@ -237,6 +242,10 @@ because SmartRename may recover intent from their later use. This rule
 deliberately does not simulate
 expression evaluation order: once the local source is proven frozen, delaying
 its read is harmless; otherwise the alias stays.
+
+Candidate declarations still participate in reference counting. This prevents
+two independently removable aliases from forming a replacement chain whose
+intermediate binding is deleted before a non-recursive substitution uses it.
 
 ## Dynamic Scope Limits
 

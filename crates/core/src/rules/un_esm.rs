@@ -1809,8 +1809,9 @@ fn binding_id(ident: &Ident) -> BindingId {
 /// aliases. Both bindings must be closed over by the matched helper shape:
 ///
 /// - every wrapper use is a read through `.default`; and
-/// - the assigned require temp is an uninitialized local with exactly the four
-///   uses proven by the matcher (assignment, marker read, and both branches).
+/// - the assigned require temp is a hoisted `var` or an earlier uninitialized
+///   `let` with exactly the four uses proven by the matcher (assignment,
+///   marker read, and both branches).
 ///
 /// The second condition matters because replacing the helper also removes the
 /// original `temp = require(...)` assignment.
@@ -1819,10 +1820,9 @@ fn collect_default_only_inline_interop_bindings(
     unresolved_mark: Mark,
 ) -> HashSet<BindingId> {
     let uses = BindingUseIndex::collect(module);
-    let uninitialized = uses.uninitialized_bindings();
     let mut bindings = HashSet::new();
 
-    for item in &module.body {
+    for (item_idx, item) in module.body.iter().enumerate() {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
             continue;
         };
@@ -1846,7 +1846,7 @@ fn collect_default_only_inline_interop_bindings(
         let require_id = binding_id(&require_local);
         if wrapper_id != require_id
             && uses.has_only_static_member_reads(&wrapper_id, "default")
-            && uninitialized.contains(&require_id)
+            && has_available_uninitialized_temp(module, &require_id, item_idx)
             && uses.use_count(&require_id) == 4
         {
             bindings.insert(wrapper_id);
@@ -1854,6 +1854,26 @@ fn collect_default_only_inline_interop_bindings(
     }
 
     bindings
+}
+
+fn has_available_uninitialized_temp(
+    module: &Module,
+    binding: &BindingId,
+    use_item_idx: usize,
+) -> bool {
+    module.body.iter().enumerate().any(|(decl_item_idx, item)| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            return false;
+        };
+        let binding_is_uninitialized = var_decl.decls.iter().any(|decl| {
+            decl.init.is_none()
+                && matches!(&decl.name, Pat::Ident(local) if binding_id(&local.id) == *binding)
+        });
+
+        binding_is_uninitialized
+            && (var_decl.kind == VarDeclKind::Var
+                || var_decl.kind == VarDeclKind::Let && decl_item_idx < use_item_idx)
+    })
 }
 
 struct DefaultInteropMemberRewriter<'a> {

@@ -116,8 +116,8 @@ impl VisitMut for SmartInline {
         let mut safety = FunctionEntrySafetyCollector::new(&bindings);
         function.params.visit_with(&mut safety);
         function.body.visit_with(&mut safety);
-        let (dynamic_scope, unsafe_bindings) = safety.finish();
-        if dynamic_scope {
+        let (dynamic_scope, arguments_observed, unsafe_bindings) = safety.finish();
+        if dynamic_scope || arguments_observed {
             bindings.clear();
         } else {
             bindings.retain(|key| !unsafe_bindings.contains(key));
@@ -137,7 +137,7 @@ impl VisitMut for SmartInline {
         let mut safety = FunctionEntrySafetyCollector::new(&bindings);
         arrow.params.visit_with(&mut safety);
         arrow.body.visit_with(&mut safety);
-        let (dynamic_scope, unsafe_bindings) = safety.finish();
+        let (dynamic_scope, _, unsafe_bindings) = safety.finish();
         if dynamic_scope {
             bindings.clear();
         } else {
@@ -155,7 +155,7 @@ impl VisitMut for SmartInline {
         }
         let mut safety = FunctionEntrySafetyCollector::new(&bindings);
         catch.body.visit_with(&mut safety);
-        let (dynamic_scope, unsafe_bindings) = safety.finish();
+        let (dynamic_scope, _, unsafe_bindings) = safety.finish();
         if dynamic_scope {
             bindings.clear();
         } else {
@@ -215,6 +215,7 @@ struct FunctionEntrySafetyCollector<'a> {
     unsafe_bindings: HashSet<BindingKey>,
     nested_depth: usize,
     dynamic_scope: bool,
+    arguments_observed: bool,
 }
 
 impl<'a> FunctionEntrySafetyCollector<'a> {
@@ -224,11 +225,16 @@ impl<'a> FunctionEntrySafetyCollector<'a> {
             unsafe_bindings: HashSet::new(),
             nested_depth: 0,
             dynamic_scope: false,
+            arguments_observed: false,
         }
     }
 
-    fn finish(self) -> (bool, HashSet<BindingKey>) {
-        (self.dynamic_scope, self.unsafe_bindings)
+    fn finish(self) -> (bool, bool, HashSet<BindingKey>) {
+        (
+            self.dynamic_scope,
+            self.arguments_observed,
+            self.unsafe_bindings,
+        )
     }
 
     fn record_nested_write(&mut self, key: BindingKey) {
@@ -248,6 +254,15 @@ impl<'a> FunctionEntrySafetyCollector<'a> {
 }
 
 impl Visit for FunctionEntrySafetyCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == "arguments" {
+            // In sloppy functions with simple parameters, writes through the
+            // arguments object can change a parameter without an identifier
+            // assignment that the frozen-binding proof can observe.
+            self.arguments_observed = true;
+        }
+    }
+
     fn visit_function(&mut self, function: &Function) {
         self.visit_nested(function);
     }
@@ -977,6 +992,7 @@ struct TempUsageInfo {
     used_in_nested_function: bool,
     source_mutated_after_def: bool,
     source_written_in_nested_scope: bool,
+    source_name_shadowed_at_use: bool,
     dynamic_scope: bool,
     // The candidate binding itself is a write target somewhere (assignment,
     // destructuring assignment, update, for-in/of head). This is invalid for
@@ -995,6 +1011,7 @@ impl TempUsageInfo {
             || self.used_in_nested_function
             || self.source_mutated_after_def
             || self.source_written_in_nested_scope
+            || self.source_name_shadowed_at_use
             || self.dynamic_scope
             || self.mutated
         {
@@ -1061,16 +1078,30 @@ impl TempUsageAnalysis {
         }
 
         for (idx, stmt) in stmts.iter().enumerate() {
-            if stmt_is_temp_definition(stmt, candidates) {
-                continue;
-            }
-
             let mut collector = TempUsageCollector {
                 analysis: &mut analysis,
                 candidates,
                 stmt_idx: idx,
             };
             stmt.visit_with(&mut collector);
+        }
+
+        for (candidate_key, candidate) in candidates {
+            let Expr::Ident(source) = candidate.init.as_ref() else {
+                continue;
+            };
+            let Some(usage) = analysis.usage.get_mut(candidate_key) else {
+                continue;
+            };
+            let Some(use_stmt_idx) = usage.use_stmt_idx else {
+                continue;
+            };
+            let mut finder = DifferentContextSameNameFinder {
+                source,
+                found: false,
+            };
+            stmts[use_stmt_idx].visit_with(&mut finder);
+            usage.source_name_shadowed_at_use = finder.found;
         }
 
         analysis
@@ -1162,17 +1193,15 @@ impl Visit for SourceBindingCollector<'_> {
     fn visit_prop_name(&mut self, _: &PropName) {}
 }
 
-fn stmt_is_temp_definition(stmt: &Stmt, candidates: &HashMap<BindingKey, TempCandidate>) -> bool {
-    let Stmt::Decl(Decl::Var(var)) = stmt else {
-        return false;
-    };
-    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
-        return false;
+struct DifferentContextSameNameFinder<'a> {
+    source: &'a Ident,
+    found: bool,
+}
+
+impl Visit for DifferentContextSameNameFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.found |= ident.sym == self.source.sym && ident.ctxt != self.source.ctxt;
     }
-    let Pat::Ident(bi) = &var.decls[0].name else {
-        return false;
-    };
-    candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt))
 }
 
 struct TempUsageCollector<'a> {

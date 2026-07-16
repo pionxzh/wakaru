@@ -1083,6 +1083,24 @@ consume(r.default, n);
 }
 
 #[test]
+fn inline_conditional_interop_default_recovery_preserves_late_let_tdz() {
+    let input = r#"
+const r = (n = require("./dep.js")) && n.__esModule ? n : { default: n };
+let n;
+consume(r.default);
+"#;
+    let expected = r#"
+import _n from "./dep.js";
+n = _n;
+const r = n;
+let n;
+consume(r.default);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn inline_conditional_interop_rejects_mismatched_shape() {
     let input = r#"
 let i;

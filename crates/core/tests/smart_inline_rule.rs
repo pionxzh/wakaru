@@ -269,6 +269,18 @@ function read(source) {
 }
 
 #[test]
+fn no_inline_parameter_when_arguments_can_rebind_it() {
+    let input = r#"
+function read(source) {
+    const t = source;
+    consume(arguments[0] = other, t);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn inline_frozen_parameter_after_call() {
     let input = r#"
 function read(source) {
@@ -692,6 +704,41 @@ let source = value;
 for (let i = 0; i < 3; i++) {
     consume(source);
     mutateSource();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn no_inline_when_loop_binding_shadows_source_name() {
+    let input = r#"
+function read(source, items) {
+    const t = source;
+    for (const source of items) {
+        consume(t);
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn chained_generated_aliases_do_not_leave_unbound_references() {
+    let input = r#"
+function read(source) {
+    const t = source;
+    consume(t);
+    const o = t;
+    consumeAgain(o);
+}
+"#;
+    let expected = r#"
+function read(source) {
+    const t = source;
+    consume(t);
+    consumeAgain(t);
 }
 "#;
     let output = apply(input);

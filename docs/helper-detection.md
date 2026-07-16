@@ -182,9 +182,11 @@ use(wrapped.default);
 ```
 
 It recovers a default import only when every use of `wrapped` is a read through
-`.default` and the assigned `temp` is an uninitialized local used exclusively
-by that exact helper expression. Bare, computed, written, or otherwise escaping
-wrapper uses bail out. This matcher stays rule-local because the proof combines
+`.default` and the assigned `temp` is a hoisted `var` or an earlier
+uninitialized `let` used exclusively by that exact helper expression. A later
+lexical declaration bails out so removing the assignment cannot erase a TDZ
+failure. Bare, computed, written, or otherwise escaping wrapper uses also bail
+out. This matcher stays rule-local because the proof combines
 the producer shape with module-wide binding-use facts; helper names alone carry
 no provenance. Calling a recovered `.default` binding also relies on the
 `call_receiver_independence` assumption documented in
