@@ -15,8 +15,8 @@ use super::cross_module_helper_refs::{
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
 use super::state_machine::{
-    invert_condition, stmts_contain_state_opcode_return, IndexLoopContinueMode, OpcodeReturnScan,
-    StateMachineProgram,
+    invert_condition, stmts_contain_state_opcode_return, ForwardJumpJoin, IndexLoopContinueMode,
+    OpcodeReturnScan, StateMachineProgram,
 };
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
@@ -669,7 +669,10 @@ fn decode_state_machine(
     let mut recovered = StateMachineProgram::from_labeled_stmts(output, trys)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::SkipNestedFunctions)
-        .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
+        .resolve_labeled_forward_jumps(
+            OpcodeReturnScan::SkipNestedFunctions,
+            ForwardJumpJoin::MidMachine,
+        )
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::AdjacentBackEdge);
     fold_memoized_member_apply_calls(&mut recovered);
     if stmts_contain_state_opcode_return(&recovered, OpcodeReturnScan::SkipNestedFunctions) {

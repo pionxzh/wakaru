@@ -818,6 +818,170 @@ function load() {
     );
 }
 
+// ── conditional forward jumps to a mid-machine join ─────────────────────────
+
+#[test]
+fn recovers_guarded_await_with_mid_machine_join() {
+    // tsc emits this for `if (cond) { await ... }` without an else: the guard
+    // jumps forward to a join label that still has statements after it.
+    let input = r#"
+function init() {
+  return __awaiter(this, void 0, void 0, function () {
+    var id;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (id = cache.get()) return [3 /*break*/, 2];
+          return [4 /*yield*/, storage.getItemAsync(KEY)];
+        case 1:
+          id = (id = _a.sent()) != null ? id : make();
+          _a.label = 2;
+        case 2:
+          storage.setItemAsync(KEY, id);
+          return [2 /*return*/, id];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function init() {
+  var id;
+  if (!(id = cache.get())) {
+    id = (id = await storage.getItemAsync(KEY)) != null ? id : make();
+  }
+  storage.setItemAsync(KEY, id);
+  return id;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn recovers_nested_guarded_awaits_with_mid_machine_joins() {
+    let input = r#"
+function init() {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (ready) return [3 /*break*/, 4];
+          return [4 /*yield*/, connect()];
+        case 1:
+          _a.sent();
+          if (cached) return [3 /*break*/, 3];
+          return [4 /*yield*/, warm_up()];
+        case 2:
+          _a.sent();
+          _a.label = 3;
+        case 3:
+          mark_started();
+          _a.label = 4;
+        case 4:
+          finish();
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function init() {
+  if (!ready) {
+    await connect();
+    if (!cached) {
+      await warm_up();
+    }
+    mark_started();
+  }
+  finish();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn mid_machine_join_rolls_back_when_guard_crosses_try_region() {
+    // The guarded region (1..3) straddles the try-region boundary at label 2:
+    // folding it into an `if` would silently move statements out of the
+    // reconstructed try/catch. The wrapper must be preserved instead.
+    let input = r#"
+function init() {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (ready) return [3 /*break*/, 3];
+          prepare();
+          _a.label = 1;
+        case 1:
+          _a.trys.push([1, 4, , 5]);
+          risky();
+          _a.label = 2;
+        case 2:
+          commit();
+          _a.label = 3;
+        case 3:
+          return [4 /*yield*/, finish()];
+        case 4:
+          _a.sent();
+          return [3 /*break*/, 5];
+        case 5:
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function()"),
+        "a guard crossing a try-region boundary must roll back, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function init"),
+        "a guard crossing a try-region boundary must not be marked async, got:\n{output}"
+    );
+}
+
+#[test]
+fn mid_machine_join_rolls_back_when_region_contains_unresolved_jump() {
+    // The guarded region contains its own jump into the machine, which the
+    // fold cannot represent; recovery must fail closed and keep the wrapper.
+    let input = r#"
+function init() {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (ready) return [3 /*break*/, 3];
+          return [4 /*yield*/, connect()];
+        case 1:
+          _a.sent();
+          if (skip) return [3 /*break*/, 1];
+          warm_up();
+          _a.label = 3;
+        case 3:
+          finish();
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function()"),
+        "an unresolvable jump inside the guarded region must roll back, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function init"),
+        "an unresolvable jump inside the guarded region must not be marked async, got:\n{output}"
+    );
+}
+
 #[test]
 fn async_with_yield_arg_consuming_previous_sent() {
     // Terser can fold TypeScript output so one yield argument consumes the

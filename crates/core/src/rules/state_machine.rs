@@ -24,6 +24,20 @@ impl OpcodeReturnScan {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) enum ForwardJumpJoin {
+    /// Fold only guards that jump past every remaining block. Regenerator
+    /// machines encode the post-yield continuation in `_ctx.next` rather than
+    /// linear fallthrough, so folding up to a mid-machine join could silently
+    /// keep blocks that the original control flow skips.
+    EndOfMachine,
+    /// Also fold guards that jump to a mid-machine join. Sound for TypeScript
+    /// `__generator` machines: yields always resume at the lexically next
+    /// label, and every other transfer is an explicit `[3, N]` opcode that the
+    /// body scan rejects.
+    MidMachine,
+}
+
+#[derive(Clone, Copy)]
 pub(crate) enum IndexLoopContinueMode {
     /// TypeScript-style state machines use the label before the break target as
     /// the continue target when loop-body jump returns are present.
@@ -55,8 +69,17 @@ impl StateMachineProgram {
         }
     }
 
-    pub(crate) fn resolve_labeled_forward_jumps(mut self, opcode_scan: OpcodeReturnScan) -> Self {
-        self.blocks = resolve_labeled_forward_jump_blocks(self.blocks, opcode_scan);
+    pub(crate) fn resolve_labeled_forward_jumps(
+        mut self,
+        opcode_scan: OpcodeReturnScan,
+        join_mode: ForwardJumpJoin,
+    ) -> Self {
+        self.blocks = resolve_labeled_forward_jump_blocks(
+            self.blocks,
+            &self.try_regions,
+            opcode_scan,
+            join_mode,
+        );
         self
     }
 
@@ -738,13 +761,34 @@ pub(crate) fn reconstruct_with_regions(
 /// where the body between the jump and target is opcode-free.
 fn resolve_labeled_forward_jump_blocks(
     mut blocks: Vec<StateBlock>,
+    try_regions: &[[Option<usize>; 4]],
     opcode_scan: OpcodeReturnScan,
+    join_mode: ForwardJumpJoin,
+) -> Vec<StateBlock> {
+    // Folding an inner guard can make an enclosing guard's body jump-free, so
+    // iterate to a fixpoint. Each fold strictly reduces the block count, which
+    // bounds the number of passes.
+    loop {
+        let before = blocks.len();
+        blocks =
+            resolve_labeled_forward_jump_blocks_once(blocks, try_regions, opcode_scan, join_mode);
+        if blocks.len() == before {
+            return blocks;
+        }
+    }
+}
+
+fn resolve_labeled_forward_jump_blocks_once(
+    mut blocks: Vec<StateBlock>,
+    try_regions: &[[Option<usize>; 4]],
+    opcode_scan: OpcodeReturnScan,
+    join_mode: ForwardJumpJoin,
 ) -> Vec<StateBlock> {
     let mut result = Vec::new();
     let mut index = 0;
     while index < blocks.len() {
         if let Some((recovered, consumed)) =
-            try_resolve_labeled_forward_jump(&blocks[index..], opcode_scan)
+            try_resolve_labeled_forward_jump(&blocks[index..], try_regions, opcode_scan, join_mode)
         {
             result.push(recovered);
             index += consumed;
@@ -758,9 +802,17 @@ fn resolve_labeled_forward_jump_blocks(
     result
 }
 
+/// Recover `if (cond) goto T; <body>` as `if (!cond) { body }` where the body
+/// is every following block below label T. T may be a mid-machine join with
+/// its own statements; those stay in place as the continuation. Any jump left
+/// inside the body (including into it from elsewhere, which leaves that jump
+/// opcode unresolved) fails the decode closed via the caller's final opcode
+/// scan instead of producing wrong control flow.
 fn try_resolve_labeled_forward_jump(
     blocks: &[StateBlock],
+    try_regions: &[[Option<usize>; 4]],
     opcode_scan: OpcodeReturnScan,
+    join_mode: ForwardJumpJoin,
 ) -> Option<(StateBlock, usize)> {
     let first_block = blocks.first()?;
     let start_label = first_block.label;
@@ -772,40 +824,57 @@ fn try_resolve_labeled_forward_jump(
     if target <= start_label {
         return None;
     }
+    if matches!(join_mode, ForwardJumpJoin::EndOfMachine) {
+        let max_remaining_label = blocks[1..]
+            .iter()
+            .map(|block| block.label)
+            .max()
+            .unwrap_or(0);
+        if target <= max_remaining_label {
+            return None;
+        }
+    }
 
-    let max_remaining_label = blocks[1..]
-        .iter()
-        .map(|block| block.label)
-        .max()
-        .unwrap_or(0);
-    if target <= max_remaining_label {
+    // Folded body statements move to `start_label`. If a try-region boundary
+    // lies between the guard and the join, that move would silently pull
+    // statements across the reconstructed try/catch/finally edges.
+    let crosses_try_boundary = try_regions.iter().any(|region| {
+        region
+            .iter()
+            .flatten()
+            .any(|&boundary| start_label < boundary && boundary < target)
+    });
+    if crosses_try_boundary {
         return None;
     }
 
-    let body_stmts: Vec<Stmt> = blocks[1..]
-        .iter()
-        .flat_map(|block| block.stmts.iter().cloned())
-        .collect();
+    let mut cursor = 1usize;
+    let mut body_stmts = Vec::new();
+    while let Some(block) = blocks.get(cursor) {
+        if block.label >= target {
+            break;
+        }
+        body_stmts.extend(block.stmts.iter().cloned());
+        cursor += 1;
+    }
     if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts, opcode_scan) {
         return None;
     }
 
-    Some((
-        StateBlock::new(
-            start_label,
-            vec![Stmt::If(IfStmt {
-                span: DUMMY_SP,
-                test: invert_condition(&test),
-                cons: Box::new(Stmt::Block(BlockStmt {
-                    span: DUMMY_SP,
-                    ctxt: Default::default(),
-                    stmts: body_stmts,
-                })),
-                alt: None,
-            })],
-        ),
-        blocks.len(),
-    ))
+    let mut stmts = first_block.stmts.clone();
+    stmts.pop();
+    stmts.push(Stmt::If(IfStmt {
+        span: DUMMY_SP,
+        test: invert_condition(&test),
+        cons: Box::new(Stmt::Block(BlockStmt {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            stmts: body_stmts,
+        })),
+        alt: None,
+    }));
+
+    Some((StateBlock::new(start_label, stmts), cursor))
 }
 
 pub(crate) fn stmts_contain_state_opcode_return(
@@ -915,7 +984,10 @@ mod tests {
             vec![(0, if_jump("done", 2)), (1, expr_ident_stmt("work"))],
             vec![],
         )
-        .resolve_labeled_forward_jumps(OpcodeReturnScan::SkipNestedFunctions)
+        .resolve_labeled_forward_jumps(
+            OpcodeReturnScan::SkipNestedFunctions,
+            ForwardJumpJoin::EndOfMachine,
+        )
         .into_reconstructed_stmts();
 
         assert_eq!(recovered.len(), 1);

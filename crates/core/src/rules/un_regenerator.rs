@@ -18,8 +18,8 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding,
 };
 use super::state_machine::{
-    invert_condition, stmts_contain_state_opcode_return, IndexLoopContinueMode, OpcodeReturnScan,
-    StateMachineProgram,
+    invert_condition, stmts_contain_state_opcode_return, ForwardJumpJoin, IndexLoopContinueMode,
+    OpcodeReturnScan, StateMachineProgram,
 };
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
@@ -1777,7 +1777,14 @@ fn decode_babel_state_machine(
     let mut result = StateMachineProgram::from_labeled_stmts(output, trys)
         .recover_conditional_assignments()
         .recover_conditional_branches(OpcodeReturnScan::IncludeNestedFunctions)
-        .resolve_labeled_forward_jumps(OpcodeReturnScan::IncludeNestedFunctions)
+        // MidMachine joins are unsound here: a regenerator yield resumes at the
+        // `_ctx.next` label set before it, not the lexically next case, so
+        // folding up to a join can keep blocks the original machine skips
+        // (see bail_on_nested_control_flow).
+        .resolve_labeled_forward_jumps(
+            OpcodeReturnScan::IncludeNestedFunctions,
+            ForwardJumpJoin::EndOfMachine,
+        )
         .into_reconstructed_stmts_with_index_loops(IndexLoopContinueMode::SingleBodyJumpTarget);
     fold_state_temp_member_calls(state_name, &mut result);
 
