@@ -1,10 +1,10 @@
 {
-  "commit": "76af537b",
+  "commit": "9bc6b9f9",
   "date": "2026-07-16",
   "aggregate": {
-    "yes": 1683,
-    "total": 1745,
-    "pct": 96.4
+    "yes": 1689,
+    "total": 1751,
+    "pct": 96.5
   },
   "matrices": [
     {
@@ -17,11 +17,11 @@
     },
     {
       "name": "async-await",
-      "yes": 396,
+      "yes": 402,
       "no": 13,
       "error": 44,
-      "total": 409,
-      "pct": 96.8
+      "total": 415,
+      "pct": 96.9
     },
     {
       "name": "conditional-switch",

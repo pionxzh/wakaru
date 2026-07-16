@@ -32,6 +32,43 @@ const snippets = [
     ],
   },
   {
+    name: "async-guarded-await-join",
+    source:
+      "async function init() {\n  let id;\n  if (!(id = cache.get())) {\n    id = await storage.getItemAsync(KEY) ?? make();\n  }\n  storage.setItemAsync(KEY, id);\n  return id;\n}\n",
+    expected: [
+      "async function init()",
+      "if (!(id = cache.get()))",
+      "await storage.getItemAsync(KEY)",
+      "storage.setItemAsync(KEY, id)",
+      "return id",
+    ],
+    // This row targets TypeScript's forward jump into a mid-machine join;
+    // other async lowerers use unrelated state-machine/helper shapes.
+    transformerFilter: ({ name }) => name.startsWith("tsc-es5"),
+  },
+  {
+    name: "async-arrow-captured-this",
+    source:
+      "class Queue {\n  initialize(items) {\n    return items.map(async (item) => {\n      await item.load();\n      this.queue.push(item);\n      return this.errorBoundary;\n    });\n  }\n}\nuse(Queue);\n",
+    // TypeScript ES5 captures the method receiver in an alias passed as
+    // __awaiter's thisArg. Keeping that alias after recovery is semantically
+    // equivalent to the original arrow's lexical `this`.
+    acceptForms: [
+      "class Queue {\n  initialize(items) {\n    const self = this;\n    return items.map(async (item) => {\n      await item.load();\n      self.queue.push(item);\n      return self.errorBoundary;\n    });\n  }\n}\nuse(Queue);\n",
+    ],
+    expected: [
+      "class Queue",
+      "initialize(items)",
+      "items.map(async (item)",
+      "await item.load()",
+      ".queue.push(item)",
+      ".errorBoundary",
+    ],
+    // TypeScript is the producer that passes a captured receiver alias as
+    // __awaiter's thisArg while its generator body still refers to `this`.
+    transformerFilter: ({ name }) => name.startsWith("tsc-es5"),
+  },
+  {
     name: "async-try-catch",
     source:
       "async function load_user(app_id) {\n  try {\n    return await fetch_user(app_id);\n  } catch (error) {\n    return fallback_user(error);\n  }\n}\n",
