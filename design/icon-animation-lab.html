@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wakaru icon motion lab</title>
+  <meta name="description" content="A local comparison lab for Wakaru icon animation concepts.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #10141e;
+      --panel: #171d29;
+      --panel-raised: #1b2230;
+      --line: #2b3547;
+      --line-bright: #43516a;
+      --ink: #eef2f8;
+      --muted: #9ca8ba;
+      --quiet: #6f7b8e;
+      --blue: #82b4ff;
+      --green: #8ddb8c;
+      --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% -12%, rgba(73, 92, 255, .13), transparent 34rem),
+        var(--page);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button { font: inherit; }
+    button:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+    .masthead { padding: 64px 0 26px; }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--blue);
+      font: 700 12px/1 var(--mono);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 820px;
+      margin: 0;
+      font: 600 clamp(34px, 5vw, 62px)/1.04 var(--mono);
+      letter-spacing: -.045em;
+    }
+    .intro {
+      max-width: 690px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .toolbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 26px;
+      padding: 12px 0;
+      background: color-mix(in srgb, var(--page) 88%, transparent);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(16px);
+    }
+    .toolbar-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .toolbar-label { margin-right: 3px; color: var(--quiet); font: 12px var(--mono); }
+    .tool-button, .canvas-button, .card-button {
+      min-height: 36px;
+      padding: 7px 12px;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .tool-button:hover, .canvas-button:hover, .card-button:hover {
+      color: var(--ink);
+      border-color: var(--line-bright);
+    }
+    .canvas-button[aria-pressed="true"] {
+      color: #fff;
+      background: #2e63cf;
+      border-color: #4b80ed;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 22px;
+      padding-bottom: 130px;
+    }
+    .concept {
+      overflow: clip;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 16px 50px rgba(0, 0, 0, .12);
+      transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+    .concept:hover { border-color: var(--line-bright); transform: translateY(-1px); }
+    .concept.selected {
+      border-color: #588af0;
+      box-shadow: 0 0 0 1px rgba(88, 138, 240, .35), 0 20px 60px rgba(0, 0, 0, .18);
+    }
+    .preview {
+      position: relative;
+      display: grid;
+      min-height: 340px;
+      place-items: center;
+      overflow: hidden;
+      isolation: isolate;
+      transition: background .25s ease;
+    }
+    body[data-canvas="dark"] .preview { background: #05070c; }
+    body[data-canvas="light"] .preview { background: #f2f5fb; }
+    body[data-canvas="grid"] .preview {
+      background-color: #0a0d14;
+      background-image:
+        linear-gradient(45deg, #141a25 25%, transparent 25%),
+        linear-gradient(-45deg, #141a25 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #141a25 75%),
+        linear-gradient(-45deg, transparent 75%, #141a25 75%);
+      background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+      background-size: 24px 24px;
+    }
+    .preview::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background: radial-gradient(circle, rgba(71, 96, 255, .13), transparent 58%);
+      pointer-events: none;
+    }
+    .preview-tag {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      padding: 5px 8px;
+      color: #b7c3d6;
+      background: rgba(8, 11, 17, .72);
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 999px;
+      font: 11px var(--mono);
+      letter-spacing: .04em;
+      backdrop-filter: blur(8px);
+    }
+    .recommended { color: #bcecb9; }
+    .interaction-hint {
+      position: absolute;
+      right: 14px;
+      bottom: 12px;
+      color: rgba(223, 230, 241, .62);
+      font: 11px var(--mono);
+    }
+    .wakaru-icon {
+      width: min(66%, 236px);
+      height: auto;
+      overflow: visible;
+      filter: drop-shadow(0 18px 30px rgba(35, 60, 255, .12));
+    }
+    .icon-stage, .part, .part path {
+      transform-box: view-box;
+      transform-origin: 118.5px 114px;
+    }
+    .part { will-change: transform, opacity, filter; }
+    .part path { vector-effect: non-scaling-stroke; }
+    .part-upper { --assemble-x: 48px; --assemble-y: -28px; --assemble-r: 12deg; --chaos-x: -20px; --chaos-y: 10px; --chaos-r: -24deg; }
+    .part-left { --assemble-x: -50px; --assemble-y: 5px; --assemble-r: -13deg; --chaos-x: 34px; --chaos-y: -18px; --chaos-r: 28deg; }
+    .part-hook-top { --assemble-x: 34px; --assemble-y: -46px; --assemble-r: -16deg; --chaos-x: -42px; --chaos-y: 48px; --chaos-r: 42deg; }
+    .part-hook-bottom { --assemble-x: -34px; --assemble-y: 48px; --assemble-r: 15deg; --chaos-x: 46px; --chaos-y: -42px; --chaos-r: -38deg; }
+
+    .card-copy { padding: 20px 20px 18px; border-top: 1px solid var(--line); }
+    .card-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .card-title { margin: 0; font: 600 19px/1.25 var(--mono); letter-spacing: -.02em; }
+    .motion-kind { color: var(--quiet); font: 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .card-description { min-height: 52px; margin: 10px 0 14px; color: var(--muted); font-size: 14px; }
+    .best-for { margin: 0 0 18px; color: var(--quiet); font: 12px/1.5 var(--mono); }
+    .best-for strong { color: var(--green); font-weight: 600; }
+    .card-actions { display: flex; gap: 8px; }
+    .card-button { flex: 0 0 auto; font-size: 13px; }
+    .choose-button { margin-left: auto; color: #dbe7ff; background: #2858b8; border-color: #376dcc; }
+    .choose-button:hover { background: #3168d2; border-color: #4d82e8; }
+    .concept.selected .choose-button { color: #102014; background: var(--green); border-color: #a6e8a5; }
+
+    .choice-bar {
+      position: fixed;
+      z-index: 30;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      padding: 14px 16px;
+      background: rgba(16, 20, 30, .88);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(18px);
+    }
+    .choice-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
+    .choice-label { color: var(--quiet); font: 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .choice-value { margin-top: 2px; color: var(--ink); font: 600 14px var(--mono); }
+    .choice-note { max-width: 620px; color: var(--muted); font-size: 13px; text-align: right; }
+
+    /* Living balance */
+    .concept-living .replay .part-upper { animation: living-upper 4.8s ease-in-out infinite; }
+    .concept-living .replay .part-left { animation: living-left 4.8s ease-in-out infinite; }
+    .concept-living .replay .part-hook-top { animation: living-top 4.8s ease-in-out infinite; }
+    .concept-living .replay .part-hook-bottom { animation: living-bottom 4.8s ease-in-out infinite; }
+    @keyframes living-upper { 50% { transform: translate(1.8px, -1.4px) rotate(.8deg); } }
+    @keyframes living-left { 50% { transform: translate(-1.6px, .9px) rotate(.7deg); } }
+    @keyframes living-top { 50% { transform: translate(1.2px, -1.8px) rotate(-.9deg); } }
+    @keyframes living-bottom { 50% { transform: translate(-1.3px, 1.7px) rotate(-.7deg); } }
+
+    /* Assemble */
+    .concept-assemble .replay .part { animation: assemble 5.2s cubic-bezier(.2, .78, .22, 1) infinite; }
+    .concept-assemble .part-hook-top { animation-delay: .08s !important; }
+    .concept-assemble .part-left { animation-delay: .16s !important; }
+    .concept-assemble .part-hook-bottom { animation-delay: .24s !important; }
+    @keyframes assemble {
+      0%, 4% { opacity: 0; transform: translate(var(--assemble-x), var(--assemble-y)) rotate(var(--assemble-r)) scale(.86); }
+      26%, 86% { opacity: 1; transform: translate(0, 0) rotate(0) scale(1); }
+      98%, 100% { opacity: 0; transform: translate(0, 0) rotate(0) scale(1); }
+    }
+
+    /* Decompile / untangle */
+    .concept-decompile .replay .part { animation: decompile 5.6s cubic-bezier(.2, .75, .2, 1) infinite; }
+    .concept-decompile .part-hook-top { animation-delay: .1s !important; }
+    .concept-decompile .part-left { animation-delay: .2s !important; }
+    .concept-decompile .part-hook-bottom { animation-delay: .3s !important; }
+    @keyframes decompile {
+      0%, 5% { opacity: .16; filter: blur(4px); transform: translate(var(--chaos-x), var(--chaos-y)) rotate(var(--chaos-r)) skewX(18deg) scale(.36); }
+      20% { opacity: .58; filter: blur(1.5px); }
+      38%, 82% { opacity: 1; filter: blur(0); transform: translate(0, 0) rotate(0) skewX(0) scale(1); }
+      96%, 100% { opacity: 0; filter: blur(2px); transform: scale(.94); }
+    }
+
+    /* Draw on */
+    .concept-draw .replay .part path { animation: draw-on 5.2s ease-in-out infinite; }
+    .concept-draw .part-upper path:nth-child(2), .concept-draw .part-left path:nth-child(2) { animation-delay: .12s !important; }
+    .concept-draw .part-upper path:nth-child(3), .concept-draw .part-left path:nth-child(3) { animation-delay: .24s !important; }
+    .concept-draw .part-hook-top path { animation-delay: .36s !important; }
+    .concept-draw .part-hook-bottom path { animation-delay: .48s !important; }
+    @keyframes draw-on {
+      0%, 5% { opacity: 0; stroke-dasharray: 1; stroke-dashoffset: 1; }
+      12% { opacity: 1; }
+      44%, 82% { opacity: 1; stroke-dasharray: 1; stroke-dashoffset: 0; }
+      96%, 100% { opacity: 0; stroke-dasharray: 1; stroke-dashoffset: -1; }
+    }
+
+    /* Quarter-turn orbit */
+    .concept-orbit .replay .icon-stage { animation: orbit 7.2s cubic-bezier(.64, 0, .36, 1) infinite; }
+    @keyframes orbit {
+      0%, 15% { transform: rotate(0); }
+      25%, 40% { transform: rotate(90deg); }
+      50%, 65% { transform: rotate(180deg); }
+      75%, 90% { transform: rotate(270deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Gradient energy */
+    .concept-energy .replay .icon-stage { animation: energy-glow 3.8s ease-in-out infinite; }
+    @keyframes energy-glow {
+      50% { filter: drop-shadow(0 0 9px rgba(67, 141, 255, .4)); }
+    }
+
+    /* Interactive balance */
+    .concept-interactive .preview { cursor: crosshair; touch-action: none; }
+    .concept-interactive .part { transition: transform 180ms cubic-bezier(.2, .8, .2, 1); }
+
+    body.is-paused .preview *, body.is-paused .preview *::before, body.is-paused .preview *::after {
+      animation-play-state: paused !important;
+    }
+
+    @media (max-width: 760px) {
+      .masthead { padding-top: 42px; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .gallery { grid-template-columns: 1fr; }
+      .preview { min-height: 300px; }
+      .choice-note { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      body:not(.motion-allowed) .preview * { animation-play-state: paused !important; }
+      .concept, .concept-interactive .part { transition: none; }
+    }
+  </style>
+</head>
+<body data-canvas="dark">
+  <header class="masthead shell">
+    <p class="eyebrow">Wakaru / motion study</p>
+    <h1>How should the icon move?</h1>
+    <p class="intro">Seven treatments, one geometry. Watch each loop, switch the canvas, and keep one as the current favorite. Nothing here changes the production icon.</p>
+  </header>
+
+  <div class="toolbar shell" aria-label="Animation lab controls">
+    <div class="toolbar-group">
+      <button class="tool-button" id="motion-toggle" type="button">Pause all</button>
+      <button class="tool-button" id="replay-all" type="button">Replay all</button>
+    </div>
+    <div class="toolbar-group" aria-label="Preview background">
+      <span class="toolbar-label">canvas</span>
+      <button class="canvas-button" type="button" data-canvas="dark" aria-pressed="true">Dark</button>
+      <button class="canvas-button" type="button" data-canvas="light" aria-pressed="false">Light</button>
+      <button class="canvas-button" type="button" data-canvas="grid" aria-pressed="false">Grid</button>
+    </div>
+  </div>
+
+  <main class="gallery shell" id="gallery"></main>
+
+  <aside class="choice-bar" aria-live="polite">
+    <div class="choice-inner">
+      <div>
+        <div class="choice-label">current favorite</div>
+        <div class="choice-value" id="choice-value">Nothing selected yet</div>
+      </div>
+      <div class="choice-note" id="choice-note">Choose any treatment. Your selection stays only in this browser.</div>
+    </div>
+  </aside>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var parts = {
+        upper: [
+          "M84 15C90 39 92 66 101 84C109 97 127 101 150 106",
+          "M149 106C174 112 200 110 224 109",
+          "M150 106C163 120 173 139 183 153C191 164 199 173 206 179"
+        ],
+        left: [
+          "M31 53C48 67 58 84 66 101C72 114 83 123 99 129",
+          "M99 129C74 124 42 122 14 122",
+          "M99 129C127 135 137 158 143 181C148 199 152 211 155 215"
+        ],
+        hookTop: ["M147 15C148 31 145 45 140 59C136 69 145 68 160 67C180 65 195 57 205 50"],
+        hookBottom: ["M30 174C51 167 76 163 96 164C104 165 101 181 98 195C96 205 92 211 87 214"]
+      };
+
+      var concepts = [
+        {
+          id: "living",
+          title: "Living balance",
+          kind: "ambient",
+          tag: "recommended",
+          description: "The four pieces breathe around their balanced gaps with tiny opposing shifts and rotations.",
+          best: "Always-on brand motion",
+          note: "Quiet enough for a header or hero. This is the safest long-running treatment."
+        },
+        {
+          id: "assemble",
+          title: "Assemble",
+          kind: "reveal",
+          tag: "arrival",
+          description: "Each part enters from its own direction, overshoots gently, and settles into the finished mark.",
+          best: "Page load or product launch",
+          note: "Strong sense of arrival. Best played once, then handed off to a static or breathing state."
+        },
+        {
+          id: "decompile",
+          title: "Decompile",
+          kind: "story",
+          tag: "brand metaphor",
+          description: "A blurred, compressed knot resolves into four readable pieces—the product idea expressed as motion.",
+          best: "Hero reveal or campaign",
+          note: "Most conceptually Wakaru. More expressive, so it should be used as a deliberate moment."
+        },
+        {
+          id: "draw",
+          title: "Draw on",
+          kind: "reveal",
+          tag: "structural",
+          description: "The branches grow from their paths in sequence, revealing how the balanced geometry is constructed.",
+          best: "Docs, onboarding, splash screen",
+          note: "Crisp and technical. It emphasizes the SVG construction more than the organic personality."
+        },
+        {
+          id: "orbit",
+          title: "Quarter-turn orbit",
+          kind: "status",
+          tag: "loading",
+          description: "The complete mark advances in calm 90-degree turns with a pause at every balanced orientation.",
+          best: "Processing or loading state",
+          note: "Very legible as progress motion, but too active for a permanent page header."
+        },
+        {
+          id: "energy",
+          title: "Gradient energy",
+          kind: "ambient",
+          tag: "minimal motion",
+          description: "The silhouette stays perfectly still while color and light circulate through the four pieces.",
+          best: "Favicon-scale or subtle ambience",
+          note: "Preserves the geometry completely. A good choice when movement must not disturb layout."
+        },
+        {
+          id: "interactive",
+          title: "Interactive balance",
+          kind: "responsive",
+          tag: "move pointer",
+          description: "The nearest pieces lean away from the pointer while the others compensate to preserve tension.",
+          best: "Hero interaction or playful easter egg",
+          note: "Memorable on desktop. It should remain optional because touch and keyboard users experience it differently."
+        }
+      ];
+
+      function pathsFor(items) {
+        return items.map(function (d) {
+          return '<path pathLength="1" d="' + d + '"></path>';
+        }).join("");
+      }
+
+      function iconMarkup(concept) {
+        var gradientId = "spectrum-" + concept.id;
+        var gradientMotion = concept.id === "energy"
+          ? '<animateTransform attributeName="gradientTransform" type="rotate" values="0 118.5 114;180 118.5 114;360 118.5 114" dur="4.6s" repeatCount="indefinite"></animateTransform>'
+          : "";
+        return [
+          '<svg class="wakaru-icon" viewBox="0 0 237 228" role="img" aria-label="Wakaru icon animated with ' + concept.title + '">',
+          '<defs><linearGradient id="' + gradientId + '" gradientUnits="userSpaceOnUse" x1="126" y1="0" x2="73" y2="228">',
+          '<stop offset="0" stop-color="#3226ff"></stop>',
+          '<stop offset=".32" stop-color="#414fff"></stop>',
+          '<stop offset=".58" stop-color="#438dff"></stop>',
+          '<stop offset=".8" stop-color="#40c2fd"></stop>',
+          '<stop offset="1" stop-color="#39ddf8"></stop>',
+          gradientMotion,
+          '</linearGradient></defs>',
+          '<g class="icon-stage" fill="none" stroke="url(#' + gradientId + ')" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">',
+          '<g class="part part-upper" data-part="upper">' + pathsFor(parts.upper) + '</g>',
+          '<g class="part part-left" data-part="left">' + pathsFor(parts.left) + '</g>',
+          '<g class="part part-hook-top" data-part="hookTop">' + pathsFor(parts.hookTop) + '</g>',
+          '<g class="part part-hook-bottom" data-part="hookBottom">' + pathsFor(parts.hookBottom) + '</g>',
+          '</g></svg>'
+        ].join("");
+      }
+
+      function cardMarkup(concept) {
+        var hint = concept.id === "interactive" ? '<span class="interaction-hint">move pointer here</span>' : "";
+        var recommended = concept.id === "living" ? " recommended" : "";
+        return [
+          '<article class="concept concept-' + concept.id + '" data-id="' + concept.id + '">',
+          '<div class="preview replay">',
+          '<span class="preview-tag' + recommended + '">' + concept.tag + '</span>',
+          iconMarkup(concept),
+          hint,
+          '</div>',
+          '<div class="card-copy">',
+          '<div class="card-title-row"><h2 class="card-title">' + concept.title + '</h2><span class="motion-kind">' + concept.kind + '</span></div>',
+          '<p class="card-description">' + concept.description + '</p>',
+          '<p class="best-for"><strong>Best for:</strong> ' + concept.best + '</p>',
+          '<div class="card-actions">',
+          '<button class="card-button replay-button" type="button">Replay</button>',
+          '<button class="card-button choose-button" type="button" aria-pressed="false">Keep this</button>',
+          '</div></div></article>'
+        ].join("");
+      }
+
+      var gallery = document.getElementById("gallery");
+      gallery.innerHTML = concepts.map(cardMarkup).join("");
+
+      function replay(preview) {
+        var svg = preview.querySelector("svg");
+        preview.classList.remove("replay");
+        void preview.offsetWidth;
+        preview.classList.add("replay");
+        if (svg && typeof svg.setCurrentTime === "function") svg.setCurrentTime(0);
+      }
+
+      document.querySelectorAll(".replay-button").forEach(function (button) {
+        button.addEventListener("click", function () {
+          replay(button.closest(".concept").querySelector(".preview"));
+        });
+      });
+
+      document.getElementById("replay-all").addEventListener("click", function () {
+        document.querySelectorAll(".preview").forEach(replay);
+      });
+
+      var motionToggle = document.getElementById("motion-toggle");
+      var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduced) {
+        document.body.classList.add("is-paused");
+        motionToggle.textContent = "Play all";
+      }
+      motionToggle.addEventListener("click", function () {
+        var paused = document.body.classList.toggle("is-paused");
+        document.body.classList.add("motion-allowed");
+        motionToggle.textContent = paused ? "Play all" : "Pause all";
+        document.querySelectorAll(".wakaru-icon").forEach(function (svg) {
+          if (paused && typeof svg.pauseAnimations === "function") svg.pauseAnimations();
+          if (!paused && typeof svg.unpauseAnimations === "function") svg.unpauseAnimations();
+        });
+      });
+
+      document.querySelectorAll(".canvas-button").forEach(function (button) {
+        button.addEventListener("click", function () {
+          document.body.dataset.canvas = button.dataset.canvas;
+          document.querySelectorAll(".canvas-button").forEach(function (item) {
+            item.setAttribute("aria-pressed", String(item === button));
+          });
+        });
+      });
+
+      var choiceValue = document.getElementById("choice-value");
+      var choiceNote = document.getElementById("choice-note");
+      function selectConcept(id) {
+        var concept = concepts.find(function (item) { return item.id === id; });
+        document.querySelectorAll(".concept").forEach(function (card) {
+          var selected = card.dataset.id === id;
+          card.classList.toggle("selected", selected);
+          var button = card.querySelector(".choose-button");
+          button.setAttribute("aria-pressed", String(selected));
+          button.textContent = selected ? "Selected" : "Keep this";
+        });
+        if (concept) {
+          choiceValue.textContent = concept.title;
+          choiceNote.textContent = concept.note;
+          try { localStorage.setItem("wakaru-motion-choice", id); } catch (_) {}
+        }
+      }
+      document.querySelectorAll(".choose-button").forEach(function (button) {
+        button.addEventListener("click", function () {
+          selectConcept(button.closest(".concept").dataset.id);
+        });
+      });
+      try {
+        var saved = localStorage.getItem("wakaru-motion-choice");
+        if (saved && concepts.some(function (item) { return item.id === saved; })) selectConcept(saved);
+      } catch (_) {}
+
+      var interactive = document.querySelector(".concept-interactive .preview");
+      var centers = {
+        upper: [150, 102],
+        left: [81, 129],
+        hookTop: [162, 51],
+        hookBottom: [75, 179]
+      };
+      function resetInteractive() {
+        interactive.querySelectorAll(".part").forEach(function (part) { part.style.transform = ""; });
+      }
+      interactive.addEventListener("pointermove", function (event) {
+        var rect = interactive.querySelector("svg").getBoundingClientRect();
+        var x = (event.clientX - rect.left) / rect.width * 237;
+        var y = (event.clientY - rect.top) / rect.height * 228;
+        interactive.querySelectorAll(".part").forEach(function (part) {
+          var center = centers[part.dataset.part];
+          var dx = center[0] - x;
+          var dy = center[1] - y;
+          var distance = Math.max(1, Math.hypot(dx, dy));
+          var strength = Math.max(1.2, 6.5 - distance * .025);
+          var tx = dx / distance * strength;
+          var ty = dy / distance * strength;
+          var rotation = Math.max(-1.5, Math.min(1.5, dx * .018));
+          part.style.transform = "translate(" + tx.toFixed(2) + "px," + ty.toFixed(2) + "px) rotate(" + rotation.toFixed(2) + "deg)";
+        });
+      });
+      interactive.addEventListener("pointerleave", resetInteractive);
+      interactive.addEventListener("pointercancel", resetInteractive);
+    }());
+  </script>
+</body>
+</html>
