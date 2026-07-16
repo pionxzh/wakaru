@@ -228,7 +228,8 @@ rationale, or level gating appear.
   visible as adjacent flat statements (SimplifySequence). It also recovers the
   TypeScript CommonJS publication form using the resolver-proven free `exports`
   binding. Split declarations are accepted only when intervening code touches
-  neither the local nor public binding, and every enum value must be literal:
+  neither the local nor public binding, and recovery is rejected when later
+  code references the same public `exports` member. Every enum value must be literal:
   effectful member initializers are preserved because publishing the object
   before running the IIFE can be observable through cycles.
 - **UnJsx** — detects pragma imports via `unresolved_mark`. Dynamic-tag alias

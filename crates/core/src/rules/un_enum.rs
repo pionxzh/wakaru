@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
@@ -76,10 +76,9 @@ enum EnumKey {
 
 fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: Option<Mark>) {
     let mut exported_names = collect_exported_names(items);
-    let old: Vec<ModuleItem> = std::mem::take(items);
-    let mut iter = old.into_iter().peekable();
+    let mut remaining: VecDeque<ModuleItem> = std::mem::take(items).into();
 
-    while let Some(item) = iter.next() {
+    while let Some(item) = remaining.pop_front() {
         match item {
             ModuleItem::Stmt(stmt) => {
                 let mut stmt = stmt;
@@ -90,10 +89,10 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
 
                 // Check if this is a bare var decl like `var Direction;`
                 if let Some(bare_var_ident) = get_bare_var_decl_ident(&stmt) {
-                    if let Some(ModuleItem::Stmt(next_stmt)) = iter.peek() {
+                    if let Some(ModuleItem::Stmt(next_stmt)) = remaining.front() {
                         if let Some(members) = parse_enum_iife(next_stmt, &bare_var_ident) {
                             // Consume the IIFE statement
-                            iter.next();
+                            remaining.pop_front();
                             let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                             items.push(ModuleItem::Stmt(new_stmt));
                             continue;
@@ -104,8 +103,15 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                                 parse_exported_enum_iife(next_stmt, &bare_var_ident, mark)
                             })
                             .filter(|(public_name, _)| !exported_names.contains(public_name))
+                            .filter(|(public_name, _)| {
+                                !module_items_reference_public_export(
+                                    remaining.iter().skip(1),
+                                    public_name,
+                                    unresolved_mark.expect("exported enum parsing requires a mark"),
+                                )
+                            })
                         {
-                            iter.next();
+                            remaining.pop_front();
                             let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                             items.push(ModuleItem::Stmt(new_stmt));
                             exported_names.insert(public_name.clone());
@@ -133,6 +139,13 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                             unresolved_mark.expect("exported enum parsing requires a mark"),
                         )
                     })
+                    .filter(|(_, public_name, _)| {
+                        !module_items_reference_public_export(
+                            remaining.iter(),
+                            public_name,
+                            unresolved_mark.expect("exported enum parsing requires a mark"),
+                        )
+                    })
                 {
                     let new_stmt =
                         build_enum_assign_stmt(local_ident.clone(), members, stmt.span());
@@ -152,6 +165,38 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
 
                 items.push(ModuleItem::ModuleDecl(module_decl));
             }
+        }
+    }
+}
+
+fn module_items_reference_public_export<'a>(
+    items: impl IntoIterator<Item = &'a ModuleItem>,
+    public_name: &Atom,
+    unresolved_mark: Mark,
+) -> bool {
+    items.into_iter().any(|item| {
+        let mut finder = PublicExportUseFinder {
+            public_name,
+            unresolved_mark,
+            found: false,
+        };
+        item.visit_with(&mut finder);
+        finder.found
+    })
+}
+
+struct PublicExportUseFinder<'a> {
+    public_name: &'a Atom,
+    unresolved_mark: Mark,
+    found: bool,
+}
+
+impl Visit for PublicExportUseFinder<'_> {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        self.found |= unresolved_exports_member(member, self.unresolved_mark).as_ref()
+            == Some(self.public_name);
+        if !self.found {
+            member.visit_children_with(self);
         }
     }
 }

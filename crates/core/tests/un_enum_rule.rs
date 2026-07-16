@@ -146,6 +146,53 @@ observe(exports.Mode);
 }
 
 #[test]
+fn exported_commonjs_enum_rejects_later_public_export_read() {
+    let input = r#"
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+observe(exports.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn split_exported_commonjs_enum_rejects_later_deferred_public_read() {
+    let input = r#"
+var Mode;
+prepare();
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode || (exports.Mode = Mode = {}));
+function later() {
+  return exports.Mode;
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_commonjs_enum_allows_later_other_public_export_read() {
+    let input = r#"
+var Mode;
+(function (e) {
+  e[e["Dev"] = 0] = "Dev";
+})(Mode = exports.Mode || (exports.Mode = {}));
+observe(exports.Other);
+"#;
+    let expected = r#"
+var Mode = {
+  Dev: 0,
+  0: "Dev"
+};
+export { Mode };
+observe(exports.Other);
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn exported_commonjs_enum_rejects_effectful_values() {
     let input = r#"
 var Mode;
