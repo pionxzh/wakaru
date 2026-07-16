@@ -229,9 +229,11 @@ rationale, or level gating appear.
   TypeScript CommonJS publication form using the resolver-proven free `exports`
   binding. Split declarations are accepted only when intervening code touches
   neither the local nor public binding, and recovery is rejected when later
-  code references the same public `exports` member. Every enum value must be literal:
-  effectful member initializers are preserved because publishing the object
-  before running the IIFE can be observable through cycles.
+  code references the same public `exports` member. Local and exported enum
+  recovery both require literal values: computed member initializers are
+  preserved because an object-literal rewrite can otherwise duplicate
+  evaluation or observe the enum before publication. Numeric forward/reverse
+  properties are emitted as consecutive pairs to preserve assignment order.
 - **UnJsx** — detects pragma imports via `unresolved_mark`. Dynamic-tag alias
   synthesis (creating `const Component = expr` for non-identifier tags)
   requires `aggressive`, or `standard` with strong JSX shape evidence.

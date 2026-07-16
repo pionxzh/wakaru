@@ -74,8 +74,8 @@ var LocalMode;
     let expected = r#"
 var LocalMode = {
   Dev: 0,
-  Prod: "prod",
-  0: "Dev"
+  0: "Dev",
+  Prod: "prod"
 };
 export { LocalMode as Mode };
 "#;
@@ -327,16 +327,47 @@ var Direction;
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
-  Left: 3,
-  Right: -4,
   1: "Up",
+  Down: 2,
   2: "Down",
+  Left: 3,
   3: "Left",
+  Right: -4,
   [-4]: "Right"
 };
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn numeric_enum_preserves_forward_reverse_overwrite_order() {
+    let input = r#"
+var Direction;
+(function (Direction) {
+  Direction[Direction["A"] = 1] = "A";
+  Direction[Direction["1"] = 2] = "1";
+})(Direction || (Direction = {}));
+"#;
+    let expected = r#"
+var Direction = {
+  A: 1,
+  1: "A",
+  "1": 2,
+  2: "1"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_enum_with_non_literal_member_value() {
+    let input = r#"
+var Direction;
+(function (Direction) {
+  Direction[Direction["Up"] = nextValue()] = "Up";
+})(Direction || (Direction = {}));
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -373,8 +404,8 @@ var Direction;
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
   1: "Up",
+  Down: 2,
   2: "Down"
 };
 "#;
@@ -393,8 +424,8 @@ var Direction = function (Direction) {
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
   1: "Up",
+  Down: 2,
   2: "Down"
 };
 "#;
@@ -413,8 +444,8 @@ var Direction = ((Direction2) => {
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
   1: "Up",
+  Down: 2,
   2: "Down"
 };
 "#;
@@ -434,10 +465,10 @@ var Direction = (Direction2 => (
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
-  Right: -4,
   1: "Up",
+  Down: 2,
   2: "Down",
+  Right: -4,
   [-4]: "Right"
 };
 "#;
@@ -452,12 +483,12 @@ var Direction=(Direction2=>(Direction2[Direction2.Up=1]="Up",Direction2[Directio
     let expected = r#"
 var Direction = {
   Up: 1,
-  Down: 2,
-  Left: 4,
-  Right: -4,
   1: "Up",
+  Down: 2,
   2: "Down",
+  Left: 4,
   4: "Left",
+  Right: -4,
   [-4]: "Right"
 };
 use(1, Direction[2], -4);
@@ -513,8 +544,8 @@ var RenderMode;
     let expected = r#"
 var RenderMode = {
   "2D": 1,
-  WebGL: 2,
   1: "2D",
+  WebGL: 2,
   2: "WebGL"
 };
 "#;

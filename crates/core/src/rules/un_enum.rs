@@ -529,13 +529,17 @@ fn parse_enum_iife_expr_inner(call: &CallExpr, enum_ident: &Ident) -> Option<Vec
         return None;
     }
 
-    if let Some((inner_param_name, body_expr)) = extract_enum_iife_expr_body(callee) {
-        return parse_enum_expr_body(body_expr, inner_param_name);
-    }
+    let members = if let Some((inner_param_name, body_expr)) = extract_enum_iife_expr_body(callee) {
+        parse_enum_expr_body(body_expr, inner_param_name)?
+    } else {
+        let (inner_param_name, body_stmts) = extract_enum_iife_body(callee)?;
+        parse_enum_body(body_stmts, inner_param_name)?
+    };
 
-    // Parse body
-    let (inner_param_name, body_stmts) = extract_enum_iife_body(callee)?;
-    parse_enum_body(body_stmts, inner_param_name)
+    members
+        .iter()
+        .all(enum_member_is_literal_only)
+        .then_some(members)
 }
 
 fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Ident, &Expr)> {
@@ -1033,27 +1037,23 @@ fn build_enum_assign_stmt(ident: Ident, members: Vec<EnumMember>, original_span:
 fn build_enum_object(members: Vec<EnumMember>) -> Expr {
     let mut props: Vec<PropOrSpread> = Vec::new();
 
-    // Forward mappings
+    // Preserve the IIFE's per-member assignment order: numeric enums assign
+    // the forward property and then immediately assign its reverse property.
+    // Grouping every forward property before every reverse property changes
+    // the winner when a forward key collides with an earlier numeric key.
     for member in &members {
         let key = make_forward_prop_name(&member.key);
         props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
             key,
             value: member.value.clone(),
         }))));
-    }
 
-    // Reverse mappings (only for numeric values)
-    let has_reverse = members.iter().any(|m| m.reverse.is_some());
-
-    if has_reverse {
-        for member in &members {
-            if let Some((num_key_expr, str_val)) = &member.reverse {
-                let key = make_reverse_prop_name(num_key_expr);
-                props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-                    key,
-                    value: str_val.clone(),
-                }))));
-            }
+        if let Some((num_key_expr, str_val)) = &member.reverse {
+            let key = make_reverse_prop_name(num_key_expr);
+            props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key,
+                value: str_val.clone(),
+            }))));
         }
     }
 
