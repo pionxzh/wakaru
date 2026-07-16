@@ -196,8 +196,7 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     // Try __awaiter transform (makes function async).
     // After extracting the inner body, also run the generator transform
     // in case the inner function was a __generator state machine.
-    let saved_stmts = body.stmts.clone();
-    if try_transform_awaiter(body, helpers) {
+    if let Some(saved_stmts) = try_transform_awaiter(body, helpers) {
         try_transform_generator(body, helpers);
         if stmts_contain_state_opcode_return(&body.stmts, OpcodeReturnScan::SkipNestedFunctions)
             || contains_unresolved_generator_wrapper(body, helpers)
@@ -1479,21 +1478,17 @@ fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> 
 // __awaiter wrapper -> async function
 // ============================================================
 
-fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
+fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> Option<Vec<Stmt>> {
     // Find: return __awaiter(this, void0, void0, function*() { ... })
     let return_idx = body
         .stmts
         .iter()
-        .position(|stmt| is_awaiter_return(stmt, helpers));
-    let return_idx = match return_idx {
-        Some(i) => i,
-        None => return false,
-    };
+        .position(|stmt| is_awaiter_return(stmt, helpers))?;
 
-    let inner_stmts = match extract_awaiter_body(body.stmts[return_idx].clone(), helpers) {
-        Some(s) => s,
-        None => return false,
-    };
+    let inner_stmts = extract_awaiter_body(body.stmts[return_idx].clone(), helpers)?;
+    // Keep the original body only once a valid awaiter extraction is known to
+    // mutate it. Post-transform validation can still require a full rollback.
+    let saved_stmts = body.stmts.clone();
     body.stmts.remove(return_idx);
 
     // Replace yield with await in the extracted statements
@@ -1502,7 +1497,7 @@ fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> 
 
     // Splice the inner statements in place of the return
     body.stmts.splice(return_idx..return_idx, inner_stmts);
-    true
+    Some(saved_stmts)
 }
 
 fn is_awaiter_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {

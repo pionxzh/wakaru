@@ -406,6 +406,39 @@ async function func(x) {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn invalid_awaiter_extraction_preserves_surrounding_statements() {
+    let input = r#"
+function load() {
+  const config = {
+    nested: { values: [1, 2, 3] },
+    read() { return this.nested.values; }
+  };
+  observe(config);
+  return __awaiter(ctx.scope, void 0, void 0, function* () {
+    yield work();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const config = {"),
+        "an invalid awaiter candidate must preserve preceding statements, got:\n{output}"
+    );
+    assert!(
+        output.contains("observe(config)"),
+        "an invalid awaiter candidate must preserve surrounding uses, got:\n{output}"
+    );
+    assert!(
+        output.contains("return __awaiter(ctx.scope, void 0, void 0, function*()"),
+        "an unsupported thisArg must preserve the awaiter wrapper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function load"),
+        "an invalid awaiter candidate must not mark the function async, got:\n{output}"
+    );
+}
+
 // ── __awaiter + __generator combined ────────────────────────────────────────
 
 #[test]
