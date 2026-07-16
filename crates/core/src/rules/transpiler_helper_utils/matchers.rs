@@ -974,8 +974,78 @@ fn is_typeof_polyfill_init(expr: &Expr) -> bool {
         return false;
     };
 
-    is_typeof_symbol_test(&cond.test) && is_typeof_identity_fn(&cond.cons)
+    is_typeof_symbol_test(&cond.test)
+        && is_typeof_identity_fn(&cond.cons)
+        && is_typeof_fallback_fn(&cond.alt)
 }
+
+pub(super) fn is_self_redefining_typeof_fn(func: &Function, self_binding: &BindingKey) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(param) = &func.params[0].pat else {
+        return false;
+    };
+    let param_binding = binding_key(&param.id);
+    let Some(body) = &func.body else {
+        return false;
+    };
+
+    let statements = body
+        .stmts
+        .iter()
+        .skip_while(|stmt| {
+            matches!(stmt, Stmt::Expr(expr_stmt) if matches!(expr_stmt.expr.as_ref(), Expr::Lit(Lit::Str(_))))
+        })
+        .collect::<Vec<_>>();
+
+    match statements.as_slice() {
+        [Stmt::Expr(assignment), Stmt::Return(ReturnStmt {
+            arg: Some(call), ..
+        })] => {
+            is_self_typeof_assignment(&assignment.expr, self_binding)
+                && is_self_typeof_call(call, self_binding, &param_binding)
+        }
+        [Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        })] => {
+            let Expr::Seq(sequence) = strip_parens(expr) else {
+                return false;
+            };
+            sequence.exprs.len() == 2
+                && is_self_typeof_assignment(&sequence.exprs[0], self_binding)
+                && is_self_typeof_call(&sequence.exprs[1], self_binding, &param_binding)
+        }
+        _ => false,
+    }
+}
+
+fn is_self_typeof_assignment(expr: &Expr, self_binding: &BindingKey) -> bool {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return false;
+    };
+    binding_key(&target.id) == *self_binding && is_typeof_polyfill_init(&assign.right)
+}
+
+fn is_self_typeof_call(expr: &Expr, self_binding: &BindingKey, param_binding: &BindingKey) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    expr_matches_binding(callee, self_binding)
+        && call.args.len() == 1
+        && call.args[0].spread.is_none()
+        && expr_matches_binding(&call.args[0].expr, param_binding)
+}
+
 fn is_typeof_symbol_test(expr: &Expr) -> bool {
     let Expr::Bin(bin) = expr else { return false };
     if bin.op != BinaryOp::LogicalAnd {
@@ -985,17 +1055,22 @@ fn is_typeof_symbol_test(expr: &Expr) -> bool {
 }
 fn is_typeof_symbol_eq_function(expr: &Expr) -> bool {
     let Expr::Bin(bin) = expr else { return false };
+    is_typeof_symbol_eq_function_bin(bin)
+}
+fn is_typeof_symbol_eq_function_bin(bin: &BinExpr) -> bool {
     if !matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
         return false;
     }
-    is_typeof_of_ident(&bin.left, "Symbol") && is_string_lit(&bin.right, "function")
+    (is_typeof_of_ident(&bin.left, "Symbol") && is_string_lit(&bin.right, "function"))
+        || (is_string_lit(&bin.left, "function") && is_typeof_of_ident(&bin.right, "Symbol"))
 }
 fn is_typeof_symbol_iterator_eq_symbol(expr: &Expr) -> bool {
     let Expr::Bin(bin) = expr else { return false };
     if !matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
         return false;
     }
-    is_typeof_of_symbol_iterator(&bin.left) && is_string_lit(&bin.right, "symbol")
+    (is_typeof_of_symbol_iterator(&bin.left) && is_string_lit(&bin.right, "symbol"))
+        || (is_string_lit(&bin.left, "symbol") && is_typeof_of_symbol_iterator(&bin.right))
 }
 fn is_typeof_of_ident(expr: &Expr, name: &str) -> bool {
     let Expr::Unary(unary) = expr else {
@@ -1073,6 +1148,105 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_typeof_fallback_fn(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(param) = &arrow.params[0] else {
+                return false;
+            };
+            let param_binding = binding_key(&param.id);
+            match &*arrow.body {
+                BlockStmtOrExpr::Expr(body) => is_typeof_fallback_conditional(body, &param_binding),
+                BlockStmtOrExpr::BlockStmt(body) => is_typeof_fallback_block(body, &param_binding),
+            }
+        }
+        Expr::Fn(fn_expr) => {
+            if fn_expr.function.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(param) = &fn_expr.function.params[0].pat else {
+                return false;
+            };
+            let Some(body) = &fn_expr.function.body else {
+                return false;
+            };
+            is_typeof_fallback_block(body, &binding_key(&param.id))
+        }
+        _ => false,
+    }
+}
+
+fn is_typeof_fallback_block(body: &BlockStmt, param_binding: &BindingKey) -> bool {
+    match body.stmts.as_slice() {
+        [Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        })] => is_typeof_fallback_conditional(expr, param_binding),
+        [Stmt::If(if_stmt), Stmt::Return(ReturnStmt {
+            arg: Some(fallback),
+            ..
+        })] => {
+            if_stmt.alt.is_none()
+                && is_typeof_fallback_test(&if_stmt.test, param_binding)
+                && stmt_returns_symbol(&if_stmt.cons)
+                && is_typeof_of_binding(fallback, param_binding)
+        }
+        _ => false,
+    }
+}
+
+fn is_typeof_fallback_conditional(expr: &Expr, param_binding: &BindingKey) -> bool {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return false;
+    };
+    is_typeof_fallback_test(&cond.test, param_binding)
+        && is_string_lit(&cond.cons, "symbol")
+        && is_typeof_of_binding(&cond.alt, param_binding)
+}
+
+fn stmt_returns_symbol(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => is_string_lit(expr, "symbol"),
+        Stmt::Block(block) if block.stmts.len() == 1 => stmt_returns_symbol(&block.stmts[0]),
+        _ => false,
+    }
+}
+
+fn is_typeof_fallback_test(expr: &Expr, param_binding: &BindingKey) -> bool {
+    struct SignalFinder<'a> {
+        param_binding: &'a BindingKey,
+        has_param: bool,
+        has_symbol_type_check: bool,
+    }
+
+    impl Visit for SignalFinder<'_> {
+        fn visit_bin_expr(&mut self, bin: &BinExpr) {
+            if is_typeof_symbol_eq_function_bin(bin) {
+                self.has_symbol_type_check = true;
+            }
+            bin.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if binding_key(ident) == *self.param_binding {
+                self.has_param = true;
+            }
+        }
+    }
+
+    let mut finder = SignalFinder {
+        param_binding,
+        has_param: false,
+        has_symbol_type_check: false,
+    };
+    expr.visit_with(&mut finder);
+    finder.has_param && finder.has_symbol_type_check
 }
 fn is_typeof_of_binding(expr: &Expr, binding: &BindingKey) -> bool {
     let Expr::Unary(unary) = expr else {

@@ -104,3 +104,118 @@ const x = typeof y === "object";
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn rewrites_self_redefining_babel_typeof_helper() {
+    let input = r#"
+function helper(value) {
+    "@babel/helpers - typeof";
+    return helper = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator
+        ? function(value) { return typeof value; }
+        : function(value) {
+            return value && typeof Symbol == "function" && value.constructor === Symbol && value !== Symbol.prototype
+                ? "symbol"
+                : typeof value;
+        }, helper(value);
+}
+var result = helper(input);
+"#;
+    let expected = r#"
+const result = typeof input;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn rewrites_minified_self_redefining_typeof_helper() {
+    let input = r#"
+function l(e) {
+    l = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+        ? function(e) { return typeof e; }
+        : function(e) {
+            if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) return "symbol";
+            return typeof e;
+        };
+    return l(e);
+}
+var result = l(input);
+"#;
+    let expected = r#"
+const result = typeof input;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_aliased_self_redefining_typeof_helper() {
+    let input = r#"
+function helper(value) {
+    helper = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+        ? function(value) { return typeof value; }
+        : function(value) {
+            if (value && typeof Symbol == "function" && value.constructor === Symbol && value !== Symbol.prototype) return "symbol";
+            return typeof value;
+        };
+    return helper(value);
+}
+globalThis.savedTypeof = helper;
+var result = helper(input);
+"#;
+    let output = render(input);
+    assert!(output.contains("function helper(value)"), "{output}");
+    assert!(output.contains("helper ="), "{output}");
+    assert!(output.contains("savedTypeof = helper"), "{output}");
+    assert!(output.contains("typeof input"), "{output}");
+}
+
+#[test]
+fn preserves_exported_self_redefining_typeof_helper() {
+    let input = r#"
+export function helper(value) {
+    helper = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+        ? function(value) { return typeof value; }
+        : function(value) {
+            if (value && typeof Symbol == "function" && value.constructor === Symbol && value !== Symbol.prototype) return "symbol";
+            return typeof value;
+        };
+    return helper(value);
+}
+var result = helper(input);
+"#;
+    let output = render(input);
+    assert!(output.contains("export function helper(value)"), "{output}");
+    assert!(output.contains("helper ="), "{output}");
+    assert!(output.contains("typeof input"), "{output}");
+}
+
+#[test]
+fn preserves_self_redefinition_with_wrong_recursive_argument() {
+    let input = r#"
+function helper(value) {
+    helper = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+        ? function(value) { return typeof value; }
+        : function(value) {
+            if (value && typeof Symbol == "function" && value.constructor === Symbol && value !== Symbol.prototype) return "symbol";
+            return typeof value;
+        };
+    return helper(other);
+}
+var result = helper(input);
+"#;
+    let output = render(input);
+    assert!(output.contains("function helper(value)"), "{output}");
+    assert!(output.contains("helper(other)"), "{output}");
+}
+
+#[test]
+fn preserves_typeof_conditional_with_arbitrary_fallback() {
+    let input = r#"
+var helper = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+    ? function(value) { return typeof value; }
+    : function(value) { return "object"; };
+var result = helper(input);
+"#;
+    let output = render(input);
+    assert!(output.contains("const helper ="), "{output}");
+    assert!(output.contains("helper(input)"), "{output}");
+}

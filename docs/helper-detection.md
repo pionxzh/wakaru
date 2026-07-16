@@ -99,8 +99,11 @@ Rules still own domain-specific shape recognition. For example:
 
 - `transpiler_helper_utils.rs` classifies known Babel/TypeScript helper bodies
   and runtime imports.
-- `un_typeof_polyfill.rs` recognizes TypeScript `typeof Symbol.iterator`
-  polyfills.
+- `un_typeof_polyfill.rs` recognizes Babel/SWC `typeof Symbol.iterator`
+  polyfills, including the self-redefining cached function form. That form is
+  matched against the declaration's `BindingKey`: both the cache assignment
+  and recursive call must target the same function binding and the recursive
+  argument must be the helper parameter.
 - `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`.
 - `un_template_literal.rs` recognizes Babel/SWC/TypeScript tagged-template
   helper calls and cache factories. Detection uses body-shape signals —
@@ -136,7 +139,11 @@ scan module-level declarations
   → collect (binding_key, TranspilerHelperKind) pairs
 ```
 
-Shape matchers are plain functions: `fn(&Function) -> bool`. They check essential structural elements and ignore variable names. Writing a new matcher for a new helper is just writing a new predicate.
+Shape matchers are plain functions over SWC nodes. Most are
+`fn(&Function) -> bool`; self-referential helpers additionally receive the
+declaration's binding identity. They check essential structural elements and
+ignore variable names. Writing a new matcher for a new helper is just writing
+a new predicate.
 
 `LocalHelperContext` also records TypeScript and `tslib` helper identities. Consumers use those binding identities directly; for example `UnAsyncAwait` matches detected `__awaiter` / `__generator` aliases instead of first renaming aliases to canonical global names. Shared call-site helpers such as `is_helper_callee()` cover local helper bindings, tslib namespace members, and direct `require("tslib").helper` calls.
 
@@ -201,6 +208,7 @@ Priority targets, roughly ordered by real-world frequency:
 | `slicedToArray` | `_slicedToArray` | `__read` | `_sliced_to_array` | Destructuring arrays from iterables |
 | `toConsumableArray` | `_toConsumableArray` | `__spreadArray` | `_to_consumable_array` | `[...arr]` polyfill |
 | `objectWithoutProperties` | `_objectWithoutProperties` | `__rest` | `_object_without_properties` | `const {a, ...rest} = obj` |
+| `typeof` | `_typeof` | — | `_type_of` | Native `typeof`, including self-caching declarations |
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.

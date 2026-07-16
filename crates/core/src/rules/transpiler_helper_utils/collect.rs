@@ -35,10 +35,15 @@ pub(super) fn collect_transpiler_helpers_inner(
         match item {
             // function _interopRequireDefault(obj) { ... }
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let key = binding_key(&fn_decl.ident);
                 if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
+                    .or_else(|| {
+                        is_self_redefining_typeof_fn(&fn_decl.function, &key)
+                            .then_some(TranspilerHelperKind::Typeof)
+                    })
                     .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
                 {
-                    helpers.insert(binding_key(&fn_decl.ident), kind);
+                    helpers.insert(key, kind);
                 }
             }
             // var _ird = function(obj) { ... }  OR  var _ird = require("@babel/runtime/...")
@@ -91,10 +96,15 @@ pub(super) fn collect_transpiler_helpers_inner(
             // export function _extends() { ... }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
                 Decl::Fn(fn_decl) => {
+                    let key = binding_key(&fn_decl.ident);
                     if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
+                        .or_else(|| {
+                            is_self_redefining_typeof_fn(&fn_decl.function, &key)
+                                .then_some(TranspilerHelperKind::Typeof)
+                        })
                         .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
                     {
-                        helpers.insert(binding_key(&fn_decl.ident), kind);
+                        helpers.insert(key, kind);
                     }
                 }
                 Decl::Var(var) => {

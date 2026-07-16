@@ -36,7 +36,7 @@ pub(crate) use matchers::{
 };
 use matchers::{
     detect_helper_from_fn, detect_helper_from_var_decl, generated_fn_helper_name_kind,
-    module_has_babel_sub_helper_signals,
+    is_self_redefining_typeof_fn, module_has_babel_sub_helper_signals,
 };
 
 use lifecycle::{collect_top_level_callable_ref_graph, helper_dependencies_from_ref_graph};

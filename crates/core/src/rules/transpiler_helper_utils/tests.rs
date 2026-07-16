@@ -457,6 +457,37 @@ fn local_helper_context_collects_typeof_polyfill_helper() {
 }
 
 #[test]
+fn local_helper_context_collects_self_redefining_typeof_helper() {
+    GLOBALS.set(&Globals::new(), || {
+        let module = parse_module(
+            r#"
+                function helper(value) {
+                    "@babel/helpers - typeof";
+                    return helper = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator
+                        ? function(value) { return typeof value; }
+                        : function(value) {
+                            return value && typeof Symbol == "function" && value.constructor === Symbol && value !== Symbol.prototype
+                                ? "symbol"
+                                : typeof value;
+                        }, helper(value);
+                }
+                function wrong(value) {
+                    wrong = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+                        ? function(value) { return typeof value; }
+                        : function(value) { return "object"; };
+                    return wrong(value);
+                }
+                "#,
+        );
+        let helpers =
+            LocalHelperContext::collect(&module).helpers_of_kind(TranspilerHelperKind::Typeof);
+
+        assert!(helpers.contains_key(&(Atom::from("helper"), SyntaxContext::empty())));
+        assert!(!helpers.contains_key(&(Atom::from("wrong"), SyntaxContext::empty())));
+    });
+}
+
+#[test]
 fn local_helper_context_collects_tsc_private_field_helpers() {
     GLOBALS.set(&Globals::new(), || {
         let module = parse_module(
