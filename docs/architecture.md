@@ -179,7 +179,7 @@ Stage 4: Complex pattern restoration
 Stage 5: Modernization
   UnThenCatch, UnUndefinedInit, VarDeclToLetConst, ObjShorthand,
   ObjMethodShorthand, UnPrototypeClass, Exponent, ArgRest,
-  UnRestArrayCopy, ArrowFunction, ArrowReturn, UnForOf
+  UnRestArrayCopy, ArrowFunction, UnNamespace, ArrowReturn, UnForOf
 
 Stage 6: Cleanup and renaming
   UnWebpackDefineGetters, UnWebpackObjectGetters, ImportDedup,

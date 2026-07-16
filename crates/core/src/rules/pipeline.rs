@@ -416,6 +416,7 @@ runner!(run_exponent, Exponent);
 runner!(run_arg_rest, |ctx| ArgRest::new(ctx.rewrite_level));
 runner!(run_un_rest_array_copy, UnRestArrayCopy);
 runner!(run_arrow_function, ArrowFunction);
+runner!(run_un_namespace, UnNamespace);
 runner!(run_arrow_return, ArrowReturn);
 fn run_un_for_of(module: &mut Module, ctx: RuleRunContext<'_>) {
     if !UnForOf::should_run_with_level(ctx.rewrite_level, module) {
@@ -647,6 +648,13 @@ define_rule_registry! {
     ("ArgRest", Modernization, run_arg_rest, always_enabled),
     ("UnRestArrayCopy", Modernization, run_un_rest_array_copy, always_enabled),
     ("ArrowFunction", Modernization, run_arrow_function, standard_or_above),
+    // TypeScript runtime namespaces use augmentation IIFEs. Run after UnEnum
+    // has consumed genuine literal enum shapes and after ArrowFunction has
+    // removed safe function-only semantics from eligible wrappers.
+    ("UnNamespace", Modernization, run_un_namespace, standard_or_above, requires: [
+        "UnEnum",
+        "ArrowFunction"
+    ]),
     ("ArrowReturn", Modernization, run_arrow_return, always_enabled),
     ("UnForOf", Modernization, run_un_for_of, always_enabled),
     ("UnWebpackDefineGetters", Cleanup, run_un_webpack_define_getters, always_enabled),

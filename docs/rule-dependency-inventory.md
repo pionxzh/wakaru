@@ -234,6 +234,14 @@ rationale, or level gating appear.
   preserved because an object-literal rewrite can otherwise duplicate
   evaluation or observe the enum before publication. Numeric forward/reverse
   properties are emitted as consecutive pairs to preserve assignment order.
+- **UnNamespace** — `standard+`, after UnEnum and ArrowFunction. It recovers
+  simple TypeScript runtime namespace IIFEs as a block containing a stable
+  alias to `X || (X = {})`, preserving repeated namespace augmentation and
+  existing-object behavior instead of replacing the namespace with an object
+  literal. The body must consist only of sequential static member assignments.
+  Function-scoped declarations, direct eval (including in nested functions),
+  lexical `this`/`arguments`/`new.target`, alias reassignment, and non-canonical
+  initializer arguments preserve the IIFE.
 - **UnJsx** — detects pragma imports via `unresolved_mark`. Dynamic-tag alias
   synthesis (creating `const Component = expr` for non-identifier tags)
   requires `aggressive`, or `standard` with strong JSX shape evidence.
