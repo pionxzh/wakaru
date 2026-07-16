@@ -84,30 +84,6 @@ pub(crate) fn fn_decl_binding_key(item: &ModuleItem) -> Option<BindingKey> {
     Some(binding_key(&fn_decl.ident))
 }
 
-/// Collect references to `targets`, skipping module items that declare helpers
-/// we are considering removable. This avoids counting a helper's own binding
-/// name or self-references as external uses that pin the declaration.
-pub(crate) fn remaining_refs_outside_skipped_items<F>(
-    module: &Module,
-    targets: &HashSet<BindingKey>,
-    should_skip_item: F,
-) -> HashSet<BindingKey>
-where
-    F: Fn(&ModuleItem) -> bool,
-{
-    let mut finder = RemainingRefFinder {
-        targets,
-        found: HashSet::new(),
-    };
-    for item in &module.body {
-        if should_skip_item(item) {
-            continue;
-        }
-        item.visit_with(&mut finder);
-    }
-    finder.found
-}
-
 /// Collect references to `targets`, skipping only var declarators whose binding
 /// is in `skipped_decls`. This is useful for helper declarations that can share
 /// a `var` statement with unrelated declarators.

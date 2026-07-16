@@ -166,6 +166,27 @@ inlining).
 
 Level: `standard` and above. `minimal` preserves captured builtin aliases.
 
+### `effect_free_property_key_coercion`
+
+Converting a generated property-definition helper back to a computed object
+property assumes coercing the property key has no observable side effects.
+
+```js
+_defineProperty({}, key, makeValue()); // arguments, then helper coerces key
+({ [key]: makeValue() });              // coerces key before evaluating value
+```
+
+Babel and SWC emit the helper call while lowering `{ [key]: value }`, and
+ordinary string, number, and symbol keys make the two orders equivalent. A
+key object with a side-effecting `Symbol.toPrimitive`, `valueOf`, or `toString`
+can observe the difference.
+
+Affects: `UnDefineProperty` for expression-position calls whose target is an
+exactly empty object literal. Standalone calls rewritten to assignments do not
+depend on this assumption.
+
+Level: `standard` and above. `minimal` preserves the helper call.
+
 ## Generated Temporaries
 
 Temporaries introduced by compilers are handled by binding analysis, not by

@@ -256,7 +256,7 @@ fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 fn run_un_define_property(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnDefineProperty::run_with_helpers(module, local_helpers.as_ref());
+    UnDefineProperty::run_with_helpers(module, local_helpers.as_ref(), ctx.rewrite_level);
 }
 fn run_un_class_call_check(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);

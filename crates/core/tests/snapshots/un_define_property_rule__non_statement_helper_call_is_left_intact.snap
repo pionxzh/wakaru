@@ -15,5 +15,6 @@ function a(e, t, n) {
     }
     return e;
 }
-const result = a({}, "k", 1);
+const target = {};
+const result = a(target, "k", 1);
 console.log(result);

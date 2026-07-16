@@ -19,10 +19,10 @@
 //! }
 //! ```
 //!
-//! Call sites rewritten only when the call is a standalone expression
-//! statement (the helper's return value is discarded). Call-in-expression
-//! positions like `const x = _defineProperty(o, k, v)` are left alone —
-//! rewriting them would lose the `return e` semantics.
+//! Standalone calls are rewritten to assignments when the helper's return
+//! value is discarded. At standard and above, expression-position calls whose
+//! target is exactly `{}` are restored to `{ [key]: value }`; other expression
+//! targets stay intact because rewriting them would lose `return e` semantics.
 //!
 //! If all references to the helper are call sites we rewrote, the helper
 //! function declaration is dropped. Exported helpers are always preserved.
@@ -31,50 +31,55 @@ use std::collections::HashSet;
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, Callee, ComputedPropName, Expr, ExprStmt, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleItem, SimpleAssignTarget, Stmt,
+    AssignExpr, AssignOp, AssignTarget, Callee, ComputedPropName, Expr, ExprStmt, KeyValueProp,
+    MemberExpr, MemberProp, Module, ObjectLit, Prop, PropName, PropOrSpread, SimpleAssignTarget,
+    Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::helper_matcher::{
-    binding_key, fn_decl_binding_key, import_specifier_binding_key,
-    remaining_refs_outside_skipped_items, remove_fn_decls_by_binding,
-    remove_import_specifiers_by_binding, BindingKey,
-};
+use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
+use super::RewriteLevel;
 
 pub struct UnDefineProperty;
 
 impl UnDefineProperty {
-    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
-        run_un_define_property(module, local_helpers);
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+        rewrite_level: RewriteLevel,
+    ) {
+        run_un_define_property(module, local_helpers, rewrite_level);
     }
 }
 
 impl VisitMut for UnDefineProperty {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_define_property(module, &local_helpers);
+        run_un_define_property(module, &local_helpers, RewriteLevel::Standard);
     }
 }
 
-fn run_un_define_property(module: &mut Module, local_helpers: &LocalHelperContext) {
-    let helpers: HelperSet = local_helpers
-        .helpers_of_kind(TranspilerHelperKind::DefineProperty)
-        .into_keys()
-        .collect();
+fn run_un_define_property(
+    module: &mut Module,
+    local_helpers: &LocalHelperContext,
+    rewrite_level: RewriteLevel,
+) {
+    let helper_map = local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty);
+    let helpers: HelperSet = helper_map.keys().cloned().collect();
     if helpers.is_empty() {
         return;
     }
 
     let mut rewriter = CallSiteRewriter {
         helpers: &helpers,
+        rewrite_level,
         rewrote_any: false,
     };
     module.visit_mut_with(&mut rewriter);
 
     if rewriter.rewrote_any {
-        remove_unused_helpers(module, &helpers);
+        local_helpers.remove_helpers_with_dependencies(module, helper_map);
     }
 }
 
@@ -83,6 +88,7 @@ type HelperSet = HashSet<BindingKey>;
 
 struct CallSiteRewriter<'a> {
     helpers: &'a HelperSet,
+    rewrite_level: RewriteLevel,
     rewrote_any: bool,
 }
 
@@ -136,6 +142,52 @@ impl CallSiteRewriter<'_> {
         self.rewrote_any = true;
         true
     }
+
+    fn try_rewrite_fresh_object_call(&mut self, expr: &mut Expr) -> bool {
+        if self.rewrite_level < RewriteLevel::Standard {
+            return false;
+        }
+        let Expr::Call(call) = expr else {
+            return false;
+        };
+        let Callee::Expr(callee_expr) = &call.callee else {
+            return false;
+        };
+        let Expr::Ident(callee_ident) = callee_expr.as_ref() else {
+            return false;
+        };
+        if !self.helpers.contains(&binding_key(callee_ident))
+            || call.args.len() != 3
+            || call.args.iter().any(|arg| arg.spread.is_some())
+        {
+            return false;
+        }
+        let Expr::Object(target) = call.args[0].expr.as_ref() else {
+            return false;
+        };
+        if !target.props.is_empty() {
+            return false;
+        }
+
+        let key = call.args[1].expr.clone();
+        let value = call.args[2].expr.clone();
+        // Assumption: effect_free_property_key_coercion. Babel/SWC evaluate
+        // the value argument before their helper coerces `key`; a computed
+        // property coerces `key` first. The known producer shape uses ordinary
+        // primitive property keys, but minimal mode preserves the exact order.
+        *expr = Expr::Object(ObjectLit {
+            span: DUMMY_SP,
+            props: vec![PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: key,
+                }),
+                value,
+            })))],
+        });
+        self.rewrote_any = true;
+        true
+    }
 }
 
 impl VisitMut for CallSiteRewriter<'_> {
@@ -143,22 +195,9 @@ impl VisitMut for CallSiteRewriter<'_> {
         self.try_rewrite_expr_stmt(stmt);
         stmt.visit_mut_children_with(self);
     }
-}
 
-fn remove_unused_helpers(module: &mut Module, helpers: &HelperSet) {
-    let remaining = remaining_refs_outside_skipped_items(module, helpers, |item| {
-        if fn_decl_binding_key(item).is_some_and(|key| helpers.contains(&key)) {
-            return true;
-        }
-        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
-            if import.specifiers.len() == 1 {
-                let key = import_specifier_binding_key(&import.specifiers[0]);
-                return helpers.contains(&key);
-            }
-        }
-        false
-    });
-    let removable: HashSet<_> = helpers.difference(&remaining).cloned().collect();
-    remove_fn_decls_by_binding(module, &removable);
-    remove_import_specifiers_by_binding(&mut module.body, &removable);
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        self.try_rewrite_fresh_object_call(expr);
+    }
 }
