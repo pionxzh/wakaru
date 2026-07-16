@@ -1528,13 +1528,117 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     if call.args.len() < 4 {
         return None;
     }
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr);
 
     let gen_fn_arg = *call.args.remove(3).expr;
     let Expr::Fn(fn_expr) = gen_fn_arg else {
         return None;
     };
     let body = fn_expr.function.body?;
-    Some(body.stmts)
+    let mut stmts = body.stmts;
+    apply_awaiter_this_arg(&mut stmts, this_arg)?;
+    Some(stmts)
+}
+
+/// The state machine's `this` is the awaiter's first argument. Unwrapping the
+/// wrapper splices the body into the enclosing function, which rebinds `this`,
+/// so anything other than the enclosing `this` must be accounted for.
+enum AwaiterThisArg {
+    /// `this` (same binding after splicing) or `void 0` / `undefined`
+    /// (tsc emits these only where `this` is not used meaningfully).
+    Compatible,
+    /// A captured alias such as tsc's `var _this = this`; body-level `this`
+    /// references are rewritten to it.
+    Alias(Ident),
+    /// Any other expression would need re-evaluating per `this` reference;
+    /// the wrapper is preserved.
+    Unsupported,
+}
+
+fn classify_awaiter_this_arg(expr: &Expr) -> AwaiterThisArg {
+    match strip_parens(expr) {
+        Expr::This(_) => AwaiterThisArg::Compatible,
+        Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::Void => {
+            AwaiterThisArg::Compatible
+        }
+        Expr::Ident(id) if id.sym.as_ref() == "undefined" => AwaiterThisArg::Compatible,
+        Expr::Ident(id) => AwaiterThisArg::Alias(id.clone()),
+        _ => AwaiterThisArg::Unsupported,
+    }
+}
+
+/// Returns `None` when the thisArg cannot be represented after unwrapping.
+fn apply_awaiter_this_arg(stmts: &mut [Stmt], this_arg: AwaiterThisArg) -> Option<()> {
+    match this_arg {
+        AwaiterThisArg::Compatible => Some(()),
+        AwaiterThisArg::Unsupported => None,
+        AwaiterThisArg::Alias(alias) => {
+            if stmts_declare_name(stmts, &alias.sym) {
+                return None;
+            }
+            let mut replacer = ThisToAlias { alias };
+            for stmt in stmts.iter_mut() {
+                stmt.visit_mut_with(&mut replacer);
+            }
+            Some(())
+        }
+    }
+}
+
+/// Conservatively detect any binding of `name` anywhere in `stmts` (including
+/// scopes the `this` rewrite never reaches); a shadowed alias would be
+/// captured by the inner binding once printed.
+fn stmts_declare_name(stmts: &[Stmt], name: &Atom) -> bool {
+    struct BindingNameFinder<'a> {
+        name: &'a Atom,
+        found: bool,
+    }
+    impl Visit for BindingNameFinder<'_> {
+        fn visit_pat(&mut self, pat: &Pat) {
+            if let Pat::Ident(binding) = pat {
+                self.found |= binding.id.sym == *self.name;
+            }
+            pat.visit_children_with(self);
+        }
+
+        fn visit_fn_expr(&mut self, fn_expr: &swc_core::ecma::ast::FnExpr) {
+            self.found |= fn_expr
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident.sym == *self.name);
+            fn_expr.visit_children_with(self);
+        }
+
+        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
+            self.found |= fn_decl.ident.sym == *self.name;
+            fn_decl.visit_children_with(self);
+        }
+    }
+    let mut finder = BindingNameFinder { name, found: false };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+struct ThisToAlias {
+    alias: Ident,
+}
+
+impl VisitMut for ThisToAlias {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if matches!(expr, Expr::This(_)) {
+            *expr = Expr::Ident(self.alias.clone());
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+
+    // `this` is lexical only through arrows; anything with its own `this`
+    // binding keeps its references untouched.
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_class(&mut self, _class: &mut swc_core::ecma::ast::Class) {}
 }
 
 /// Transform a standalone `__awaiter(this, void0, void0, function*() {...})`
@@ -1558,9 +1662,13 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
     if contains_unresolved_generator_wrapper(body, helpers) {
         return;
     }
+    let this_arg = classify_awaiter_this_arg(&call.args[0].expr);
     let fn_span = fn_expr.function.span;
 
     let mut stmts = body.stmts.clone();
+    if apply_awaiter_this_arg(&mut stmts, this_arg).is_none() {
+        return;
+    }
     replace_yield_with_await(&mut stmts);
 
     let async_fn = Expr::Fn(swc_core::ecma::ast::FnExpr {

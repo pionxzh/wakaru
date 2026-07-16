@@ -982,6 +982,129 @@ function init() {
     );
 }
 
+// ── awaiter thisArg handling ────────────────────────────────────────────────
+
+#[test]
+fn awaiter_with_captured_this_alias_rewrites_body_this() {
+    // tsc captures the enclosing `this` (`var _this = this`) when the awaiter
+    // sits inside a plain callback. Splicing the body into that callback
+    // rebinds `this`, so references must be rewritten to the alias.
+    let input = r#"
+function make() {
+  var self = this;
+  return function () {
+    return __awaiter(self, void 0, void 0, function* () {
+      yield ready();
+      return this.items.map(() => this.tag);
+    });
+  };
+}
+"#;
+    let expected = r#"
+function make() {
+  var self = this;
+  return async function() {
+    await ready();
+    return self.items.map(() => self.tag);
+  };
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn awaiter_alias_rewrite_preserves_nested_function_this() {
+    let input = r#"
+function make() {
+  var self = this;
+  return function () {
+    return __awaiter(self, void 0, void 0, function* () {
+      yield ready();
+      return function () { return this.own; };
+    });
+  };
+}
+"#;
+    let expected = r#"
+function make() {
+  var self = this;
+  return async function() {
+    await ready();
+    return function() {
+      return this.own;
+    };
+  };
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn awaiter_with_expression_this_arg_is_preserved() {
+    // A non-identifier thisArg would need re-evaluating per `this` reference;
+    // the wrapper must be preserved instead.
+    let input = r#"
+function load(ctx) {
+  return __awaiter(ctx.scope, void 0, void 0, function* () {
+    yield ready();
+    return this.items;
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(ctx.scope, void 0, void 0, function*()"),
+        "an expression thisArg must preserve the awaiter wrapper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function load"),
+        "an expression thisArg must not be marked async, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_alias_shadowed_inside_body_is_preserved() {
+    let input = r#"
+function make() {
+  var self = this;
+  return function () {
+    return __awaiter(self, void 0, void 0, function* () {
+      var self = other();
+      yield ready();
+      return this.items;
+    });
+  };
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __awaiter(self, void 0, void 0, function*()"),
+        "a shadowed alias must preserve the awaiter wrapper, got:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_iife_with_captured_this_alias_rewrites_body_this() {
+    let input = r#"
+var self = this;
+__awaiter(self, void 0, void 0, function* () {
+  yield tick();
+  self_report(this.count);
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("(async function()"),
+        "alias-thisArg awaiter IIFE should still unwrap, got:\n{output}"
+    );
+    assert!(
+        output.contains("self_report(self.count);"),
+        "IIFE body `this` must be rewritten to the alias, got:\n{output}"
+    );
+}
+
 #[test]
 fn async_with_yield_arg_consuming_previous_sent() {
     // Terser can fold TypeScript output so one yield argument consumes the
