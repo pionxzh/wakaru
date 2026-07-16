@@ -482,6 +482,45 @@ async function loadValue(id) {
 }
 
 #[test]
+fn preserves_unmatched_statements_between_owned_rewrites() {
+    let input = r#"
+const { useState } = React;
+function Component(id) {
+    let h;
+    let value;
+    const config = {
+        nested: { values: [1, 2, 3] },
+        read() { return this.nested.values; }
+    };
+    h = load(id);
+    value = h;
+    let count;
+    let setCount;
+    const pair = useState(0);
+    count = pair[0];
+    setCount = pair[1];
+    consume(config, value, count, setCount);
+}
+"#;
+    let expected = r#"
+const { useState } = React;
+function Component(id) {
+    let h;
+    let value;
+    const config = {
+        nested: { values: [1, 2, 3] },
+        read() { return this.nested.values; }
+    };
+    value = load(id);
+    const [count, setCount] = useState(0);
+    consume(config, value, count, setCount);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn minimal_preserves_adjacent_assignment_alias() {
     let input = r#"
 async function loadValue(id) {

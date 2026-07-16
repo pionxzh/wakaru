@@ -737,14 +737,16 @@ fn inline_temp_vars(
 }
 
 fn forward_adjacent_assignment_aliases(
-    stmts: Vec<Stmt>,
+    mut stmts: Vec<Stmt>,
     unresolved_mark: Option<Mark>,
 ) -> Vec<Stmt> {
     if stmts.len() < 2 {
         return stmts;
     }
 
-    let mut result = Vec::with_capacity(stmts.len());
+    // Decide every rewrite before moving statements out of the input. The
+    // safety checks inspect declarations and uses across the whole list.
+    let mut replacements = vec![None; stmts.len()];
     let mut idx = 0;
     while idx < stmts.len() {
         if idx + 1 < stmts.len() {
@@ -758,17 +760,28 @@ fn forward_adjacent_assignment_aliases(
                     &target.id,
                     unresolved_mark,
                 ) {
-                    let mut stmt = stmts[idx].clone();
-                    replace_assignment_target_ident(&mut stmt, target);
-                    result.push(stmt);
+                    replacements[idx] = Some(target);
                     idx += 2;
                     continue;
                 }
             }
         }
 
-        result.push(stmts[idx].clone());
         idx += 1;
+    }
+
+    let mut result = Vec::with_capacity(stmts.len());
+    idx = 0;
+    while idx < stmts.len() {
+        let mut stmt = take_stmt(&mut stmts, idx);
+        if let Some(target) = replacements[idx].take() {
+            replace_assignment_target_ident(&mut stmt, target);
+            result.push(stmt);
+            idx += 2;
+        } else {
+            result.push(stmt);
+            idx += 1;
+        }
     }
 
     result
@@ -1752,7 +1765,7 @@ struct FoldedUseStateAssignment {
 }
 
 fn fold_use_state_assignment_tuple_reads(
-    stmts: Vec<Stmt>,
+    mut stmts: Vec<Stmt>,
     use_state_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
     let mut result = Vec::with_capacity(stmts.len());
@@ -1781,7 +1794,7 @@ fn fold_use_state_assignment_tuple_reads(
             }
         }
 
-        result.push(stmts[i].clone());
+        result.push(take_stmt(&mut stmts, i));
         i += 1;
     }
 
