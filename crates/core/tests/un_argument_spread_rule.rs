@@ -238,6 +238,38 @@ function collect(output, args) {
 }
 
 #[test]
+fn preserves_unmatched_statements_between_owned_split_apply_rewrites() {
+    let input = r#"
+function collect(first, second, args) {
+  let firstMethod;
+  let secondMethod;
+  const config = {
+    nested: { values: [1, 2, 3] },
+    read() { return this.nested.values; }
+  };
+  firstMethod = first.push;
+  firstMethod.apply(first, args);
+  observe(config);
+  secondMethod = second.push;
+  secondMethod.apply(second, args);
+}
+"#;
+    let expected = r#"
+function collect(first, second, args) {
+  const config = {
+    nested: { values: [1, 2, 3] },
+    read() { return this.nested.values; }
+  };
+  first.push(...args);
+  observe(config);
+  second.push(...args);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn preserves_split_memoized_method_apply_when_temps_are_used_later() {
     let input = r#"
 function collect(output, args) {

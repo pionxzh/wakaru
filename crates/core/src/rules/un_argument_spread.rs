@@ -42,7 +42,7 @@ impl VisitMut for UnArgumentSpread {
             return;
         }
 
-        let old = std::mem::take(stmts);
+        let mut old = std::mem::take(stmts);
         let mut index = 0;
         while index < old.len() {
             if index + 1 < old.len() {
@@ -70,7 +70,10 @@ impl VisitMut for UnArgumentSpread {
                 }
             }
 
-            stmts.push(old[index].clone());
+            stmts.push(std::mem::replace(
+                &mut old[index],
+                Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+            ));
             index += 1;
         }
     }
