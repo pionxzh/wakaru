@@ -949,3 +949,183 @@ use(a, b);
         "pre-existing dead sub-helper imports should survive: {output}"
     );
 }
+
+#[test]
+fn recovers_sliced_callback_prologue_as_parameter_pattern() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    const value = sliced(entry, 2)[1];
+    return value != null;
+});
+"#;
+    let expected = r#"
+const out = entries.filter(([, value]) => value != null);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn recovers_direct_sliced_callback_comparison() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    return sliced(entry, 2)[1] != null;
+});
+"#;
+    let expected = r#"
+const out = entries.filter(([, entry]) => entry != null);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn recovers_direct_callback_with_inlined_babel_dispatcher() {
+    let input = r#"
+function arrayWithHoles(value) {
+    if (Array.isArray(value)) return value;
+}
+function sliced(value, limit) {
+    return arrayWithHoles(value) || iterable(value, limit) || unsupported(value, limit) || fail();
+}
+const out = entries.filter(function(entry) {
+    return sliced(entry, 2)[1] != null;
+});
+"#;
+    let expected = r#"
+const out = entries.filter(([, entry]) => entry != null);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn recovers_direct_callback_after_unused_temp_declarations() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    let tuple, value;
+    return sliced(entry, 2)[1] != null;
+});
+"#;
+    let expected = r#"
+const out = entries.filter(([, entry]) => {
+    return entry != null;
+});
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn recovers_multiple_sliced_sort_parameters() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+entries.sort(function(left, right) {
+    const leftKey = sliced(left, 1)[0];
+    const rightKey = sliced(right, 1)[0];
+    return leftKey.localeCompare(rightKey);
+});
+"#;
+    let expected = r#"
+entries.sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_callback_when_source_parameter_has_another_use() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.map(function(entry) {
+    const first = sliced(entry, 1)[0];
+    return [first, entry.length];
+});
+"#;
+    let output = render(input);
+    assert!(output.contains("sliced(entry, 1)[0]"), "{output}");
+    assert!(output.contains("entry.length"), "{output}");
+}
+
+#[test]
+fn preserves_callback_when_recovered_binding_collides_with_parameter() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.map(function(entry, value) {
+    var value = sliced(entry, 1)[0];
+    return value;
+});
+"#;
+    let output = render(input);
+    assert!(output.contains("sliced(entry, 1)[0]"), "{output}");
+}
+
+#[test]
+fn preserves_lazy_callback_helper_access() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.map(function(entry) {
+    return enabled ? sliced(entry, 1)[0] : fallback;
+});
+"#;
+    let output = render(input);
+    assert!(output.contains("sliced(entry, 1)[0]"), "{output}");
+}
+
+#[test]
+fn preserves_callback_with_arguments_or_direct_eval() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const first = entries.map(function(entry) {
+    const value = sliced(entry, 1)[0];
+    return [value, arguments.length];
+});
+const second = entries.map(function(entry) {
+    const value = sliced(entry, 1)[0];
+    eval(code);
+    return value;
+});
+"#;
+    let output = render(input);
+    assert_eq!(output.matches("sliced(entry, 1)[0]").count(), 2, "{output}");
+}
+
+#[test]
+fn preserves_generator_callback_parameter_timing() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const iterate = function* (entry) {
+    const value = sliced(entry, 1)[0];
+    yield value;
+};
+"#;
+    let output = render(input);
+    assert!(output.contains("sliced(entry, 1)[0]"), "{output}");
+}
+
+#[test]
+fn minimal_preserves_sliced_callback_parameter_shape() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const out = entries.filter(function(entry) {
+    const value = sliced(entry, 2)[1];
+    return value != null;
+});
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+        }),
+        input,
+    );
+}
+
+#[test]
+fn spread_sliced_helper_arguments_are_preserved() {
+    let input = r#"
+import sliced from "@babel/runtime/helpers/slicedToArray";
+const tuple = sliced(...args);
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        input,
+    );
+}

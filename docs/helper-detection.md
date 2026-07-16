@@ -213,6 +213,16 @@ Priority targets, roughly ordered by real-world frequency:
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
 
+`UnSlicedToArray` also restores callback-local destructuring when a proven
+helper is applied directly to one callback parameter. It accepts either an
+unconditional leading declaration such as
+`const value = sliced(entry, 2)[1]` or a direct equality comparison of that
+indexed result. The parameter must have no other uses, the limit and index must
+be bounded literals, and the recovered array pattern retains trailing elisions
+so it consumes exactly the helper's requested number of iterator values.
+Conditional/deferred access, `arguments`, direct `eval`, `with`, and minimal
+rewrite mode all preserve the lowered form.
+
 ### Tagged template body shapes
 
 `taggedTemplateLiteral` detection uses signal-based matching on a 2-param

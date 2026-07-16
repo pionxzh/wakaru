@@ -284,8 +284,11 @@ function expectedNeedleGroups(snippet, expectedNeedles) {
 function collectShapes(snippet, transformers) {
   const groups = new Map();
   const shapes = [];
+  const selectedTransformers = snippet.transformerFilter
+    ? transformers.filter(snippet.transformerFilter)
+    : transformers;
 
-  for (const transformer of [...transformers, ...(snippet.extraTransformers ?? [])]) {
+  for (const transformer of [...selectedTransformers, ...(snippet.extraTransformers ?? [])]) {
     let lowered;
     try {
       lowered = transformer.run(snippet.source);

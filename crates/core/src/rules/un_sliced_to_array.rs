@@ -4,9 +4,10 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
-    ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, Callee, Decl, Expr, ExprStmt, Function, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 
 use super::cross_module_helper_refs::{
@@ -17,6 +18,7 @@ use super::decl_utils::{
     can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
     UninitializedDeclKind,
 };
+use super::eval_utils::is_direct_eval_call;
 use super::helper_matcher::BindingKey;
 use super::transpiler_helper_utils::{
     collect_maybe_array_like_bindings, extract_inline_sliced_to_array_call,
@@ -220,6 +222,32 @@ struct SlicedToArrayRewriter<'a> {
 }
 
 impl VisitMut for SlicedToArrayRewriter<'_> {
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        function.visit_mut_children_with(self);
+        if self.level >= RewriteLevel::Standard {
+            rewrite_function_callback_params(
+                function,
+                self.local_helpers,
+                self.cross_module_helpers,
+                self.maybe_array_like,
+                self.unresolved_mark,
+            );
+        }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        arrow.visit_mut_children_with(self);
+        if self.level >= RewriteLevel::Standard {
+            rewrite_arrow_callback_params(
+                arrow,
+                self.local_helpers,
+                self.cross_module_helpers,
+                self.maybe_array_like,
+                self.unresolved_mark,
+            );
+        }
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
         fold_sliced_to_array_module_item_groups(
@@ -264,6 +292,464 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
                 self.maybe_array_like,
                 self.unresolved_mark,
             );
+        }
+    }
+}
+
+fn rewrite_function_callback_params(
+    function: &mut Function,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+    maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
+) {
+    if function.is_generator {
+        return;
+    }
+    let Some(body) = function.body.as_mut() else {
+        return;
+    };
+    if callback_body_has_dynamic_scope_hazard(body) {
+        return;
+    }
+
+    loop {
+        let matched = function
+            .params
+            .iter()
+            .enumerate()
+            .find_map(|(index, param)| {
+                let Pat::Ident(source) = &param.pat else {
+                    return None;
+                };
+                if count_param_uses_in_function(&function.params, body, &source.id) != 1 {
+                    return None;
+                }
+                extract_callback_prologue(
+                    body.stmts.first()?,
+                    &source.id,
+                    local_helpers,
+                    cross_module_helpers,
+                    maybe_array_like,
+                    unresolved_mark,
+                )
+                .filter(|pattern| {
+                    callback_pattern_binding(pattern).is_some_and(|binding| {
+                        function
+                            .params
+                            .iter()
+                            .enumerate()
+                            .all(|(other_index, param)| {
+                                other_index == index
+                                    || !pat_binds_symbol(&param.pat, &binding.id.sym)
+                            })
+                    })
+                })
+                .map(|pattern| (index, pattern))
+            });
+        let Some((param_index, pattern)) = matched else {
+            break;
+        };
+        function.params[param_index].pat = Pat::Array(pattern);
+        body.stmts.remove(0);
+    }
+
+    for param_index in 0..function.params.len() {
+        let Pat::Ident(source) = &function.params[param_index].pat else {
+            continue;
+        };
+        if count_param_uses_in_function(&function.params, body, &source.id) != 1 {
+            continue;
+        }
+        if function
+            .params
+            .iter()
+            .enumerate()
+            .any(|(other_index, param)| {
+                other_index != param_index && pat_binds_symbol(&param.pat, &source.id.sym)
+            })
+        {
+            continue;
+        }
+        let source = source.clone();
+        let Some(expr) = callback_direct_return_expr(&mut body.stmts) else {
+            continue;
+        };
+        let Some(pattern) = rewrite_direct_callback_access(
+            expr,
+            &source,
+            local_helpers,
+            cross_module_helpers,
+            maybe_array_like,
+            unresolved_mark,
+        ) else {
+            continue;
+        };
+        function.params[param_index].pat = Pat::Array(pattern);
+    }
+}
+
+fn rewrite_arrow_callback_params(
+    arrow: &mut ArrowExpr,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+    maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
+) {
+    if arrow.is_generator {
+        return;
+    }
+    if callback_arrow_has_dynamic_scope_hazard(arrow) {
+        return;
+    }
+
+    if let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() {
+        loop {
+            let matched = arrow.params.iter().enumerate().find_map(|(index, param)| {
+                let Pat::Ident(source) = param else {
+                    return None;
+                };
+                if count_param_uses_in_arrow(&arrow.params, body, &source.id) != 1 {
+                    return None;
+                }
+                extract_callback_prologue(
+                    body.stmts.first()?,
+                    &source.id,
+                    local_helpers,
+                    cross_module_helpers,
+                    maybe_array_like,
+                    unresolved_mark,
+                )
+                .filter(|pattern| {
+                    callback_pattern_binding(pattern).is_some_and(|binding| {
+                        arrow.params.iter().enumerate().all(|(other_index, param)| {
+                            other_index == index || !pat_binds_symbol(param, &binding.id.sym)
+                        })
+                    })
+                })
+                .map(|pattern| (index, pattern))
+            });
+            let Some((param_index, pattern)) = matched else {
+                break;
+            };
+            arrow.params[param_index] = Pat::Array(pattern);
+            body.stmts.remove(0);
+        }
+    }
+
+    for param_index in 0..arrow.params.len() {
+        let Pat::Ident(source) = &arrow.params[param_index] else {
+            continue;
+        };
+        if count_param_uses_in_arrow_body(&arrow.params, &arrow.body, &source.id) != 1 {
+            continue;
+        }
+        if arrow.params.iter().enumerate().any(|(other_index, param)| {
+            other_index != param_index && pat_binds_symbol(param, &source.id.sym)
+        }) {
+            continue;
+        }
+        let source = source.clone();
+        let expr = match arrow.body.as_mut() {
+            BlockStmtOrExpr::Expr(expr) => expr,
+            BlockStmtOrExpr::BlockStmt(body) => {
+                let Some(expr) = callback_direct_return_expr(&mut body.stmts) else {
+                    continue;
+                };
+                expr
+            }
+        };
+        let Some(pattern) = rewrite_direct_callback_access(
+            expr,
+            &source,
+            local_helpers,
+            cross_module_helpers,
+            maybe_array_like,
+            unresolved_mark,
+        ) else {
+            continue;
+        };
+        arrow.params[param_index] = Pat::Array(pattern);
+    }
+}
+
+fn callback_direct_return_expr(stmts: &mut [Stmt]) -> Option<&mut Box<Expr>> {
+    let (last, prefix) = stmts.split_last_mut()?;
+    if !prefix.iter().all(|stmt| {
+        matches!(
+            stmt,
+            Stmt::Decl(Decl::Var(var))
+                if var.decls.iter().all(|decl| decl.init.is_none())
+        )
+    }) {
+        return None;
+    }
+    let Stmt::Return(ReturnStmt {
+        arg: Some(expr), ..
+    }) = last
+    else {
+        return None;
+    };
+    Some(expr)
+}
+
+fn extract_callback_prologue(
+    stmt: &Stmt,
+    source_param: &swc_core::ecma::ast::Ident,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+    maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
+) -> Option<ArrayPat> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let (index, length) = extract_callback_access(
+        decl.init.as_deref()?,
+        source_param,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    )?;
+    Some(callback_array_pattern(binding.clone(), index, length))
+}
+
+fn rewrite_direct_callback_access(
+    expr: &mut Expr,
+    source: &BindingIdent,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+    maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
+) -> Option<ArrayPat> {
+    enum AccessPosition {
+        Root,
+        BinaryLeft,
+        BinaryRight,
+    }
+
+    let direct = extract_callback_access(
+        expr,
+        &source.id,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    );
+    let (position, index, length) = if let Some((index, length)) = direct {
+        (AccessPosition::Root, index, length)
+    } else {
+        let Expr::Bin(binary) = expr else {
+            return None;
+        };
+        if !matches!(
+            binary.op,
+            BinaryOp::EqEq | BinaryOp::NotEq | BinaryOp::EqEqEq | BinaryOp::NotEqEq
+        ) {
+            return None;
+        }
+        let left = extract_callback_access(
+            &binary.left,
+            &source.id,
+            local_helpers,
+            cross_module_helpers,
+            maybe_array_like,
+            unresolved_mark,
+        );
+        let right = extract_callback_access(
+            &binary.right,
+            &source.id,
+            local_helpers,
+            cross_module_helpers,
+            maybe_array_like,
+            unresolved_mark,
+        );
+        match (left, right) {
+            (Some((index, length)), None) => (AccessPosition::BinaryLeft, index, length),
+            (None, Some((index, length))) => (AccessPosition::BinaryRight, index, length),
+            _ => return None,
+        }
+    };
+
+    let replacement = Box::new(Expr::Ident(source.id.clone()));
+    match position {
+        AccessPosition::Root => *expr = *replacement,
+        AccessPosition::BinaryLeft => {
+            let Expr::Bin(binary) = expr else {
+                unreachable!()
+            };
+            binary.left = replacement;
+        }
+        AccessPosition::BinaryRight => {
+            let Expr::Bin(binary) = expr else {
+                unreachable!()
+            };
+            binary.right = replacement;
+        }
+    }
+    Some(callback_array_pattern(source.clone(), index, length))
+}
+
+fn extract_callback_access(
+    expr: &Expr,
+    source_param: &swc_core::ecma::ast::Ident,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+    maybe_array_like: &HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
+) -> Option<(usize, usize)> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let index = member_index(member)?;
+    let Expr::Call(call) = strip_parens(&member.obj) else {
+        return None;
+    };
+    let (source, length) = extract_sliced_call_args(
+        call,
+        local_helpers,
+        cross_module_helpers,
+        maybe_array_like,
+        unresolved_mark,
+    )?;
+    let Expr::Ident(source) = strip_parens(source) else {
+        return None;
+    };
+    if !same_sliced_ref_ident(source, source_param) {
+        return None;
+    }
+    let length = numeric_length(length)?;
+    (index < length).then_some((index, length))
+}
+
+fn callback_array_pattern(binding: BindingIdent, index: usize, length: usize) -> ArrayPat {
+    let mut elems = vec![None; length];
+    elems[index] = Some(Pat::Ident(binding));
+    ArrayPat {
+        span: DUMMY_SP,
+        elems,
+        optional: false,
+        type_ann: None,
+    }
+}
+
+fn callback_pattern_binding(pattern: &ArrayPat) -> Option<&BindingIdent> {
+    pattern.elems.iter().find_map(|element| match element {
+        Some(Pat::Ident(binding)) => Some(binding),
+        _ => None,
+    })
+}
+
+fn pat_binds_symbol(pat: &Pat, symbol: &swc_core::atoms::Atom) -> bool {
+    struct BindingFinder<'a> {
+        symbol: &'a swc_core::atoms::Atom,
+        found: bool,
+    }
+
+    impl Visit for BindingFinder<'_> {
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            if binding.id.sym == *self.symbol {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = BindingFinder {
+        symbol,
+        found: false,
+    };
+    pat.visit_with(&mut finder);
+    finder.found
+}
+
+fn count_param_uses_in_function(
+    params: &[Param],
+    body: &BlockStmt,
+    target: &swc_core::ecma::ast::Ident,
+) -> usize {
+    let mut counter = CallbackParamUseCounter { target, count: 0 };
+    params.visit_with(&mut counter);
+    body.visit_with(&mut counter);
+    counter.count
+}
+
+fn count_param_uses_in_arrow(
+    params: &[Pat],
+    body: &BlockStmt,
+    target: &swc_core::ecma::ast::Ident,
+) -> usize {
+    let mut counter = CallbackParamUseCounter { target, count: 0 };
+    params.visit_with(&mut counter);
+    body.visit_with(&mut counter);
+    counter.count
+}
+
+fn count_param_uses_in_arrow_body(
+    params: &[Pat],
+    body: &BlockStmtOrExpr,
+    target: &swc_core::ecma::ast::Ident,
+) -> usize {
+    let mut counter = CallbackParamUseCounter { target, count: 0 };
+    params.visit_with(&mut counter);
+    body.visit_with(&mut counter);
+    counter.count
+}
+
+struct CallbackParamUseCounter<'a> {
+    target: &'a swc_core::ecma::ast::Ident,
+    count: usize,
+}
+
+impl Visit for CallbackParamUseCounter<'_> {
+    fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if same_sliced_ref_ident(ident, self.target) {
+            self.count += 1;
+        }
+    }
+}
+
+fn callback_body_has_dynamic_scope_hazard(body: &BlockStmt) -> bool {
+    let mut finder = CallbackDynamicScopeFinder { found: false };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn callback_arrow_has_dynamic_scope_hazard(arrow: &ArrowExpr) -> bool {
+    let mut finder = CallbackDynamicScopeFinder { found: false };
+    arrow.body.visit_with(&mut finder);
+    finder.found
+}
+
+struct CallbackDynamicScopeFinder {
+    found: bool,
+}
+
+impl Visit for CallbackDynamicScopeFinder {
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if is_direct_eval_call(call) {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_with_stmt(&mut self, _: &swc_core::ecma::ast::WithStmt) {
+        self.found = true;
+    }
+
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if ident.sym == "arguments" {
+            self.found = true;
         }
     }
 }
@@ -1270,6 +1756,9 @@ fn extract_sliced_call_args<'a>(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
 
     if is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers, unresolved_mark)
         && call.args.len() == 2

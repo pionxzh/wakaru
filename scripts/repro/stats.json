@@ -1,19 +1,19 @@
 {
-  "commit": "3dde38bc",
-  "date": "2026-07-13",
+  "commit": "76af537b",
+  "date": "2026-07-16",
   "aggregate": {
-    "yes": 1681,
-    "total": 1743,
+    "yes": 1683,
+    "total": 1745,
     "pct": 96.4
   },
   "matrices": [
     {
       "name": "array-spread-rest",
-      "yes": 203,
+      "yes": 205,
       "no": 34,
       "error": 0,
-      "total": 237,
-      "pct": 85.7
+      "total": 239,
+      "pct": 85.8
     },
     {
       "name": "async-await",

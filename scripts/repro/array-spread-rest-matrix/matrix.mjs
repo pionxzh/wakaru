@@ -126,6 +126,17 @@ const snippets = [
     rejected: [...ARRAY_HELPER_REJECTED, "_useState[0]", "_useState[1]"],
   },
   {
+    name: "array-destructure-callback",
+    source:
+      "const out = items.filter(([, value]) => value != null);\nuse(out);\n",
+    expected: ["filter(([,", "!= null"],
+    rejected: [...ARRAY_HELPER_REJECTED, ")[1]"],
+    execute: { env: { items: [["a", null], ["b", 2], ["c", 3]] } },
+    // This row targets the helper-backed callback shape. Loose/direct-index
+    // lowerings are a different recovery problem and would dilute this oracle.
+    transformerFilter: ({ name }) => name.includes("-spec-terser-compress"),
+  },
+  {
     name: "array-destructure-assignment",
     source:
       'import { useState } from "react";\nfunction Component() {\n  var current;\n  var setCurrent;\n  [current, setCurrent] = useState(value);\n  use(current, setCurrent);\n}\nComponent();\n',
