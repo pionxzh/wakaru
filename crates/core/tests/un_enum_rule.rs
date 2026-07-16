@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline_until};
+use common::{assert_eq_normalized, render_pipeline, render_pipeline_until};
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{BindingIdent, Decl, EsVersion, ModuleItem, Pat, Stmt};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -80,6 +80,24 @@ var LocalMode = {
 export { LocalMode as Mode };
 "#;
     assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn pipeline_promotes_adjacent_exported_enum_to_const() {
+    let input = r#"
+export let Mode;
+(function (e) {
+  e["Dev"] = "dev";
+})(Mode || (Mode = {}));
+use(Mode);
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: "dev"
+};
+use(Mode);
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
 }
 
 #[test]

@@ -68,6 +68,107 @@ fn standard_merges_inert_adjacent_object_literal() {
 }
 
 #[test]
+fn standard_merges_top_level_literal_object_as_const() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0, 0: 'Dev' }; use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("const Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("let Mode;"),
+        "bare decl should be gone: {out}"
+    );
+}
+
+#[test]
+fn standard_merges_exported_top_level_literal_object_as_const() {
+    let out = apply_with_level(
+        "export let Mode; Mode = { Dev: 0, 0: 'Dev' };",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("export const Mode = {"), "got: {out}");
+    assert!(!out.contains("export let Mode;"), "got: {out}");
+}
+
+#[test]
+fn top_level_merge_stays_let_when_later_reassigned() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0 }; Mode = other; use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(out.contains("Mode = other;"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "later write forbids const: {out}"
+    );
+}
+
+#[test]
+fn top_level_merge_stays_let_when_direct_eval_can_reassign() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0 }; eval('Mode = other'); use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "direct eval forbids const: {out}"
+    );
+}
+
+#[test]
+fn top_level_merge_stays_let_when_unknown_direct_eval_can_reassign() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0 }; eval(source); use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "unknown direct eval forbids const: {out}"
+    );
+}
+
+#[test]
+fn unrelated_known_direct_eval_allows_const() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0 }; eval('other = value'); use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("const Mode = {"), "got: {out}");
+}
+
+#[test]
+fn top_level_merge_stays_let_when_nested_function_reassigns() {
+    let out = apply_with_level(
+        "let Mode; Mode = { Dev: 0 }; function replace(){ Mode = other; } use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "nested write forbids const: {out}"
+    );
+}
+
+#[test]
+fn standard_preserves_top_level_non_literal_object_assignment() {
+    let input = "let Mode; Mode = { Dev: makeMode() }; use(Mode);";
+    let out = apply_with_level(input, RewriteLevel::Standard);
+    assert!(out.contains("let Mode;"), "got: {out}");
+    assert!(out.contains("Mode = {"), "got: {out}");
+}
+
+#[test]
+fn standard_preserves_top_level_observable_computed_key() {
+    let input = "let Mode; Mode = { [{}]: 0 }; use(Mode);";
+    let out = apply_with_level(input, RewriteLevel::Standard);
+    assert!(out.contains("let Mode;"), "got: {out}");
+    assert!(out.contains("Mode = {"), "got: {out}");
+}
+
+#[test]
 fn standard_does_not_merge_observable_call_rhs() {
     let out = apply_with_level(
         "function f(){ let x; x = g(); function g(){ return x; } return x; }",

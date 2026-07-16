@@ -297,6 +297,12 @@ rationale, or level gating appear.
   alias inlining (`const E = TypeError` → inline) are `standard` (assumes
   `stable_builtins`); index-based destructuring grouping (`obj[0]`, `obj[1]`
   → array destructuring) is `aggressive`.
+- **MergeDeclarationInit** — runs after SmartInline and UnDestructuring so their
+  assignment-form temporaries remain available. Its general statement-list
+  merge keeps the existing declaration kind. The narrower top-level form only
+  joins an exactly-adjacent, recursively literal initializer; it promotes `let`
+  (including `export let`) to `const` only when the remaining module has no
+  direct write or relevant direct-eval source.
 - **SmartRename** — after SmartInline (aliases removed, names stabilized).
   Candidate consumer of source-map-recovered names.
 - **UnReturn** — removes tail `return undefined`; runs before the final

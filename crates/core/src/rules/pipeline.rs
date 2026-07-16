@@ -684,8 +684,10 @@ define_rule_registry! {
         "UnDestructuring"
     ]),
     // Fold hoisted `let x; … x = e` (from async/regenerator lowering) back into
-    // `let x = e`. Runs after UnDestructuring/SmartInline so it does not disturb
-    // the assignment-form temps those rules rely on.
+    // `let x = e`, and recover an exactly-adjacent top-level literal initializer
+    // as `const` when later writes and direct eval cannot mutate it. Runs after
+    // UnDestructuring/SmartInline so it does not disturb the assignment-form
+    // temps those rules rely on.
     ("MergeDeclarationInit", Cleanup, run_merge_declaration_init, standard_or_above, requires: [
         "SmartInline"
     ]),
