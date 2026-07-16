@@ -786,6 +786,39 @@ function load() {
 }
 
 #[test]
+fn nested_unsupported_generator_does_not_roll_back_outer_async_transform() {
+    let input = r#"
+function load() {
+  return __awaiter(this, void 0, void 0, function* () {
+    function nested() {
+      return __generator(this, function (_a) {
+        switch (_a.label) {
+          case 0:
+            return [9, work()];
+        }
+      });
+    }
+    yield fetch_items();
+    return nested;
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function load()"),
+        "an independent nested wrapper must not block outer recovery, got:\n{output}"
+    );
+    assert!(
+        output.contains("await fetch_items();"),
+        "the outer generator yield should become await, got:\n{output}"
+    );
+    assert!(
+        output.contains("return __generator(this, function(_a)"),
+        "the unsupported nested wrapper must remain intact, got:\n{output}"
+    );
+}
+
+#[test]
 fn async_with_yield_arg_consuming_previous_sent() {
     // Terser can fold TypeScript output so one yield argument consumes the
     // previous _a.sent() value: return [4, (response = _a.sent()).json()].
@@ -1144,6 +1177,35 @@ __awaiter(this, void 0, void 0, function* () {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn nested_arrow_generator_does_not_block_standalone_awaiter_iife() {
+    let input = r#"
+__awaiter(this, void 0, void 0, function* () {
+  const nested = () => __generator(this, function (_a) {
+    switch (_a.label) {
+      case 0:
+        return [9, work()];
+    }
+  });
+  yield setup();
+  return nested;
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("(async function()"),
+        "an independent nested arrow must not block IIFE recovery, got:\n{output}"
+    );
+    assert!(
+        output.contains("await setup();"),
+        "the standalone awaiter yield should become await, got:\n{output}"
+    );
+    assert!(
+        output.contains("=>__generator(this, function(_a)"),
+        "the unsupported nested arrow wrapper must remain intact, got:\n{output}"
+    );
 }
 
 // ── Terser-compressed state machines ────────────────────────────────────────

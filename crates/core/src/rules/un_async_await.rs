@@ -210,9 +210,11 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     }
 }
 
-/// An awaiter wrapper is only safe to remove when its nested generator wrapper
-/// was decoded too. Otherwise the async function would return the generator
-/// iterator itself instead of awaiting the state machine's result.
+/// An awaiter wrapper is only safe to remove when its generator wrapper in the
+/// current function body was decoded too. Otherwise the async function would
+/// return the generator iterator itself instead of awaiting the state machine's
+/// result. Independent nested callables are transformed on their own and must
+/// not make the containing awaiter roll back.
 fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelperContext) -> bool {
     struct Finder<'a> {
         helpers: &'a AsyncHelperContext,
@@ -220,6 +222,10 @@ fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelper
     }
 
     impl Visit for Finder<'_> {
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
         fn visit_call_expr(&mut self, call: &CallExpr) {
             if self.helpers.is_generator_call(call)
                 && call
