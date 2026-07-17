@@ -1,7 +1,92 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
+use crate::test_tracing::record_spans;
 use crate::unpacker::UnpackedModule;
+
+#[test]
+fn webpack5_normal_unpack_consumes_prepared_ast_without_round_trip() {
+    let source = r#"
+(self.webpackChunkapp = self.webpackChunkapp || []).push([[1], {
+    1: (module, exports, require) => {
+        module.exports = { value: 1 };
+    }
+}]);
+"#;
+
+    let (output, spans) = record_spans(|| {
+        unpack(
+            source,
+            DecompileOptions {
+                filename: "chunk.js".to_string(),
+                heuristic_split: false,
+                ..Default::default()
+            },
+        )
+        .expect("webpack chunk should unpack")
+    });
+
+    assert_eq!(output.modules.len(), 1);
+    assert!(output.modules[0].1.contains("value: 1"));
+    for expected in [
+        "webpack5: prepare_module",
+        "phase1: rules",
+        "phase2: rules",
+        "phase2: emit",
+    ] {
+        assert!(
+            spans.iter().any(|name| name == expected),
+            "missing {expected:?} in {spans:?}"
+        );
+    }
+    for skipped in [
+        "unpacker: prepared emit",
+        "phase1: parse",
+        "phase1: resolver",
+    ] {
+        assert!(
+            !spans.iter().any(|name| name == skipped),
+            "unexpected round-trip span {skipped:?} in {spans:?}"
+        );
+    }
+}
+
+#[test]
+fn webpack5_source_map_mode_materializes_before_phase1() {
+    let source = r#"
+(self.webpackChunkapp = self.webpackChunkapp || []).push([[1], {
+    1: (module) => {
+        module.exports = 1;
+    }
+}]);
+"#;
+
+    let (output, spans) = record_spans(|| {
+        unpack(
+            source,
+            DecompileOptions {
+                filename: "chunk.js".to_string(),
+                heuristic_split: false,
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("webpack chunk should unpack with an output source map")
+    });
+
+    assert_eq!(output.modules.len(), 1);
+    assert_eq!(output.source_maps.len(), 1);
+    for expected in [
+        "unpacker: prepared emit",
+        "phase1: parse",
+        "phase1: resolver",
+    ] {
+        assert!(
+            spans.iter().any(|name| name == expected),
+            "missing materialized-path span {expected:?} in {spans:?}"
+        );
+    }
+}
 
 #[test]
 fn nested_scope_split_gate_requires_heuristic_split_and_aggressive() {

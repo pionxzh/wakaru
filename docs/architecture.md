@@ -100,8 +100,10 @@ parallel module decompilation (see "Multi-module pipeline" section below for
 the full design):
 ```
 unpack_bundle(source)
-  → Phase 1: par_iter → parse → rules through UnEsm → ESM recovery → collect facts
-  → Phase 2: par_iter → parse → rules through UnEsm → cross-module late pass
+  → detector payload: normalized source or prepared AST
+  → Phase 1: par_iter → obtain resolved AST → rules through UnEsm
+                        → ESM recovery on a facts clone → collect facts
+  → Phase 2: par_iter → resume retained AST → cross-module late pass
                     → rules from UnTemplateLiteral through UnReturn
                     → targeted late cleanup → emit
 ```
@@ -281,20 +283,32 @@ This works even when the `names` array is empty (common in esbuild output).
 
 When unpacking bundles, the driver runs a two-phase pipeline:
 
-1. **Phase 1 (parallel):** Parse each module → run the rule registry through
-   `UnEsm` → recover webpack factory IIFE ESM shapes → extract import/export
-   facts → discard AST.
-2. **Phase 2 (parallel):** Parse each module again → run the same through-`UnEsm`
-   rule range → cross-module late pass (re-export consolidation, namespace
-   decomposition, fact-aware helper recovery) → run the `UnTemplateLiteral`
-   through `UnReturn` rule range → targeted late cleanup/recovery → emit.
+1. **Phase 1 (parallel):** Obtain a resolved module AST. Source-only detector
+   output is parsed and resolved here; webpack5 can hand off its already
+   resolved, bundler-normalized AST directly. Run the rule registry through
+   `UnEsm`, clone that barrier AST for webpack factory-IIFE fact recovery, and
+   extract import/export facts. Retain the pre-recovery AST together with its
+   `Globals` and unresolved mark.
+2. **Phase 2 (parallel):** Resume the retained Phase 1 AST → cross-module late
+   pass (re-export consolidation, namespace decomposition, fact-aware helper
+   recovery) → run the `UnTemplateLiteral` through `UnReturn` rule range →
+   targeted late cleanup/recovery → emit.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }` or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
 
-The through-`UnEsm` range runs twice per module — once for fact collection, once
-for the real output pipeline. This is necessary because SWC's `SyntaxContext`
-must remain continuous within the emitted module pipeline; reusing the Phase 1
-AST after a separate parse would break downstream ctxt-sensitive rules.
+Normal no-source-map unpack runs the through-`UnEsm` range once and carries the
+same `Globals`/`SyntaxContext` lineage across the barrier. If Phase 1 cannot
+prepare an AST, Phase 2 retains the best-effort parser fallback. Output
+source-map mode also deliberately materializes prepared detector ASTs and uses
+the parser path because its mappings depend on parser-owned per-module source
+coordinates.
+
+The internal detector handoff is a single aligned payload boundary rather than
+a format branch in either phase: each module has source text and may also have a
+private prepared AST sidecar. Public/raw unpack APIs materialize every sidecar
+back into `UnpackedModule::code`; the normal driver consumes it once at the
+Phase 1 boundary. Aggressive nested scope splitting likewise materializes first
+because that pass operates on emitted module text.
 
 ## File structure
 

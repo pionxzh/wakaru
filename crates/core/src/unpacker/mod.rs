@@ -11,9 +11,10 @@ use std::panic::{self, AssertUnwindSafe};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{
-    sync::Lrc, BytePos, FileName, LineCol, SourceMap, Span, SyntaxContext, GLOBALS,
+    sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, SyntaxContext, GLOBALS,
 };
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
+use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 #[derive(Default)]
@@ -168,6 +169,119 @@ pub struct UnpackResult {
     pub format: BundleFormat,
 }
 
+/// Detector-owned AST that has completed bundler-specific normalization.
+///
+/// This is private to the core pipeline. Public/raw unpack APIs materialize it
+/// into `UnpackedModule::code`; the normal driver can instead consume it at the
+/// Phase 1 boundary and avoid the intermediate emit/parse round trip.
+pub(crate) struct PreparedModuleAst {
+    pub(crate) globals: Globals,
+    pub(crate) module: Module,
+    pub(crate) unresolved_mark: Mark,
+}
+
+/// Internal detector result. `prepared` is always aligned one-for-one with
+/// `result.modules`; a `None` entry means that module is source-only.
+pub(crate) struct DetectedBundle {
+    pub(crate) result: UnpackResult,
+    pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
+    materialize_cm: Option<Lrc<SourceMap>>,
+}
+
+impl DetectedBundle {
+    pub(crate) fn from_result(result: UnpackResult) -> Self {
+        let prepared = std::iter::repeat_with(|| None)
+            .take(result.modules.len())
+            .collect();
+        Self {
+            result,
+            prepared,
+            materialize_cm: None,
+        }
+    }
+
+    pub(crate) fn new(
+        result: UnpackResult,
+        prepared: Vec<Option<PreparedModuleAst>>,
+        materialize_cm: Lrc<SourceMap>,
+    ) -> Self {
+        assert_eq!(
+            result.modules.len(),
+            prepared.len(),
+            "prepared AST sidecar must align with unpacked modules"
+        );
+        Self {
+            result,
+            prepared,
+            materialize_cm: Some(materialize_cm),
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (UnpackResult, Vec<Option<PreparedModuleAst>>) {
+        (self.result, self.prepared)
+    }
+
+    pub(crate) fn materialize(mut self) -> anyhow::Result<UnpackResult> {
+        let cm = self.materialize_cm.take();
+        for (module, prepared) in self.result.modules.iter_mut().zip(self.prepared) {
+            let Some(prepared) = prepared else {
+                continue;
+            };
+            let cm = cm
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("prepared module is missing its source map"))?;
+            let (code, generated_source_map) = prepared.materialize(cm.clone())?;
+            module.code = code;
+            module.generated_source_map = generated_source_map;
+        }
+        Ok(self.result)
+    }
+}
+
+impl From<UnpackResult> for DetectedBundle {
+    fn from(result: UnpackResult) -> Self {
+        Self::from_result(result)
+    }
+}
+
+impl PreparedModuleAst {
+    pub(crate) fn materialize(
+        self,
+        cm: Lrc<SourceMap>,
+    ) -> anyhow::Result<(String, Vec<GeneratedSourceMapPoint>)> {
+        let Self {
+            globals, module, ..
+        } = self;
+        GLOBALS.set(&globals, || {
+            let span = tracing::info_span!("unpacker: prepared emit");
+            let _enter = span.enter();
+            emit_module_with_source_map(&module, cm)
+        })
+    }
+}
+
+pub(crate) fn emit_module_with_source_map(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+) -> anyhow::Result<(String, Vec<GeneratedSourceMapPoint>)> {
+    let mut output = Vec::new();
+    let mut srcmap_buf = Vec::new();
+    {
+        let mut emitter = Emitter {
+            cfg: Config::default().with_minify(false),
+            cm: cm.clone(),
+            comments: None,
+            wr: JsWriter::new(cm.clone(), "\n", &mut output, Some(&mut srcmap_buf)),
+        };
+        emitter
+            .emit_module(module)
+            .map_err(|error| anyhow::anyhow!("emit error: {error:?}"))?;
+    }
+    let code = String::from_utf8(output).map_err(|error| anyhow::anyhow!("utf8 error: {error}"))?;
+    let mappings = generated_source_map_points(&code, &cm, &srcmap_buf);
+    Ok((code, mappings))
+}
+
 impl UnpackResult {
     pub(crate) fn new(modules: Vec<UnpackedModule>, format: BundleFormat) -> Self {
         Self {
@@ -214,6 +328,12 @@ pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
 }
 
 pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
+    try_prepare_bundle(source)?
+        .map(DetectedBundle::materialize)
+        .transpose()
+}
+
+pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<DetectedBundle>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = {
@@ -238,7 +358,7 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
             let _enter = span.enter();
             amd::detect_from_module(&module, cm)
         };
-        Ok(result)
+        Ok(result.map(DetectedBundle::from_result))
     })
 }
 
@@ -247,11 +367,11 @@ fn detect_bundle_candidate(
     cm: Lrc<SourceMap>,
     source: &str,
     allow_runtime_entry: bool,
-) -> Option<UnpackResult> {
+) -> Option<DetectedBundle> {
     let result = {
         let span = tracing::info_span!("detect_webpack5");
         let _enter = span.enter();
-        webpack5::detect_from_module(module, cm.clone())
+        webpack5::detect_from_module_prepared(module, cm.clone())
     };
     if result.is_some() {
         return result;
@@ -264,7 +384,7 @@ fn detect_bundle_candidate(
             webpack5::detect_runtime_entry_from_module(module, source)
         };
         if result.is_some() {
-            return result;
+            return result.map(DetectedBundle::from_result);
         }
     }
 
@@ -274,13 +394,13 @@ fn detect_bundle_candidate(
         webpack4::detect_from_module(module, cm.clone())
     };
     if result.is_some() {
-        return result;
+        return result.map(DetectedBundle::from_result);
     }
 
     let result = {
         let span = tracing::info_span!("detect_webpack5_chunk");
         let _enter = span.enter();
-        webpack5::detect_chunk_from_module(module, cm.clone())
+        webpack5::detect_chunk_from_module_prepared(module, cm.clone())
     };
     if result.is_some() {
         return result;
@@ -292,7 +412,7 @@ fn detect_bundle_candidate(
         browserify::detect_from_module(module, cm.clone())
     };
     if result.is_some() {
-        return result;
+        return result.map(DetectedBundle::from_result);
     }
 
     let result = {
@@ -301,12 +421,13 @@ fn detect_bundle_candidate(
         systemjs::detect_from_module(module, cm.clone())
     };
     if result.is_some() {
-        return result;
+        return result.map(DetectedBundle::from_result);
     }
 
     let span = tracing::info_span!("detect_esbuild");
     let _enter = span.enter();
     esbuild::detect_from_module_with_source(module, Some(source), cm)
+        .map(DetectedBundle::from_result)
 }
 
 pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {

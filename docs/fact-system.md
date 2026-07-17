@@ -27,25 +27,28 @@ them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
 
 ```
 Phase 1 (per module, parallel):
-    parse → resolver → rule range through UnEsm
-    recover webpack factory IIFE ESM shapes
-    collect_module_facts(&module)                    ← pure AST → facts
-    AST discarded
+    obtain resolved AST (prepared detector AST, or parse → resolver)
+    rule range through UnEsm
+    clone barrier AST → recover webpack factory IIFE ESM shapes
+    collect_module_facts(&facts_clone)                ← pure AST → facts
+    retain original barrier AST + Globals + unresolved mark
 
 ──── barrier: ModuleFactsMap assembled from all modules ────
 
 Phase 2 (per module, parallel):
-    parse → resolver → rule range through UnEsm
+    resume retained barrier AST
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
     rule range from UnTemplateLiteral through UnReturn
     targeted late cleanup/recovery
 ```
 
-The through-`UnEsm` range runs twice per module — the first pass feeds fact
-extraction, the second runs the real output pipeline. Re-parsing is required
-because SWC's `SyntaxContext` must remain continuous within the emitted module
-pipeline; reusing the Phase 1 AST after a separate parse would break downstream
-ctxt-sensitive rules.
+The normal no-source-map path runs the through-`UnEsm` range once. The retained
+AST crosses the barrier together with the exact `Globals` and unresolved mark
+that produced its `SyntaxContext`s, so downstream ctxt-sensitive rules keep a
+continuous binding identity. Webpack5 can enter Phase 1 with a resolved AST
+produced by detector normalization, avoiding its former emit → parse → resolver
+round trip. Source-map mode materializes that private AST sidecar and follows
+the parser path because emitted mappings need parser-owned module coordinates.
 
 ## Facts
 

@@ -56,13 +56,15 @@ struct Phase1Module {
 
 /// Multi-module unpack with cross-module late pass.
 ///
-/// Phase 1: parse + through-UnEsm range + ESM recovery + collect facts (code discarded)
-/// Phase 2: parse + through-UnEsm range + late pass + UnTemplateLiteral-through-UnReturn range
+/// Phase 1: obtain a resolved AST + through-UnEsm range + fact recovery/collection
+/// Phase 2: resume the retained AST + late pass + UnTemplateLiteral-through-UnReturn range
 ///
-/// The through-UnEsm range runs twice per module — once for fact collection, once
-/// for the real output pipeline. This is necessary because SWC's SyntaxContext
-/// must remain continuous within the emitted module pipeline; reusing a Phase 1
-/// AST after a separate parse would break rename rules.
+/// Normal unpack retains each Phase 1 AST together with its `Globals` and
+/// unresolved mark across the facts barrier. Webpack5 detectors can provide an
+/// already-resolved, bundler-normalized AST, avoiding their intermediate emit
+/// and this phase's parse/resolver. Source-map mode deliberately materializes
+/// detector ASTs and uses the parser path so output mappings keep parser-owned
+/// source coordinates.
 ///
 /// # Best-effort semantics
 ///
@@ -102,29 +104,31 @@ pub(super) fn unpack_multi_module_with_plan(
     let span = tracing::info_span!("unpack_multi_module", count = modules.len());
     let _enter = span.enter();
     let report_import_cycle_warnings = modules.iter().all(|module| module.allow_cycle_premerge);
-    let (modules, cycle_warnings) =
-        if numeric_rewrite_plan.is_empty() && should_premerge_import_cycles(&modules) {
-            let (modules, warnings) = merge_import_cycles(
-                modules
-                    .into_iter()
-                    .map(|prepared| prepared.module)
-                    .collect(),
-            );
-            (
-                modules
-                    .into_iter()
-                    .map(PreparedUnpackModule::plain)
-                    .collect(),
-                warnings,
-            )
-        } else {
-            // Numeric rewrite context is per original input group. A merged cycle
-            // could contain members from different groups, but the later AST
-            // pipeline accepts only one context per output module. Keep those
-            // modules split so numeric require ids are rewritten in their original
-            // context and source strings stay untouched until the normal pipeline.
-            (modules, Vec::new())
-        };
+    let (mut modules, cycle_warnings) = if numeric_rewrite_plan.is_empty()
+        && modules.iter().all(|module| module.prepared.is_none())
+        && should_premerge_import_cycles(&modules)
+    {
+        let (modules, warnings) = merge_import_cycles(
+            modules
+                .into_iter()
+                .map(|prepared| prepared.module)
+                .collect(),
+        );
+        (
+            modules
+                .into_iter()
+                .map(PreparedUnpackModule::plain)
+                .collect(),
+            warnings,
+        )
+    } else {
+        // Numeric rewrite context is per original input group. A merged cycle
+        // could contain members from different groups, but the later AST
+        // pipeline accepts only one context per output module. Keep those
+        // modules split so numeric require ids are rewritten in their original
+        // context and source strings stay untouched until the normal pipeline.
+        (modules, Vec::new())
+    };
 
     // Stash per-module provenance (byte ranges into the original input)
     // keyed by provisional filename. Final provenance is built after dead
@@ -165,29 +169,57 @@ pub(super) fn unpack_multi_module_with_plan(
     // normalized AST so Phase 2 can resume after the facts barrier. Source-map
     // mode still reparses in Phase 2 because sourcemap renaming depends on the
     // original parser SourceMap.
-    let collect_facts = |unpacked: &PreparedUnpackModule| -> Phase1Module {
-        let globals = Globals::new();
+    let collect_facts = |unpacked: &mut PreparedUnpackModule| -> Phase1Module {
+        let (globals, prepared_input) = match unpacked.prepared.take() {
+            Some(prepared) => (
+                prepared.globals,
+                Some((prepared.module, prepared.unresolved_mark)),
+            ),
+            None => (Globals::new(), None),
+        };
         let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
-            let cm: Lrc<SourceMap> = Default::default();
-            let mut module = {
-                let span = tracing::info_span!("phase1: parse");
-                let _enter = span.enter();
-                match parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone()) {
-                    Ok(module) => module,
-                    Err(e) => {
-                        return (
-                            crate::facts::ModuleFacts::default(),
-                            None,
-                            Some(UnpackWarning::new(
-                                unpacked.module.filename.clone(),
-                                UnpackWarningKind::FactCollectionParseFailed,
-                                format!(
-                                    "parse failed during fact collection, using empty facts: {e}"
-                                ),
-                            )),
-                            None,
-                        );
-                    }
+            let (mut module, unresolved_mark) = match prepared_input {
+                Some(prepared) => prepared,
+                None => {
+                    let cm: Lrc<SourceMap> = Default::default();
+                    let mut module = {
+                        let span = tracing::info_span!("phase1: parse");
+                        let _enter = span.enter();
+                        match parse_js(
+                            &unpacked.module.code,
+                            &unpacked.module.filename,
+                            cm.clone(),
+                        ) {
+                            Ok(module) => module,
+                            Err(e) => {
+                                return (
+                                    crate::facts::ModuleFacts::default(),
+                                    None,
+                                    Some(UnpackWarning::new(
+                                        unpacked.module.filename.clone(),
+                                        UnpackWarningKind::FactCollectionParseFailed,
+                                        format!(
+                                            "parse failed during fact collection, using empty facts: {e}"
+                                        ),
+                                    )),
+                                    None,
+                                );
+                            }
+                        }
+                    };
+                    let unresolved_mark = {
+                        let span = tracing::info_span!("phase1: resolver");
+                        let _enter = span.enter();
+                        let unresolved_mark = Mark::new();
+                        let top_level_mark = Mark::new();
+                        module.visit_mut_with(&mut resolver(
+                            unresolved_mark,
+                            top_level_mark,
+                            false,
+                        ));
+                        unresolved_mark
+                    };
+                    (module, unresolved_mark)
                 }
             };
             // Harvest the original filename from provenance markers before any
@@ -197,14 +229,6 @@ pub(super) fn unpack_multi_module_with_plan(
                 harvest_suggested_filename(&module)
             } else {
                 None
-            };
-            let unresolved_mark = {
-                let span = tracing::info_span!("phase1: resolver");
-                let _enter = span.enter();
-                let unresolved_mark = Mark::new();
-                let top_level_mark = Mark::new();
-                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-                unresolved_mark
             };
             apply_numeric_rewrites(
                 &mut module,
@@ -276,7 +300,7 @@ pub(super) fn unpack_multi_module_with_plan(
     let phase1: Vec<_> = {
         let span = tracing::info_span!("phase1_collect_facts");
         let _enter = span.enter();
-        modules.par_iter().map(collect_facts).collect()
+        modules.par_iter_mut().map(collect_facts).collect()
     };
 
     let mut module_facts = ModuleFactsMap::new();

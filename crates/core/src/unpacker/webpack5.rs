@@ -1,16 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
     Callee, Expr, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
     ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt,
     Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -19,8 +18,8 @@ use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
 use crate::unpacker::{
-    generated_source_map_points, spans_byte_ranges, BundleFormat, GeneratedSourceMapPoint,
-    UnpackResult, UnpackedModule,
+    emit_module_with_source_map, spans_byte_ranges, BundleFormat, DetectedBundle,
+    PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -243,11 +242,14 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
-        detect_from_module(&module, cm)
+        detect_from_module_prepared(&module, cm)?.materialize().ok()
     })
 }
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+pub(super) fn detect_from_module_prepared(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: detect_from_module");
     let _enter = span.enter();
     for item in &module.body {
@@ -299,7 +301,9 @@ pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
-        detect_chunk_from_module(&module, cm)
+        detect_chunk_from_module_prepared(&module, cm)?
+            .materialize()
+            .ok()
     })
 }
 
@@ -327,24 +331,27 @@ fn detect_chunk_ids_from_module(module: &Module) -> HashSet<usize> {
     ids
 }
 
-pub(super) fn detect_chunk_from_module(
+pub(super) fn detect_chunk_from_module_prepared(
     module: &Module,
     cm: Lrc<SourceMap>,
-) -> Option<UnpackResult> {
+) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: detect_chunk_from_module");
     let _enter = span.enter();
     let mut all_modules = Vec::new();
+    let mut all_prepared = Vec::new();
 
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
         if let Some(modules_object) = extract_chunk_push_modules(expr) {
-            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
-            all_modules.extend(extracted);
+            let (modules, prepared) = extract_modules_from_object(modules_object, cm.clone())?;
+            all_modules.extend(modules);
+            all_prepared.extend(prepared);
         } else if let Some(modules_object) = extract_commonjs_chunk_modules(expr) {
-            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
-            all_modules.extend(extracted);
+            let (modules, prepared) = extract_modules_from_object(modules_object, cm.clone())?;
+            all_modules.extend(modules);
+            all_prepared.extend(prepared);
         }
     }
 
@@ -352,7 +359,11 @@ pub(super) fn detect_chunk_from_module(
         return None;
     }
 
-    Some(UnpackResult::new(all_modules, BundleFormat::Webpack5))
+    Some(DetectedBundle::new(
+        UnpackResult::new(all_modules, BundleFormat::Webpack5),
+        all_prepared,
+        cm,
+    ))
 }
 
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
@@ -559,7 +570,7 @@ fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {
 fn extract_modules_from_object(
     modules_object: &ObjectLit,
     cm: Lrc<SourceMap>,
-) -> Option<Vec<UnpackedModule>> {
+) -> Option<(Vec<UnpackedModule>, Vec<Option<PreparedModuleAst>>)> {
     let span = tracing::info_span!(
         "webpack5: extract_modules_from_object",
         count = modules_object.props.len()
@@ -584,28 +595,29 @@ fn extract_modules_from_object(
         .collect();
 
     let mut modules = Vec::new();
+    let mut prepared = Vec::new();
 
     for entry in &module_entries {
-        let (code, generated_source_map) =
-            emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
+        let ast = prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename)?;
         modules.push(UnpackedModule {
             id: entry.id.clone(),
             is_entry: false,
-            code,
+            code: source_fallback_for_stmts(&cm, entry.body_stmts),
             filename: entry.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
             source_input: String::new(),
-            generated_source_map,
+            generated_source_map: Vec::new(),
         });
+        prepared.push(Some(ast));
     }
 
-    Some(modules)
+    Some((modules, prepared))
 }
 
 fn extract_webpack5_modules(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     cm: Lrc<SourceMap>,
-) -> Option<UnpackResult> {
+) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
 
@@ -648,22 +660,26 @@ fn extract_webpack5_modules(
         .collect();
 
     let mut modules = Vec::new();
+    let mut prepared = Vec::new();
 
     {
-        let span = tracing::info_span!("webpack5: emit all modules", count = module_entries.len());
+        let span = tracing::info_span!(
+            "webpack5: prepare all modules",
+            count = module_entries.len()
+        );
         let _enter = span.enter();
         for entry in &module_entries {
-            let (code, generated_source_map) =
-                emit_webpack5_module(entry, cm.clone(), &id_to_filename, &str_id_to_filename)?;
+            let ast = prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename)?;
             modules.push(UnpackedModule {
                 id: entry.id.clone(),
                 is_entry: false,
-                code,
+                code: source_fallback_for_stmts(&cm, entry.body_stmts),
                 filename: entry.filename.clone(),
                 source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
                 source_input: String::new(),
-                generated_source_map,
+                generated_source_map: Vec::new(),
             });
+            prepared.push(Some(ast));
         }
     }
 
@@ -685,6 +701,7 @@ fn extract_webpack5_modules(
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
+        prepared.push(None);
         true
     } else {
         false
@@ -708,7 +725,11 @@ fn extract_webpack5_modules(
         return None;
     }
 
-    Some(UnpackResult::new(modules, BundleFormat::Webpack5))
+    Some(DetectedBundle::new(
+        UnpackResult::new(modules, BundleFormat::Webpack5),
+        prepared,
+        cm,
+    ))
 }
 
 fn emit_webpack5_entry_module(
@@ -1130,28 +1151,44 @@ fn extract_factory_parts(expr: &Expr) -> Option<(Webpack5FactoryParams<'_>, &[St
     }
 }
 
-fn emit_webpack5_module(
+fn prepare_webpack5_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
-    cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
-) -> Option<(String, Vec<GeneratedSourceMapPoint>)> {
-    let span = tracing::info_span!("webpack5: emit_module");
+) -> Option<PreparedModuleAst> {
+    let span = tracing::info_span!("webpack5: prepare_module");
     let _enter = span.enter();
 
-    let (mut synthetic_module, _) =
-        normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename);
-
-    {
+    let globals = Globals::new();
+    let (synthetic_module, unresolved_mark) = GLOBALS.set(&globals, || {
+        let (mut synthetic_module, unresolved_mark) =
+            normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename);
         let span = tracing::info_span!("webpack5: fixer");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).ok()?;
+        Some((synthetic_module, unresolved_mark))
+    })?;
+
+    Some(PreparedModuleAst {
+        globals,
+        module: synthetic_module,
+        unresolved_mark,
+    })
+}
+
+fn source_fallback_for_stmts(cm: &SourceMap, stmts: &[Stmt]) -> String {
+    let (Some(first), Some(last)) = (stmts.first(), stmts.last()) else {
+        return String::new();
+    };
+    let first_span = first.span();
+    let last_span = last.span();
+    if first_span.lo.0 == 0 || last_span.hi.0 == 0 || first_span.lo > last_span.hi {
+        return String::new();
     }
-    {
-        let span = tracing::info_span!("webpack5: emit");
-        let _enter = span.enter();
-        emit_module_with_source_map(&synthetic_module, cm).ok()
-    }
+    let file = cm.lookup_byte_offset(first_span.lo).sf;
+    let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
+    let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
+    file.src.get(start..end).unwrap_or_default().to_string()
 }
 
 /// Normalize a webpack5 factory body into a standalone module.
@@ -1474,28 +1511,6 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     emit_module_with_source_map(module, cm).map(|(code, _)| code)
 }
 
-fn emit_module_with_source_map(
-    module: &Module,
-    cm: Lrc<SourceMap>,
-) -> anyhow::Result<(String, Vec<GeneratedSourceMapPoint>)> {
-    let mut output = Vec::new();
-    let mut srcmap_buf = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default().with_minify(false),
-            cm: cm.clone(),
-            comments: None,
-            wr: JsWriter::new(cm.clone(), "\n", &mut output, Some(&mut srcmap_buf)),
-        };
-        emitter
-            .emit_module(module)
-            .map_err(|e| anyhow!("emit error: {e:?}"))?;
-    }
-    let code = String::from_utf8(output).map_err(|e| anyhow!("utf8 error: {e}"))?;
-    let mappings = generated_source_map_points(&code, &cm, &srcmap_buf);
-    Ok((code, mappings))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1613,7 +1628,7 @@ const modules = {
         });
 
         assert!(!result.modules.is_empty());
-        for expected in ["webpack5: fixer", "webpack5: emit"] {
+        for expected in ["webpack5: fixer", "unpacker: prepared emit"] {
             assert!(
                 spans.iter().any(|name| name == expected),
                 "missing {expected:?} in {spans:?}"

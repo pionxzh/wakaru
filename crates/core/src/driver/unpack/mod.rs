@@ -22,7 +22,8 @@ use crate::rules::{
     UnExportRename, UnIife,
 };
 use crate::unpacker::{
-    scope_hoist, try_unpack_bundle, webpack5, BundleFormat, UnpackResult, UnpackedModule,
+    scope_hoist, try_prepare_bundle, webpack5, BundleFormat, DetectedBundle, UnpackResult,
+    UnpackedModule,
 };
 
 mod dead_module;
@@ -46,9 +47,12 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
 
     match detect_bundle(source, &options.filename)? {
         Some(result) => {
-            let format = result.format;
-            let result =
-                maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
+            let format = result.result.format;
+            let result = maybe_split_detected_bundle(
+                result,
+                nested_scope_split_enabled(&options),
+                options.emit_source_map,
+            )?;
             let mut output = unpack_unpack_result(result, options)?;
             output.detected_formats.push(format);
             Ok(output)
@@ -57,7 +61,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
             Some(result) if result.modules.len() > 1 => {
                 let mut opts = options.clone();
                 opts.dce_mode = super::types::DceMode::Off;
-                let mut output = unpack_unpack_result(result, opts)?;
+                let mut output = unpack_unpack_result(DetectedBundle::from_result(result), opts)?;
                 output.detected_formats.push(BundleFormat::ScopeHoisted);
                 Ok(output)
             }
@@ -115,23 +119,34 @@ pub fn unpack_files(
     for input in inputs {
         match detect_bundle(&input.source, &input.filename)? {
             Some(result) => {
-                let format = result.format;
+                let format = result.result.format;
                 if !detected_formats.contains(&format) {
                     detected_formats.push(format);
                 }
-                let result =
-                    maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(&options));
+                let result = maybe_split_detected_bundle(
+                    result,
+                    nested_scope_split_enabled(&options),
+                    options.emit_source_map,
+                )?;
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let input_filename = input.filename.clone();
+                let (result, prepared) = result.into_parts();
                 let allow_cycle_premerge = result.allow_cycle_premerge;
-                modules.extend(result.modules.into_iter().map(|module| {
-                    MultiSourceModule::detected(
-                        module,
-                        chunk_ids.clone(),
-                        input_filename.clone(),
-                        allow_cycle_premerge,
-                    )
-                }))
+                modules.extend(
+                    result
+                        .modules
+                        .into_iter()
+                        .zip(prepared)
+                        .map(|(module, ast)| {
+                            MultiSourceModule::detected_with_ast(
+                                module,
+                                ast,
+                                chunk_ids.clone(),
+                                input_filename.clone(),
+                                allow_cycle_premerge,
+                            )
+                        }),
+                )
             }
             None if options.heuristic_split => {
                 match scope_hoist::split_scope_hoisted(&input.source) {
@@ -369,11 +384,11 @@ fn filename_for_fallback_input(filename: &str) -> String {
         .to_string()
 }
 
-pub(super) fn detect_bundle(source: &str, filename: &str) -> Result<Option<UnpackResult>> {
+pub(super) fn detect_bundle(source: &str, filename: &str) -> Result<Option<DetectedBundle>> {
     let span = tracing::info_span!("detect_bundle");
     let _enter = span.enter();
 
-    match try_unpack_bundle(source) {
+    match try_prepare_bundle(source) {
         Ok(result) => Ok(result),
         Err(bundle_parse_error) => {
             // Bundle detection intentionally parses only ES/JSX. Preserve the
@@ -473,14 +488,31 @@ impl Default for LateEsmRecoveryOptions {
     }
 }
 
-fn unpack_unpack_result(result: UnpackResult, options: DecompileOptions) -> Result<UnpackOutput> {
+fn unpack_unpack_result(result: DetectedBundle, options: DecompileOptions) -> Result<UnpackOutput> {
+    let (result, prepared) = result.into_parts();
     let allow_cycle_premerge = result.allow_cycle_premerge;
     let modules = result
         .modules
         .into_iter()
-        .map(|module| PreparedUnpackModule::with_cycle_premerge(module, allow_cycle_premerge))
+        .zip(prepared)
+        .map(|(module, ast)| {
+            PreparedUnpackModule::with_prepared_cycle_premerge(module, ast, allow_cycle_premerge)
+        })
         .collect();
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+}
+
+fn maybe_split_detected_bundle(
+    result: DetectedBundle,
+    split_nested_scope: bool,
+    materialize: bool,
+) -> Result<DetectedBundle> {
+    if !split_nested_scope && !materialize {
+        return Ok(result);
+    }
+    let result = result.materialize()?;
+    let result = maybe_split_scope_hoisted_modules(result, split_nested_scope);
+    Ok(DetectedBundle::from_result(result))
 }
 
 /// Provenance entries for a list of unpacked modules, in module order.

@@ -20,11 +20,13 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::super::io::{apply_fixer, parse_js, print_js};
 use super::super::types::{ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use crate::module_path::relative_import_specifier;
+use crate::unpacker::PreparedModuleAst;
 use crate::unpacker::UnpackedModule;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) struct MultiSourceModule {
     module: UnpackedModule,
+    prepared: Option<PreparedModuleAst>,
     allow_cross_chunk_rewrite: bool,
     allow_cycle_premerge: bool,
     chunk_ids: HashSet<usize>,
@@ -34,7 +36,23 @@ pub(super) struct MultiSourceModule {
 
 impl MultiSourceModule {
     pub(super) fn detected(
+        module: UnpackedModule,
+        chunk_ids: HashSet<usize>,
+        input_filename: String,
+        allow_cycle_premerge: bool,
+    ) -> Self {
+        Self::detected_with_ast(
+            module,
+            None,
+            chunk_ids,
+            input_filename,
+            allow_cycle_premerge,
+        )
+    }
+
+    pub(super) fn detected_with_ast(
         mut module: UnpackedModule,
+        prepared: Option<PreparedModuleAst>,
         chunk_ids: HashSet<usize>,
         input_filename: String,
         allow_cycle_premerge: bool,
@@ -45,6 +63,7 @@ impl MultiSourceModule {
         module.source_input = input_filename.clone();
         Self {
             module,
+            prepared,
             allow_cross_chunk_rewrite: true,
             allow_cycle_premerge,
             chunk_ids,
@@ -56,6 +75,7 @@ impl MultiSourceModule {
     pub(super) fn fallback(module: UnpackedModule) -> Self {
         Self {
             module,
+            prepared: None,
             allow_cross_chunk_rewrite: false,
             allow_cycle_premerge: false,
             chunk_ids: HashSet::new(),
@@ -67,6 +87,7 @@ impl MultiSourceModule {
 
 pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
+    pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) allow_cycle_premerge: bool,
 }
@@ -75,14 +96,25 @@ impl PreparedUnpackModule {
     pub(super) fn plain(module: UnpackedModule) -> Self {
         Self {
             module,
+            prepared: None,
             numeric_rewrite: None,
             allow_cycle_premerge: true,
         }
     }
 
+    #[cfg(test)]
     pub(super) fn with_cycle_premerge(module: UnpackedModule, allow_cycle_premerge: bool) -> Self {
+        Self::with_prepared_cycle_premerge(module, None, allow_cycle_premerge)
+    }
+
+    pub(super) fn with_prepared_cycle_premerge(
+        module: UnpackedModule,
+        prepared: Option<PreparedModuleAst>,
+        allow_cycle_premerge: bool,
+    ) -> Self {
         Self {
             module,
+            prepared,
             numeric_rewrite: None,
             allow_cycle_premerge,
         }
@@ -129,6 +161,7 @@ pub(super) fn prepare_multi_source_modules(
             };
             PreparedUnpackModule {
                 module: module.module,
+                prepared: module.prepared,
                 numeric_rewrite,
                 allow_cycle_premerge: module.allow_cycle_premerge,
             }
