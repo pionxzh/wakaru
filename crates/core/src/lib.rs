@@ -57,3 +57,42 @@ pub fn unpack_webpack4_raw(source: &str) -> Option<Vec<(String, String)>> {
             .collect(),
     )
 }
+
+#[cfg(test)]
+pub(crate) mod test_tracing {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::{span::Attributes, Dispatch, Id, Subscriber};
+    use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
+
+    #[derive(Clone)]
+    struct SpanNameRecorder(Arc<Mutex<Vec<String>>>);
+
+    impl<S> Layer<S> for SpanNameRecorder
+    where
+        S: Subscriber,
+    {
+        fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _ctx: Context<'_, S>) {
+            self.0
+                .lock()
+                .expect("span recorder lock should not be poisoned")
+                .push(attrs.metadata().name().to_string());
+        }
+    }
+
+    pub(crate) fn record_spans<T: Send>(f: impl FnOnce() -> T + Send) -> (T, Vec<String>) {
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(SpanNameRecorder(names.clone()));
+        let dispatch = Dispatch::new(subscriber);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("single-thread test pool should build");
+        let output = pool.install(|| tracing::dispatcher::with_default(&dispatch, f));
+        let recorded = names
+            .lock()
+            .expect("span recorder lock should not be poisoned")
+            .clone();
+        (output, recorded)
+    }
+}

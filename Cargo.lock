@@ -2157,6 +2157,7 @@ dependencies = [
  "sourcemap",
  "swc_core",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

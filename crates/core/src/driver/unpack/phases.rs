@@ -169,7 +169,9 @@ pub(super) fn unpack_multi_module_with_plan(
         let globals = Globals::new();
         let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
             let cm: Lrc<SourceMap> = Default::default();
-            let mut module =
+            let mut module = {
+                let span = tracing::info_span!("phase1: parse");
+                let _enter = span.enter();
                 match parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone()) {
                     Ok(module) => module,
                     Err(e) => {
@@ -186,7 +188,8 @@ pub(super) fn unpack_multi_module_with_plan(
                             None,
                         );
                     }
-                };
+                }
+            };
             // Harvest the original filename from provenance markers before any
             // rule mutates the AST. The marker is still a props-object property
             // here (UnJsx has not run), so this does not depend on JSX recovery.
@@ -195,20 +198,29 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
-            let unresolved_mark = Mark::new();
-            let top_level_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            let unresolved_mark = {
+                let span = tracing::info_span!("phase1: resolver");
+                let _enter = span.enter();
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                unresolved_mark
+            };
             apply_numeric_rewrites(
                 &mut module,
                 unresolved_mark,
                 unpacked.numeric_rewrite.as_ref(),
                 &numeric_rewrite_plan,
             );
-            apply_rules(
-                &mut module,
-                unresolved_mark,
-                RulePipelineOptions::until("UnEsm"),
-            );
+            {
+                let span = tracing::info_span!("phase1: rules");
+                let _enter = span.enter();
+                apply_rules(
+                    &mut module,
+                    unresolved_mark,
+                    RulePipelineOptions::until("UnEsm"),
+                );
+            }
             // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
             // rewrites, renames) to expose import/export declarations that
             // `collect_module_facts` reads. Phase 2 resumes from the
@@ -219,21 +231,29 @@ pub(super) fn unpack_multi_module_with_plan(
             // path discards `module`), recover in place and skip the clone.
             let (facts, prepared) = if can_reuse_phase1_ast {
                 let mut facts_module = module.clone();
-                recover_late_esm_from_factory_iifes(
-                    &mut facts_module,
-                    unresolved_mark,
-                    RewriteLevel::Standard,
-                    LateEsmRecoveryOptions::default(),
-                );
+                {
+                    let span = tracing::info_span!("phase1: fact recovery");
+                    let _enter = span.enter();
+                    recover_late_esm_from_factory_iifes(
+                        &mut facts_module,
+                        unresolved_mark,
+                        RewriteLevel::Standard,
+                        LateEsmRecoveryOptions::default(),
+                    );
+                }
                 let facts = collect_module_facts(&facts_module);
                 (facts, Some((module, unresolved_mark)))
             } else {
-                recover_late_esm_from_factory_iifes(
-                    &mut module,
-                    unresolved_mark,
-                    RewriteLevel::Standard,
-                    LateEsmRecoveryOptions::default(),
-                );
+                {
+                    let span = tracing::info_span!("phase1: fact recovery");
+                    let _enter = span.enter();
+                    recover_late_esm_from_factory_iifes(
+                        &mut module,
+                        unresolved_mark,
+                        RewriteLevel::Standard,
+                        LateEsmRecoveryOptions::default(),
+                    );
+                }
                 let facts = collect_module_facts(&module);
                 (facts, None)
             };
@@ -317,6 +337,8 @@ pub(super) fn unpack_multi_module_with_plan(
             Vec<UnpackWarning>,
             Option<ImportReport>,
         )> {
+            let rules_span = tracing::info_span!("phase2: rules");
+            let rules_enter = rules_span.enter();
             // Late pass at the barrier
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
@@ -374,6 +396,8 @@ pub(super) fn unpack_multi_module_with_plan(
             if let Some(cleanup) = &mut final_recovered_import_cleanup {
                 module.visit_mut_with(cleanup);
             }
+            drop(rules_enter);
+            drop(rules_span);
 
             let mut diag_warnings = if options.diagnostics {
                 let mut warnings = input_parse_warnings;
@@ -422,13 +446,26 @@ pub(super) fn unpack_multi_module_with_plan(
                 crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
             }
 
-            apply_fixer(&mut module)?;
+            {
+                let span = tracing::info_span!("phase2: fixer");
+                let _enter = span.enter();
+                apply_fixer(&mut module)?;
+            }
             let (code, srcmap_json) = if options.emit_source_map {
-                let (code, srcmap_buf) = print_js_with_srcmap(&module, cm.clone())?;
+                let (code, srcmap_buf) = {
+                    let span = tracing::info_span!("phase2: emit");
+                    let _enter = span.enter();
+                    print_js_with_srcmap(&module, cm.clone())?
+                };
                 let map_json = build_output_sourcemap(&srcmap_buf, &cm, final_filename)?;
                 (code, Some(map_json))
             } else {
-                (print_js(&module, cm)?, None)
+                let code = {
+                    let span = tracing::info_span!("phase2: emit");
+                    let _enter = span.enter();
+                    print_js(&module, cm)?
+                };
+                (code, None)
             };
 
             if options.diagnostics {
@@ -451,15 +488,24 @@ pub(super) fn unpack_multi_module_with_plan(
         } else {
             GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
-                let parsed = parse_js_with_recovery(
-                    &unpacked.module.code,
-                    &unpacked.module.filename,
-                    cm.clone(),
-                )?;
+                let parsed = {
+                    let span = tracing::info_span!("phase2: parse");
+                    let _enter = span.enter();
+                    parse_js_with_recovery(
+                        &unpacked.module.code,
+                        &unpacked.module.filename,
+                        cm.clone(),
+                    )?
+                };
                 let mut module = parsed.module;
-                let unresolved_mark = Mark::new();
-                let top_level_mark = Mark::new();
-                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                let unresolved_mark = {
+                    let span = tracing::info_span!("phase2: resolver");
+                    let _enter = span.enter();
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
+                    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                    unresolved_mark
+                };
                 apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,
@@ -468,11 +514,15 @@ pub(super) fn unpack_multi_module_with_plan(
                 );
 
                 // Through-UnEsm range.
-                apply_rules(
-                    &mut module,
-                    unresolved_mark,
-                    RulePipelineOptions::until("UnEsm"),
-                );
+                {
+                    let span = tracing::info_span!("phase2: early rules");
+                    let _enter = span.enter();
+                    apply_rules(
+                        &mut module,
+                        unresolved_mark,
+                        RulePipelineOptions::until("UnEsm"),
+                    );
+                }
 
                 let input_parse_warnings = if options.diagnostics {
                     collect_input_parse_warnings(&parsed.recoverable_errors)
@@ -596,8 +646,45 @@ fn should_premerge_import_cycles(_modules: &[PreparedUnpackModule]) -> bool {
 mod tests {
     use super::super::should_merge_raw_import_cycles;
     use super::*;
+    use crate::test_tracing::record_spans;
     use crate::unpacker::UnpackedModule;
     use crate::DceMode;
+
+    #[test]
+    fn profiler_reports_phase_operation_boundaries() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: "export const value = 1;".to_string(),
+            filename: "entry.js".to_string(),
+            ..Default::default()
+        }];
+
+        let (output, spans) = record_spans(|| {
+            unpack_multi_module(modules, DecompileOptions::default())
+                .expect("profiled fixture should decompile")
+        });
+
+        assert_eq!(output.modules.len(), 1);
+        for expected in [
+            "phase1: parse",
+            "phase1: resolver",
+            "phase1: rules",
+            "phase1: fact recovery",
+            "phase2: rules",
+            "phase2: fixer",
+            "phase2: emit",
+        ] {
+            assert!(
+                spans.iter().any(|name| name == expected),
+                "missing {expected:?} in {spans:?}"
+            );
+        }
+        assert!(
+            !spans.iter().any(|name| name == "phase2: parse"),
+            "normal unpack should reuse the Phase 1 AST"
+        );
+    }
 
     #[test]
     fn recovered_imports_do_not_gain_source_link_check_semantics() {

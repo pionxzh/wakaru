@@ -1143,9 +1143,13 @@ fn emit_webpack5_module(
         normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename);
 
     {
-        let span = tracing::info_span!("webpack5: fixer+emit");
+        let span = tracing::info_span!("webpack5: fixer");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).ok()?;
+    }
+    {
+        let span = tracing::info_span!("webpack5: emit");
+        let _enter = span.enter();
         emit_module_with_source_map(&synthetic_module, cm).ok()
     }
 }
@@ -1594,6 +1598,27 @@ const modules = {
             "expected numeric module IDs, got {:?}",
             module_ids
         );
+    }
+
+    #[test]
+    fn profiler_separates_webpack_fixer_and_emit() {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/bundles/webpack-gen/dist/wp5-cjs-min/bundle.js"
+        ))
+        .expect("failed to read wp5-cjs-min fixture");
+
+        let (result, spans) = crate::test_tracing::record_spans(|| {
+            detect_and_extract(&source).expect("wp5-cjs-min should be detected")
+        });
+
+        assert!(!result.modules.is_empty());
+        for expected in ["webpack5: fixer", "webpack5: emit"] {
+            assert!(
+                spans.iter().any(|name| name == expected),
+                "missing {expected:?} in {spans:?}"
+            );
+        }
     }
 
     #[test]
