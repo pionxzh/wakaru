@@ -2,6 +2,22 @@ use super::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
+fn public_unpack_preserves_cli_scope_hoist_level_semantics() {
+    assert_eq!(
+        public_scope_hoist_mode(false, RewriteLevel::Aggressive),
+        wakaru::ScopeHoistMode::Disabled
+    );
+    assert_eq!(
+        public_scope_hoist_mode(true, RewriteLevel::Standard),
+        wakaru::ScopeHoistMode::Fallback
+    );
+    assert_eq!(
+        public_scope_hoist_mode(true, RewriteLevel::Aggressive),
+        wakaru::ScopeHoistMode::Recursive
+    );
+}
+
+#[test]
 fn parses_extract_without_js_input() {
     let cli = Cli::try_parse_from(["wakaru", "extract", "input.js.map", "-o", "src"])
         .expect("extract command should parse");
@@ -1274,38 +1290,125 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
         .expect("write node_modules chunk");
     fs::write(dir.join("chunk.js.map"), webpack5_chunk_source()).expect("write sourcemap");
 
-    let input_set =
-        read_unpack_inputs(std::slice::from_ref(&dir), false).expect("read directory inputs");
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        false,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("read and unpack directory inputs");
     assert_eq!(
-        input_set.scan_stats,
+        execution.scan_stats,
         Some(DirectoryScanStats {
             scanned: 4,
             detected: 2,
             skipped: 2,
         })
     );
+    assert!(!execution.output.modules.is_empty());
+    assert!(
+        execution
+            .output
+            .provenance
+            .iter()
+            .any(|module| module.input.ends_with("nested\\chunk.js")
+                || module.input.ends_with("nested/chunk.js")),
+        "missing detected chunk provenance: {:?}",
+        execution.output.provenance
+    );
+    assert!(
+        execution
+            .output
+            .provenance
+            .iter()
+            .any(|module| module.input.ends_with("runtime.js")),
+        "missing detected runtime provenance: {:?}",
+        execution.output.provenance
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
+    let dir = temp_test_dir("unpack-mixed-input-policy");
+    let chunks = dir.join("chunks");
+    fs::create_dir_all(&chunks).expect("create chunks dir");
+    let explicit = dir.join("explicit.js");
+    fs::write(&explicit, "const explicitValue = 1;").expect("write explicit file");
+    fs::write(chunks.join("chunk.js"), webpack5_chunk_source()).expect("write chunk");
+
+    let execution = run_public_unpack(
+        &[explicit.clone(), chunks],
+        false,
+        false,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("mixed explicit and directory inputs should unpack");
+
     assert_eq!(
-        input_set.inputs.len(),
-        2,
-        "expected visible chunk and runtime entry"
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 1,
+            detected: 1,
+            skipped: 0,
+        })
     );
     assert!(
-        input_set
-            .inputs
+        execution
+            .output
+            .modules
             .iter()
-            .any(|input| input.filename.ends_with("nested\\chunk.js")
-                || input.filename.ends_with("nested/chunk.js")),
-        "missing detected chunk input: {:?}",
-        input_set.inputs
+            .any(|(_, code)| code.contains("explicitValue")),
+        "plain explicit input was dropped: {:?}",
+        execution.output.modules
     );
     assert!(
-        input_set
-            .inputs
+        execution
+            .output
+            .provenance
             .iter()
-            .any(|input| input.filename.ends_with("runtime.js")),
-        "missing detected runtime input: {:?}",
-        input_set.inputs
+            .any(|module| { module.input.ends_with("explicit.js") && !module.ranges.is_empty() }),
+        "plain explicit provenance was dropped: {:?}",
+        execution.output.provenance
     );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn unpack_directory_skips_malformed_javascript_candidate() {
+    let dir = temp_test_dir("unpack-dir-malformed");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    fs::write(dir.join("malformed.js"), "function {").expect("write malformed file");
+    fs::write(dir.join("chunk.js"), webpack5_chunk_source()).expect("write chunk");
+
+    let execution = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        false,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .expect("malformed directory candidate should not abort the scan");
+
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 2,
+            detected: 1,
+            skipped: 1,
+        })
+    );
+    assert!(!execution.output.modules.is_empty());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
@@ -1316,8 +1419,17 @@ fn unpack_directory_without_detected_files_errors() {
     fs::create_dir_all(&dir).expect("create temp dir");
     fs::write(dir.join("plain.js"), "const value = 1;").expect("write plain file");
 
-    let err = read_unpack_inputs(std::slice::from_ref(&dir), false)
-        .expect_err("directory with no detected bundles should error");
+    let err = run_public_unpack(
+        std::slice::from_ref(&dir),
+        false,
+        false,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+    )
+    .err()
+    .expect("directory with no detected bundles should error");
     assert!(
         err.to_string()
             .contains("no bundle or chunk files detected in directory input"),
@@ -1671,17 +1783,17 @@ fn overlapping_dot_webpack5_bundle() -> &'static str {
 #[test]
 fn renders_provenance_json_with_final_names_and_default_input() {
     let provenance = vec![
-        wakaru_core::ModuleProvenance {
+        CliModuleProvenance {
             filename: "b.js".to_string(),
             input: String::new(),
             ranges: vec![(10, 20), (30, 40)],
         },
-        wakaru_core::ModuleProvenance {
+        CliModuleProvenance {
             filename: "a \"quoted\".js".to_string(),
             input: "chunk-1.js".to_string(),
             ranges: vec![(0, 5)],
         },
-        wakaru_core::ModuleProvenance {
+        CliModuleProvenance {
             filename: "module-1/chunk_a.js".to_string(),
             input: String::new(),
             ranges: vec![(50, 60)],
@@ -1695,7 +1807,7 @@ fn renders_provenance_json_with_final_names_and_default_input() {
         &provenance,
         &final_names,
         "bundle.js",
-        &[wakaru_core::BundleFormat::Webpack5],
+        &[CliBundleFormat::Structural(wakaru::BundleFormat::Webpack5)],
     );
 
     assert!(
@@ -1724,4 +1836,19 @@ fn renders_provenance_json_with_final_names_and_default_input() {
         "{\n  \"format\": \"webpack5\",\n  \"strategy\": \"mixed\",\n  \"modules\": {\n"
     ));
     assert!(json.ends_with("  }\n}\n"));
+}
+
+#[test]
+fn public_diagnostic_keeps_facade_code_and_severity() {
+    let warning = CliWarning::new(
+        "module.js".to_string(),
+        wakaru::DiagnosticCode::FactCollectionFailed,
+        wakaru::DiagnosticSeverity::Warning,
+        "could not collect facts".to_string(),
+    );
+
+    assert_eq!(warning.filename, "module.js");
+    assert_eq!(warning.kind, "fact_collection_failed");
+    assert!(!warning.is_error);
+    assert_eq!(warning.message, "could not collect facts");
 }

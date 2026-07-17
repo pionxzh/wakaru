@@ -3,6 +3,7 @@ name = "wakaru-formatter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Shared code formatter integration for Wakaru"
 
 [dependencies]

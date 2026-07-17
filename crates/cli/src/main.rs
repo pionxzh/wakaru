@@ -9,12 +9,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
+#[cfg(test)]
 use wakaru_core::{
-    decompile, decompile_vue_sfc, extract_source_entries, format_trace_events,
-    is_likely_vue_sfc_source, normalize, parse_sourcemap, recover_vue_sfc_source_from_js,
-    recover_vue_sfcs_from_js, trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw,
-    BundleFormat, DceMode, DecompileOptions, NormalizeOptions, RewriteLevel, RuleTraceOptions,
-    UnpackInput, VueSfcDecompileOptions, VueSfcRecoveryOptions,
+    decompile, decompile_vue_sfc, normalize, NormalizeOptions, VueSfcDecompileOptions,
+};
+use wakaru_core::{
+    format_trace_events, is_likely_vue_sfc_source, recover_vue_sfcs_from_js, trace_rules, DceMode,
+    DecompileOptions, RewriteLevel, RuleTraceOptions, VueSfcRecoveryOptions,
 };
 
 mod color;
@@ -24,7 +25,7 @@ mod json_output;
 mod output;
 
 use color::Styled;
-use discovery::{scan_directory_for_unpack_inputs, DirectoryScanStats};
+use discovery::{collect_directory_js_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
 use json_output::{
     JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonUnpackOutput,
@@ -278,50 +279,29 @@ fn run_default(cli: Cli) -> Result<()> {
     };
 
     if cli.unpack.is_some() {
-        let input_set = read_unpack_inputs(&cli.inputs, heuristic_split)?;
-        let scan_stats = input_set.scan_stats;
-        let inputs = input_set.inputs;
-        let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
-        let filename = inputs
-            .first()
-            .map(|input| input.filename.clone())
-            .unwrap_or_default();
         let dce_mode = if cli.dce {
             DceMode::Full
         } else {
             DceMode::TransformOnly
-        };
-        let options = DecompileOptions {
-            filename,
-            sourcemap: sourcemap_bytes,
-            dce_mode,
-            level: cli.level.into(),
-            heuristic_split,
-            diagnostics: cli.diagnostics,
-            emit_source_map: cli.emit_source_map,
         };
 
         let out_dir = cli.output.expect("checked above");
         let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
         let out_dir = canonicalize_output_dir(&out_dir)?;
 
-        // Provenance entries from single-source unpacks leave `input` empty;
-        // remember the input name so the provenance file can attribute them.
-        let single_input_name = (inputs.len() == 1).then(|| inputs[0].filename.clone());
-
         let start = Instant::now();
-        let output = if inputs.len() == 1 {
-            let input = inputs.into_iter().next().expect("checked input length");
-            if cli.raw {
-                unpack_raw(&input.source, &options)?
-            } else {
-                unpack(&input.source, options)?
-            }
-        } else if cli.raw {
-            unpack_files_raw(inputs, &options)?
-        } else {
-            unpack_files(inputs, options)?
-        };
+        let execution = run_public_unpack(
+            &cli.inputs,
+            cli.raw,
+            heuristic_split,
+            dce_mode,
+            cli.level.into(),
+            cli.diagnostics,
+            cli.emit_source_map,
+        )?;
+        let scan_stats = execution.scan_stats;
+        let single_input_name = execution.single_input_name;
+        let output = execution.output;
         let elapsed = start.elapsed();
 
         if !cli.json {
@@ -330,7 +310,7 @@ fn run_default(cli: Cli) -> Result<()> {
         let error_modules: Vec<&str> = output
             .warnings
             .iter()
-            .filter(|w| w.kind.is_error())
+            .filter(|w| w.is_error)
             .map(|w| w.filename.as_str())
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -531,15 +511,6 @@ fn run_default(cli: Cli) -> Result<()> {
         } else {
             DceMode::TransformOnly
         };
-        let options = DecompileOptions {
-            filename,
-            sourcemap: sourcemap_bytes,
-            dce_mode,
-            level: cli.level.into(),
-            heuristic_split,
-            diagnostics: cli.diagnostics,
-            emit_source_map: cli.emit_source_map,
-        };
         let output_path = cli.output.clone();
         let vue_file_output = cli.vue_sfc
             && output_path
@@ -550,25 +521,44 @@ fn run_default(cli: Cli) -> Result<()> {
                 .as_ref()
                 .is_some_and(|path| !is_vue_output_path(path));
         let start = Instant::now();
-        let (output, vue_sidecar, recovered_vue_sfc) = if js_primary_vue_output {
-            let output = decompile(&input, options)?;
-            let vue_sidecar = recover_single_file_vue_sidecar(&output.code, &output_filename);
-            let recovered_vue_sfc = vue_sidecar.is_some();
-            (output, vue_sidecar, recovered_vue_sfc)
-        } else if cli.vue_sfc {
-            let output = decompile_vue_sfc(
-                &input,
-                VueSfcDecompileOptions {
-                    decompile: options,
-                    recovery: VueSfcRecoveryOptions::default().with_import_resolver(|specifier| {
-                        read_relative_import_source(&output_filename, specifier)
-                    }),
-                },
-            )?;
-            (output.output, None, output.recovered_sfc)
-        } else {
-            (decompile(&input, options)?, None, false)
-        };
+        let vue_unpack_source = cli.vue_sfc.then(|| input.clone());
+        let mut source = wakaru::Source::new(filename, input);
+        if let Some(sourcemap) = sourcemap_bytes {
+            source = source.with_source_map(sourcemap);
+        }
+        let rewrite = wakaru::RewriteOptions::default()
+            .with_level(public_rewrite_level(cli.level.into()))
+            .with_dce(public_dce_mode(dce_mode));
+        let public_output = wakaru::decompile(
+            source,
+            wakaru::DecompileOptions::default()
+                .with_rewrite(rewrite)
+                .with_diagnostics(cli.diagnostics)
+                .with_output_source_map(cli.emit_source_map),
+        )?;
+        let mut output = adapt_public_decompile_output(public_output);
+        let recovered = cli
+            .vue_sfc
+            .then(|| recover_single_file_vue_sidecar(&output.code, &output_filename))
+            .flatten()
+            .or_else(|| {
+                vue_unpack_source.as_deref().and_then(|source| {
+                    recover_single_file_vue_after_unpack(
+                        source,
+                        &output_filename,
+                        rewrite,
+                        cli.diagnostics,
+                    )
+                })
+            });
+        let recovered_vue_sfc = recovered.is_some();
+        let vue_sidecar = js_primary_vue_output.then_some(recovered.clone()).flatten();
+        if vue_file_output {
+            if let Some(recovered) = recovered {
+                output.code = recovered;
+                output.source_map = None;
+            }
+        }
         let vue_sidecar_path = output_path
             .as_ref()
             .filter(|_| js_primary_vue_output)
@@ -640,7 +630,7 @@ fn run_default(cli: Cli) -> Result<()> {
                 vue_sidecar_filename: vue_metadata
                     .as_ref()
                     .and_then(|metadata| metadata.vue_sidecar_filename.clone()),
-                warnings: output.warnings.iter().map(JsonWarning::from_core).collect(),
+                warnings: output.warnings.iter().map(CliWarning::to_json).collect(),
                 elapsed_ms: elapsed.as_millis() as u64,
             };
             println!(
@@ -679,7 +669,7 @@ fn run_default(cli: Cli) -> Result<()> {
             let failing: Vec<&str> = output
                 .warnings
                 .iter()
-                .filter(|w| w.kind.is_error())
+                .filter(|w| w.is_error)
                 .map(|w| w.filename.as_str())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
@@ -695,14 +685,14 @@ fn run_default(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn print_warnings(warnings: &[wakaru_core::UnpackWarning], styled: &Styled) {
+fn print_warnings(warnings: &[CliWarning], styled: &Styled) {
     for warning in warnings {
-        let label = if warning.kind.is_error() {
+        let label = if warning.is_error {
             styled.error("error")
         } else {
             styled.warning("warning")
         };
-        eprintln!("{label}: {warning}");
+        eprintln!("{label}: {}: {}", warning.filename, warning.message);
     }
 }
 
@@ -734,17 +724,17 @@ fn install_panic_hook() {
 fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
     let map_bytes = fs::read(&args.map)
         .with_context(|| format!("failed to read source map {}", args.map.display()))?;
-    let sm = parse_sourcemap(&map_bytes)?;
     ensure_output_dir(&args.output, force)?;
 
-    let entries = extract_source_entries(&sm, &args.output);
+    let entries = wakaru::sourcemap::embedded_sources(&map_bytes)?;
     let mut written = 0;
-    for (out_path, content) in &entries {
+    for entry in &entries {
+        let out_path = args.output.join(&entry.path);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        fs::write(out_path, content)
+        fs::write(&out_path, &entry.content)
             .with_context(|| format!("failed to write {}", out_path.display()))?;
         written += 1;
     }
@@ -767,11 +757,8 @@ fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
 
 fn run_normalize(args: NormalizeArgs) -> Result<()> {
     let (source, filename) = read_input(args.input.as_ref())?;
-    let options = NormalizeOptions {
-        rename_bindings: args.rename,
-        filename: filename.clone(),
-    };
-    let canonical = normalize(&source, &options)?;
+    let options = wakaru::debug::NormalizeOptions::default().with_rename_bindings(args.rename);
+    let canonical = wakaru::debug::normalize(wakaru::Source::new(&filename, source), options)?;
     let output = if args.format {
         format_cli_output(canonical, &filename, selected_formatter(true))
     } else {
@@ -870,14 +857,38 @@ fn read_relative_import_source(base_filename: &str, specifier: &str) -> Option<S
 }
 
 fn recover_single_file_vue_sidecar(code: &str, output_filename: &str) -> Option<String> {
-    recover_vue_sfc_source_from_js(
-        code,
-        VueSfcRecoveryOptions::default().with_import_resolver(|specifier| {
-            read_relative_import_source(output_filename, specifier)
+    let resolver_filename = output_filename.to_string();
+    wakaru::vue::recover(
+        wakaru::Source::new(output_filename, code),
+        wakaru::vue::RecoveryOptions::default().with_import_resolver(move |specifier: &str| {
+            read_relative_import_source(&resolver_filename, specifier)
         }),
     )
-    .ok()
-    .flatten()
+    .ok()?
+    .into_iter()
+    .next()
+    .map(|recovered| recovered.source)
+}
+
+fn recover_single_file_vue_after_unpack(
+    code: &str,
+    filename: &str,
+    rewrite: wakaru::RewriteOptions,
+    diagnostics: bool,
+) -> Option<String> {
+    let output = wakaru::unpack(
+        vec![wakaru::Source::new(filename, code)],
+        wakaru::UnpackOptions::default()
+            .with_modules(wakaru::ModuleMode::Decompile(rewrite))
+            .with_scope_hoist(wakaru::ScopeHoistMode::Fallback)
+            .with_unmatched(wakaru::UnmatchedInput::Process)
+            .with_diagnostics(diagnostics),
+    )
+    .ok()?;
+    output
+        .modules
+        .iter()
+        .find_map(|module| recover_single_file_vue_sidecar(&module.code, &module.filename))
 }
 
 struct CliOutputArtifact {
@@ -906,9 +917,9 @@ fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
 }
 
 fn json_unpack_output_for_artifacts(
-    detected_formats: &[BundleFormat],
+    detected_formats: &[CliBundleFormat],
     artifacts: &[CliOutputArtifact],
-    warnings: &[wakaru_core::UnpackWarning],
+    warnings: &[CliWarning],
     total_modules: usize,
     failed: usize,
     elapsed: Duration,
@@ -919,7 +930,7 @@ fn json_unpack_output_for_artifacts(
             .map(|format| format.as_str().to_string())
             .collect(),
         modules: artifacts.iter().map(json_module_for_artifact).collect(),
-        warnings: warnings.iter().map(JsonWarning::from_core).collect(),
+        warnings: warnings.iter().map(CliWarning::to_json).collect(),
         total: total_modules,
         failed,
         elapsed_ms: elapsed.as_millis() as u64,
@@ -1127,54 +1138,311 @@ fn normalized_path_parts(path: &str) -> Vec<String> {
         .collect()
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct UnpackInputSet {
-    inputs: Vec<UnpackInput>,
+struct PublicUnpackExecution {
+    output: CliUnpackOutput,
     scan_stats: Option<DirectoryScanStats>,
+    single_input_name: Option<String>,
 }
 
-fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<UnpackInputSet> {
-    if inputs.is_empty() {
-        let (source, filename) = read_input(None)?;
-        return Ok(UnpackInputSet {
-            inputs: vec![UnpackInput { filename, source }],
-            scan_stats: None,
-        });
+struct CliDecompileOutput {
+    code: String,
+    source_map: Option<String>,
+    warnings: Vec<CliWarning>,
+}
+
+impl CliDecompileOutput {
+    fn has_errors(&self) -> bool {
+        self.warnings.iter().any(|warning| warning.is_error)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CliWarning {
+    filename: String,
+    kind: String,
+    is_error: bool,
+    message: String,
+}
+
+impl CliWarning {
+    fn from_public(diagnostic: wakaru::Diagnostic, filename: String) -> Self {
+        Self::new(
+            filename,
+            diagnostic.code,
+            diagnostic.severity,
+            diagnostic.message,
+        )
     }
 
-    let mut out = Vec::new();
-    let mut saw_directory = false;
-    let mut scan_stats = DirectoryScanStats::default();
-
-    for input in inputs {
-        if input == &PathBuf::from("-") || !input.is_dir() {
-            let (source, filename) = read_input(Some(input))?;
-            out.push(UnpackInput { filename, source });
-            continue;
+    fn new(
+        filename: String,
+        code: wakaru::DiagnosticCode,
+        severity: wakaru::DiagnosticSeverity,
+        message: String,
+    ) -> Self {
+        Self {
+            filename,
+            kind: code.as_str().to_string(),
+            is_error: severity == wakaru::DiagnosticSeverity::Error,
+            message,
         }
-
-        saw_directory = true;
-        let (scanned_inputs, stats) = scan_directory_for_unpack_inputs(input, heuristic_split)?;
-        scan_stats.scanned += stats.scanned;
-        scan_stats.detected += stats.detected;
-        scan_stats.skipped += stats.skipped;
-        out.extend(scanned_inputs);
     }
 
-    let scan_stats = if scan_stats.scanned > 0 {
-        Some(scan_stats)
-    } else {
-        None
-    };
+    fn to_json(&self) -> JsonWarning {
+        JsonWarning::new(
+            self.filename.clone(),
+            self.kind.clone(),
+            self.is_error,
+            self.message.clone(),
+        )
+    }
+}
 
-    if saw_directory && out.is_empty() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliBundleFormat {
+    Structural(wakaru::BundleFormat),
+    ScopeHoisted,
+}
+
+impl CliBundleFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Structural(format) => format.as_str(),
+            Self::ScopeHoisted => "scope-hoisted",
+        }
+    }
+
+    fn is_scope_hoisted(self) -> bool {
+        self == Self::ScopeHoisted
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CliModuleProvenance {
+    filename: String,
+    input: String,
+    ranges: Vec<(u32, u32)>,
+}
+
+struct CliUnpackOutput {
+    modules: Vec<(String, String)>,
+    provenance: Vec<CliModuleProvenance>,
+    warnings: Vec<CliWarning>,
+    detected_formats: Vec<CliBundleFormat>,
+    source_maps: Vec<(String, String)>,
+}
+
+fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompileOutput {
+    let filename = output.module.filename.clone();
+    CliDecompileOutput {
+        code: output.module.code,
+        source_map: output.module.source_map,
+        warnings: output
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| CliWarning::from_public(diagnostic, filename.clone()))
+            .collect(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_public_unpack(
+    paths: &[PathBuf],
+    raw: bool,
+    heuristic_split: bool,
+    dce_mode: DceMode,
+    level: RewriteLevel,
+    diagnostics: bool,
+    emit_source_map: bool,
+) -> Result<PublicUnpackExecution> {
+    let saw_directory = paths.iter().any(|path| path.is_dir());
+    let rewrite = wakaru::RewriteOptions::default()
+        .with_level(public_rewrite_level(level))
+        .with_dce(public_dce_mode(dce_mode));
+    let options = wakaru::UnpackOptions::default()
+        .with_modules(if raw {
+            wakaru::ModuleMode::Raw
+        } else {
+            wakaru::ModuleMode::Decompile(rewrite)
+        })
+        .with_scope_hoist(public_scope_hoist_mode(heuristic_split, level))
+        .with_unmatched(wakaru::UnmatchedInput::Process)
+        .with_diagnostics(diagnostics)
+        .with_output_source_maps(emit_source_map);
+    let mut job = wakaru::UnpackJob::new(options)?;
+    let mut stats = DirectoryScanStats::default();
+    let mut pushed_inputs = 0usize;
+
+    {
+        let span = tracing::info_span!("cli_unpack_intake");
+        let _enter = span.enter();
+        if paths.is_empty() {
+            let (code, filename) = read_input(None)?;
+            job.push(wakaru::Source::new(filename, code))?;
+            pushed_inputs += 1;
+        } else {
+            for path in paths {
+                if path == &PathBuf::from("-") || !path.is_dir() {
+                    let (code, filename) = read_input(Some(path))?;
+                    job.push(wakaru::Source::new(filename, code))?;
+                    pushed_inputs += 1;
+                    continue;
+                }
+
+                for candidate in collect_directory_js_inputs(path)? {
+                    stats.scanned += 1;
+                    let code = fs::read_to_string(&candidate)
+                        .with_context(|| format!("failed to read {}", candidate.display()))?;
+                    let receipt = match job.push_with_unmatched(
+                        wakaru::Source::new(candidate.to_string_lossy().to_string(), code),
+                        wakaru::UnmatchedInput::Skip,
+                    ) {
+                        Ok(receipt) => receipt,
+                        Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
+                            stats.skipped += 1;
+                            continue;
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    pushed_inputs += 1;
+                    if receipt.detection == wakaru::InputDetection::Plain {
+                        stats.skipped += 1;
+                    } else {
+                        stats.detected += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if saw_directory && pushed_inputs == 0 {
         bail!("no bundle or chunk files detected in directory input");
     }
-
-    Ok(UnpackInputSet {
-        inputs: out,
-        scan_stats,
+    let output = {
+        let span = tracing::info_span!("cli_unpack_finish");
+        let _enter = span.enter();
+        job.finish()?
+    };
+    if saw_directory && output.modules.is_empty() {
+        bail!("no bundle or chunk files detected in directory input");
+    }
+    let single_input_name = (output.inputs.len() == 1).then(|| output.inputs[0].filename.clone());
+    Ok(PublicUnpackExecution {
+        output: adapt_public_unpack_output(output),
+        scan_stats: (stats.scanned > 0).then_some(stats),
+        single_input_name,
     })
+}
+
+fn public_rewrite_level(level: RewriteLevel) -> wakaru::RewriteLevel {
+    match level {
+        RewriteLevel::Minimal => wakaru::RewriteLevel::Minimal,
+        RewriteLevel::Standard => wakaru::RewriteLevel::Standard,
+        RewriteLevel::Aggressive => wakaru::RewriteLevel::Aggressive,
+    }
+}
+
+fn public_scope_hoist_mode(heuristic_split: bool, level: RewriteLevel) -> wakaru::ScopeHoistMode {
+    match (heuristic_split, level) {
+        (false, _) => wakaru::ScopeHoistMode::Disabled,
+        (true, RewriteLevel::Aggressive) => wakaru::ScopeHoistMode::Recursive,
+        (true, _) => wakaru::ScopeHoistMode::Fallback,
+    }
+}
+
+fn public_dce_mode(mode: DceMode) -> wakaru::DceMode {
+    match mode {
+        DceMode::Off => wakaru::DceMode::Off,
+        DceMode::TransformOnly => wakaru::DceMode::TransformOnly,
+        DceMode::Full => wakaru::DceMode::Full,
+    }
+}
+
+fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
+    let span = tracing::info_span!("cli_adapt_public_unpack_output");
+    let _enter = span.enter();
+    let input_names = output
+        .inputs
+        .iter()
+        .map(|input| input.filename.as_str())
+        .collect::<Vec<_>>();
+    let detected_formats = output
+        .inputs
+        .iter()
+        .filter_map(|input| match input.detection {
+            wakaru::InputDetection::Structural(format) => Some(CliBundleFormat::Structural(format)),
+            wakaru::InputDetection::HeuristicScopeHoisted => Some(CliBundleFormat::ScopeHoisted),
+            wakaru::InputDetection::Plain => None,
+            _ => None,
+        })
+        .fold(Vec::new(), |mut formats, format| {
+            if !formats.contains(&format) {
+                formats.push(format);
+            }
+            formats
+        });
+    let warnings = output
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| {
+            let filename = diagnostic
+                .module
+                .and_then(|index| output.modules.get(index))
+                .map(|module| module.filename.clone())
+                .or_else(|| {
+                    diagnostic
+                        .input
+                        .and_then(|id| input_names.get(id.get() as usize))
+                        .map(|name| (*name).to_string())
+                })
+                .unwrap_or_default();
+            CliWarning::from_public(diagnostic, filename)
+        })
+        .collect();
+    let provenance = output
+        .modules
+        .iter()
+        .map(|module| {
+            let input = module
+                .provenance
+                .first()
+                .and_then(|span| input_names.get(span.input.get() as usize))
+                .copied()
+                .unwrap_or_default()
+                .to_string();
+            CliModuleProvenance {
+                filename: module.filename.clone(),
+                input,
+                ranges: module
+                    .provenance
+                    .iter()
+                    .map(|span| (span.start, span.end))
+                    .collect(),
+            }
+        })
+        .collect();
+    let source_maps = output
+        .modules
+        .iter()
+        .filter_map(|module| {
+            module
+                .source_map
+                .as_ref()
+                .map(|map| (module.filename.clone(), map.clone()))
+        })
+        .collect();
+    let modules = output
+        .modules
+        .into_iter()
+        .map(|module| (module.filename, module.code))
+        .collect();
+    CliUnpackOutput {
+        modules,
+        provenance,
+        warnings,
+        detected_formats,
+        source_maps,
+    }
 }
 
 /// Append `.map` to a path's extension: `foo.js` → `foo.js.map`.
@@ -1333,12 +1601,12 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<bool> {
 /// CLI actually wrote (CLI-side dedup can rename). `default_input` fills in
 /// entries whose input is empty (single-source unpacks).
 fn render_provenance_json(
-    provenance: &[wakaru_core::ModuleProvenance],
+    provenance: &[CliModuleProvenance],
     final_names: &HashMap<&str, String>,
     default_input: &str,
-    detected_formats: &[BundleFormat],
+    detected_formats: &[CliBundleFormat],
 ) -> String {
-    let mut entries: Vec<(String, &wakaru_core::ModuleProvenance)> = provenance
+    let mut entries: Vec<(String, &CliModuleProvenance)> = provenance
         .iter()
         .map(|entry| {
             let name = final_names
@@ -1406,11 +1674,11 @@ fn provenance_final_names<'a>(
     final_names
 }
 
-fn provenance_format(detected_formats: &[BundleFormat]) -> &'static str {
+fn provenance_format(detected_formats: &[CliBundleFormat]) -> &'static str {
     let mut non_scope = detected_formats
         .iter()
         .copied()
-        .filter(|format| *format != BundleFormat::ScopeHoisted);
+        .filter(|format| !format.is_scope_hoisted());
     let Some(first) = non_scope.next() else {
         return detected_formats
             .first()
@@ -1425,13 +1693,15 @@ fn provenance_format(detected_formats: &[BundleFormat]) -> &'static str {
 }
 
 fn provenance_strategy(
-    entries: &[(String, &wakaru_core::ModuleProvenance)],
-    detected_formats: &[BundleFormat],
+    entries: &[(String, &CliModuleProvenance)],
+    detected_formats: &[CliBundleFormat],
 ) -> &'static str {
-    let has_scope_format = detected_formats.contains(&BundleFormat::ScopeHoisted);
+    let has_scope_format = detected_formats
+        .iter()
+        .any(|format| format.is_scope_hoisted());
     let has_structural_format = detected_formats
         .iter()
-        .any(|format| *format != BundleFormat::ScopeHoisted);
+        .any(|format| !format.is_scope_hoisted());
     let has_heuristic_modules = entries
         .iter()
         .any(|(name, _)| is_heuristic_provenance_module(name));

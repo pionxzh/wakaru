@@ -6,6 +6,7 @@
 //! unambiguous across all inputs.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::Result;
 use rayon::prelude::*;
@@ -29,15 +30,16 @@ pub(super) struct MultiSourceModule {
     prepared: Option<PreparedModuleAst>,
     allow_cross_chunk_rewrite: bool,
     allow_cycle_premerge: bool,
-    chunk_ids: HashSet<usize>,
+    chunk_ids: Arc<HashSet<usize>>,
     input_filename: String,
     input_group: String,
 }
 
 impl MultiSourceModule {
+    #[cfg(test)]
     pub(super) fn detected(
         module: UnpackedModule,
-        chunk_ids: HashSet<usize>,
+        chunk_ids: impl Into<Arc<HashSet<usize>>>,
         input_filename: String,
         allow_cycle_premerge: bool,
     ) -> Self {
@@ -50,35 +52,64 @@ impl MultiSourceModule {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn detected_with_ast(
-        mut module: UnpackedModule,
+        module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
-        chunk_ids: HashSet<usize>,
+        chunk_ids: impl Into<Arc<HashSet<usize>>>,
         input_filename: String,
         allow_cycle_premerge: bool,
     ) -> Self {
-        let input_group = input_group_for_filename(&input_filename);
+        let source_input = input_filename.clone();
+        let input_group = input_group_for_filename(&source_input);
+        Self::detected_with_ast_from_source(
+            module,
+            prepared,
+            chunk_ids,
+            input_filename,
+            source_input,
+            input_group,
+            allow_cycle_premerge,
+        )
+    }
+
+    pub(super) fn detected_with_ast_from_source(
+        mut module: UnpackedModule,
+        prepared: Option<PreparedModuleAst>,
+        chunk_ids: impl Into<Arc<HashSet<usize>>>,
+        input_filename: String,
+        source_input: String,
+        input_group: String,
+        allow_cycle_premerge: bool,
+    ) -> Self {
         // Unpackers don't know which physical input they ran on; attribute
         // provenance ranges to it here.
-        module.source_input = input_filename.clone();
+        module.source_input = source_input;
         Self {
             module,
             prepared,
             allow_cross_chunk_rewrite: true,
             allow_cycle_premerge,
-            chunk_ids,
+            chunk_ids: chunk_ids.into(),
             input_filename,
             input_group,
         }
     }
 
     pub(super) fn fallback(module: UnpackedModule) -> Self {
+        Self::fallback_with_ast(module, None)
+    }
+
+    pub(super) fn fallback_with_ast(
+        module: UnpackedModule,
+        prepared: Option<PreparedModuleAst>,
+    ) -> Self {
         Self {
             module,
-            prepared: None,
+            prepared,
             allow_cross_chunk_rewrite: false,
             allow_cycle_premerge: false,
-            chunk_ids: HashSet::new(),
+            chunk_ids: Arc::default(),
             input_filename: String::new(),
             input_group: String::new(),
         }
@@ -107,6 +138,7 @@ impl PreparedUnpackModule {
         Self::with_prepared_cycle_premerge(module, None, allow_cycle_premerge)
     }
 
+    #[cfg(test)]
     pub(super) fn with_prepared_cycle_premerge(
         module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
@@ -141,6 +173,8 @@ impl NumericRewritePlan {
 pub(super) fn prepare_multi_source_modules(
     mut modules: Vec<MultiSourceModule>,
 ) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
+    let span = tracing::info_span!("prepare_multi_source_modules", count = modules.len());
+    let _enter = span.enter();
     assign_unique_module_filenames(&mut modules);
     let numeric_rewrite_plan = NumericRewritePlan {
         plain_id_to_filename: unique_numeric_module_id_map(&modules),
@@ -203,7 +237,7 @@ fn deduplicate_module_filename(filename: &str, seen: &mut HashSet<String>) -> St
     }
 }
 
-fn input_group_for_filename(filename: &str) -> String {
+pub(super) fn input_group_for_filename(filename: &str) -> String {
     let parent = std::path::Path::new(filename)
         .parent()
         .unwrap_or_else(|| std::path::Path::new(""));
@@ -280,7 +314,7 @@ fn unique_numeric_chunk_module_id_map(
         let Ok(id) = module.module.id.parse::<usize>() else {
             continue;
         };
-        for chunk_id in &module.chunk_ids {
+        for chunk_id in module.chunk_ids.iter() {
             if !chunk_filename_matches_id(&module.input_filename, *chunk_id) {
                 continue;
             }
@@ -330,6 +364,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
             filename: prepared.module.filename.clone(),
             input: prepared.module.source_input.clone(),
             ranges: prepared.module.source_ranges.clone(),
+            is_entry: prepared.module.is_entry,
         })
         .collect();
 
@@ -616,6 +651,40 @@ fn member_prop_is(prop: &MemberProp, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detected_modules_share_chunk_id_storage() {
+        let chunk_ids = Arc::new(HashSet::from([7, 11, 13]));
+        let first = MultiSourceModule::detected(
+            UnpackedModule::default(),
+            chunk_ids.clone(),
+            "chunk-7.js".to_string(),
+            true,
+        );
+        let second = MultiSourceModule::detected(
+            UnpackedModule::default(),
+            chunk_ids,
+            "chunk-11.js".to_string(),
+            true,
+        );
+
+        assert!(Arc::ptr_eq(&first.chunk_ids, &second.chunk_ids));
+    }
+
+    #[test]
+    fn prepared_detection_reuses_precomputed_input_group() {
+        let module = MultiSourceModule::detected_with_ast_from_source(
+            UnpackedModule::default(),
+            None,
+            HashSet::new(),
+            "input.js".to_string(),
+            "\0wakaru-input:0".to_string(),
+            "precomputed-group".to_string(),
+            true,
+        );
+
+        assert_eq!(module.input_group, "precomputed-group");
+    }
 
     #[test]
     fn numeric_rewrite_paths_are_relative_to_nested_module() {

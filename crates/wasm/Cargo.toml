@@ -3,13 +3,14 @@ name = "wakaru-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Wakaru WASM bindings for browser-based JavaScript decompilation"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-wakaru-core.workspace = true
+wakaru.workspace = true
 wakaru-formatter.workspace = true
 wasm-bindgen = { version = "0.2", features = ["enable-interning"] }
 serde = { version = "1", features = ["derive"] }

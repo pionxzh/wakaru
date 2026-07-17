@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::transforms::base::resolver;
@@ -7,6 +7,7 @@ use swc_core::ecma::visit::VisitMutWith;
 use super::io::{parse_js, print_trace_module};
 use super::types::DecompileOptions;
 use super::unpack::detect_bundle;
+use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{apply_rules_with_observer, rule_names, RulePipelineOptions};
 
 #[derive(Debug, Clone)]
@@ -43,25 +44,33 @@ pub fn trace_rules(
     source: &str,
     options: DecompileOptions,
     trace_options: RuleTraceOptions,
-) -> Result<Vec<RuleTraceEvent>> {
+) -> DriverResult<Vec<RuleTraceEvent>> {
     validate_trace_rule_name("trace start rule", trace_options.start_from.as_deref())?;
     validate_trace_rule_name("trace stop rule", trace_options.stop_after.as_deref())?;
 
-    if detect_bundle(source, &options.filename)?.is_some() {
-        return Err(anyhow!(
-            "rule tracing currently supports single-file inputs only; use normal decompile or unpack for bundles"
+    if detect_bundle(source, &options.filename)
+        .map_err(|error| DriverError::new(DriverErrorKind::Parse, error))?
+        .is_some()
+    {
+        return Err(DriverError::new(
+            DriverErrorKind::InvalidInput,
+            anyhow!(
+                "rule tracing currently supports single-file inputs only; use normal decompile or unpack for bundles"
+            ),
         ));
     }
 
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let mut module = parse_js(source, &options.filename, cm.clone())?;
+        let mut module = parse_js(source, &options.filename, cm.clone())
+            .map_err(|error| DriverError::new(DriverErrorKind::Parse, error))?;
 
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        let mut previous = print_trace_module(&module, cm.clone())?;
+        let mut previous = print_trace_module(&module, cm.clone())
+            .map_err(|error| DriverError::new(DriverErrorKind::Internal, error))?;
         let mut events = Vec::new();
         let mut render_error: Option<anyhow::Error> = None;
 
@@ -105,21 +114,24 @@ pub fn trace_rules(
         }
 
         if let Some(error) = render_error {
-            return Err(error);
+            return Err(DriverError::new(DriverErrorKind::Internal, error));
         }
 
         Ok(events)
     })
 }
 
-fn validate_trace_rule_name(label: &str, rule_name: Option<&str>) -> Result<()> {
+fn validate_trace_rule_name(label: &str, rule_name: Option<&str>) -> DriverResult<()> {
     let Some(rule_name) = rule_name else {
         return Ok(());
     };
     if rule_names().contains(&rule_name) {
         Ok(())
     } else {
-        Err(anyhow!("unknown {label}: {rule_name}"))
+        Err(DriverError::new(
+            DriverErrorKind::InvalidOptions,
+            anyhow!("unknown {label}: {rule_name}"),
+        ))
     }
 }
 

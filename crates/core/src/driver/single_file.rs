@@ -7,23 +7,40 @@ use super::diagnostics::{
     collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
     verify_output_parses,
 };
+use super::error::DriverErrorKind;
 use super::io::{
-    apply_fixer, build_output_sourcemap, parse_js_with_recovery, print_js, print_js_with_srcmap,
+    apply_fixer, build_output_sourcemap, parse_js_with_recovery_owned, print_js,
+    print_js_with_srcmap,
 };
 use super::types::{DecompileOptions, DecompileOutput};
 use crate::rules::{apply_rules, ImportDedup, RulePipelineOptions, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
+    decompile_owned(source.to_string(), options).map_err(|failure| failure.error)
+}
+
+#[derive(Debug)]
+pub struct OwnedDecompileFailure {
+    pub kind: DriverErrorKind,
+    pub error: anyhow::Error,
+    pub original_source: String,
+}
+
+pub fn decompile_owned(
+    source: String,
+    options: DecompileOptions,
+) -> std::result::Result<DecompileOutput, OwnedDecompileFailure> {
     let span = tracing::info_span!("decompile", filename = %options.filename);
     let _enter = span.enter();
 
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
+    let cm: Lrc<SourceMap> = Default::default();
+    let result = GLOBALS.set(&Default::default(), || {
         let parsed = {
             let span = tracing::info_span!("parse");
             let _enter = span.enter();
-            parse_js_with_recovery(source, &options.filename, cm.clone())?
+            parse_js_with_recovery_owned(source, &options.filename, cm.clone())
+                .map_err(|error| (DriverErrorKind::Parse, error))?
         };
         let mut module = parsed.module;
 
@@ -51,7 +68,7 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
         if let Some(bytes) = &options.sourcemap {
             let span = tracing::info_span!("sourcemap_renames");
             let _enter = span.enter();
-            let sm = parse_sourcemap(bytes)?;
+            let sm = parse_sourcemap(bytes).map_err(|error| (DriverErrorKind::SourceMap, error))?;
             module.visit_mut_with(&mut ImportDedup);
             apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
             module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
@@ -61,33 +78,36 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
             crate::rules::strip_redundant_sentry_source_file(&mut module, &options.filename);
         }
 
-        let mut warnings = if options.diagnostics {
-            let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
+        let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
+        if options.diagnostics {
             warnings.extend(collect_tdz_warnings(&module, &options.filename));
             warnings.extend(collect_duplicate_declaration_warnings(
                 &module,
                 &options.filename,
             ));
-            warnings
-        } else {
-            Vec::new()
-        };
+        }
 
         {
             let span = tracing::info_span!("fixer");
             let _enter = span.enter();
-            apply_fixer(&mut module)?;
+            apply_fixer(&mut module).map_err(|error| (DriverErrorKind::Internal, error))?;
         }
 
         let (code, source_map) = {
             let span = tracing::info_span!("emit");
             let _enter = span.enter();
             if options.emit_source_map {
-                let (code, srcmap_buf) = print_js_with_srcmap(&module, cm.clone())?;
-                let map_json = build_output_sourcemap(&srcmap_buf, &cm, &options.filename)?;
+                let (code, srcmap_buf) = print_js_with_srcmap(&module, cm.clone())
+                    .map_err(|error| (DriverErrorKind::Internal, error))?;
+                let map_json = build_output_sourcemap(&srcmap_buf, &cm, &options.filename)
+                    .map_err(|error| (DriverErrorKind::Internal, error))?;
                 (code, Some(map_json))
             } else {
-                (print_js(&module, cm)?, None)
+                (
+                    print_js(&module, cm.clone())
+                        .map_err(|error| (DriverErrorKind::Internal, error))?,
+                    None,
+                )
             }
         };
 
@@ -100,6 +120,19 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
             warnings,
             source_map,
         })
+    });
+
+    result.map_err(|(kind, error)| {
+        let original_source = cm
+            .files()
+            .first()
+            .map(|file| file.src.to_string())
+            .unwrap_or_default();
+        OwnedDecompileFailure {
+            kind,
+            error,
+            original_source,
+        }
     })
 }
 
@@ -116,6 +149,30 @@ mod tests {
             output.warnings.is_empty(),
             "default decompile should produce no diagnostic warnings"
         );
+    }
+
+    #[test]
+    fn owned_decompile_returns_original_source_on_failure() {
+        let source = "function (".to_string();
+        let failure = decompile_owned(source.clone(), DecompileOptions::default())
+            .expect_err("invalid input should fail");
+        assert_eq!(failure.original_source, source);
+        assert_eq!(failure.kind, DriverErrorKind::Parse);
+        assert!(failure.error.to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn owned_decompile_classifies_invalid_source_map_without_message_matching() {
+        let failure = decompile_owned(
+            "const value = 1;".to_string(),
+            DecompileOptions {
+                sourcemap: Some(b"not a source map".to_vec()),
+                ..Default::default()
+            },
+        )
+        .expect_err("invalid source map should fail");
+
+        assert_eq!(failure.kind, DriverErrorKind::SourceMap);
     }
 
     #[test]
@@ -156,6 +213,22 @@ mod tests {
             "diagnostics should report recovered input parse error: {:?}",
             output.warnings
         );
+    }
+
+    #[test]
+    fn recovered_input_parse_errors_are_operational_diagnostics() {
+        let output = decompile(
+            "label: label: break label;",
+            DecompileOptions {
+                filename: "duplicate-label.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("recovered input parse should still decompile");
+        assert!(output
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == UnpackWarningKind::InputParseRecovered));
     }
 
     #[test]

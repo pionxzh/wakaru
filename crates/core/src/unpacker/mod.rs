@@ -19,6 +19,8 @@ use swc_core::common::{
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::VisitMutWith;
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::rules::rename_utils::{
@@ -331,6 +333,7 @@ pub(crate) struct PreparedModuleAst {
     pub(crate) globals: Globals,
     pub(crate) module: Module,
     pub(crate) unresolved_mark: Mark,
+    pub(crate) recoverable_parse_errors: Vec<String>,
 }
 
 /// Internal detector result. `prepared` is always aligned one-for-one with
@@ -338,6 +341,7 @@ pub(crate) struct PreparedModuleAst {
 pub(crate) struct DetectedBundle {
     pub(crate) result: UnpackResult,
     pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
+    pub(crate) chunk_ids: std::collections::HashSet<usize>,
     materialize_cm: Option<Lrc<SourceMap>>,
 }
 
@@ -349,6 +353,7 @@ impl DetectedBundle {
         Self {
             result,
             prepared,
+            chunk_ids: Default::default(),
             materialize_cm: None,
         }
     }
@@ -366,6 +371,7 @@ impl DetectedBundle {
         Self {
             result,
             prepared,
+            chunk_ids: Default::default(),
             materialize_cm: Some(materialize_cm),
         }
     }
@@ -486,6 +492,11 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         .transpose()
 }
 
+pub(crate) enum PreparedSource {
+    Bundle(DetectedBundle),
+    Plain(Option<PreparedModuleAst>),
+}
+
 pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<DetectedBundle>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -494,24 +505,101 @@ pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<Detected
             let _enter = span.enter();
             parse_es_module(source, "bundle.js", cm.clone())?
         };
+        Ok(detect_parsed_source(&module, cm, source))
+    })
+}
 
-        if let Some(result) = detect_bundle_candidate(&module, cm.clone(), source, true) {
-            return Ok(Some(result));
-        }
+pub(crate) fn try_prepare_source(
+    source: &str,
+    filename: &str,
+    prepare_plain_ast: bool,
+) -> anyhow::Result<PreparedSource> {
+    enum PreparedSourceParts {
+        Bundle(DetectedBundle),
+        Plain {
+            module: Module,
+            unresolved_mark: Mark,
+            recoverable_parse_errors: Vec<String>,
+        },
+        PlainUnprepared,
+    }
 
-        let unwrapped_candidates = wrappers::collect_unwrap_candidates(&module);
-        for candidate in &unwrapped_candidates {
-            if let Some(result) = detect_bundle_candidate(candidate, cm.clone(), source, false) {
-                return Ok(Some(result));
-            }
-        }
-
-        let result = {
-            let span = tracing::info_span!("detect_amd");
+    let globals = Globals::new();
+    let prepared = GLOBALS.set(&globals, || -> anyhow::Result<PreparedSourceParts> {
+        let cm: Lrc<SourceMap> = Default::default();
+        let (mut module, recoverable_parse_errors) = {
+            let span = tracing::info_span!("parse_bundle");
             let _enter = span.enter();
-            amd::detect_from_module(&module, cm)
+            parse_es_module_with_recovery(source, filename, cm.clone())?
         };
-        Ok(result.map(DetectedBundle::from_result))
+
+        if let Some(result) = detect_parsed_source(&module, cm, source) {
+            return Ok(PreparedSourceParts::Bundle(result));
+        }
+
+        if prepare_plain_ast {
+            let unresolved_mark = {
+                let span = tracing::info_span!("prepare_plain: resolver");
+                let _enter = span.enter();
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                unresolved_mark
+            };
+            Ok(PreparedSourceParts::Plain {
+                module,
+                unresolved_mark,
+                recoverable_parse_errors,
+            })
+        } else {
+            Ok(PreparedSourceParts::PlainUnprepared)
+        }
+    })?;
+
+    Ok(match prepared {
+        PreparedSourceParts::Bundle(bundle) => PreparedSource::Bundle(bundle),
+        PreparedSourceParts::Plain {
+            module,
+            unresolved_mark,
+            recoverable_parse_errors,
+        } => PreparedSource::Plain(Some(PreparedModuleAst {
+            globals,
+            module,
+            unresolved_mark,
+            recoverable_parse_errors,
+        })),
+        PreparedSourceParts::PlainUnprepared => PreparedSource::Plain(None),
+    })
+}
+
+fn detect_parsed_source(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+) -> Option<DetectedBundle> {
+    let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
+    if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true) {
+        result.chunk_ids = chunk_ids;
+        return Some(result);
+    }
+
+    let unwrapped_candidates = wrappers::collect_unwrap_candidates(module);
+    for candidate in &unwrapped_candidates {
+        if let Some(mut result) = detect_bundle_candidate(candidate, cm.clone(), source, false) {
+            result.chunk_ids = chunk_ids;
+            return Some(result);
+        }
+    }
+
+    let result = {
+        let span = tracing::info_span!("detect_amd");
+        let _enter = span.enter();
+        amd::detect_from_module(module, cm)
+    };
+    result.map(|result| {
+        let mut detected = DetectedBundle::from_result(result);
+        detected.chunk_ids = chunk_ids;
+        detected
     })
 }
 
@@ -609,6 +697,14 @@ pub(crate) fn parse_es_module(
     filename: &str,
     cm: Lrc<SourceMap>,
 ) -> anyhow::Result<Module> {
+    parse_es_module_with_recovery(source, filename, cm).map(|(module, _)| module)
+}
+
+fn parse_es_module_with_recovery(
+    source: &str,
+    filename: &str,
+    cm: Lrc<SourceMap>,
+) -> anyhow::Result<(Module, Vec<String>)> {
     let fm = cm.new_source_file(
         FileName::Custom(filename.to_string()).into(),
         source.to_string(),
@@ -634,7 +730,7 @@ pub(crate) fn parse_es_module(
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(module), _) => Ok(module),
+        (Ok(module), _) => Ok((module, parser_errors)),
         (Err(error), true) => Err(anyhow::anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow::anyhow!(
             "failed to parse {filename}: {error:?}; {}",

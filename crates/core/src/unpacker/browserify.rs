@@ -530,6 +530,7 @@ fn prepare_factory_module(
         globals,
         module,
         unresolved_mark,
+        recoverable_parse_errors: Vec::new(),
     })
 }
 

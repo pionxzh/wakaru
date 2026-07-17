@@ -1,29 +1,28 @@
 use anyhow::{anyhow, Result};
-use rayon::prelude::*;
+use std::sync::Arc;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::io::{apply_fixer, parse_js, print_js};
-use super::single_file::decompile;
-use super::types::{
-    DecompileOptions, ModuleProvenance, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind,
-};
+use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
 #[cfg(test)]
 use super::unpack_cleanup::hoist_late_runtime_helpers;
+#[cfg(test)]
 use super::unpack_cycles::merge_import_cycles;
 #[cfg(test)]
 use super::unpack_cycles::{
     collect_import_cycle_warnings, scan_local_import_dependencies, unsafe_merge_member_reason,
 };
+use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, RewriteLevel, RulePipelineOptions, SmartRename, UnEsm,
     UnExportRename, UnIife,
 };
 use crate::unpacker::{
-    scope_hoist, try_prepare_bundle, webpack5, BundleFormat, DetectedBundle, UnpackResult,
-    UnpackedModule,
+    scope_hoist, try_prepare_bundle, try_prepare_source, BundleFormat, DetectedBundle,
+    PreparedModuleAst, PreparedSource, UnpackResult, UnpackedModule,
 };
 
 mod dead_module;
@@ -33,167 +32,316 @@ mod phases;
 mod scope_split;
 
 use merge::{
-    emit_raw_modules_with_numeric_rewrites, prepare_multi_source_modules, MultiSourceModule,
-    NumericRewritePlan, PreparedUnpackModule,
+    emit_raw_modules_with_numeric_rewrites, input_group_for_filename, prepare_multi_source_modules,
+    MultiSourceModule,
 };
 #[cfg(test)]
 use phases::unpack_multi_module;
 use phases::unpack_multi_module_with_plan;
 use scope_split::maybe_split_scope_hoisted_modules;
 
-pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
-    let span = tracing::info_span!("unpack");
-    let _enter = span.enter();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreparedInputDetection {
+    Bundle(BundleFormat),
+    ScopeHoisted,
+    Plain,
+}
 
-    match detect_bundle(source, &options.filename)? {
-        Some(result) => {
-            let format = result.result.format;
-            let result = maybe_split_detected_bundle(
-                result,
-                nested_scope_split_enabled(&options),
-                options.emit_source_map,
-            )?;
-            let mut output = unpack_unpack_result(result, options)?;
-            output.detected_formats.push(format);
-            Ok(output)
-        }
-        None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
-            Some(result) if result.modules.len() > 1 => {
-                let mut opts = options.clone();
-                opts.dce_mode = super::types::DceMode::Off;
-                let mut output = unpack_unpack_result(DetectedBundle::from_result(result), opts)?;
-                output.detected_formats.push(BundleFormat::ScopeHoisted);
-                Ok(output)
-            }
-            _ => {
-                let output = decompile(source, options)?;
-                let source_maps = output
-                    .source_map
-                    .map(|m| vec![("module.js".to_string(), m)])
-                    .unwrap_or_default();
-                Ok(UnpackOutput {
-                    modules: vec![("module.js".to_string(), output.code)],
-                    provenance: vec![whole_input_provenance("module.js", "", source)],
-                    warnings: output.warnings,
-                    detected_formats: Vec::new(),
-                    source_maps,
-                })
-            }
-        },
-        None => {
-            let output = decompile(source, options)?;
-            let source_maps = output
-                .source_map
-                .map(|m| vec![("module.js".to_string(), m)])
-                .unwrap_or_default();
-            Ok(UnpackOutput {
-                modules: vec![("module.js".to_string(), output.code)],
-                provenance: vec![whole_input_provenance("module.js", "", source)],
-                warnings: output.warnings,
-                detected_formats: Vec::new(),
-                source_maps,
-            })
-        }
+const PREPARED_INPUT_PREFIX: &str = "\0wakaru-input:";
+
+pub fn prepared_input_index(source_input: &str) -> Option<usize> {
+    source_input
+        .strip_prefix(PREPARED_INPUT_PREFIX)?
+        .parse()
+        .ok()
+}
+
+fn prepared_input_label(index: usize) -> String {
+    format!("{PREPARED_INPUT_PREFIX}{index}")
+}
+
+/// Opaque input prepared by the public façade's incremental intake path.
+///
+/// Structural bundle detection is complete, but the shared cross-module
+/// phases are deferred until the whole logical input set is available.
+pub struct PreparedUnpackInput {
+    filename: String,
+    source: Option<String>,
+    detection: PreparedInputDetection,
+    detected: Option<DetectedBundle>,
+    scope_hoisted: Option<UnpackResult>,
+    plain_prepared: Option<PreparedModuleAst>,
+}
+
+impl PreparedUnpackInput {
+    pub fn detection(&self) -> PreparedInputDetection {
+        self.detection
+    }
+
+    pub fn filename(&self) -> &str {
+        &self.filename
+    }
+
+    pub fn into_plain_source(self) -> Option<(String, String)> {
+        (self.detection == PreparedInputDetection::Plain).then(|| {
+            (
+                self.filename,
+                self.source.expect("plain input retains source"),
+            )
+        })
     }
 }
 
-pub fn unpack_files(
-    mut inputs: Vec<UnpackInput>,
+pub fn prepare_unpack_input(
+    filename: String,
+    source: String,
+    heuristic_scope_hoist: bool,
+    prepare_plain_ast: bool,
+) -> DriverResult<PreparedUnpackInput> {
+    let prepared = match try_prepare_source(&source, &filename, prepare_plain_ast) {
+        Ok(prepared) => prepared,
+        Err(bundle_parse_error) => {
+            // Bundle detection deliberately uses the ES/JSX grammar. Preserve
+            // filename-driven syntax (for example TypeScript) as a valid plain
+            // input, but do not pretend its incompatible AST can be reused.
+            let input_parse_result = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                parse_js(&source, &filename, cm)
+            });
+            match input_parse_result {
+                Ok(_) => {
+                    return Ok(PreparedUnpackInput {
+                        filename,
+                        source: Some(source),
+                        detection: PreparedInputDetection::Plain,
+                        detected: None,
+                        scope_hoisted: None,
+                        plain_prepared: None,
+                    });
+                }
+                Err(input_parse_error) => {
+                    return Err(DriverError::new(
+                        DriverErrorKind::Parse,
+                        anyhow!(
+                            "{input_parse_error}; bundle detection also failed: {bundle_parse_error}"
+                        ),
+                    ));
+                }
+            }
+        }
+    };
+
+    let mut plain_prepared = match prepared {
+        PreparedSource::Bundle(detected) => {
+            let format = detected.result.format;
+            return Ok(PreparedUnpackInput {
+                filename,
+                source: None,
+                detection: PreparedInputDetection::Bundle(format),
+                detected: Some(detected),
+                scope_hoisted: None,
+                plain_prepared: None,
+            });
+        }
+        PreparedSource::Plain(prepared) => prepared,
+    };
+
+    // Detection always starts with the ES/JSX grammar. If that parser only
+    // produced an AST by recovering errors, prefer a clean filename-driven
+    // parse (notably for TypeScript) before deciding the AST is reusable.
+    if matches!(
+        std::path::Path::new(&filename)
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("ts" | "tsx")
+    ) && plain_prepared
+        .as_ref()
+        .is_some_and(|prepared| !prepared.recoverable_parse_errors.is_empty())
+    {
+        if let Ok(prepared) = prepare_plain_ast_for_filename(&source, &filename) {
+            plain_prepared = Some(prepared);
+        }
+    }
+
+    if heuristic_scope_hoist {
+        if let Some(result) =
+            scope_hoist::split_scope_hoisted(&source).filter(|result| result.modules.len() > 1)
+        {
+            return Ok(PreparedUnpackInput {
+                filename,
+                source: None,
+                detection: PreparedInputDetection::ScopeHoisted,
+                detected: None,
+                scope_hoisted: Some(result),
+                plain_prepared: None,
+            });
+        }
+    }
+
+    Ok(PreparedUnpackInput {
+        filename,
+        source: Some(source),
+        detection: PreparedInputDetection::Plain,
+        detected: None,
+        scope_hoisted: None,
+        plain_prepared,
+    })
+}
+
+fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<PreparedModuleAst> {
+    let globals = swc_core::common::Globals::new();
+    let (module, unresolved_mark) = GLOBALS.set(&globals, || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(source, filename, cm)?;
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        Ok::<_, anyhow::Error>((module, unresolved_mark))
+    })?;
+    Ok(PreparedModuleAst {
+        globals,
+        module,
+        unresolved_mark,
+        recoverable_parse_errors: Vec::new(),
+    })
+}
+
+pub fn unpack_prepared_inputs(
+    inputs: Vec<PreparedUnpackInput>,
     mut options: DecompileOptions,
+    raw: bool,
+    recursive_scope_hoist: bool,
 ) -> Result<UnpackOutput> {
     if inputs.is_empty() {
-        return Err(anyhow!("at least one input file is required"));
+        return Err(anyhow!("at least one prepared input is required"));
     }
-
-    if inputs.len() == 1 {
-        let input = inputs.pop().expect("checked input length");
-        options.filename = input.filename;
-        return unpack(&input.source, options);
-    }
-
-    let span = tracing::info_span!("unpack_files", count = inputs.len());
-    let _enter = span.enter();
 
     let mut modules = Vec::new();
     let mut detected_formats = Vec::new();
-    for input in inputs {
-        match detect_bundle(&input.source, &input.filename)? {
-            Some(result) => {
-                let format = result.result.format;
+    let mut preparation_warnings = Vec::new();
+    for (input_index, input) in inputs.into_iter().enumerate() {
+        let provenance_input = prepared_input_label(input_index);
+        let PreparedUnpackInput {
+            filename,
+            source,
+            detection,
+            detected,
+            scope_hoisted,
+            plain_prepared,
+        } = input;
+        match detection {
+            PreparedInputDetection::Bundle(format) => {
                 if !detected_formats.contains(&format) {
                     detected_formats.push(format);
                 }
-                let result = maybe_split_detected_bundle(
-                    result,
-                    nested_scope_split_enabled(&options),
-                    options.emit_source_map,
-                )?;
-                let chunk_ids = webpack5::detect_chunk_ids(&input.source);
-                let input_filename = input.filename.clone();
-                let (result, prepared) = result.into_parts();
+                let detected = detected.expect("bundle detection carries prepared result");
+                let chunk_ids = Arc::new(detected.chunk_ids.clone());
+                let detected = if raw {
+                    let result = detected.materialize()?;
+                    DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
+                        result,
+                        recursive_scope_hoist,
+                    ))
+                } else {
+                    maybe_split_detected_bundle(
+                        detected,
+                        recursive_scope_hoist,
+                        options.emit_source_map,
+                    )?
+                };
+                let (result, prepared) = detected.into_parts();
                 let allow_cycle_premerge = result.allow_cycle_premerge;
+                let input_group = input_group_for_filename(&filename);
                 modules.extend(
                     result
                         .modules
                         .into_iter()
                         .zip(prepared)
                         .map(|(module, ast)| {
-                            MultiSourceModule::detected_with_ast(
+                            MultiSourceModule::detected_with_ast_from_source(
                                 module,
                                 ast,
                                 chunk_ids.clone(),
-                                input_filename.clone(),
+                                filename.clone(),
+                                provenance_input.clone(),
+                                input_group.clone(),
                                 allow_cycle_premerge,
                             )
                         }),
-                )
+                );
             }
-            None if options.heuristic_split => {
-                match scope_hoist::split_scope_hoisted(&input.source) {
-                    Some(result) if result.modules.len() > 1 => {
-                        if !detected_formats.contains(&BundleFormat::ScopeHoisted) {
-                            detected_formats.push(BundleFormat::ScopeHoisted);
-                        }
-                        modules.extend(result.modules.into_iter().map(|mut module| {
-                            module.source_input = input.filename.clone();
-                            MultiSourceModule::fallback(module)
-                        }))
-                    }
-                    _ => modules.push(MultiSourceModule::fallback(
-                        crate::unpacker::UnpackedModule {
-                            id: input.filename.clone(),
-                            is_entry: false,
-                            filename: filename_for_fallback_input(&input.filename),
-                            source_ranges: vec![(0, input.source.len() as u32)],
-                            source_input: input.filename.clone(),
-                            generated_source_map: Vec::new(),
-                            code: input.source,
-                        },
-                    )),
+            PreparedInputDetection::ScopeHoisted => {
+                if !detected_formats.contains(&BundleFormat::ScopeHoisted) {
+                    detected_formats.push(BundleFormat::ScopeHoisted);
                 }
+                let result = scope_hoisted.expect("scope-hoist detection carries result");
+                modules.extend(result.modules.into_iter().map(|mut module| {
+                    module.source_input = provenance_input.clone();
+                    if raw {
+                        match normalize_raw_unpacked_module(&module.code, &module.filename) {
+                            Ok(normalized) => module.code = normalized,
+                            Err(error) => preparation_warnings.push(UnpackWarning::new(
+                                module.filename.clone(),
+                                UnpackWarningKind::RawNormalizationFailed,
+                                format!(
+                                    "raw normalization failed, preserving unparsed code: {error}"
+                                ),
+                            )),
+                        }
+                    }
+                    MultiSourceModule::fallback(module)
+                }));
             }
-            None => modules.push(MultiSourceModule::fallback(
-                crate::unpacker::UnpackedModule {
-                    id: input.filename.clone(),
-                    is_entry: false,
-                    filename: filename_for_fallback_input(&input.filename),
-                    source_ranges: vec![(0, input.source.len() as u32)],
-                    source_input: input.filename.clone(),
-                    generated_source_map: Vec::new(),
-                    code: input.source,
-                },
-            )),
+            PreparedInputDetection::Plain => {
+                let source = source.expect("plain input retains source");
+                let source_len = source.len() as u32;
+                modules.push(MultiSourceModule::fallback_with_ast(
+                    UnpackedModule {
+                        id: filename.clone(),
+                        is_entry: false,
+                        filename: filename_for_fallback_input(&filename),
+                        source_ranges: vec![(0, source_len)],
+                        source_input: provenance_input,
+                        generated_source_map: Vec::new(),
+                        code: source,
+                    },
+                    (!raw).then_some(plain_prepared).flatten(),
+                ));
+            }
         }
     }
 
-    if modules.is_empty() {
-        return Err(anyhow!("no modules were extracted from input files"));
+    if !raw && detected_formats == [BundleFormat::ScopeHoisted] && modules.len() > 1 {
+        options.dce_mode = super::types::DceMode::Off;
     }
-
     let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
-    let mut output = unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options)?;
+    let mut output = if raw {
+        emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?
+    } else {
+        unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options.clone())?
+    };
+    output.warnings.splice(0..0, preparation_warnings);
     output.detected_formats = detected_formats;
     Ok(output)
+}
+
+pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
+    let span = tracing::info_span!("unpack");
+    let _enter = span.enter();
+    unpack_legacy_inputs(
+        vec![UnpackInput {
+            filename: options.filename.clone(),
+            source: source.to_string(),
+        }],
+        options,
+        false,
+    )
+}
+
+pub fn unpack_files(inputs: Vec<UnpackInput>, options: DecompileOptions) -> Result<UnpackOutput> {
+    let span = tracing::info_span!("unpack_files", count = inputs.len());
+    let _enter = span.enter();
+    unpack_legacy_inputs(inputs, options, false)
 }
 
 /// Unpack a bundle without running the decompiler rule pipeline.
@@ -202,104 +350,14 @@ pub fn unpack_files(
 /// bundler-coupled normalization. Cross-module analysis and the normal
 /// decompile rule pipeline are skipped.
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
-    let result = detect_bundle_raw(source, &options.filename)?
-        .map(|result| {
-            let format = result.format;
-            (
-                maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options)),
-                false,
-                format,
-            )
-        })
-        .or_else(|| {
-            if options.heuristic_split {
-                let r = scope_hoist::split_scope_hoisted(source)?;
-                if r.modules.len() > 1 {
-                    Some((r, true, BundleFormat::ScopeHoisted))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-    match result {
-        Some((result, normalize_for_runnable_split, format)) => {
-            let (modules, provenance, warnings) = if normalize_for_runnable_split {
-                // Heuristic scope-hoisted fallback does not get the esbuild
-                // detector's bundler-specific cleanup, so keep the narrow
-                // runnable normalization it still relies on.
-                let (modules, warnings) = {
-                    if should_merge_raw_import_cycles(&result.modules) {
-                        let span = tracing::info_span!("raw_merge_import_cycles");
-                        let _enter = span.enter();
-                        merge_import_cycles(result.modules)
-                    } else {
-                        (result.modules, Vec::new())
-                    }
-                };
-                let provenance = module_provenance(&modules);
-                let normalized: Vec<_> = modules
-                    .into_par_iter()
-                    .map(|module| {
-                        match normalize_raw_unpacked_module(&module.code, &module.filename) {
-                            Ok(normalized) => ((module.filename, normalized), None),
-                            Err(e) => {
-                                let warning = UnpackWarning::new(
-                                    module.filename.clone(),
-                                    UnpackWarningKind::RawNormalizationFailed,
-                                    format!(
-                                        "raw normalization failed, preserving unparsed code: {e}"
-                                    ),
-                                );
-                                ((module.filename, module.code), Some(warning))
-                            }
-                        }
-                    })
-                    .collect();
-                let mut output_modules = Vec::with_capacity(normalized.len());
-                let mut output_warnings = if options.diagnostics {
-                    warnings
-                } else {
-                    Vec::new()
-                };
-                for (module, warning) in normalized {
-                    if options.diagnostics {
-                        if let Some(warning) = warning {
-                            output_warnings.push(warning);
-                        }
-                    }
-                    output_modules.push(module);
-                }
-                (output_modules, provenance, output_warnings)
-            } else {
-                let provenance = module_provenance(&result.modules);
-                (
-                    result
-                        .modules
-                        .into_iter()
-                        .map(|module| (module.filename, module.code))
-                        .collect(),
-                    provenance,
-                    Vec::new(),
-                )
-            };
-            Ok(UnpackOutput {
-                modules,
-                provenance,
-                warnings,
-                detected_formats: vec![format],
-                source_maps: Vec::new(),
-            })
-        }
-        None => Ok(UnpackOutput {
-            modules: vec![("module.js".to_string(), source.to_string())],
-            provenance: vec![whole_input_provenance("module.js", "", source)],
-            warnings: Vec::new(),
-            detected_formats: Vec::new(),
-            source_maps: Vec::new(),
-        }),
-    }
+    unpack_legacy_inputs(
+        vec![UnpackInput {
+            filename: options.filename.clone(),
+            source: source.to_string(),
+        }],
+        options.clone(),
+        true,
+    )
 }
 
 fn nested_scope_split_enabled(options: &DecompileOptions) -> bool {
@@ -307,71 +365,67 @@ fn nested_scope_split_enabled(options: &DecompileOptions) -> bool {
 }
 
 pub fn unpack_files_raw(
-    mut inputs: Vec<UnpackInput>,
+    inputs: Vec<UnpackInput>,
     options: &DecompileOptions,
+) -> Result<UnpackOutput> {
+    unpack_legacy_inputs(inputs, options.clone(), true)
+}
+
+fn unpack_legacy_inputs(
+    inputs: Vec<UnpackInput>,
+    mut options: DecompileOptions,
+    raw: bool,
 ) -> Result<UnpackOutput> {
     if inputs.is_empty() {
         return Err(anyhow!("at least one input file is required"));
     }
 
-    if inputs.len() == 1 {
-        let input = inputs.pop().expect("checked input length");
-        let mut opts = options.clone();
-        opts.filename = input.filename;
-        return unpack_raw(&input.source, &opts);
+    let input_names = inputs
+        .iter()
+        .map(|input| input.filename.clone())
+        .collect::<Vec<_>>();
+    let single_input = inputs.len() == 1;
+    if single_input {
+        options.filename = input_names[0].clone();
     }
+    let prepared = inputs
+        .into_iter()
+        .map(|input| {
+            prepare_unpack_input(input.filename, input.source, options.heuristic_split, !raw)
+                .map_err(DriverError::into_inner)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let plain_single = single_input && prepared[0].detection() == PreparedInputDetection::Plain;
+    let mut output = unpack_prepared_inputs(
+        prepared,
+        options.clone(),
+        raw,
+        nested_scope_split_enabled(&options),
+    )?;
 
-    let mut modules = Vec::new();
-    let mut detected_formats = Vec::new();
-
-    for input in inputs {
-        let result = detect_bundle_raw(&input.source, &input.filename)?.or_else(|| {
-            if options.heuristic_split {
-                let r = scope_hoist::split_scope_hoisted(&input.source)?;
-                if r.modules.len() > 1 {
-                    Some(r)
-                } else {
-                    None
-                }
+    for provenance in &mut output.provenance {
+        if let Some(index) = prepared_input_index(&provenance.input) {
+            provenance.input = if single_input {
+                String::new()
             } else {
-                None
-            }
-        });
-
-        match result {
-            Some(result) => {
-                let format = result.format;
-                if !detected_formats.contains(&format) {
-                    detected_formats.push(format);
-                }
-                let result =
-                    maybe_split_scope_hoisted_modules(result, nested_scope_split_enabled(options));
-                let chunk_ids = webpack5::detect_chunk_ids(&input.source);
-                let allow_cycle_premerge = result.allow_cycle_premerge;
-                modules.extend(result.modules.into_iter().map(|module| {
-                    MultiSourceModule::detected(
-                        module,
-                        chunk_ids.clone(),
-                        input.filename.clone(),
-                        allow_cycle_premerge,
-                    )
-                }));
-            }
-            None => modules.push(MultiSourceModule::fallback(UnpackedModule {
-                id: input.filename.clone(),
-                is_entry: false,
-                filename: filename_for_fallback_input(&input.filename),
-                source_ranges: vec![(0, input.source.len() as u32)],
-                source_input: input.filename.clone(),
-                generated_source_map: Vec::new(),
-                code: input.source.to_string(),
-            })),
+                input_names.get(index).cloned().unwrap_or_default()
+            };
         }
     }
-
-    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
-    let mut output = emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?;
-    output.detected_formats = detected_formats;
+    if plain_single {
+        let emitted_name = output.modules[0].0.clone();
+        output.modules[0].0 = "module.js".to_string();
+        for provenance in &mut output.provenance {
+            if provenance.filename == emitted_name {
+                provenance.filename = "module.js".to_string();
+            }
+        }
+        for (filename, _) in &mut output.source_maps {
+            if *filename == emitted_name {
+                *filename = "module.js".to_string();
+            }
+        }
+    }
     Ok(output)
 }
 
@@ -396,24 +450,6 @@ pub(super) fn detect_bundle(source: &str, filename: &str) -> Result<Option<Detec
             // syntax such as TypeScript. That means a second parse here is
             // intentional: it distinguishes unsupported bundle syntax from
             // genuinely invalid input.
-            let input_parse_result = GLOBALS.set(&Default::default(), || {
-                let cm: Lrc<SourceMap> = Default::default();
-                parse_js(source, filename, cm)
-            });
-            match input_parse_result {
-                Ok(_) => Ok(None),
-                Err(input_parse_error) => Err(anyhow!(
-                    "{input_parse_error}; bundle detection also failed: {bundle_parse_error}"
-                )),
-            }
-        }
-    }
-}
-
-fn detect_bundle_raw(source: &str, filename: &str) -> Result<Option<UnpackResult>> {
-    match crate::unpacker::try_unpack_bundle_raw(source) {
-        Ok(result) => Ok(result),
-        Err(bundle_parse_error) => {
             let input_parse_result = GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
                 parse_js(source, filename, cm)
@@ -488,20 +524,6 @@ impl Default for LateEsmRecoveryOptions {
     }
 }
 
-fn unpack_unpack_result(result: DetectedBundle, options: DecompileOptions) -> Result<UnpackOutput> {
-    let (result, prepared) = result.into_parts();
-    let allow_cycle_premerge = result.allow_cycle_premerge;
-    let modules = result
-        .modules
-        .into_iter()
-        .zip(prepared)
-        .map(|(module, ast)| {
-            PreparedUnpackModule::with_prepared_cycle_premerge(module, ast, allow_cycle_premerge)
-        })
-        .collect();
-    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
-}
-
 fn maybe_split_detected_bundle(
     result: DetectedBundle,
     split_nested_scope: bool,
@@ -515,27 +537,7 @@ fn maybe_split_detected_bundle(
     Ok(DetectedBundle::from_result(result))
 }
 
-/// Provenance entries for a list of unpacked modules, in module order.
-pub(super) fn module_provenance(modules: &[UnpackedModule]) -> Vec<ModuleProvenance> {
-    modules
-        .iter()
-        .map(|module| ModuleProvenance {
-            filename: module.filename.clone(),
-            input: module.source_input.clone(),
-            ranges: module.source_ranges.clone(),
-        })
-        .collect()
-}
-
-/// Provenance entry covering an entire input source.
-fn whole_input_provenance(filename: &str, input: &str, source: &str) -> ModuleProvenance {
-    ModuleProvenance {
-        filename: filename.to_string(),
-        input: input.to_string(),
-        ranges: vec![(0, source.len() as u32)],
-    }
-}
-
+#[cfg(test)]
 fn should_merge_raw_import_cycles(_modules: &[UnpackedModule]) -> bool {
     // Keep the raw merge hook available, but disabled for now. ESM cycles are
     // often valid, and the previous repair could undo recovered module

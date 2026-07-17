@@ -93,6 +93,8 @@ pub struct ModuleProvenance {
     pub input: String,
     /// 0-based byte ranges `(start, end)` into the input source.
     pub ranges: Vec<(u32, u32)>,
+    /// Whether the detector identified this output as an entry module.
+    pub is_entry: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,6 @@
 mod diagnostics;
 mod discovery;
+mod error;
 mod io;
 mod normalize;
 mod output;
@@ -12,12 +13,17 @@ mod unpack_cycles;
 
 pub use crate::unpacker::BundleFormat;
 pub use discovery::is_detected_unpack_input;
+pub use error::{DriverError, DriverErrorKind, DriverResult};
 pub use normalize::{normalize, NormalizeOptions};
 pub use output::{deduplicate_path, safe_relative_module_path};
-pub use single_file::decompile;
+pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
     DceMode, DecompileOptions, DecompileOutput, ModuleProvenance, UnpackInput, UnpackOutput,
     UnpackWarning, UnpackWarningKind,
+};
+pub use unpack::{
+    prepare_unpack_input, prepared_input_index, unpack_prepared_inputs, PreparedInputDetection,
+    PreparedUnpackInput,
 };
 pub use unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};

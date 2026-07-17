@@ -48,6 +48,7 @@ struct Phase1Module {
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
     warning: Option<UnpackWarning>,
+    input_parse_warnings: Vec<UnpackWarning>,
     /// Original source filename recovered from provenance markers (Sentry
     /// `data-sentry-source-file`), if any. Used at the barrier to rename the
     /// module's output file and rewrite importers' references.
@@ -134,19 +135,22 @@ pub(super) fn unpack_multi_module_with_plan(
     // keyed by provisional filename. Final provenance is built after dead
     // module elimination and filename recovery, so only surviving modules
     // appear with their final names.
-    let provenance_by_provisional: std::collections::HashMap<String, (String, Vec<(u32, u32)>)> =
-        modules
-            .iter()
-            .map(|prepared| {
+    let provenance_by_provisional: std::collections::HashMap<
+        String,
+        (String, Vec<(u32, u32)>, bool),
+    > = modules
+        .iter()
+        .map(|prepared| {
+            (
+                prepared.module.filename.clone(),
                 (
-                    prepared.module.filename.clone(),
-                    (
-                        prepared.module.source_input.clone(),
-                        prepared.module.source_ranges.clone(),
-                    ),
-                )
-            })
-            .collect();
+                    prepared.module.source_input.clone(),
+                    prepared.module.source_ranges.clone(),
+                    prepared.module.is_entry,
+                ),
+            )
+        })
+        .collect();
 
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
@@ -170,12 +174,26 @@ pub(super) fn unpack_multi_module_with_plan(
     // mode still reparses in Phase 2 because sourcemap renaming depends on the
     // original parser SourceMap.
     let collect_facts = |unpacked: &mut PreparedUnpackModule| -> Phase1Module {
-        let (globals, prepared_input) = match unpacked.prepared.take() {
-            Some(prepared) => (
-                prepared.globals,
-                Some((prepared.module, prepared.unresolved_mark)),
-            ),
-            None => (Globals::new(), None),
+        let (globals, prepared_input, input_parse_warnings) = match unpacked.prepared.take() {
+            Some(prepared) => {
+                let warnings = prepared
+                    .recoverable_parse_errors
+                    .into_iter()
+                    .map(|error| {
+                        UnpackWarning::new(
+                            unpacked.module.filename.clone(),
+                            UnpackWarningKind::InputParseRecovered,
+                            format!("input parse recovered: {error}"),
+                        )
+                    })
+                    .collect();
+                (
+                    prepared.globals,
+                    Some((prepared.module, prepared.unresolved_mark)),
+                    warnings,
+                )
+            }
+            None => (Globals::new(), None, Vec::new()),
         };
         let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
             let (mut module, unresolved_mark) = match prepared_input {
@@ -293,6 +311,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts,
             prepared,
             warning,
+            input_parse_warnings,
             suggested_filename,
         }
     };
@@ -305,6 +324,7 @@ pub(super) fn unpack_multi_module_with_plan(
 
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
+    let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
     if options.diagnostics {
@@ -317,6 +337,7 @@ pub(super) fn unpack_multi_module_with_plan(
         ));
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
         prepared_modules.push(phase1_module.prepared);
+        prepared_parse_warnings.push(phase1_module.input_parse_warnings);
         if let Some(w) = phase1_module.warning {
             warnings.push(w);
         }
@@ -338,11 +359,17 @@ pub(super) fn unpack_multi_module_with_plan(
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
     let rename_ref = &rename_map;
-    let phase2_inputs: Vec<_> = modules.into_iter().zip(prepared_modules).collect();
+    let phase2_inputs: Vec<_> = modules
+        .into_iter()
+        .zip(prepared_modules)
+        .zip(prepared_parse_warnings)
+        .map(|((module, prepared), warnings)| (module, prepared, warnings))
+        .collect();
 
-    let decompile_module = |(unpacked, prepared): (
+    let decompile_module = |(unpacked, prepared, prepared_parse_warnings): (
         PreparedUnpackModule,
         Option<Phase1PreparedModule>,
+        Vec<UnpackWarning>,
     )|
      -> (
         String,
@@ -423,17 +450,15 @@ pub(super) fn unpack_multi_module_with_plan(
             drop(rules_enter);
             drop(rules_span);
 
-            let mut diag_warnings = if options.diagnostics {
-                let mut warnings = input_parse_warnings;
+            let mut diag_warnings = input_parse_warnings;
+            if options.diagnostics {
+                let warnings = &mut diag_warnings;
                 warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
                 warnings.extend(collect_duplicate_declaration_warnings(
                     &module,
                     &unpacked.module.filename,
                 ));
-                warnings
-            } else {
-                Vec::new()
-            };
+            }
 
             // Final, isolated remap: rewrite import-source strings that point
             // at modules renamed via recovered filenames. Runs after every
@@ -507,7 +532,7 @@ pub(super) fn unpack_multi_module_with_plan(
             } = prepared;
             GLOBALS.set(&globals, || {
                 let cm: Lrc<SourceMap> = Default::default();
-                run_phase2_tail(module, cm, unresolved_mark, Vec::new())
+                run_phase2_tail(module, cm, unresolved_mark, prepared_parse_warnings)
             })
         } else {
             GLOBALS.set(&Default::default(), || {
@@ -548,11 +573,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     );
                 }
 
-                let input_parse_warnings = if options.diagnostics {
-                    collect_input_parse_warnings(&parsed.recoverable_errors)
-                } else {
-                    Vec::new()
-                };
+                let input_parse_warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
                 run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
             })
         };
@@ -639,11 +660,12 @@ pub(super) fn unpack_multi_module_with_plan(
                 .get(final_filename.as_str())
                 .copied()
                 .unwrap_or(final_filename.as_str());
-            let (input, ranges) = provenance_by_provisional.get(provisional)?;
+            let (input, ranges, is_entry) = provenance_by_provisional.get(provisional)?;
             Some(ModuleProvenance {
                 filename: final_filename.clone(),
                 input: input.clone(),
                 ranges: ranges.clone(),
+                is_entry: *is_entry,
             })
         })
         .collect();

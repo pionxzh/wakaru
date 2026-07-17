@@ -3,6 +3,7 @@ name = "wakaru-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Wakaru CLI — fast JavaScript decompiler and bundle splitter"
 
 [[bin]]
@@ -10,6 +11,7 @@ name = "wakaru"
 path = "src/main.rs"
 
 [dependencies]
+wakaru.workspace = true
 wakaru-core.workspace = true
 wakaru-formatter.workspace = true
 anyhow.workspace = true

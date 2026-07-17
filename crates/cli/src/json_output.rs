@@ -66,12 +66,17 @@ pub struct JsonWarning {
 }
 
 impl JsonWarning {
-    pub fn from_core(w: &wakaru_core::UnpackWarning) -> Self {
+    pub fn new(
+        filename: impl Into<String>,
+        kind: impl Into<String>,
+        is_error: bool,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            filename: w.filename.clone(),
-            kind: w.kind.as_str().to_string(),
-            is_error: w.kind.is_error(),
-            message: w.message.clone(),
+            filename: filename.into(),
+            kind: kind.into(),
+            is_error,
+            message: message.into(),
         }
     }
 }

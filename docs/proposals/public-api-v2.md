@@ -1,12 +1,13 @@
 # Public API v2 proposal
 
-Status: approved design proposal; implementation pending. This document
-specifies a breaking Rust API. It does not describe an implemented
-compatibility layer.
+Status: implemented. This document is the contract for the breaking Rust API;
+the published façade lives in `crates/wakaru`.
 
-The public façade is published as `wakaru`. The existing `wakaru-core` crate
-becomes an unpublished, explicitly internal engine crate so its implementation
-surface can evolve without becoming a semver contract.
+The public façade is published as `wakaru`. Cargo cannot package a façade with
+an unpublished path dependency, so `wakaru-core` is also published as a
+lockstep, exact-version implementation dependency. It remains explicitly
+unsupported as an integration surface and may change whenever the façade
+version changes.
 
 ## Goals
 
@@ -60,6 +61,15 @@ impl UnpackJob {
     /// released before this method returns.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt>;
 
+    /// Override only the unmatched-input policy for this input. This supports
+    /// explicit-file fallback and detection-only directory candidates in one
+    /// cross-module job.
+    pub fn push_with_unmatched(
+        &mut self,
+        input: Source,
+        unmatched: UnmatchedInput,
+    ) -> Result<InputReceipt>;
+
     /// Run the shared cross-module phases and materialize final output.
     pub fn finish(self) -> Result<UnpackOutput>;
 }
@@ -70,9 +80,11 @@ pushing those sources into one `UnpackJob` in order and finishing it. Both
 forms use the same detection and processing semantics; this contract does not
 require the Vec form to use a literally serial push loop.
 
-`UnpackJob::new` validates option combinations. A failed `push` does not add an
-input or consume an `InputId`; the job remains usable. A successful push
-returns the assigned ID and detection result, allowing a walker to report
+`UnpackJob::new` validates option combinations. `push_with_unmatched` overrides
+only the plain-input policy for that input; module mode, scope-hoist behavior,
+diagnostics, and source-map behavior remain job-wide. A failed push does not
+add an input or consume an `InputId`; the job remains usable. A successful
+push returns the assigned ID and detection result, allowing a walker to report
 detection progress without waiting for `finish`.
 
 `UnmatchedInput::Error` is an operation-level policy evaluated by `finish`,
@@ -262,6 +274,12 @@ diagnostics are still returned. Combining `ModuleMode::Raw` with requested
 output source maps is `ErrorKind::InvalidOptions`; raw mode never silently
 ignores a requested output source map.
 
+When heuristic scope-hoist detection itself produces multiple top-level
+modules, decompilation disables DCE for that output set. The heuristic split
+does not establish a complete enough reachability graph to apply the requested
+DCE mode safely. Structural bundle output, including recursively split
+structural modules, continues to honor the selected `DceMode`.
+
 ## Output artifacts
 
 ```rust
@@ -328,7 +346,11 @@ pub struct DecompileOutput {
 
 `EntryStatus::Unknown` is distinct from `NonEntry`: several bundle/chunk
 shapes can identify an entry positively without proving that every other
-module is not an entry.
+module is not an entry. `NonEntry` is emitted only for formats whose runtime
+metadata defines a complete entry set (webpack, Browserify, Closure
+ModuleManager, and Metro). AMD, SystemJS, esbuild, and heuristic scope-hoist
+entry flags remain `Unknown` because their current detectors do not establish
+that contract reliably.
 
 `ModuleStatus::DecompileFailed` always has at least one associated operational
 diagnostic. A successfully returned operation can therefore contain partial
@@ -358,6 +380,8 @@ pub enum BundleFormat {
     Webpack5,
     Webpack4,
     Browserify,
+    ClosureModuleManager,
+    Metro,
     SystemJs,
     Esbuild,
     Amd,
@@ -394,7 +418,9 @@ pub struct InputReport {
     pub detection: InputDetection,
     pub action: InputAction,
     /// Indices into `UnpackOutput::modules`. A module with provenance from
-    /// multiple inputs appears in every applicable report.
+    /// multiple inputs appears in every applicable report. A synthesized
+    /// module with no narrower input identity appears in every processed
+    /// input report without fabricating source spans.
     pub module_indices: Vec<usize>,
 }
 
@@ -755,8 +781,8 @@ retained for the rest of the walk.
 
 ## Decisions in this revision
 
-- Publish the stable façade as `wakaru`; keep `wakaru-core` unpublished and
-  internal.
+- Publish the stable façade as `wakaru`; publish `wakaru-core` first as its
+  exact-version, unsupported implementation dependency.
 - Use private option fields with builder methods.
 - Keep `InputReport::module_indices`, because synthesized modules can have no
   provenance.

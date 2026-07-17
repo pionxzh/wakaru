@@ -1,0 +1,12 @@
+[package]
+name = "wakaru"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Public Rust API for the Wakaru JavaScript decompiler"
+
+[dependencies]
+wakaru-core.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

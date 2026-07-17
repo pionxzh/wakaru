@@ -43,11 +43,16 @@ pub(super) fn parse_js_with_recovery(
     filename: &str,
     cm: Lrc<SourceMap>,
 ) -> Result<ParsedModule> {
+    parse_js_with_recovery_owned(source.to_string(), filename, cm)
+}
+
+pub(super) fn parse_js_with_recovery_owned(
+    source: String,
+    filename: &str,
+    cm: Lrc<SourceMap>,
+) -> Result<ParsedModule> {
     let syntax = detect_syntax(filename);
-    let fm = cm.new_source_file(
-        FileName::Custom(filename.to_string()).into(),
-        source.to_string(),
-    );
+    let fm = cm.new_source_file(FileName::Custom(filename.to_string()).into(), source);
 
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
     let mut parser = Parser::new_from(lexer);

@@ -5,6 +5,167 @@ use crate::test_tracing::record_spans;
 use crate::unpacker::UnpackedModule;
 
 #[test]
+fn prepared_input_classifies_unrecoverable_parse_errors() {
+    let error = prepare_unpack_input(
+        "broken.js".to_string(),
+        "function (".to_string(),
+        false,
+        true,
+    )
+    .err()
+    .expect("invalid input should fail preparation");
+
+    assert_eq!(error.kind(), DriverErrorKind::Parse);
+}
+
+#[test]
+fn prepared_plain_input_reuses_detection_ast_in_phase1() {
+    let (output, spans) = record_spans(|| {
+        let input = prepare_unpack_input(
+            "plain.js".to_string(),
+            "const answer = 40 + 2;".to_string(),
+            false,
+            true,
+        )
+        .expect("plain input should prepare");
+        assert_eq!(input.detection(), PreparedInputDetection::Plain);
+
+        unpack_prepared_inputs(vec![input], DecompileOptions::default(), false, false)
+            .expect("prepared plain input should decompile")
+    });
+
+    assert_eq!(output.modules.len(), 1);
+    assert!(output.modules[0].1.contains("answer"));
+    assert_eq!(
+        spans.iter().filter(|name| *name == "parse_bundle").count(),
+        1,
+        "detection should parse the input exactly once: {spans:?}"
+    );
+    for skipped in ["phase1: parse", "phase1: resolver"] {
+        assert!(
+            !spans.iter().any(|name| name == skipped),
+            "unexpected prepared-input round trip {skipped:?} in {spans:?}"
+        );
+    }
+    assert!(spans.iter().any(|name| name == "prepare_plain: resolver"));
+}
+
+#[test]
+fn legacy_plain_unpack_uses_prepared_intake_once() {
+    let (output, spans) = record_spans(|| {
+        unpack(
+            "const answer = 40 + 2;",
+            DecompileOptions {
+                filename: "src/input.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("legacy plain input should decompile")
+    });
+
+    assert_eq!(output.modules[0].0, "module.js");
+    assert_eq!(output.provenance[0].filename, "module.js");
+    assert!(output.provenance[0].input.is_empty());
+    assert_eq!(
+        spans.iter().filter(|name| *name == "parse_bundle").count(),
+        1,
+        "legacy intake should delegate to preparation exactly once: {spans:?}"
+    );
+    assert!(
+        !spans.iter().any(|name| name == "phase1: parse"),
+        "legacy plain intake should reuse its prepared AST: {spans:?}"
+    );
+}
+
+#[test]
+fn unprocessed_plain_input_skips_resolver_preparation() {
+    let (detection, spans) = record_spans(|| {
+        prepare_unpack_input(
+            "plain.js".to_string(),
+            "const value = 1;".to_string(),
+            false,
+            false,
+        )
+        .expect("plain input should detect")
+        .detection()
+    });
+    assert_eq!(detection, PreparedInputDetection::Plain);
+    assert!(
+        !spans.iter().any(|name| name == "prepare_plain: resolver"),
+        "unprocessed plain input should only be detected: {spans:?}"
+    );
+}
+
+#[test]
+fn prepared_raw_scope_split_keeps_runnable_normalization() {
+    let input = PreparedUnpackInput {
+        filename: "bundle.js".to_string(),
+        source: None,
+        detection: PreparedInputDetection::ScopeHoisted,
+        detected: None,
+        scope_hoisted: Some(UnpackResult {
+            modules: vec![UnpackedModule {
+                id: "entry".to_string(),
+                is_entry: true,
+                filename: "entry.js".to_string(),
+                source_ranges: vec![(0, 18)],
+                source_input: String::new(),
+                generated_source_map: Vec::new(),
+                code: "if (ready) run();".to_string(),
+            }],
+            allow_cycle_premerge: false,
+            format: BundleFormat::ScopeHoisted,
+        }),
+        plain_prepared: None,
+    };
+
+    let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), true, false)
+        .expect("raw scope-hoisted module should normalize");
+    assert_eq!(output.modules.len(), 1);
+    assert!(
+        output.modules[0].1.contains("if (ready) {"),
+        "raw split should retain runnable statement normalization: {}",
+        output.modules[0].1
+    );
+}
+
+#[test]
+fn prepared_webpack_input_does_not_reparse_for_chunk_metadata() {
+    let source = r#"
+(self.webpackChunkapp = self.webpackChunkapp || []).push([[1], {
+    1: (module) => { module.exports = 1; }
+}]);
+"#;
+    let (output, spans) = record_spans(|| {
+        let input = prepare_unpack_input("chunk.js".to_string(), source.to_string(), false, true)
+            .expect("webpack input should prepare");
+        assert!(matches!(
+            input.detection(),
+            PreparedInputDetection::Bundle(BundleFormat::Webpack5)
+        ));
+        unpack_prepared_inputs(vec![input], DecompileOptions::default(), false, false)
+            .expect("prepared webpack input should decompile")
+    });
+
+    assert_eq!(output.modules.len(), 1);
+    assert_eq!(
+        spans.iter().filter(|name| *name == "parse_bundle").count(),
+        1,
+        "chunk metadata must come from the detection AST: {spans:?}"
+    );
+    for skipped in [
+        "unpacker: prepared emit",
+        "phase1: parse",
+        "phase1: resolver",
+    ] {
+        assert!(
+            !spans.iter().any(|name| name == skipped),
+            "unexpected prepared-input round trip {skipped:?} in {spans:?}"
+        );
+    }
+}
+
+#[test]
 fn webpack5_normal_unpack_consumes_prepared_ast_without_round_trip() {
     let source = r#"
 (self.webpackChunkapp = self.webpackChunkapp || []).push([[1], {

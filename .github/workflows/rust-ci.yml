@@ -50,6 +50,37 @@ jobs:
       - name: Format check
         run: cargo fmt --check
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustc --version
+      - name: Package Rust façade and engine
+        run: |
+          cargo package -p wakaru-core --allow-dirty --no-verify
+          cargo package -p wakaru --allow-dirty --no-verify \
+            --config 'patch.crates-io.wakaru-core.path="crates/core"'
+
+  external-types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install rustdoc JSON toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-20
+      - name: Install external type checker
+        run: cargo install --locked cargo-check-external-types --version 0.5.0
+      - name: Reject dependency types in the public façade
+        run: >-
+          cargo +nightly-2026-03-20 check-external-types
+          --manifest-path crates/wakaru/Cargo.toml
+
   check:
     runs-on: ${{ matrix.os }}
     strategy:

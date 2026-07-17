@@ -309,17 +309,7 @@ pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
     })
 }
 
-pub(crate) fn detect_chunk_ids(source: &str) -> HashSet<usize> {
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
-        let Ok(module) = super::parse_es_module(source, "webpack5.js", cm) else {
-            return HashSet::new();
-        };
-        detect_chunk_ids_from_module(&module)
-    })
-}
-
-fn detect_chunk_ids_from_module(module: &Module) -> HashSet<usize> {
+pub(crate) fn detect_chunk_ids_from_module(module: &Module) -> HashSet<usize> {
     let mut ids = HashSet::new();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
@@ -1345,6 +1335,7 @@ fn prepare_webpack5_module(
         globals,
         module: synthetic_module,
         unresolved_mark,
+        recoverable_parse_errors: Vec::new(),
     })
 }
 

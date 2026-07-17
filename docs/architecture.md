@@ -134,18 +134,29 @@ the file goes through single-file decompile. The same splitter also runs on
 detected modules to break up scope-hoisted chunks nested inside another
 bundle format.
 
-Unpackers emit module code strings or prepared normalized ASTs. They do not run
-the normal decompile rule pipeline — that's the driver's job. Bundler-specific
-extraction normalization (factory parameter renaming, dependency-map or module
-ID rewriting, and runtime helper removal) remains in the relevant unpacker
-because those transforms are tightly coupled to the bundle format. Webpack5
-and Metro can hand their normalized ASTs directly to Phase 1, avoiding an
-emit/parse cycle; raw unpack and source-map mode materialize the sidecar to
-source text.
+Unpackers emit module metadata with source text and, when available, a private
+prepared normalized AST sidecar. They do not run the normal decompile rule
+pipeline — that's the driver's job. Prepared payloads cross the same Phase 1
+boundary as source-only payloads; there is no format-specific rule route.
+Bundler-specific extraction normalization (factory parameter renaming,
+dependency-map or module-ID rewriting, and runtime helper removal) remains in
+the relevant unpacker because those transforms are tightly coupled to the
+bundle format. Webpack5 and Metro can hand their normalized ASTs directly to
+Phase 1, avoiding an emit/parse cycle; raw unpack and source-map mode
+materialize the sidecar to source text.
 
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
-Orchestrates the full pipeline.
+Orchestrates the internal pipeline. The stable Rust surface is the `wakaru`
+façade crate. Cargo requires separately packaged dependencies to exist in the
+registry, so `wakaru-core` is published in lockstep and exact-version pinned by
+the façade, but its driver types are not a supported semver contract.
+
+The façade exposes owned `Source` inputs, structured module artifacts and
+diagnostics, and two root operations: `decompile` and `unpack`. `UnpackJob`
+adds push-based intake for directory walkers. Each push performs detection
+once; compatible plain JavaScript retains that resolved AST for Phase 1, and
+prepared detector modules are neither emitted nor reparsed before rules.
 
 **`decompile(source, options)`** — single-file decompilation:
 ```
@@ -175,6 +186,10 @@ chunk files. Each input is detected independently, detected module sets are
 merged, and the same two-phase pipeline runs once over the combined module set
 so cross-module facts can see modules from every input file.
 
+The legacy `wakaru-core` `unpack*` entry points are compatibility wrappers over
+the same `prepare_unpack_input` intake and shared executor used by the façade;
+they do not maintain a second detector loop.
+
 Before the two-phase pipeline starts, multi-source unpack stabilizes the merged
 module set: filenames are made unique before fact collection, and unambiguous
 numeric webpack module IDs are mapped to those final filenames so entry/chunk
@@ -196,12 +211,11 @@ live ESM exports without guessing.
 **`unpack_files_raw(inputs)`** — multi-source raw unpack. It merges raw
 detector output from all inputs and skips the normal decompile pipeline.
 
-The CLI also accepts directory inputs with `--unpack`. Directory inputs are
-expanded recursively to `.js`, `.mjs`, and `.cjs` candidates while skipping
-hidden files/directories and `node_modules`. Directory-discovered files are
-detect-only: files that do not match a bundle/chunk shape are skipped rather
-than copied or decompiled. Explicit file inputs keep the normal single-file
-fallback behavior.
+The CLI also accepts directory inputs with `--unpack`. It expands directories
+recursively to `.js`, `.mjs`, and `.cjs` candidates while skipping hidden
+files/directories and `node_modules`, then pushes each candidate directly into
+one `UnpackJob`. Plain directory candidates are skipped and released during
+the walk; the CLI does not run a separate boolean detection preflight.
 
 **`trace_rules(source, options, trace_options)`** — single-file rule tracing.
 Runs the pipeline with an observer that captures per-rule before/after snapshots.
@@ -377,21 +391,30 @@ because that pass operates on emitted module text.
 
 ```
 crates/
+  wakaru/
+    src/
+      lib.rs                        — stable compiler-like public façade
+      decompile.rs                  — owned single-file operation adapter
+      unpack.rs                     — Vec and incremental UnpackJob operations
+      source.rs, options.rs         — owned inputs and private builder options
+      output.rs, error.rs           — artifacts, reports, diagnostics, fatal errors
+      debug.rs, sourcemap.rs, vue.rs — standalone auxiliary namespaces
+
   cli/
     src/
       main.rs                       — CLI entry point (clap)
 
   core/
     src/
-      lib.rs                        — public API exports
-      driver.rs                     — public driver facade
+      lib.rs                        — internal engine exports
+      driver.rs                     — internal driver consolidation
       driver/
         single_file.rs              — decompile() orchestration
         unpack.rs                   — unpack(), unpack_raw(), and multi-module pipeline
         trace.rs                    — rule trace orchestration and formatting
         diagnostics.rs              — post-transform diagnostic warning collection
-        discovery.rs                — recursive input-directory scan + bundle detection
-        output.rs                   — output-path safety, dedup, write-if-changed
+        discovery.rs                — internal structural-detection helper
+        output.rs                   — internal path normalization and dedup helpers
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction

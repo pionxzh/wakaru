@@ -547,6 +547,10 @@ fn trace_rejects_unknown_rule_names() {
     )
     .expect_err("unknown trace rule should fail");
 
+    assert_eq!(
+        err.kind(),
+        wakaru_core::driver::DriverErrorKind::InvalidOptions
+    );
     assert!(err.to_string().contains("NoSuchRule"));
 }
 

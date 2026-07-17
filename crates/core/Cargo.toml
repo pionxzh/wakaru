@@ -3,6 +3,7 @@ name = "wakaru-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Wakaru core — JavaScript decompiler and bundle splitter"
 
 [lib]
