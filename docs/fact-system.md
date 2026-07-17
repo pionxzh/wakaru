@@ -45,10 +45,11 @@ Phase 2 (per module, parallel):
 The normal no-source-map path runs the through-`UnEsm` range once. The retained
 AST crosses the barrier together with the exact `Globals` and unresolved mark
 that produced its `SyntaxContext`s, so downstream ctxt-sensitive rules keep a
-continuous binding identity. Webpack5 can enter Phase 1 with a resolved AST
-produced by detector normalization, avoiding its former emit → parse → resolver
-round trip. Source-map mode materializes that private AST sidecar and follows
-the parser path because emitted mappings need parser-owned module coordinates.
+continuous binding identity. Webpack5 and Browserify-family detectors can enter
+Phase 1 with a resolved AST produced by detector normalization, avoiding an
+emit → parse → resolver round trip. Source-map mode materializes that private
+AST sidecar and follows the parser path because emitted mappings need
+parser-owned module coordinates.
 
 ## Facts
 

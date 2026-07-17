@@ -40,6 +40,13 @@ separately emitted asset files remain external to the recovered JavaScript
 modules. ncc `.mjs` output uses a top-level runtime and is not structurally
 split.
 
+Cocos Creator 2.x project-script bundles using `window.__require` are handled
+as Browserify-family output. String-keyed factories are emitted as named
+modules, local dependency-map targets are rewritten to those filenames, and
+`cc._RF.push/pop` registration calls are preserved, including when production
+compression combines them into comma sequences. Dependencies delegated to
+another previously loaded Cocos bundle remain unresolved in single-file mode.
+
 ## Formatter
 
 ```bash

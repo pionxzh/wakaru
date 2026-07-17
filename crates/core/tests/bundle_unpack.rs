@@ -1,6 +1,47 @@
 use std::fs;
 
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::{unpack, unpack_raw, BundleFormat, DecompileOptions};
+
+#[test]
+fn browserify_accepts_a_nonliteral_cache_argument() {
+    let source = r#"
+var sharedCache = {};
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = "entry";
+  }, {}]
+}, sharedCache, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify variable-cache bundle should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    assert!(output.modules.iter().any(|(name, _)| name == "entry.js"));
+}
+
+#[test]
+fn browserify_accepts_numeric_dependency_request_keys() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = require("2048");
+  }, { 2048: 2 }],
+  2: [function(require, module) {
+    module.exports = "value";
+  }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify numeric-request bundle should unpack");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Browserify entry should exist");
+    assert!(entry.contains("require(\"./module-2.js\")"), "{entry}");
+}
 
 #[test]
 fn webpack5_unpack_extracts_multiple_modules() {
@@ -383,5 +424,19 @@ fn browserify_unpack_extracts_multiple_modules() {
         pairs.iter().any(|(name, _)| name == "entry.js"),
         "expected browserify unpack to include entry.js, got {:?}",
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("expected browserify entry module");
+    assert!(
+        entry.contains(r#""./module-2.js""#) && entry.contains(r#""./module-3.js""#),
+        "browserify dependency maps should target emitted module filenames:\n{entry}"
+    );
+    assert!(
+        !entry.contains(r#""./calculator""#) && !entry.contains(r#""./greeting""#),
+        "original browserify request names should be remapped:\n{entry}"
     );
 }

@@ -409,10 +409,10 @@ fn detect_bundle_candidate(
     let result = {
         let span = tracing::info_span!("detect_browserify");
         let _enter = span.enter();
-        browserify::detect_from_module(module, cm.clone())
+        browserify::detect_from_module_prepared(module, cm.clone())
     };
     if result.is_some() {
-        return result.map(DetectedBundle::from_result);
+        return result;
     }
 
     let result = {

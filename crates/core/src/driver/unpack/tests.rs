@@ -52,6 +52,50 @@ fn webpack5_normal_unpack_consumes_prepared_ast_without_round_trip() {
 }
 
 #[test]
+fn browserify_family_normal_unpack_consumes_prepared_ast_without_round_trip() {
+    let source = r#"
+window.__require = function(modules, cache, entries) { return function() {}; }({
+    Entry: [function(require, module, exports) {
+        cc._RF.push(module, "entryFixtureUuid", "Entry");
+        exports.value = 1;
+        cc._RF.pop();
+    }, {}]
+}, {}, ["Entry"]);
+"#;
+
+    let (output, spans) = record_spans(|| {
+        unpack(
+            source,
+            DecompileOptions {
+                filename: "project.js".to_string(),
+                heuristic_split: false,
+                ..Default::default()
+            },
+        )
+        .expect("Cocos Creator bundle should unpack")
+    });
+
+    assert_eq!(output.modules.len(), 1);
+    assert!(output.modules[0].1.contains("value = 1"));
+    for expected in ["phase1: rules", "phase2: rules", "phase2: emit"] {
+        assert!(
+            spans.iter().any(|name| name == expected),
+            "missing {expected:?} in {spans:?}"
+        );
+    }
+    for skipped in [
+        "unpacker: prepared emit",
+        "phase1: parse",
+        "phase1: resolver",
+    ] {
+        assert!(
+            !spans.iter().any(|name| name == skipped),
+            "unexpected round-trip span {skipped:?} in {spans:?}"
+        );
+    }
+}
+
+#[test]
 fn webpack5_source_map_mode_materializes_before_phase1() {
     let source = r#"
 (self.webpackChunkapp = self.webpackChunkapp || []).push([[1], {

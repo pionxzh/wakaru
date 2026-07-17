@@ -48,7 +48,9 @@ Each unpacker detects a specific bundle format and extracts individual modules a
    runtime-only entry files and Vercel ncc's inline startup variant
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
-4. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
+4. **browserify family** — numeric-keyed
+   `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`,
+   including Cocos Creator 2.x's string-keyed `window.__require` variant
 5. **SystemJS** — top-level `System.register(...)` modules
 6. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
@@ -74,6 +76,17 @@ JavaScript module graph; files emitted separately by ncc's asset relocation
 loader are not reconstructed by the unpacker. ncc's `.mjs` output uses a
 top-level runtime rather than this IIFE shape and is not structurally split.
 
+Cocos Creator 2.x project-script bundles are treated as a Browserify dialect,
+not as a new public `BundleFormat`. The detector recognizes the assignment to
+`window.__require`, string module and entry IDs, `[factory, dependencyMap]`
+tuples, and paired factory-scope `cc._RF.push/pop` registration markers. The
+marker scan accepts top-level comma sequences produced by minifiers without
+descending into nested functions. Dependency-map targets found in the same
+table are rewritten to relative emitted filenames; targets absent from that
+table remain unresolved because Cocos can delegate them to a previously loaded
+`__require` bundle. Registration markers are preserved because removing them
+would change Cocos runtime behavior.
+
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no
 bundle format matches, the driver falls back to heuristic scope-hoisted
@@ -85,11 +98,11 @@ the file goes through single-file decompile. The same splitter also runs on
 detected modules to break up scope-hoisted chunks nested inside another
 bundle format.
 
-Unpackers emit module code strings. They do not run the normal decompile rule
-pipeline — that's the driver's job. Bundler-specific extraction normalization
-(factory parameter renaming, `require()` rewriting, and runtime helper
-removal) remains in the relevant unpacker because those transforms are tightly
-coupled to the bundle format.
+Unpackers emit module code strings or prepared normalized ASTs. They do not run
+the normal decompile rule pipeline — that's the driver's job. Bundler-specific
+extraction normalization (factory parameter renaming, dependency-map or module
+ID rewriting, and runtime helper removal) remains in the relevant unpacker
+because those transforms are tightly coupled to the bundle format.
 
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
@@ -363,7 +376,7 @@ crates/
         mod.rs                      — unpack_bundle() dispatch
         webpack4.rs                 — webpack4 splitter + normalization
         webpack5.rs                 — webpack5 splitter (incl. runtime entry, ncc + chunk)
-        browserify.rs               — browserify splitter
+        browserify.rs               — browserify-family splitter (incl. Cocos Creator 2.x)
         systemjs.rs                 — System.register splitter + ESM reconstruction
         esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
         amd.rs                      — AMD define() bundle splitter
@@ -379,6 +392,7 @@ crates/
                                       = webpack5 + browserify, esbuild, systemjs,
                                       amd, rollup, bun, multi-file)
       webpack_fixtures.rs           — generated webpack4/5 + ncc fixture coverage
+      cocos_creator_unpack.rs       — Cocos 2.x detection + dependency-map coverage
       noop_pipeline.rs              — stability tests
       snapshots/                    — insta snapshot files
 
