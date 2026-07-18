@@ -22,6 +22,11 @@ rest while leaving the outer index/`slice()` accesses split, and helper-heavy
 the denominator and explain the matrix's lower aggregate rate; they are not
 regressions in previously passing shapes.
 
+Nested defaults backed by an exact single-spread materialization are recovered
+at `standard`, including the form where a minifier fuses the default expression
+into that materialization. Direct TypeScript index/`slice()` shapes and imported
+helper calls remain subject to their separate proof requirements.
+
 `array-rest-basic` also accepts Babel's retained single-read `_items = items`
 capture before the recovered destructuring. `items` is environment-injected in
 the harness, so SmartInline intentionally cannot prove it frozen; preserving

@@ -1374,6 +1374,14 @@ fn try_extract_access(
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Access, usize)> {
+    if let Some((access, consumed, nested_temps, nested_helpers)) =
+        try_extract_inline_spread_default_access(stmts, index, ref_ident, unresolved_mark)
+    {
+        removed_temps.extend(nested_temps);
+        consumed_helpers.extend(nested_helpers);
+        return Some((access, consumed));
+    }
+
     if let Some((mut access, temp)) =
         try_extract_default_access(stmts, index, ref_ident, unresolved_mark)
     {
@@ -1420,6 +1428,66 @@ fn try_extract_access(
     None
 }
 
+/// Match a minifier-fused nested default materialization:
+///
+/// `temp = ref[i]; nested_ref = [...(temp === undefined ? DEFAULT : temp)]; …`
+///
+/// The spread capture proves the nested value is fully materialized before the
+/// index/rest reads. Rebuilding the nested rest pattern preserves that contract
+/// under the same iterable-source assumption as the outer spread unwrap.
+fn try_extract_inline_spread_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    ref_ident: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Access, usize, Vec<BindingKey>, Vec<BindingKey>)> {
+    let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
+    let source_access = extract_source_access(temp_init, ref_ident)?;
+
+    let (nested_ref, nested_init) = extract_binding_decl(stmts.get(index + 1)?)?;
+    let spread_source = extract_single_spread_source(nested_init)?;
+    let default = extract_default_value(spread_source, &temp.id, unresolved_mark)?;
+    let temp_key = binding_key(&temp.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let mut removed_temps = Vec::new();
+    let mut consumed_helpers = Vec::new();
+    let collected = collect_accesses_on(
+        stmts,
+        index + 2,
+        &nested_ref.id,
+        unresolved_mark,
+        &mut removed_temps,
+        &mut consumed_helpers,
+    );
+    if collected.accesses.is_empty() || !collected.accesses.iter().any(is_rest_or_default_access) {
+        return None;
+    }
+
+    let consumed = 2 + collected.consumed;
+    let nested_ref_key = binding_key(&nested_ref.id);
+    if ident_used_in_stmts(&stmts[index + consumed..], &nested_ref_key) {
+        return None;
+    }
+
+    let nested_pat = build_pat_from_accesses(collected.accesses)?;
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(nested_pat),
+        right: default,
+    });
+    let access = match source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array { index, pat },
+        SourceAccess::ObjectProp(key) => Access::Object { key, pat },
+    };
+
+    removed_temps.push(temp_key);
+    removed_temps.push(nested_ref_key);
+    Some((access, consumed, removed_temps, consumed_helpers))
+}
+
 fn try_nest_default_binding(
     access: &Access,
     stmts: &[Stmt],
@@ -1441,7 +1509,7 @@ fn try_nest_default_binding(
         Access::ArrayRest { .. } => return None,
     };
 
-    let collected = collect_accesses_on(
+    let mut collected = collect_accesses_on(
         stmts,
         nested_start,
         default_binding,
@@ -1449,6 +1517,17 @@ fn try_nest_default_binding(
         removed_temps,
         consumed_helpers,
     );
+
+    if collected.accesses.is_empty() {
+        collected = try_expand_nested_spread_capture(
+            stmts,
+            nested_start,
+            default_binding,
+            unresolved_mark,
+            removed_temps,
+            consumed_helpers,
+        )?;
+    }
 
     if collected.accesses.is_empty() || !collected.accesses.iter().any(is_rest_or_default_access) {
         return None;
@@ -1463,6 +1542,72 @@ fn try_nest_default_binding(
     removed_temps.push(nested_key);
     let nested_pat = build_pat_from_accesses(collected.accesses)?;
     Some((nested_pat, collected.consumed))
+}
+
+/// Expand a compiler materialization between a defaulted outer element and its
+/// nested accesses:
+///
+/// `nested_ref = [...value]; first = nested_ref[0]; rest = nested_ref.slice(1)`
+///
+/// The single spread is the shape left after a proven `toArray` helper has been
+/// removed. It has the same full-iteration contract as the nested rest pattern
+/// we rebuild. Keep this fallback local to nested defaults; ordinary spread
+/// captures remain the responsibility of the outer ref-group path.
+fn try_expand_nested_spread_capture(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: &Ident,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+    consumed_helpers: &mut Vec<BindingKey>,
+) -> Option<CollectedAccesses> {
+    let (ref_binding, init) = extract_binding_decl(stmts.get(index)?)?;
+    let Expr::Ident(source) = strip_parens(extract_single_spread_source(init)?) else {
+        return None;
+    };
+    if source.sym != expected_source.sym || source.ctxt != expected_source.ctxt {
+        return None;
+    }
+
+    let mut nested_removed_temps = Vec::new();
+    let mut nested_consumed_helpers = Vec::new();
+    let mut collected = collect_accesses_on(
+        stmts,
+        index + 1,
+        &ref_binding.id,
+        unresolved_mark,
+        &mut nested_removed_temps,
+        &mut nested_consumed_helpers,
+    );
+    if collected.accesses.is_empty() {
+        return None;
+    }
+
+    let consumed = 1 + collected.consumed;
+    let ref_key = binding_key(&ref_binding.id);
+    if ident_used_in_stmts(&stmts[index + consumed..], &ref_key) {
+        return None;
+    }
+
+    removed_temps.push(ref_key);
+    removed_temps.extend(nested_removed_temps);
+    consumed_helpers.extend(nested_consumed_helpers);
+    collected.consumed = consumed;
+    Some(collected)
+}
+
+fn extract_single_spread_source(expr: &Expr) -> Option<&Expr> {
+    let Expr::Array(array) = strip_parens(expr) else {
+        return None;
+    };
+    let [Some(ExprOrSpread {
+        spread: Some(_),
+        expr,
+    })] = array.elems.as_slice()
+    else {
+        return None;
+    };
+    Some(strip_parens(expr))
 }
 
 fn replace_access_left(access: &mut Access, nested_pat: Pat) {

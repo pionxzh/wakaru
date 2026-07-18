@@ -197,6 +197,96 @@ var [head, ...tail] = arr;
 }
 
 #[test]
+fn reconstructs_nested_array_rest_after_spread_array_unwrap() {
+    let input = r#"
+var _ref = [...items];
+var first = _ref[0];
+var _tmp = _ref[1];
+var _nested = _tmp === void 0 ? [] : _tmp;
+var _nested_ref = [..._nested];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+var outer_rest = _ref.slice(2);
+"#;
+    let expected = r#"
+var [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_nested_array_rest_from_inline_default_spread() {
+    let input = r#"
+var _ref = [...items];
+var first = _ref[0];
+var _tmp = _ref[1];
+var _nested_ref = [...(_tmp === void 0 ? [] : _tmp)];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+var outer_rest = _ref.slice(2);
+"#;
+    let expected = r#"
+var [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rejects_inline_default_spread_that_uses_removed_temp() {
+    let input = r#"
+var _ref = [...items];
+var _tmp = _ref[0];
+var _nested_ref = [...(_tmp === void 0 ? fallback(_tmp) : _tmp)];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+"#;
+    let expected = r#"
+var _ref = [...items];
+var _tmp = _ref[0];
+var [nested, ...inner_rest] = _tmp === void 0 ? fallback(_tmp) : _tmp;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rejects_nested_spread_capture_with_additional_elements() {
+    let input = r#"
+var _ref = [...items];
+var _tmp = _ref[0];
+var _nested = _tmp === void 0 ? [] : _tmp;
+var _nested_ref = [prefix, ..._nested];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+"#;
+    let expected = r#"
+var [_nested = []] = items;
+var [nested, ...inner_rest] = [prefix, ..._nested];
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rejects_nested_spread_capture_used_after_reconstruction() {
+    let input = r#"
+var _ref = [...items];
+var _tmp = _ref[0];
+var _nested = _tmp === void 0 ? [] : _tmp;
+var _nested_ref = [..._nested];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+use(_nested_ref);
+"#;
+    let expected = r#"
+var [_nested = []] = items;
+var _nested_ref = [..._nested];
+var nested = _nested_ref[0];
+var inner_rest = _nested_ref.slice(1);
+use(_nested_ref);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn reconstructs_array_rest_from_array_like_to_array_slice() {
     let input = r#"
 var _ref = arr;
