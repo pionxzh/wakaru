@@ -12,8 +12,8 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
 use crate::unpacker::{
-    sanitize_relative_path, span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst,
-    UnpackResult, UnpackedModule,
+    runtime_binding_renames_are_safe, sanitize_relative_path, span_byte_range, BundleFormat,
+    DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -461,6 +461,9 @@ fn normalize_metro_module(
             new: target.into(),
         })
         .collect::<Vec<_>>();
+    if !runtime_binding_renames_are_safe(&module, &renames) {
+        return None;
+    }
     rename_bindings_in_module(&mut module, &renames);
 
     let mut dependency_rewriter = MetroDependencyRewriter {

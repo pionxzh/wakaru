@@ -446,6 +446,49 @@ __r(1);
 }
 
 #[test]
+fn rejects_factory_param_rename_capture() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  function invoke(require) {
+    return [require, r(d[0])];
+  }
+  m.exports = invoke;
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#;
+
+    assert!(
+        try_unpack_bundle(source)
+            .expect("Metro detection should not error")
+            .is_none(),
+        "renaming the runtime loader must not capture it behind a nested require parameter"
+    );
+}
+
+#[test]
+fn rejects_factory_param_rename_existing_target_reference() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = [typeof require, r(d[0])];
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#;
+
+    assert!(
+        try_unpack_bundle(source)
+            .expect("Metro detection should not error")
+            .is_none(),
+        "the runtime loader and a pre-existing free require reference must remain distinct"
+    );
+}
+
+#[test]
 fn rejects_partial_selected_prefix_with_malformed_definition() {
     let source = r#"
 const sharedDependencyMap = [];

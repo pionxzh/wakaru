@@ -16,7 +16,10 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
-use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
+use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::{
+    runtime_binding_renames_are_safe, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
+};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -561,7 +564,7 @@ fn extract_webpack4_array_modules(
                 };
                 module.visit_mut_with(&mut id_rewriter);
             },
-        );
+        )?;
         if apply_fixer(&mut synthetic_module).is_err() {
             continue;
         }
@@ -714,7 +717,7 @@ fn extract_webpack4_object_modules(
                     module.visit_mut_with(&mut str_rewriter);
                 }
             },
-        );
+        )?;
         if apply_fixer(&mut synthetic_module).is_err() {
             continue;
         }
@@ -768,7 +771,7 @@ fn extract_string_module_id(key: &PropName) -> Option<String> {
 fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
     require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
-) -> (Module, Mark) {
+) -> Option<(Module, Mark)> {
     // Extract param names (up to 3: module, exports, require)
     let params = &fn_expr.function.params;
     let param_syms: Vec<Atom> = params
@@ -784,7 +787,7 @@ fn normalize_extracted_webpack_module(
 
     // Build renaming map: param[0] -> "module", param[1] -> "exports", param[2] -> "require"
     let standard_names = ["module", "exports", "require"];
-    let renames: Vec<(Atom, Atom)> = param_syms
+    let rename_symbols: Vec<(Atom, Atom)> = param_syms
         .iter()
         .enumerate()
         .filter_map(|(i, sym)| {
@@ -812,10 +815,19 @@ fn normalize_extracted_webpack_module(
 
     // Step 1: rename factory params to standard names
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-    for (old_sym, new_sym) in &renames {
-        let from_id = (old_sym.clone(), unresolved_ctxt);
-        let to_ident = Ident::new(new_sym.clone(), Default::default(), unresolved_ctxt);
-        replace_ident(&mut synthetic_module, from_id, &to_ident);
+    let renames = rename_symbols
+        .iter()
+        .map(|(old_sym, new_sym)| BindingRename {
+            old: (old_sym.clone(), unresolved_ctxt),
+            new: new_sym.clone(),
+        })
+        .collect::<Vec<_>>();
+    if !runtime_binding_renames_are_safe(&synthetic_module, &renames) {
+        return None;
+    }
+    for rename in &renames {
+        let to_ident = Ident::new(rename.new.clone(), Default::default(), unresolved_ctxt);
+        replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
     }
 
     // Step 1b: apply require rewriting (caller provides the specific rewriter)
@@ -850,7 +862,7 @@ fn normalize_extracted_webpack_module(
     // Step 2b: strip webpack's global-polyfill envelope
     unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
 
-    (synthetic_module, unresolved_mark)
+    Some((synthetic_module, unresolved_mark))
 }
 
 /// Sanitize a webpack module path string into a safe filename.

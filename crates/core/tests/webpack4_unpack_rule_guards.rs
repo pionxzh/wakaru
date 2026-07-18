@@ -423,6 +423,30 @@ fn shadowed_require_is_not_rewritten() {
 }
 
 #[test]
+fn factory_param_rename_capture_rejects_extraction() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {}
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(m, e, r) {
+    function invoke(require) {
+      return [require, r(1)];
+    }
+    m.exports = invoke;
+  },
+  function(m, e, r) { m.exports = "dependency"; }
+]);
+"#;
+
+    assert!(
+        unpack_webpack4_raw(source).is_none(),
+        "webpack4 extraction must fall back when normalizing r to require would capture it"
+    );
+}
+
+#[test]
 fn entry_detection_ignores_unrelated_dot_s_assignment() {
     let source = r#"
 !function(modules) {

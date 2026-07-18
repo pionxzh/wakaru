@@ -14,12 +14,14 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
 use crate::unpacker::{
-    emit_module_with_source_map, source_fallback_for_stmts, spans_byte_ranges, BundleFormat,
-    DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
+    emit_module_with_source_map, runtime_binding_renames_are_safe, source_fallback_for_stmts,
+    spans_byte_ranges, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult,
+    UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -1332,7 +1334,7 @@ fn prepare_webpack5_module(
     let globals = Globals::new();
     let (synthetic_module, unresolved_mark) = GLOBALS.set(&globals, || {
         let (mut synthetic_module, unresolved_mark) =
-            normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename);
+            normalize_extracted_webpack_module(descriptor, id_to_filename, str_id_to_filename)?;
         let span = tracing::info_span!("webpack5: fixer");
         let _enter = span.enter();
         apply_fixer(&mut synthetic_module).ok()?;
@@ -1356,7 +1358,7 @@ fn normalize_extracted_webpack_module(
     descriptor: &Webpack5ModuleDescriptor<'_>,
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
-) -> (Module, Mark) {
+) -> Option<(Module, Mark)> {
     let mut synthetic_module = build_module_from_stmts(descriptor.body_stmts.to_vec());
 
     let param_syms: Vec<Atom> = match descriptor.params {
@@ -1389,16 +1391,21 @@ fn normalize_extracted_webpack_module(
         let span = tracing::info_span!("webpack5: normalize");
         let _enter = span.enter();
         let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-        for (idx, target) in ["module", "exports", "require"].iter().enumerate() {
-            let Some(old_sym) = param_syms.get(idx) else {
-                continue;
-            };
-            if old_sym.as_ref() == *target {
-                continue;
-            }
-            let from_id = (old_sym.clone(), unresolved_ctxt);
-            let to_ident = Ident::new(Atom::from(*target), Default::default(), unresolved_ctxt);
-            replace_ident(&mut synthetic_module, from_id, &to_ident);
+        let renames = param_syms
+            .iter()
+            .zip(["module", "exports", "require"])
+            .filter(|(source, target)| source.as_ref() != *target)
+            .map(|(source, target)| BindingRename {
+                old: (source.clone(), unresolved_ctxt),
+                new: target.into(),
+            })
+            .collect::<Vec<_>>();
+        if !runtime_binding_renames_are_safe(&synthetic_module, &renames) {
+            return None;
+        }
+        for rename in &renames {
+            let to_ident = Ident::new(rename.new.clone(), Default::default(), unresolved_ctxt);
+            replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
         }
 
         let require_sym = Atom::from("require");
@@ -1427,7 +1434,7 @@ fn normalize_extracted_webpack_module(
         synthetic_module.visit_mut_with(&mut normalizer);
     }
 
-    (synthetic_module, unresolved_mark)
+    Some((synthetic_module, unresolved_mark))
 }
 
 fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::BlockStmt> {

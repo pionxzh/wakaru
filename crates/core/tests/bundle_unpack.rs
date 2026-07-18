@@ -73,6 +73,55 @@ fn browserify_accepts_numeric_dependency_request_keys() {
 }
 
 #[test]
+fn browserify_rejects_factory_param_rename_capture() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(r, m, e) {
+    function invoke(require) {
+      return [require, r("./dependency")];
+    }
+    m.exports = invoke;
+  }, { "./dependency": 2 }],
+  2: [function(r, m, e) { m.exports = "dependency"; }, {}]
+}, {}, [1]);
+"#;
+
+    assert!(
+        wakaru_core::unpacker::browserify::detect_and_extract(source).is_none(),
+        "Browserify extraction must fall back when normalizing r to require would capture it"
+    );
+}
+
+#[test]
+fn webpack5_rejects_factory_param_rename_capture() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    1: ((m, e, r) => {
+      function invoke(require) {
+        return [require, r(2)];
+      }
+      m.exports = invoke;
+    }),
+    2: ((m) => { m.exports = "dependency"; })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var m = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](m, m.exports, __webpack_require__);
+    return m.exports;
+  }
+  __webpack_require__(1);
+})();
+"#;
+
+    assert!(
+        wakaru_core::unpacker::webpack5::detect_and_extract(source).is_none(),
+        "webpack5 extraction must fall back when normalizing r to require would capture it"
+    );
+}
+
+#[test]
 fn webpack5_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/webpack5/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read webpack5 testcase");

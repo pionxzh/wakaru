@@ -19,17 +19,7 @@ shape is valid producer output before loosening detection, keep the
 embedded-marker rejection test green, and add a synthetic fixture per newly
 accepted shape.
 
-## 2. Metro / webpack: factory runtime-name capture
-
-Factories that capture or re-alias the runtime parameter names (require /
-module / exports / Metro's 7-slot signature) in ways the normalizers don't
-model are currently left partially rewritten. Affects
-`crates/core/src/unpacker/metro.rs` and the webpack factory normalizers.
-Deferred by the implementing session as needing a shared design — likely a
-common "runtime binding capture" analysis instead of per-bundler special
-cases. Start by collecting concrete failing shapes as synthetic tests.
-
-## 3. Browserify: readable module filenames
+## 2. Browserify: readable module filenames
 
 String-keyed dependency maps carry original-ish request paths (e.g.
 `./utils` → id 3), but numeric-id modules are still emitted as

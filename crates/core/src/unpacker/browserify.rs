@@ -12,9 +12,10 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::module_path::relative_import_specifier;
+use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::{
-    sanitize_relative_path, source_fallback_for_stmts, span_byte_range, BundleFormat,
-    DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
+    runtime_binding_renames_are_safe, sanitize_relative_path, source_fallback_for_stmts,
+    span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::swc_safety::apply_fixer;
 
@@ -446,7 +447,7 @@ fn prepare_factory_module(
     let globals = Globals::new();
     let (module, unresolved_mark) = GLOBALS.set(&globals, || {
         let (mut module, unresolved_mark) =
-            normalize_factory_module(descriptor, id_to_filename, dialect);
+            normalize_factory_module(descriptor, id_to_filename, dialect)?;
         apply_fixer(&mut module).ok()?;
         Some((module, unresolved_mark))
     })?;
@@ -461,7 +462,7 @@ fn normalize_factory_module(
     descriptor: &FactoryModule<'_>,
     id_to_filename: &HashMap<ModuleId, String>,
     dialect: TableDialect,
-) -> (Module, Mark) {
+) -> Option<(Module, Mark)> {
     let mut module = build_module_from_stmts(descriptor.body_stmts.to_vec());
     let param_symbols: Vec<Atom> = match descriptor.params {
         FactoryParams::Function(params) => params
@@ -485,18 +486,24 @@ fn normalize_factory_module(
     module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-    for (index, target) in ["require", "module", "exports"].iter().enumerate() {
-        let Some(source) = param_symbols.get(index) else {
-            continue;
-        };
-        if source.as_ref() == *target {
-            continue;
-        }
+    let renames = param_symbols
+        .iter()
+        .zip(["require", "module", "exports"])
+        .filter(|(source, target)| source.as_ref() != *target)
+        .map(|(source, target)| BindingRename {
+            old: (source.clone(), unresolved_ctxt),
+            new: target.into(),
+        })
+        .collect::<Vec<_>>();
+    if !runtime_binding_renames_are_safe(&module, &renames) {
+        return None;
+    }
+    for rename in &renames {
         replace_ident(
             &mut module,
-            (source.clone(), unresolved_ctxt),
+            rename.old.clone(),
             &swc_core::ecma::ast::Ident::new(
-                Atom::from(*target),
+                rename.new.clone(),
                 Default::default(),
                 unresolved_ctxt,
             ),
@@ -511,7 +518,7 @@ fn normalize_factory_module(
         dialect,
     });
 
-    (module, unresolved_mark)
+    Some((module, unresolved_mark))
 }
 
 struct DependencyMapRewriter<'a> {

@@ -20,6 +20,9 @@ use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
+use crate::analysis::binding_uses::BindingUseIndex;
+use crate::rules::rename_utils::{collect_module_names, BindingRename, RenameShadowIndex};
+
 #[derive(Default)]
 pub struct UnpackedModule {
     pub id: String,
@@ -90,6 +93,34 @@ pub(crate) fn source_fallback_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> 
     let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
     let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
     file.src.get(start..end).unwrap_or_default().to_string()
+}
+
+/// Whether extraction can rename removed factory parameters without changing
+/// which binding a printed identifier resolves to.
+pub(crate) fn runtime_binding_renames_are_safe(module: &Module, renames: &[BindingRename]) -> bool {
+    let uses = BindingUseIndex::collect(module);
+    let relevant = renames
+        .iter()
+        .filter(|rename| uses.use_count(&rename.old) > 0 || uses.has_declaration(&rename.old))
+        .collect::<Vec<_>>();
+    if relevant.is_empty() {
+        return true;
+    }
+
+    let module_names = collect_module_names(module);
+    let bindings = relevant
+        .iter()
+        .map(|rename| rename.old.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &bindings);
+
+    relevant.into_iter().all(|rename| {
+        let target = (rename.new.clone(), rename.old.1);
+        !module_names.contains(&rename.new)
+            && uses.use_count(&target) == 0
+            && !uses.has_declaration(&target)
+            && !shadow_index.rename_causes_shadowing(&rename.old, &rename.new)
+    })
 }
 
 pub(crate) fn generated_source_map_points(
