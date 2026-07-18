@@ -17,7 +17,7 @@ the registry defines *what*.
 | New rule, or moving a rule | [rule-dependency-inventory.md](rule-dependency-inventory.md) — ordering rationale, fragile edges, experiment log; [rewrite-assumptions.md](rewrite-assumptions.md) — level gating and named assumptions |
 | Transpiler helper work | [helper-detection.md](helper-detection.md) — detection design and rejected alternatives |
 | Cross-module / unpack behavior | [fact-system.md](fact-system.md) — the two-phase barrier and module facts |
-| Public Rust API | [proposals/public-api-v2.md](proposals/public-api-v2.md) — stable façade, owned inputs, artifacts, diagnostics, and incremental unpack contract |
+| Public Rust API | [public-api.md](public-api.md) — stable façade, owned inputs, artifacts, diagnostics, and incremental unpack contract |
 | Vue SFC recovery (`--vue-sfc`) | [vue-decompile.md](vue-decompile.md) — the recovery path and CLI behavior; [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) — experimental status and known gaps |
 | Correctness / semantics questions | [rewrite-assumptions.md](rewrite-assumptions.md); [test262-roundtrip.md](test262-roundtrip.md) — the semantic round-trip harness |
 | Before proposing a redesign | [learnings/](learnings/) — approaches already built, measured, and reverted |
@@ -30,5 +30,5 @@ the registry defines *what*.
 - [test262-baselines/](test262-baselines/) — tracked canonical Test262 JSON
   baselines and Markdown summaries (current totals cached in
   `scripts/correctness/test262-stats.json`)
-- [proposals/](proposals/) — reviewed design contracts and proposals
+- [proposals/](proposals/) — reviewed proposals for deferred or in-progress work
 - [learnings/](learnings/) — post-mortems of measured-and-reverted approaches

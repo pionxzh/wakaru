@@ -468,6 +468,7 @@ crates/
 
 docs/
   architecture.md                   — this file
+  public-api.md                     — supported Rust façade contract and design decisions
   testing.md                        — test patterns, helpers, organization
   debugging.md                      — rule tracing, snapshot debugging, fixture workflow
   helper-detection.md               — transpiler helper detection design

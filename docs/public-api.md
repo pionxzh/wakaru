@@ -1,7 +1,10 @@
-# Public API v2 proposal
+# Public Rust API
 
-Status: implemented. This document is the contract for the breaking Rust API;
-the published façade lives in `crates/wakaru`.
+This document defines the supported behavioral contract of the `wakaru`
+façade implemented in `crates/wakaru`. The crate's public declarations and
+Rustdoc are authoritative for exact signatures; this document records the
+operation semantics, compatibility boundaries, design decisions, and
+performance invariants that those declarations alone do not express.
 
 The public façade is published as `wakaru`. Cargo cannot package a façade with
 an unpublished path dependency, so `wakaru-core` is also published as a
@@ -620,7 +623,6 @@ The integrated path resolves sibling imports from Wakaru's own module graph;
 caller-supplied import resolution remains useful only for standalone namespace
 operations such as `vue::recover`.
 
-No speculative `Framework` or `ComponentOutput` types are included in v2.
 Private option fields and non-exhaustive result types allow that integrated
 surface to be added without a breaking change. Future framework namespaces may
 provide framework-specific standalone recovery and option types, but should
@@ -779,7 +781,7 @@ The CLI performs the filesystem walk and pushes one candidate at a time. It
 does not call a boolean detection API first, and skipped source strings are not
 retained for the rest of the walk.
 
-## Decisions in this revision
+## Design decisions
 
 - Publish the stable façade as `wakaru`; publish `wakaru-core` first as its
   exact-version, unsupported implementation dependency.
