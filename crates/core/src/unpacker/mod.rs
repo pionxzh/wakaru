@@ -2,6 +2,7 @@ pub mod amd;
 pub mod browserify;
 pub mod closure_module_manager;
 pub mod esbuild;
+pub mod metro;
 pub mod scope_hoist;
 pub mod systemjs;
 pub mod webpack4;
@@ -147,6 +148,7 @@ pub enum BundleFormat {
     ClosureModuleManager,
     SystemJs,
     Esbuild,
+    Metro,
     Amd,
     ScopeHoisted,
 }
@@ -160,6 +162,7 @@ impl BundleFormat {
             Self::ClosureModuleManager => "closure-module-manager",
             Self::SystemJs => "systemjs",
             Self::Esbuild => "esbuild",
+            Self::Metro => "metro",
             Self::Amd => "amd",
             Self::ScopeHoisted => "scope-hoisted",
         }
@@ -436,10 +439,18 @@ fn detect_bundle_candidate(
         return result.map(DetectedBundle::from_result);
     }
 
-    let span = tracing::info_span!("detect_esbuild");
+    let result = {
+        let span = tracing::info_span!("detect_esbuild");
+        let _enter = span.enter();
+        esbuild::detect_from_module_with_source(module, Some(source), cm.clone())
+    };
+    if result.is_some() {
+        return result.map(DetectedBundle::from_result);
+    }
+
+    let span = tracing::info_span!("detect_metro");
     let _enter = span.enter();
-    esbuild::detect_from_module_with_source(module, Some(source), cm)
-        .map(DetectedBundle::from_result)
+    metro::detect_from_module_prepared(module, cm)
 }
 
 pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {

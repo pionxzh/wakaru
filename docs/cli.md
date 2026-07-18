@@ -32,8 +32,8 @@ files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
 
 Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
-with an IIFE webpack bootstrap), Browserify, Closure ModuleManager, SystemJS,
-esbuild/Bun helper-based bundles, and AMD/UMD wrappers. Scope-hoisted
+with an IIFE webpack bootstrap), Browserify, Metro, Closure ModuleManager,
+SystemJS, esbuild/Bun helper-based bundles, and AMD/UMD wrappers. Scope-hoisted
 Rollup/Vite-style output is handled by the default heuristic fallback. For
 supported ncc output, Wakaru extracts the webpack module table and preserves
 its inline startup as `entry.js`; separately emitted asset files remain
@@ -46,6 +46,12 @@ modules, local dependency-map targets are rewritten to those filenames, and
 `cc._RF.push/pop` registration calls are preserved, including when production
 compression combines them into comma sequences. Dependencies delegated to
 another previously loaded Cocos bundle remain unresolved in single-file mode.
+
+Metro plain JavaScript bundles are split from their `__d(...)` module table and
+`__r(...)` startup calls, including prefixed definition globals, minified
+factory parameters, and dynamic dependency-map metadata. Indexed/file RAM
+bundles and Hermes bytecode are not JavaScript AST inputs and remain out of
+scope.
 
 Closure Library ModuleManager responses are split at guarded module segments,
 using `/*_M:id*/` annotations and `_ModuleManager_initialize(...)` metadata to

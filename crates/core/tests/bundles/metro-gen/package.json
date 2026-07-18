@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "generate": "node generate.cjs"
+  },
+  "devDependencies": {
+    "metro": "0.87.0",
+    "metro-babel-transformer": "0.87.0",
+    "metro-runtime": "0.87.0"
+  }
+}

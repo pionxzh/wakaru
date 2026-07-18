@@ -1,0 +1,14 @@
+---
+source: crates/core/tests/metro_unpack.rs
+expression: code
+---
+"use strict";
+var cjs = require("./module-200.js");
+import defaultValue from "./module-201.js";
+import * as namespace from "./module-202.js";
+exports.result = [
+    cjs.label,
+    defaultValue,
+    namespace.answer
+];
+exports.namespace = namespace;

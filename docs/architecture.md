@@ -68,6 +68,16 @@ Each unpacker detects a specific bundle format and extracts individual modules a
    Preserved Bun path comments are used only as filename hints for modules
    already found through structural helper patterns; they are not module
    boundaries by themselves.
+8. **Metro** — React Native/Expo plain-JavaScript bundles made of top-level
+   `__d(factory, moduleId, dependencyMap)` definitions and `__r(entryId)`
+   startup calls. The extractor resolves indexed dependencies, normalizes the
+   fixed seven factory parameters, and recovers Metro's default/namespace
+   import loaders. When dynamic import, prefetch, maybe-sync, or `resolveWeak`
+   leaves dependency-map accesses in the extracted module, the full map is
+   preserved as a local binding. Every definition using the selected runtime
+   prefix must parse before any modules are emitted, preventing partial tables
+   with dangling imports. Indexed/file RAM bundles and Hermes bytecode are
+   separate binary formats and are not handled by this detector.
 
 If nothing matches directly, `wrappers.rs` unwraps UMD factory and AMD
 `define()` wrapper shapes and retries the same detection chain on each
@@ -111,7 +121,10 @@ Unpackers emit module code strings or prepared normalized ASTs. They do not run
 the normal decompile rule pipeline — that's the driver's job. Bundler-specific
 extraction normalization (factory parameter renaming, dependency-map or module
 ID rewriting, and runtime helper removal) remains in the relevant unpacker
-because those transforms are tightly coupled to the bundle format.
+because those transforms are tightly coupled to the bundle format. Webpack5
+and Metro can hand their normalized ASTs directly to Phase 1, avoiding an
+emit/parse cycle; raw unpack and source-map mode materialize the sidecar to
+source text.
 
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
@@ -155,9 +168,10 @@ unrelated webpack runtimes from the same scanned directory.
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
 pipeline. It returns detector output after only the extraction and
 bundler-coupled cleanup needed to make each extracted module stand alone.
-Webpack/browserify extractors use named extraction normalization helpers for
-that boundary work, such as factory parameter renaming, numeric/string module
-ID rewrites, `require.n` access normalization, and wrapper/decorator removal.
+Webpack/browserify/Metro extractors use named extraction normalization helpers
+for that boundary work, such as factory parameter renaming, numeric/string
+module ID rewrites, Metro dependency-map resolution, `require.n` access
+normalization, and wrapper/decorator removal.
 They do not run a slice of the normal rule pipeline. Webpack ESM markers and
 export getters remain in raw output so the later decompile pipeline can recover
 live ESM exports without guessing.
@@ -391,6 +405,7 @@ crates/
         esbuild.rs                  — esbuild/Bun splitter (CJS factories + scope-hoisted)
         amd.rs                      — AMD define() bundle splitter
         wrappers.rs                 — UMD/AMD wrapper unwrapping for detection retry
+        metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
       utils/
         matcher.rs                  — AST helper predicates
@@ -400,7 +415,8 @@ crates/
       *_unpack.rs                   — per-bundler unpack/pipeline snapshot tests
                                       (webpack4 + raw, webpack5 chunk, bundle_unpack
                                       = webpack5 + browserify, Closure ModuleManager,
-                                      esbuild, systemjs, amd, rollup, bun, multi-file)
+                                      esbuild, systemjs, amd, metro, rollup, bun,
+                                      multi-file)
       webpack_fixtures.rs           — generated webpack4/5 + ncc fixture coverage
       cocos_creator_unpack.rs       — Cocos 2.x detection + dependency-map coverage
       noop_pipeline.rs              — stability tests

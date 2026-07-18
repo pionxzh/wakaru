@@ -1,6 +1,6 @@
 # Wakaru
 
-Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It unpacks bundles (webpack4/5, including Vercel ncc; Browserify, including Cocos Creator 2.x; Closure ModuleManager; SystemJS; esbuild/Bun; AMD/UMD; plus heuristic scope-hoisted splitting), restores transpiler helpers (Babel, TypeScript), and applies an ordered pipeline of rewrite rules to recover idiomatic source (the registry in `crates/core/src/rules/pipeline.rs` is the authoritative list). It can also experimentally recover Vue 3 SFC-like artifacts from compiled render modules (`--vue-sfc`).
+Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It unpacks bundles (webpack4/5, including Vercel ncc; Browserify, including Cocos Creator 2.x; Closure ModuleManager; SystemJS; esbuild/Bun; Metro; AMD/UMD; plus heuristic scope-hoisted splitting), restores transpiler helpers (Babel, TypeScript), and applies an ordered pipeline of rewrite rules to recover idiomatic source (the registry in `crates/core/src/rules/pipeline.rs` is the authoritative list). It can also experimentally recover Vue 3 SFC-like artifacts from compiled render modules (`--vue-sfc`).
 
 Written in Rust using the SWC AST ecosystem. The workspace is split into four crates under `crates/`: `core`, `cli`, `formatter`, and `wasm`.
 

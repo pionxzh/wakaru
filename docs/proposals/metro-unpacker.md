@@ -1,9 +1,11 @@
 # Metro (React Native) Unpacker
 
-Status: **Proposed** — not started. Highest-value new bundle format after the
-current set; see the direction notes for why (large, underserved
-reverse-engineering audience; text-JS format with a well-defined module shape;
-no good open tool exists).
+Status: **IMPLEMENTED (plain-bundle v1).** Numeric and string module IDs,
+array and indexable-object dependency maps, minified factory parameters,
+prefixed `__d` globals with Metro's unprefixed `__r` startup call, dynamic
+dependency-map preservation, multiple entries, raw/full unpack, prepared-AST
+handoff, and provenance are covered. Indexed/file RAM bundles and Hermes
+bytecode remain out of scope.
 
 See also: [architecture.md](../architecture.md) for the unpacker dispatch and
 the extraction-normalization boundary, [testing.md](../testing.md) for the
@@ -107,7 +109,9 @@ edge cases. First match wins, as with all detectors.
 Mirror `webpack4.rs`'s structure (it is the closest existing extractor):
 
 1. Collect every `__d(factory, id, depMap)` into a registry `{ id → (factory,
-   depMap) }`.
+   depMap) }`. Once a definition prefix is selected, every top-level call using
+   that exact `${prefix}__d` runtime must parse; otherwise reject the whole
+   candidate rather than emit a partial module table with dangling imports.
 2. For each module, take the factory body as the module source. Rename the
    fixed params (`global`, `require`, `importDefault`, `importAll`, `module`,
    `exports`, `dependencyMap`) to conventional names via the existing
@@ -118,11 +122,17 @@ Mirror `webpack4.rs`'s structure (it is the closest existing extractor):
    `depMap` array to a real id, then to that id's emitted filename. Handle the
    minified require alias by matching the call target that is applied to
    `dependencyMap[...]`, not the literal name `require`.
-4. Normalize `importDefault`/`importAll` call sites into plain
-   `require(...)` + interop the later pipeline recognizes (or leave them as
-   interop calls if the Stage 2 interop rules already match Metro's shape —
-   verify with a reproduced bundle before writing bespoke handling here).
-5. Emit `UnpackResult::new(modules, BundleFormat::Metro)`; keep webpack-style
+   Dynamic import, prefetch, maybe-sync, and `resolveWeak` shapes retain a
+   synthesized local copy of the complete dependency map (including `paths`)
+   when indexed accesses remain after static rewriting. Reject extraction when
+   such a factory-only reference has no map value to preserve.
+4. Normalize `importDefault`/`importAll` call sites. Declaration initializers
+   become default/namespace imports directly because the Metro runtime loader
+   identity proves the original import kind; uncommon expression-position
+   calls fall back to `require(...).default` / `require(...)` so the normal
+   pipeline can continue processing them.
+5. Emit `UnpackResult::new(modules, BundleFormat::Metro)` plus the private
+   prepared-AST sidecar; keep webpack-style
    ESM markers untouched so the decompile pipeline recovers live exports.
 
 Provenance byte ranges: record each module's factory-body span, same as the
@@ -154,16 +164,17 @@ tests: use obviously-fake module ids, never values copied from a real app.
   dependency-map rewrite and param rename), following `webpack4_unpack_raw.rs`.
 - A noop/negative case: a plain script that calls a user function named `__d`
   must **not** be detected as Metro (guards the detection signal).
-- Add one small Metro bundle per variant (dev + minified) to `wakaru-fixtures`
-  once the extractor works, extending the cross-bundler regression net.
+- Pinned Metro 0.87 dev and minified bundles live under
+  `crates/core/tests/bundles/metro-gen/` and in `wakaru-fixtures`, extending the
+  cross-bundler regression net with producer-generated output.
 
-## Open questions
+## Resolved questions and remaining boundary
 
-1. **Does the existing Stage 2 interop handle Metro's `importDefault`/
-   `importAll`?** If yes, step 4 above shrinks to nothing. Reproduce and trace
-   before deciding.
-2. **How common are string module ids in the wild** (custom
-   `createModuleIdFactory`)? Affects filename derivation but not the core
-   design.
-3. **RAM bundles**: is there real demand? They are the harder, binary format;
+1. **Metro runtime import loaders need boundary handling.** They implement
+   cached default/namespace interop rather than Babel helper calls, so the
+   extractor recovers their import kind before the generic pipeline. Ordinary
+   Babel helper modules still flow through Stage 2 normally.
+2. **String module IDs are supported.** Sanitized string IDs become output
+   paths and indexed dependencies are rewritten relative to those paths.
+3. **RAM bundles** remain demand-gated. They are the harder, binary format;
    defer until asked, then spec separately.

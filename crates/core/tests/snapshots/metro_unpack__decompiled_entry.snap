@@ -1,0 +1,13 @@
+---
+source: crates/core/tests/metro_unpack.rs
+expression: code
+---
+import cjs from "./module-200.js";
+import defaultValue from "./module-201.js";
+import * as namespace from "./module-202.js";
+export const result = [
+    cjs.label,
+    defaultValue,
+    namespace.answer
+];
+export { namespace };

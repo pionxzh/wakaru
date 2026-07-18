@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/metro_unpack.rs
+expression: code
+---
+module.exports = {
+    label: "commonjs"
+};

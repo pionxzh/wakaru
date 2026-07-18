@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/metro_unpack.rs
+expression: code
+---
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.answer = 42;
