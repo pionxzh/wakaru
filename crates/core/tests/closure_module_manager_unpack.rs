@@ -585,6 +585,25 @@ try {
 }
 
 #[test]
+fn rejects_forward_graph_indexes() {
+    assert_not_detected(
+        r#"
+/*_M:base*/
+try {
+  shared.before("base");
+  shared._ModuleManager_initialize(
+    "base/feature:2/dependency",
+    ["base"]
+  );
+  shared.after();
+} catch (error) {
+  shared._DumpException(error);
+}
+"#,
+    );
+}
+
+#[test]
 fn rejects_marker_without_dump_exception_guard() {
     assert_not_detected(
         r#"

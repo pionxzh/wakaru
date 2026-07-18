@@ -58,8 +58,10 @@ Each unpacker detects a specific bundle format and extracts individual modules a
    in each output. An unguarded statement in a direct response or after wrapper
    segment extraction begins rejects the shape rather than guessing placement.
    The `_ModuleManager_initialize(...)` graph is decoded to validate module
-   identities and response ordering, but its loader dependencies are not
-   fabricated as ESM imports.
+   identities and response ordering. Dependency indexes must refer to an
+   earlier graph record, matching Closure Library's one-pass runtime decoder;
+   forward indexes reject the candidate. Loader dependencies are not fabricated
+   as ESM imports.
 6. **SystemJS** — top-level `System.register(...)` modules
 7. **esbuild / Bun** — scope-hoisted ESM namespace boundaries
    (`__export(ns, ...)`) and CJS factory helpers (`__commonJS` / `__esm`).
