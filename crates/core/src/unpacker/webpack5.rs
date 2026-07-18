@@ -18,8 +18,8 @@ use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
 use crate::unpacker::{
-    emit_module_with_source_map, spans_byte_ranges, BundleFormat, DetectedBundle,
-    PreparedModuleAst, UnpackResult, UnpackedModule,
+    emit_module_with_source_map, source_fallback_for_stmts, spans_byte_ranges, BundleFormat,
+    DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -1344,21 +1344,6 @@ fn prepare_webpack5_module(
         module: synthetic_module,
         unresolved_mark,
     })
-}
-
-fn source_fallback_for_stmts(cm: &SourceMap, stmts: &[Stmt]) -> String {
-    let (Some(first), Some(last)) = (stmts.first(), stmts.last()) else {
-        return String::new();
-    };
-    let first_span = first.span();
-    let last_span = last.span();
-    if first_span.lo.0 == 0 || last_span.hi.0 == 0 || first_span.lo > last_span.hi {
-        return String::new();
-    }
-    let file = cm.lookup_byte_offset(first_span.lo).sf;
-    let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
-    let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
-    file.src.get(start..end).unwrap_or_default().to_string()
 }
 
 /// Normalize a webpack5 factory body into a standalone module.

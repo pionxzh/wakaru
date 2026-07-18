@@ -13,7 +13,8 @@ use std::panic::{self, AssertUnwindSafe};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{
-    sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, SyntaxContext, GLOBALS,
+    sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, Spanned, SyntaxContext,
+    GLOBALS,
 };
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
@@ -74,6 +75,21 @@ pub(crate) fn spans_byte_ranges(
         }
     }
     out
+}
+
+pub(crate) fn source_fallback_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> String {
+    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+        return String::new();
+    };
+    let first_span = first.span();
+    let last_span = last.span();
+    if first_span.lo.0 == 0 || last_span.hi.0 == 0 || first_span.lo > last_span.hi {
+        return String::new();
+    }
+    let file = cm.lookup_byte_offset(first_span.lo).sf;
+    let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
+    let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
+    file.src.get(start..end).unwrap_or_default().to_string()
 }
 
 pub(crate) fn generated_source_map_points(
@@ -566,6 +582,15 @@ mod tests {
         assert_eq!(sanitize_relative_path("./", "module.js"), "module.js");
         assert_eq!(sanitize_relative_path("../../..", "module.js"), "module.js");
         assert_eq!(sanitize_relative_path("..\\..\\", "module.js"), "module.js");
+    }
+
+    #[test]
+    fn source_fallback_rejects_empty_and_dummy_statement_ranges() {
+        assert!(source_fallback_for_stmts(&SourceMap::default(), &[]).is_empty());
+        let statements = [Stmt::Empty(swc_core::ecma::ast::EmptyStmt {
+            span: Default::default(),
+        })];
+        assert!(source_fallback_for_stmts(&SourceMap::default(), &statements).is_empty());
     }
 
     #[test]

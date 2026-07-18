@@ -13,8 +13,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::{
-    sanitize_relative_path, span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst,
-    UnpackResult, UnpackedModule,
+    sanitize_relative_path, source_fallback_for_stmts, span_byte_range, BundleFormat,
+    DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::swc_safety::apply_fixer;
 
@@ -580,21 +580,6 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
     }
-}
-
-fn source_fallback_for_stmts(cm: &SourceMap, statements: &[Stmt]) -> String {
-    let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
-        return String::new();
-    };
-    let first_span = first.span();
-    let last_span = last.span();
-    if first_span.lo.0 == 0 || last_span.hi.0 == 0 || first_span.lo > last_span.hi {
-        return String::new();
-    }
-    let file = cm.lookup_byte_offset(first_span.lo).sf;
-    let start = first_span.lo.0.saturating_sub(file.start_pos.0) as usize;
-    let end = last_span.hi.0.saturating_sub(file.start_pos.0) as usize;
-    file.src.get(start..end).unwrap_or_default().to_string()
 }
 
 fn member_prop_name_is(property: &MemberProp, expected: &str) -> bool {
