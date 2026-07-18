@@ -76,6 +76,63 @@ console.log(mod_a_val);
 }
 
 #[test]
+fn esbuild_scope_module_keeps_mixed_lazy_helper_sibling_provenance() {
+    let source = r#"
+var lazyA = (init, value) => () => (init && (value = init(init = 0)), value);
+var factoryA = lazyA(() => { valueA = 1; });
+var factoryB = lazyA(() => { valueB = 2; });
+var factoryC = lazyA(() => { valueC = 3; });
+var factoryD = lazyA(() => { valueD = 4; });
+var factoryE = lazyA(() => { valueE = 5; });
+var defineProperty = Object.defineProperty;
+var exportAll = (target, all) => {
+    for (var name in all)
+        defineProperty(target, name, { get: all[name], enumerable: true });
+};
+var alpha = {};
+exportAll(alpha, { alphaValue: () => alphaValue });
+var alphaValue = "alpha", lazyB = (init, value) => () => (init && (value = init(init = 0)), value);
+var factoryF = lazyB(() => { valueF = 6; });
+var beta = {};
+exportAll(beta, { betaValue: () => betaValue });
+var betaValue = "beta";
+factoryA();
+factoryB();
+factoryC();
+factoryD();
+factoryE();
+factoryF();
+export { alpha, beta };
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("scope-hoisted esbuild bundle should unpack without consuming a body twice");
+
+    let alpha = provenance_for(&output.provenance, "alpha.js");
+    let text = range_text(source, alpha).join("\n");
+    assert!(
+        text.contains("alphaValue = \"alpha\""),
+        "provenance should retain the scope binding: {text:?}"
+    );
+    let alpha_code = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "alpha.js")
+        .map(|(_, code)| code)
+        .expect("alpha scope module should be emitted");
+    assert!(
+        alpha_code.contains("alphaValue") && !alpha_code.contains("lazyB"),
+        "the scope module should retain its sibling without re-emitting the lazy helper:\n{alpha_code}"
+    );
+}
+
+#[test]
 fn webpack5_modules_report_factory_body_ranges() {
     let source = r#"
 (() => {

@@ -2093,6 +2093,13 @@ fn extract_scope_hoisted_modules(
         }
     }
     for index in drop_unowned_helper_sibling_indices {
+        // Mixed helper declarations are filtered before scope partitioning.
+        // Only discard a surviving sibling when it remains entry-owned; a
+        // scope boundary may have claimed the filtered statement as module
+        // body, namespace setup, or export setup.
+        if consumed.contains(index) {
+            continue;
+        }
         if source_slots.get(*index).and_then(Option::as_ref).is_some() {
             source_slots[*index] = None;
             consumed.insert(*index);

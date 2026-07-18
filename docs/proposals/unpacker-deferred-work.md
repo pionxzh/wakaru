@@ -9,29 +9,7 @@ including a focused unit test for every change. Use synthetic module ids and
 filenames in tests and commits — never values copied from private fixture
 bundles — and update affected documentation in the same commit.
 
-## 1. esbuild `--provenance` panic on scope-hoisted chunks (crash)
-
-`wakaru --provenance` panics while unpacking some scope-hoisted esbuild
-code-splitting chunks. Observed in v1.7.0; the panic site is still present on
-main at `crates/core/src/unpacker/esbuild.rs:2507`:
-
-```rust
-let item = source_slots[i].take().expect("body item already consumed");
-```
-
-So either a `meta.body_indices` entry is consumed twice across module metadata
-entries, or an index is out of range for `source_slots`. Overlapping body
-ranges between inferred module boundaries are one hypothesis, not yet a
-confirmed cause. Reproduce and establish the ownership invariant first. The
-fix must avoid the panic without silently dropping or reordering statements:
-establish unique ownership, or conservatively retain/fall back when attribution
-is ambiguous. Add a synthetic regression for the confirmed cause.
-
-The original reproduction comes from a private fixture corpus — build a
-minimal synthetic repro; do not reference the source bundle in code, tests,
-or commit messages.
-
-## 2. Closure ModuleManager: forward graph references
+## 1. Closure ModuleManager: forward graph references
 
 `decode_module_graph` / segment attribution in
 `crates/core/src/unpacker/closure_module_manager.rs` rejects graphs where a
@@ -41,7 +19,7 @@ the compiler implementation that forward references are valid. If confirmed,
 use a two-pass decode (collect ids first, then resolve edges) rather than
 resolve-as-you-go.
 
-## 3. Closure ModuleManager: heuristic boundary inference
+## 2. Closure ModuleManager: heuristic boundary inference
 
 Segment-boundary inference (`collect_segment_candidates`) is conservative and
 rejects unusual segment shapes (see the marker-gap rules tightened in the
@@ -51,7 +29,7 @@ shape is valid producer output before loosening detection, keep the
 embedded-marker rejection test green, and add a synthetic fixture per newly
 accepted shape.
 
-## 4. Metro / webpack: factory runtime-name capture
+## 3. Metro / webpack: factory runtime-name capture
 
 Factories that capture or re-alias the runtime parameter names (require /
 module / exports / Metro's 7-slot signature) in ways the normalizers don't
@@ -61,7 +39,7 @@ Deferred by the implementing session as needing a shared design — likely a
 common "runtime binding capture" analysis instead of per-bundler special
 cases. Start by collecting concrete failing shapes as synthetic tests.
 
-## 5. Browserify: readable module filenames
+## 4. Browserify: readable module filenames
 
 String-keyed dependency maps carry original-ish request paths (e.g.
 `./utils` → id 3), but numeric-id modules are still emitted as
