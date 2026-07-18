@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Wakaru core — JavaScript decompiler and bundle splitter"
+# Publish only the library sources: tests/ carries ~100MB of bundle fixtures
+# and generator node_modules that must never enter the .crate archive.
+include = ["/src"]
 
 [lib]
 name = "wakaru_core"
