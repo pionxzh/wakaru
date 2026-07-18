@@ -296,8 +296,12 @@ rationale, or level gating appear.
   variables are handled in place. Function-variable candidates with exact-binding
   pre-references (including references captured by earlier closures), multiple
   declarators, or named function expressions are preserved because converting
-  them would change binding or recursion semantics. ObjMethodShorthand remains
-  an upstream normalizer for method bodies.
+  them would change binding or recursion semantics. Function-variable candidates
+  also stay in prototype form when an unrecognized interstitial call involving
+  the constructor may replace its prototype; this safety gate is specific to the
+  newly supported variable shape and does not change the existing
+  function-declaration recovery policy. ObjMethodShorthand remains an upstream
+  normalizer for method bodies.
 
 ### Cleanup and renaming
 

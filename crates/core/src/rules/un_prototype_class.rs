@@ -402,18 +402,20 @@ fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<Class
         // may replace its prototype (for example `tm.inherit(Child, Base)`), so
         // preserve the original ordering. Ordinary reads and `new Child()` are
         // safe and are intentionally not blocked.
-        let has_interleaved_constructor_call = candidate
-            .consumed_indices
-            .iter()
-            .copied()
-            .max()
-            .is_some_and(|last_consumed| {
-                ((*fn_idx + 1)..last_consumed).any(|i| {
-                    !candidate.consumed_indices.contains(&i)
-                        && get_stmt(i)
-                            .is_some_and(|stmt| is_call_referencing_binding(stmt, binding))
-                })
-            });
+        let has_interleaved_constructor_call = *constructor_kind
+            == ConstructorKind::VariableFunction
+            && candidate
+                .consumed_indices
+                .iter()
+                .copied()
+                .max()
+                .is_some_and(|last_consumed| {
+                    ((*fn_idx + 1)..last_consumed).any(|i| {
+                        !candidate.consumed_indices.contains(&i)
+                            && get_stmt(i)
+                                .is_some_and(|stmt| is_call_referencing_binding(stmt, binding))
+                    })
+                });
         if has_interleaved_constructor_call {
             continue;
         }

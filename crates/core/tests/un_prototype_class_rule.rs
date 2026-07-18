@@ -382,6 +382,50 @@ Child.prototype.run = function() { return this.base(); };
     assert_eq_normalized(&apply_resolved(input), expected);
 }
 
+#[test]
+fn function_declaration_keeps_recovery_across_define_property_call() {
+    let input = r#"
+function RecordType() {}
+Object.defineProperty(RecordType.prototype, "value", {
+    get: makeGetter()
+});
+RecordType.prototype.serialize = function() { return this.value; };
+"#;
+    let expected = r#"
+class RecordType {
+    serialize() { return this.value; }
+}
+Object.defineProperty(RecordType.prototype, "value", {
+    get: makeGetter()
+});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn function_declaration_keeps_recovery_across_define_properties_call() {
+    let input = r#"
+function TreeNode() {}
+Object.defineProperties(TreeNode.prototype, {
+    owner: {
+        get: function() { return this; }
+    }
+});
+TreeNode.prototype.serialize = function() { return this.owner; };
+"#;
+    let expected = r#"
+class TreeNode {
+    serialize() { return this.owner; }
+}
+Object.defineProperties(TreeNode.prototype, {
+    owner: {
+        get: function() { return this; }
+    }
+});
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
 // ============================================================
 // No-op: function without prototype methods
 // ============================================================
