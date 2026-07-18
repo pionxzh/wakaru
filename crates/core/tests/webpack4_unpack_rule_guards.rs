@@ -423,7 +423,7 @@ fn shadowed_require_is_not_rewritten() {
 }
 
 #[test]
-fn factory_param_rename_capture_rejects_extraction() {
+fn factory_param_rename_capture_is_deconflicted() {
     let source = r#"
 !function(modules) {
   function __webpack_require__(id) {}
@@ -440,9 +440,10 @@ fn factory_param_rename_capture_rejects_extraction() {
 ]);
 "#;
 
+    let code = raw_module(source, "entry.js");
     assert!(
-        unpack_webpack4_raw(source).is_none(),
-        "webpack4 extraction must fall back when normalizing r to require would capture it"
+        code.contains("function invoke(_require)") && code.contains(r#"require("./module-1.js")"#),
+        "the nested binding must be renamed before the runtime loader:\n{code}"
     );
 }
 

@@ -95,6 +95,14 @@ impl BindingUseIndex {
             .collect()
     }
 
+    pub(crate) fn declared_bindings(&self) -> HashSet<BindingId> {
+        self.bindings
+            .keys()
+            .filter(|binding| self.has_declaration(binding))
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn new_callee_bindings(&self) -> HashSet<BindingId> {
         self.bindings
             .iter()

@@ -73,7 +73,7 @@ fn browserify_accepts_numeric_dependency_request_keys() {
 }
 
 #[test]
-fn browserify_rejects_factory_param_rename_capture() {
+fn browserify_deconflicts_factory_param_rename_capture() {
     let source = r#"
 (function() { return function() {}; })()({
   1: [function(r, m, e) {
@@ -86,14 +86,23 @@ fn browserify_rejects_factory_param_rename_capture() {
 }, {}, [1]);
 "#;
 
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify capture should be repaired and unpacked");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Browserify entry should exist");
     assert!(
-        wakaru_core::unpacker::browserify::detect_and_extract(source).is_none(),
-        "Browserify extraction must fall back when normalizing r to require would capture it"
+        entry.contains("function invoke(_require)")
+            && entry.contains(r#"require("./module-2.js")"#),
+        "the nested binding must be renamed before the runtime loader:\n{entry}"
     );
 }
 
 #[test]
-fn webpack5_rejects_factory_param_rename_capture() {
+fn webpack5_deconflicts_factory_param_rename_capture() {
     let source = r#"
 (() => {
   var __webpack_modules__ = ({
@@ -115,9 +124,18 @@ fn webpack5_rejects_factory_param_rename_capture() {
 })();
 "#;
 
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("webpack5 capture should be repaired and unpacked");
+    let module = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .map(|(_, code)| code)
+        .expect("webpack5 module should exist");
     assert!(
-        wakaru_core::unpacker::webpack5::detect_and_extract(source).is_none(),
-        "webpack5 extraction must fall back when normalizing r to require would capture it"
+        module.contains("function invoke(_require)")
+            && module.contains(r#"require("./module-2.js")"#),
+        "the nested binding must be renamed before the runtime loader:\n{module}"
     );
 }
 

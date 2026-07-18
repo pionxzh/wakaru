@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, Decl, DefaultDecl,
-    ExportNamedSpecifier, Expr, FnDecl, Function, Ident, ImportDecl, ImportNamedSpecifier,
+    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
+    ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
     ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
     ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
 };
@@ -343,6 +343,28 @@ pub fn binding_replacement_would_be_shadowed(
 
     impl Visit for Checker<'_> {
         fn visit_import_decl(&mut self, _: &ImportDecl) {}
+
+        fn visit_fn_expr(&mut self, function: &FnExpr) {
+            self.scope_stack.push(
+                function
+                    .ident
+                    .as_ref()
+                    .is_some_and(|ident| &ident.sym == self.replacement_name),
+            );
+            function.function.visit_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_class_expr(&mut self, class: &ClassExpr) {
+            self.scope_stack.push(
+                class
+                    .ident
+                    .as_ref()
+                    .is_some_and(|ident| &ident.sym == self.replacement_name),
+            );
+            class.class.visit_with(self);
+            self.scope_stack.pop();
+        }
 
         fn visit_function(&mut self, function: &Function) {
             let params_shadow = function

@@ -21,7 +21,10 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 use crate::analysis::binding_uses::BindingUseIndex;
-use crate::rules::rename_utils::{collect_module_names, BindingRename, RenameShadowIndex};
+use crate::rules::rename_utils::{
+    binding_replacement_would_be_shadowed, collect_module_names, rename_bindings_in_module,
+    BindingRename, RenameShadowIndex,
+};
 
 #[derive(Default)]
 pub struct UnpackedModule {
@@ -121,6 +124,103 @@ pub(crate) fn runtime_binding_renames_are_safe(module: &Module, renames: &[Bindi
             && !uses.has_declaration(&target)
             && !shadow_index.rename_causes_shadowing(&rename.old, &rename.new)
     })
+}
+
+/// Make bound-local conflicts safe before factory runtime parameters receive
+/// their canonical names. Free references to a target name remain a hard
+/// rejection because renaming them would change host-environment lookup.
+pub(crate) fn deconflict_runtime_binding_renames(
+    module: &mut Module,
+    renames: &[BindingRename],
+) -> bool {
+    let uses = BindingUseIndex::collect(module);
+    let relevant = renames
+        .iter()
+        .filter(|rename| uses.use_count(&rename.old) > 0 || uses.has_declaration(&rename.old))
+        .collect::<Vec<_>>();
+    if relevant.is_empty() {
+        return true;
+    }
+
+    // The stripped factory parameters and free globals both carry the
+    // unresolved context. A pre-existing free target therefore cannot be
+    // hygienically renamed or kept distinct in the standalone module.
+    if relevant.iter().any(|rename| {
+        let target = (rename.new.clone(), rename.old.1);
+        uses.use_count(&target) > 0
+    }) {
+        return false;
+    }
+
+    let module_names = collect_module_names(module);
+    let bindings = relevant
+        .iter()
+        .map(|rename| rename.old.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &bindings);
+    let declared_bindings = uses.declared_bindings();
+    let mut conflicts = std::collections::HashSet::new();
+
+    for rename in relevant {
+        if !module_names.contains(&rename.new)
+            && !shadow_index.rename_causes_shadowing(&rename.old, &rename.new)
+            && !binding_replacement_would_be_shadowed(module, &rename.old, &rename.new)
+        {
+            continue;
+        }
+
+        conflicts.extend(
+            declared_bindings
+                .iter()
+                .filter(|binding| binding.0 == rename.new)
+                .cloned(),
+        );
+    }
+
+    if conflicts.is_empty() {
+        return runtime_binding_renames_are_safe(module, renames);
+    }
+
+    let mut used_names = uses
+        .referenced_bindings()
+        .into_iter()
+        .chain(declared_bindings)
+        .map(|binding| binding.0)
+        .collect::<std::collections::HashSet<_>>();
+    used_names.extend(renames.iter().map(|rename| rename.new.clone()));
+
+    let mut conflicts = conflicts.into_iter().collect::<Vec<_>>();
+    conflicts.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.as_u32().cmp(&right.1.as_u32()))
+    });
+    let local_renames = conflicts
+        .into_iter()
+        .map(|old| {
+            let new = fresh_runtime_local_name(&old.0, &mut used_names);
+            BindingRename { old, new }
+        })
+        .collect::<Vec<_>>();
+    rename_bindings_in_module(module, &local_renames);
+
+    runtime_binding_renames_are_safe(module, renames)
+}
+
+fn fresh_runtime_local_name(name: &Atom, used_names: &mut std::collections::HashSet<Atom>) -> Atom {
+    let base = Atom::from(format!("_{name}"));
+    if used_names.insert(base.clone()) {
+        return base;
+    }
+
+    let mut suffix = 2usize;
+    loop {
+        let candidate = Atom::from(format!("_{name}{suffix}"));
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 pub(crate) fn generated_source_map_points(

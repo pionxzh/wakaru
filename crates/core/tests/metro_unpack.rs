@@ -446,7 +446,7 @@ __r(1);
 }
 
 #[test]
-fn rejects_factory_param_rename_capture() {
+fn deconflicts_factory_param_rename_capture() {
     let source = r#"
 __d(function(g, r, i, a, m, e, d) {
   function invoke(require) {
@@ -460,11 +460,112 @@ __d(function(g, r, i, a, m, e, d) {
 __r(1);
 "#;
 
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Metro capture should be repaired and unpacked");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Metro entry should exist");
     assert!(
-        try_unpack_bundle(source)
-            .expect("Metro detection should not error")
-            .is_none(),
-        "renaming the runtime loader must not capture it behind a nested require parameter"
+        entry.contains("function invoke(_require)")
+            && entry.contains(r#"require("./module-2.js")"#),
+        "the nested binding must be renamed before the runtime loader:\n{entry}"
+    );
+}
+
+#[test]
+fn leaves_non_capturing_runtime_target_binding_unchanged() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  function identity(require) {
+    return require;
+  }
+  m.exports = [identity, r(d[0])];
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("non-capturing Metro bundle should unpack");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Metro entry should exist");
+    assert!(
+        entry.contains("function identity(require)"),
+        "an unrelated nested binding should not be cosmetically renamed:\n{entry}"
+    );
+}
+
+#[test]
+fn deconflicts_runtime_target_declared_after_loader_use() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  function invoke() {
+    const value = r(d[0]);
+    let require;
+    return [require, value];
+  }
+  m.exports = invoke;
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Metro TDZ capture should be repaired and unpacked");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Metro entry should exist");
+    assert!(
+        entry.contains(r#"const value = require("./module-2.js");"#)
+            && entry.contains("let _require;")
+            && entry.contains("_require,")
+            && entry.contains("value\n    ];"),
+        "a later lexical declaration must be renamed before loader normalization:\n{entry}"
+    );
+}
+
+#[test]
+fn deconflicts_named_function_expression_capture() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  const invoke = function require() {
+    return [require, r(d[0])];
+  };
+  m.exports = invoke;
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = "dependency";
+}, 2, []);
+__r(1);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("named-function capture should be repaired and unpacked");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Metro entry should exist");
+    assert!(
+        entry.contains("function _require()")
+            && entry.contains("_require,")
+            && entry.contains(r#"require("./module-2.js")"#),
+        "the function's self-binding must be renamed without touching the loader:\n{entry}"
     );
 }
 

@@ -19,7 +19,7 @@ use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
 use crate::unpacker::{
-    emit_module_with_source_map, runtime_binding_renames_are_safe, source_fallback_for_stmts,
+    deconflict_runtime_binding_renames, emit_module_with_source_map, source_fallback_for_stmts,
     spans_byte_ranges, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult,
     UnpackedModule,
 };
@@ -1400,7 +1400,7 @@ fn normalize_extracted_webpack_module(
                 new: target.into(),
             })
             .collect::<Vec<_>>();
-        if !runtime_binding_renames_are_safe(&synthetic_module, &renames) {
+        if !deconflict_runtime_binding_renames(&mut synthetic_module, &renames) {
             return None;
         }
         for rename in &renames {

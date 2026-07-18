@@ -14,7 +14,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::{
-    runtime_binding_renames_are_safe, sanitize_relative_path, source_fallback_for_stmts,
+    deconflict_runtime_binding_renames, sanitize_relative_path, source_fallback_for_stmts,
     span_byte_range, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult, UnpackedModule,
 };
 use crate::utils::swc_safety::apply_fixer;
@@ -495,7 +495,7 @@ fn normalize_factory_module(
             new: target.into(),
         })
         .collect::<Vec<_>>();
-    if !runtime_binding_renames_are_safe(&module, &renames) {
+    if !deconflict_runtime_binding_renames(&mut module, &renames) {
         return None;
     }
     for rename in &renames {

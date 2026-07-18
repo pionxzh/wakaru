@@ -112,9 +112,10 @@ markers are preserved because removing them would change Cocos runtime behavior.
 Factory-based webpack, Browserify/Cocos, and Metro extraction removes the
 factory wrapper and gives its runtime parameters canonical names. Before doing
 so, the unpackers check top-level collisions, pre-existing free references, and
-nested-scope shadowing. If a rename would change which binding a reference
-resolves to, structural detection rejects the candidate and normal fallback
-preserves the original bundle instead of emitting captured identifiers.
+nested-scope shadowing. Bound locals that would capture a canonical runtime
+name are hygienically renamed first. A pre-existing free reference cannot be
+renamed without changing host-environment lookup, so that case still rejects
+the candidate and normal fallback preserves the original bundle.
 
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no

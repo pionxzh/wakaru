@@ -18,7 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::{
-    runtime_binding_renames_are_safe, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -822,7 +822,7 @@ fn normalize_extracted_webpack_module(
             new: new_sym.clone(),
         })
         .collect::<Vec<_>>();
-    if !runtime_binding_renames_are_safe(&synthetic_module, &renames) {
+    if !deconflict_runtime_binding_renames(&mut synthetic_module, &renames) {
         return None;
     }
     for rename in &renames {
