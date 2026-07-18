@@ -32,9 +32,8 @@ Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
 shape is still preserved while duplicate tool outputs are collapsed.
 
-By default the script uses `target/debug/wakaru(.exe)` when present, otherwise
-it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
-specific binary.
+By default the script asks Cargo to refresh `target/debug/wakaru(.exe)` once,
+then uses that binary for the matrix. Set `WAKARU` to test a specific binary.
 
 The transformer packages are installed under `target/repro-tools/`, so the first
 run may download Babel, TypeScript, SWC, esbuild, or Terser packages. The

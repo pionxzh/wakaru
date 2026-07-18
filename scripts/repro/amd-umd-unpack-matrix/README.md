@@ -13,9 +13,8 @@ It focuses on issue-style repros instead of a broad synthetic variant matrix:
 node scripts/repro/amd-umd-unpack-matrix/matrix.mjs
 ```
 
-Set `WAKARU` to test a specific binary. By default the script uses
-`target/debug/wakaru(.exe)` when present, otherwise it falls back to
-`cargo run -q -p wakaru-cli --`.
+Set `WAKARU` to test a specific binary. By default the script asks Cargo to
+refresh `target/debug/wakaru(.exe)` once, then uses that binary for the matrix.
 
 The tool packages are installed under `target/repro-tools/`, so the first run
 may download RequireJS or Rollup packages. The `target/` directory is ignored by

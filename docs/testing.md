@@ -148,6 +148,9 @@ export WAKARU="$PWD/target/dev-release/wakaru"   # wakaru.exe on Windows
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
 ```
 
+Without an explicit `WAKARU`, the shared matrix runner asks Cargo to refresh
+the current worktree's debug CLI once before using `target/debug/wakaru`.
+
 Do not reuse a `target/dev-release/wakaru` binary from another checkout unless
 you are intentionally comparing against that checkout. A stale binary from
 `main` can make a matrix pass or fail for the wrong code.

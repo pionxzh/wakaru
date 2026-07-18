@@ -584,18 +584,44 @@ function spawnCapture(command, args, input) {
   });
 }
 
-// Resolve how to invoke the wakaru CLI once: $WAKARU override → debug build →
-// `cargo run` fallback. Returns the command plus any argument prefix.
-function resolveWakaruCmd() {
-  if (process.env.WAKARU) {
-    return { command: process.env.WAKARU, prefix: [] };
-  }
-  const debugBinary = join(repoRoot, "target", "debug", process.platform === "win32" ? "wakaru.exe" : "wakaru");
-  if (existsSync(debugBinary)) {
-    return { command: debugBinary, prefix: [] };
-  }
-  return { command: "cargo", prefix: ["run", "-q", "-p", "wakaru-cli", "--"] };
+// Resolve how to invoke the wakaru CLI once. An explicit $WAKARU is trusted;
+// otherwise Cargo refreshes the debug binary before any matrix can reuse it.
+export function createWakaruCommandResolver({
+  env = process.env,
+  platform = process.platform,
+  root = repoRoot,
+  runBuild = spawnSync,
+} = {}) {
+  let resolved;
+  return function resolveWakaruCmd() {
+    if (resolved) return resolved;
+    if (env.WAKARU) {
+      resolved = { command: env.WAKARU, prefix: [] };
+      return resolved;
+    }
+
+    const targetDir = join(root, "target");
+    const build = runBuild(
+      "cargo",
+      ["build", "-q", "-p", "wakaru-cli", "--target-dir", targetDir],
+      { cwd: root, encoding: "utf8" },
+    );
+    if (build.error) throw build.error;
+    if (build.status !== 0) {
+      throw new Error(
+        `cargo build -p wakaru-cli exited ${build.status}: ${build.stderr?.trim() || build.stdout?.trim() || "unknown error"}`,
+      );
+    }
+
+    resolved = {
+      command: join(targetDir, "debug", platform === "win32" ? "wakaru.exe" : "wakaru"),
+      prefix: [],
+    };
+    return resolved;
+  };
 }
+
+const resolveWakaruCmd = createWakaruCommandResolver();
 
 // Invoke the wakaru CLI synchronously with arbitrary args. `options.input` is
 // piped to stdin (use the `-` arg to make wakaru read it).

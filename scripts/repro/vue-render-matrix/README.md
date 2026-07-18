@@ -31,9 +31,8 @@ Each profile also runs through Terser compression and compression+mangling
 because patch flags, comments, hoists, and renamed bindings all affect the
 shapes Wakaru must recover.
 
-By default the script uses `target/debug/wakaru(.exe)` when present, otherwise
-it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
-specific binary.
+By default the script asks Cargo to refresh `target/debug/wakaru(.exe)` once,
+then uses that binary for the matrix. Set `WAKARU` to test a specific binary.
 
 The Vue compiler package is installed under `target/repro-tools/`, so the first
 run may download `@vue/compiler-sfc` and Terser packages. The `target/`
