@@ -693,7 +693,7 @@ fn extract_webpack5_modules(
             &id_to_filename,
             &str_id_to_filename,
             Atom::from("__webpack_require__"),
-            Atom::from("__webpack_exports__"),
+            Some(Atom::from("__webpack_exports__")),
         );
         append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else if let Some(entry) = extract_ncc_inline_entry(bootstrap_body) {
@@ -704,7 +704,7 @@ fn extract_webpack5_modules(
             &id_to_filename,
             &str_id_to_filename,
             entry.require_sym,
-            entry.exports_sym,
+            None,
         );
         append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else {
@@ -765,7 +765,7 @@ fn emit_webpack5_entry_module(
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
     require_sym: Atom,
-    exports_sym: Atom,
+    exports_sym: Option<Atom>,
 ) -> Option<String> {
     let (mut synthetic_module, _) = normalize_extracted_webpack_entry_module(
         body_stmts,
@@ -788,7 +788,7 @@ fn normalize_extracted_webpack_entry_module(
     id_to_filename: &HashMap<usize, String>,
     str_id_to_filename: &HashMap<String, String>,
     require_sym: Atom,
-    exports_sym: Atom,
+    exports_sym: Option<Atom>,
 ) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
@@ -819,11 +819,13 @@ fn normalize_extracted_webpack_entry_module(
         (require_sym.clone(), unresolved_ctxt),
         &Ident::new(Atom::from("require"), Default::default(), unresolved_ctxt),
     );
-    replace_ident(
-        &mut synthetic_module,
-        (exports_sym, unresolved_ctxt),
-        &Ident::new(Atom::from("exports"), Default::default(), unresolved_ctxt),
-    );
+    if let Some(exports_sym) = exports_sym {
+        replace_ident(
+            &mut synthetic_module,
+            (exports_sym, unresolved_ctxt),
+            &Ident::new(Atom::from("exports"), Default::default(), unresolved_ctxt),
+        );
+    }
 
     let mut normalizer = Webpack5RuntimeNormalizer {
         require_sym: Atom::from("require"),
@@ -849,7 +851,6 @@ fn extract_trailing_entry_body(
 struct NccInlineEntry {
     body_stmts: Vec<Stmt>,
     require_sym: Atom,
-    exports_sym: Atom,
 }
 
 /// Extract ncc's inline startup program.
@@ -888,7 +889,6 @@ fn extract_ncc_inline_entry(
     Some(NccInlineEntry {
         body_stmts: bootstrap_body.stmts[entry_start..].to_vec(),
         require_sym,
-        exports_sym,
     })
 }
 
