@@ -166,7 +166,7 @@ fn extract_len_decl(decl: &VarDeclarator) -> Option<(BindingId, BindingId)> {
 }
 
 /// `copy = Array(len)` or `copy = new Array(len)`  →  `copy_binding_id`
-fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<BindingId> {
+pub(super) fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<BindingId> {
     let Pat::Ident(BindingIdent { id: copy_id, .. }) = &decl.name else {
         return None;
     };
@@ -209,7 +209,7 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<Bind
 }
 
 /// `idx = 0`  →  `idx_binding_id`
-fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<BindingId> {
+pub(super) fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<BindingId> {
     let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
         return None;
     };
@@ -222,7 +222,7 @@ fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<BindingId> {
 
 // ── condition / update / body matchers ──────────────────────────────────────
 
-fn matches_lt_test(test: Option<&Expr>, idx: &BindingId, len: &BindingId) -> bool {
+pub(super) fn matches_lt_test(test: Option<&Expr>, idx: &BindingId, len: &BindingId) -> bool {
     let Some(Expr::Bin(bin)) = test else {
         return false;
     };
@@ -231,7 +231,7 @@ fn matches_lt_test(test: Option<&Expr>, idx: &BindingId, len: &BindingId) -> boo
         && matches!(bin.right.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
 }
 
-fn matches_increment(update: Option<&Expr>, idx: &BindingId) -> bool {
+pub(super) fn matches_increment(update: Option<&Expr>, idx: &BindingId) -> bool {
     let Some(Expr::Update(upd)) = update else {
         return false;
     };
@@ -240,7 +240,12 @@ fn matches_increment(update: Option<&Expr>, idx: &BindingId) -> bool {
 }
 
 /// Body is `copy[idx] = src[idx]` — either as a bare ExprStmt or inside a block.
-fn matches_copy_body(body: &Stmt, copy: &BindingId, idx: &BindingId, src: &BindingId) -> bool {
+pub(super) fn matches_copy_body(
+    body: &Stmt,
+    copy: &BindingId,
+    idx: &BindingId,
+    src: &BindingId,
+) -> bool {
     let expr = match body {
         Stmt::Expr(e) => e.expr.as_ref(),
         Stmt::Block(block) => {

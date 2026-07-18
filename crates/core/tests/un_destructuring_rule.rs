@@ -355,6 +355,82 @@ use(first, rest);
 }
 
 #[test]
+fn reconstructs_array_rest_from_mangled_array_like_to_array() {
+    let input = r#"
+function copy(source, limit) {
+    (limit == null || limit > source.length) && (limit = source.length);
+    for (var index = 0, output = Array(limit); index < limit; index++) output[index] = source[index];
+    return output;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = copy(_ref).slice(1);
+use(first, rest);
+"#;
+    let expected = r#"
+var [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_mangled_array_copy_with_wrong_length_guard() {
+    let input = r#"
+function copy(source, limit) {
+    (limit == null || limit < source.length) && (limit = source.length);
+    for (var index = 0, output = Array(limit); index < limit; index++) output[index] = source[index];
+    return output;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = copy(_ref).slice(1);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_mangled_array_copy_with_shifted_source_index() {
+    let input = r#"
+function copy(source, limit) {
+    (limit == null || limit > source.length) && (limit = source.length);
+    for (var index = 0, output = Array(limit); index < limit; index++) output[index] = source[index + 1];
+    return output;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = copy(_ref).slice(1);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_mangled_array_copy_with_shadowed_array_constructor() {
+    let input = r#"
+const Array = customArray;
+function copy(source, limit) {
+    (limit == null || limit > source.length) && (limit = source.length);
+    for (var index = 0, output = Array(limit); index < limit; index++) output[index] = source[index];
+    return output;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = copy(_ref).slice(1);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn rejects_array_like_to_array_rest_with_explicit_limit() {
+    let input = r#"
+var _ref = items;
+var first = _ref[0];
+var rest = _arrayLikeToArray(_ref, 2).slice(1);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn preserves_array_like_to_array_when_still_referenced() {
     let input = r#"
 function _arrayLikeToArray(arr, len) {

@@ -6,17 +6,21 @@ use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
     BinaryOp, BindingIdent, BlockStmt, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt,
     Function, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, ReturnStmt,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{
-    can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
-    UninitializedDeclKind,
+    binding_id, can_remove_prior_uninitialized_decls_by, ident_matches_binding,
+    remove_prior_uninitialized_decls_by, BindingId, UninitializedDeclKind,
 };
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind, TsHelperKind};
+use super::un_rest_array_copy::{
+    extract_array_copy_decl, extract_zero_init_decl, matches_copy_body, matches_increment,
+    matches_lt_test,
+};
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 use crate::utils::paren::strip_parens;
 
@@ -30,6 +34,7 @@ pub struct UnDestructuring {
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: Option<HashSet<BindingKey>>,
+    array_like_to_array_helpers: Option<HashSet<BindingKey>>,
     consumed_sliced_to_array_helpers: HashSet<BindingKey>,
 }
 
@@ -43,6 +48,7 @@ impl UnDestructuring {
             unresolved_mark,
             level,
             sliced_to_array_helpers: None,
+            array_like_to_array_helpers: None,
             consumed_sliced_to_array_helpers: HashSet::new(),
         }
     }
@@ -56,6 +62,7 @@ impl UnDestructuring {
             unresolved_mark,
             level,
             sliced_to_array_helpers: Some(collect_sliced_to_array_helpers(local_helpers)),
+            array_like_to_array_helpers: None,
             consumed_sliced_to_array_helpers: HashSet::new(),
         }
     }
@@ -100,12 +107,17 @@ impl VisitMut for UnDestructuring {
             let local_helpers = LocalHelperContext::collect_with_mark(module, self.unresolved_mark);
             self.sliced_to_array_helpers = Some(collect_sliced_to_array_helpers(&local_helpers));
         }
+        self.array_like_to_array_helpers = Some(collect_array_like_to_array_helpers(
+            module,
+            self.unresolved_mark,
+        ));
         module.visit_mut_children_with(self);
         let (items, consumed_helpers) = process_module_items(
             std::mem::take(&mut module.body),
             self.unresolved_mark,
             self.level,
             self.sliced_to_array_helpers(),
+            self.array_like_to_array_helpers(),
         );
         self.consumed_sliced_to_array_helpers
             .extend(consumed_helpers);
@@ -119,6 +131,7 @@ impl VisitMut for UnDestructuring {
             self.unresolved_mark,
             self.level,
             self.sliced_to_array_helpers(),
+            self.array_like_to_array_helpers(),
         );
         self.consumed_sliced_to_array_helpers
             .extend(consumed_helpers);
@@ -129,7 +142,12 @@ impl VisitMut for UnDestructuring {
         func.visit_mut_children_with(self);
         if self.level >= RewriteLevel::Standard {
             if let Some(body) = &mut func.body {
-                nest_param_destructuring(&mut func.params, body, self.unresolved_mark);
+                nest_param_destructuring(
+                    &mut func.params,
+                    body,
+                    self.unresolved_mark,
+                    self.array_like_to_array_helpers(),
+                );
             }
         }
     }
@@ -138,6 +156,12 @@ impl VisitMut for UnDestructuring {
 impl UnDestructuring {
     fn sliced_to_array_helpers(&self) -> &HashSet<BindingKey> {
         self.sliced_to_array_helpers
+            .as_ref()
+            .expect("UnDestructuring should collect helper facts before visiting statements")
+    }
+
+    fn array_like_to_array_helpers(&self) -> &HashSet<BindingKey> {
+        self.array_like_to_array_helpers
             .as_ref()
             .expect("UnDestructuring should collect helper facts before visiting statements")
     }
@@ -153,11 +177,279 @@ fn collect_sliced_to_array_helpers(local_helpers: &LocalHelperContext) -> HashSe
     helpers
 }
 
+fn collect_array_like_to_array_helpers(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function)))
+                if is_array_like_to_array_fn(&function.function, unresolved_mark) =>
+            {
+                Some(binding_key(&function.ident))
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.decls.len() == 1 => {
+                let decl = &var.decls[0];
+                let Pat::Ident(binding) = &decl.name else {
+                    return None;
+                };
+                let Expr::Fn(function) = decl.init.as_deref()? else {
+                    return None;
+                };
+                is_array_like_to_array_fn(&function.function, unresolved_mark)
+                    .then(|| binding_key(&binding.id))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Prove the Babel/SWC array-like copy helper independently of its name:
+///
+/// `if (len == null || len > source.length) len = source.length;`
+/// `for (i = 0, out = Array(len); i < len; i++) out[i] = source[i];`
+/// `return out;`
+fn is_array_like_to_array_fn(func: &Function, unresolved_mark: Mark) -> bool {
+    if func.is_async || func.is_generator || func.params.len() != 2 {
+        return false;
+    }
+    let (Pat::Ident(source), Pat::Ident(len)) = (&func.params[0].pat, &func.params[1].pat) else {
+        return false;
+    };
+    let source = binding_id(&source.id);
+    let len = binding_id(&len.id);
+    let Some(body) = &func.body else { return false };
+
+    let Some(output) = body.stmts.last().and_then(extract_return_binding) else {
+        return false;
+    };
+    let guard_count = body
+        .stmts
+        .iter()
+        .filter(|stmt| matches_array_copy_length_guard(stmt, &source, &len))
+        .count();
+    let loop_count = body
+        .stmts
+        .iter()
+        .filter(|stmt| matches_array_like_copy_loop(stmt, &source, &len, &output, unresolved_mark))
+        .count();
+    let allocation_count = body
+        .stmts
+        .iter()
+        .filter(|stmt| {
+            matches_standalone_array_allocation(stmt, &len, &output, unresolved_mark)
+                || loop_has_array_allocation(stmt, &len, &output, unresolved_mark)
+        })
+        .count();
+    let return_count = body
+        .stmts
+        .iter()
+        .filter(|stmt| extract_return_binding(stmt).as_ref() == Some(&output))
+        .count();
+    if guard_count != 1 || loop_count != 1 || allocation_count != 1 || return_count != 1 {
+        return false;
+    }
+
+    body.stmts.iter().all(|stmt| {
+        matches_array_copy_length_guard(stmt, &source, &len)
+            || matches_array_like_copy_loop(stmt, &source, &len, &output, unresolved_mark)
+            || matches_standalone_array_allocation(stmt, &len, &output, unresolved_mark)
+            || extract_return_binding(stmt).as_ref() == Some(&output)
+            || matches!(stmt, Stmt::Empty(_))
+    })
+}
+
+fn loop_has_array_allocation(
+    stmt: &Stmt,
+    len: &BindingId,
+    output: &BindingId,
+    unresolved_mark: Mark,
+) -> bool {
+    let Stmt::For(for_stmt) = stmt else {
+        return false;
+    };
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return false;
+    };
+    init.decls.iter().any(|decl| {
+        array_allocation_uses_unresolved_array(decl, unresolved_mark)
+            && extract_array_copy_decl(decl, len).as_ref() == Some(output)
+    })
+}
+
+fn extract_return_binding(stmt: &Stmt) -> Option<BindingId> {
+    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = stmt else {
+        return None;
+    };
+    let Expr::Ident(id) = strip_parens(arg) else {
+        return None;
+    };
+    Some(binding_id(id))
+}
+
+fn matches_array_copy_length_guard(stmt: &Stmt, source: &BindingId, len: &BindingId) -> bool {
+    match stmt {
+        Stmt::If(if_stmt) if if_stmt.alt.is_none() => {
+            matches_length_guard_test(&if_stmt.test, source, len)
+                && stmt_is_exact_assignment(&if_stmt.cons, len, source)
+        }
+        Stmt::Expr(expr_stmt) => {
+            let Expr::Bin(and) = strip_parens(&expr_stmt.expr) else {
+                return false;
+            };
+            and.op == BinaryOp::LogicalAnd
+                && matches_length_guard_test(&and.left, source, len)
+                && expr_is_exact_length_assignment(&and.right, len, source)
+        }
+        _ => false,
+    }
+}
+
+fn matches_length_guard_test(expr: &Expr, source: &BindingId, len: &BindingId) -> bool {
+    let Expr::Bin(or) = strip_parens(expr) else {
+        return false;
+    };
+    if or.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    (is_len_null_test(&or.left, len) && is_len_gt_source_length(&or.right, source, len))
+        || (is_len_null_test(&or.right, len) && is_len_gt_source_length(&or.left, source, len))
+}
+
+fn is_len_null_test(expr: &Expr, len: &BindingId) -> bool {
+    let Expr::Bin(test) = strip_parens(expr) else {
+        return false;
+    };
+    test.op == BinaryOp::EqEq
+        && ((is_binding_expr(&test.left, len)
+            && matches!(strip_parens(&test.right), Expr::Lit(Lit::Null(_))))
+            || (is_binding_expr(&test.right, len)
+                && matches!(strip_parens(&test.left), Expr::Lit(Lit::Null(_)))))
+}
+
+fn is_len_gt_source_length(expr: &Expr, source: &BindingId, len: &BindingId) -> bool {
+    let Expr::Bin(test) = strip_parens(expr) else {
+        return false;
+    };
+    test.op == BinaryOp::Gt
+        && is_binding_expr(&test.left, len)
+        && is_length_member(&test.right, source)
+}
+
+fn stmt_is_exact_assignment(stmt: &Stmt, len: &BindingId, source: &BindingId) -> bool {
+    match stmt {
+        Stmt::Expr(expr) => expr_is_exact_length_assignment(&expr.expr, len, source),
+        Stmt::Block(block) if block.stmts.len() == 1 => {
+            stmt_is_exact_assignment(&block.stmts[0], len, source)
+        }
+        _ => false,
+    }
+}
+
+fn expr_is_exact_length_assignment(expr: &Expr, len: &BindingId, source: &BindingId) -> bool {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return false;
+    };
+    assign.op == AssignOp::Assign
+        && matches!(&assign.left, AssignTarget::Simple(SimpleAssignTarget::Ident(id)) if ident_matches_binding(&id.id, len))
+        && is_length_member(&assign.right, source)
+}
+
+fn is_length_member(expr: &Expr, source: &BindingId) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::Ident(id) if ident_matches_binding(id, source))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "length")
+}
+
+fn is_binding_expr(expr: &Expr, binding: &BindingId) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if ident_matches_binding(id, binding))
+}
+
+fn matches_array_like_copy_loop(
+    stmt: &Stmt,
+    source: &BindingId,
+    len: &BindingId,
+    output: &BindingId,
+    unresolved_mark: Mark,
+) -> bool {
+    let Stmt::For(for_stmt) = stmt else {
+        return false;
+    };
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return false;
+    };
+
+    let indexes: Vec<_> = init
+        .decls
+        .iter()
+        .filter_map(extract_zero_init_decl)
+        .collect();
+    if indexes.len() != 1 {
+        return false;
+    }
+    let index = &indexes[0];
+
+    let inline_allocations: Vec<_> = init
+        .decls
+        .iter()
+        .filter(|decl| array_allocation_uses_unresolved_array(decl, unresolved_mark))
+        .filter_map(|decl| extract_array_copy_decl(decl, len))
+        .collect();
+    if !inline_allocations.is_empty()
+        && (inline_allocations.len() != 1 || inline_allocations[0] != *output)
+    {
+        return false;
+    }
+    if init.decls.len() != 1 + inline_allocations.len() {
+        return false;
+    }
+
+    matches_lt_test(for_stmt.test.as_deref(), index, len)
+        && matches_increment(for_stmt.update.as_deref(), index)
+        && matches_copy_body(&for_stmt.body, output, index, source)
+}
+
+fn matches_standalone_array_allocation(
+    stmt: &Stmt,
+    len: &BindingId,
+    output: &BindingId,
+    unresolved_mark: Mark,
+) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    var.decls.len() == 1
+        && array_allocation_uses_unresolved_array(&var.decls[0], unresolved_mark)
+        && extract_array_copy_decl(&var.decls[0], len).as_ref() == Some(output)
+}
+
+fn array_allocation_uses_unresolved_array(decl: &VarDeclarator, unresolved_mark: Mark) -> bool {
+    let Some(init) = decl.init.as_deref() else {
+        return false;
+    };
+    let callee = match init {
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            callee.as_ref()
+        }
+        Expr::New(new_expr) => new_expr.callee.as_ref(),
+        _ => return false,
+    };
+    matches!(callee, Expr::Ident(id) if id.sym.as_ref() == "Array" && id.ctxt.outer() == unresolved_mark)
+}
+
 fn process_module_items(
     items: Vec<ModuleItem>,
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
 ) -> (Vec<ModuleItem>, Vec<BindingKey>) {
     let mut result = Vec::with_capacity(items.len());
     let mut stmt_buf = Vec::new();
@@ -173,6 +465,7 @@ fn process_module_items(
                         unresolved_mark,
                         level,
                         sliced_to_array_helpers,
+                        array_like_to_array_helpers,
                     );
                     consumed_sliced_to_array_helpers.extend(consumed_helpers);
                     result.extend(processed.into_iter().map(ModuleItem::Stmt));
@@ -183,8 +476,13 @@ fn process_module_items(
     }
 
     if !stmt_buf.is_empty() {
-        let (processed, consumed_helpers) =
-            process_stmts(stmt_buf, unresolved_mark, level, sliced_to_array_helpers);
+        let (processed, consumed_helpers) = process_stmts(
+            stmt_buf,
+            unresolved_mark,
+            level,
+            sliced_to_array_helpers,
+            array_like_to_array_helpers,
+        );
         consumed_sliced_to_array_helpers.extend(consumed_helpers);
         result.extend(processed.into_iter().map(ModuleItem::Stmt));
     }
@@ -197,6 +495,7 @@ fn process_stmts(
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
 ) -> (Vec<Stmt>, Vec<BindingKey>) {
     let mut stmts = hoist_conditional_test_assignments(stmts);
     let mut result = Vec::with_capacity(stmts.len());
@@ -210,6 +509,7 @@ fn process_stmts(
             unresolved_mark,
             level,
             sliced_to_array_helpers,
+            array_like_to_array_helpers,
             &mut consumed_helpers,
         ) {
             remove_prior_uninitialized_decls_for_bindings(
@@ -396,6 +696,7 @@ fn try_reconstruct_group(
     unresolved_mark: Mark,
     level: RewriteLevel,
     sliced_to_array_helpers: &HashSet<BindingKey>,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     let mut group_helpers = Vec::new();
@@ -411,9 +712,13 @@ fn try_reconstruct_group(
     }
 
     let mut group_helpers = Vec::new();
-    if let Some(group) =
-        try_reconstruct_ref_group(stmts, start, unresolved_mark, &mut group_helpers)
-    {
+    if let Some(group) = try_reconstruct_ref_group(
+        stmts,
+        start,
+        unresolved_mark,
+        array_like_to_array_helpers,
+        &mut group_helpers,
+    ) {
         consumed_helpers.extend(group_helpers);
         return Some(group);
     }
@@ -972,6 +1277,7 @@ fn try_reconstruct_ref_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
@@ -983,6 +1289,7 @@ fn try_reconstruct_ref_group(
         start + 1,
         &ref_decl.ident.id,
         unresolved_mark,
+        array_like_to_array_helpers,
         &mut removed_temps,
         consumed_helpers,
     );
@@ -1036,6 +1343,7 @@ fn collect_accesses_on(
     start: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> CollectedAccesses {
@@ -1048,6 +1356,7 @@ fn collect_accesses_on(
             i,
             ref_ident,
             unresolved_mark,
+            array_like_to_array_helpers,
             removed_temps,
             consumed_helpers,
         ) {
@@ -1371,11 +1680,18 @@ fn try_extract_access(
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Access, usize)> {
     if let Some((access, consumed, nested_temps, nested_helpers)) =
-        try_extract_inline_spread_default_access(stmts, index, ref_ident, unresolved_mark)
+        try_extract_inline_spread_default_access(
+            stmts,
+            index,
+            ref_ident,
+            unresolved_mark,
+            array_like_to_array_helpers,
+        )
     {
         removed_temps.extend(nested_temps);
         consumed_helpers.extend(nested_helpers);
@@ -1393,6 +1709,7 @@ fn try_extract_access(
             stmts,
             index + 2,
             unresolved_mark,
+            array_like_to_array_helpers,
             removed_temps,
             consumed_helpers,
         ) {
@@ -1418,7 +1735,9 @@ fn try_extract_access(
         return Some((access, 1));
     }
 
-    if let Some((start, binding, helper_key)) = extract_slice_rest(init, ref_ident, binding) {
+    if let Some((start, binding, helper_key)) =
+        extract_slice_rest(init, ref_ident, binding, array_like_to_array_helpers)
+    {
         if let Some(key) = helper_key {
             consumed_helpers.push(key);
         }
@@ -1440,6 +1759,7 @@ fn try_extract_inline_spread_default_access(
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
 ) -> Option<(Access, usize, Vec<BindingKey>, Vec<BindingKey>)> {
     let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
     let source_access = extract_source_access(temp_init, ref_ident)?;
@@ -1459,6 +1779,7 @@ fn try_extract_inline_spread_default_access(
         index + 2,
         &nested_ref.id,
         unresolved_mark,
+        array_like_to_array_helpers,
         &mut removed_temps,
         &mut consumed_helpers,
     );
@@ -1493,6 +1814,7 @@ fn try_nest_default_binding(
     stmts: &[Stmt],
     nested_start: usize,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Pat, usize)> {
@@ -1514,6 +1836,7 @@ fn try_nest_default_binding(
         nested_start,
         default_binding,
         unresolved_mark,
+        array_like_to_array_helpers,
         removed_temps,
         consumed_helpers,
     );
@@ -1524,6 +1847,7 @@ fn try_nest_default_binding(
             nested_start,
             default_binding,
             unresolved_mark,
+            array_like_to_array_helpers,
             removed_temps,
             consumed_helpers,
         )?;
@@ -1558,6 +1882,7 @@ fn try_expand_nested_spread_capture(
     index: usize,
     expected_source: &Ident,
     unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
     removed_temps: &mut Vec<BindingKey>,
     consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<CollectedAccesses> {
@@ -1576,6 +1901,7 @@ fn try_expand_nested_spread_capture(
         index + 1,
         &ref_binding.id,
         unresolved_mark,
+        array_like_to_array_helpers,
         &mut nested_removed_temps,
         &mut nested_consumed_helpers,
     );
@@ -1818,6 +2144,7 @@ fn extract_slice_rest(
     expr: &Expr,
     ref_ident: &Ident,
     binding: BindingIdent,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
 ) -> Option<(usize, BindingIdent, Option<BindingKey>)> {
     let Expr::Call(call) = expr else {
         return None;
@@ -1831,7 +2158,7 @@ fn extract_slice_rest(
     let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
         return None;
     };
-    let helper_key = match_ref_or_array_like_to_array(obj, ref_ident)?;
+    let helper_key = match_ref_or_array_like_to_array(obj, ref_ident, array_like_to_array_helpers)?;
     if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
         return None;
     }
@@ -1844,11 +2171,15 @@ fn extract_slice_rest(
 /// Checks whether `expr` is `ref_ident` or `_arrayLikeToArray(ref_ident)`.
 /// Returns `Some(helper_binding_key)` when the `_arrayLikeToArray` wrapper was
 /// matched, `Some(None)` for a direct ref match, or `None` on mismatch.
-fn match_ref_or_array_like_to_array(expr: &Expr, ref_ident: &Ident) -> Option<Option<BindingKey>> {
+fn match_ref_or_array_like_to_array(
+    expr: &Expr,
+    ref_ident: &Ident,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
+) -> Option<Option<BindingKey>> {
     match expr {
         Expr::Ident(obj) if obj.sym == ref_ident.sym && obj.ctxt == ref_ident.ctxt => Some(None),
         Expr::Call(call) => {
-            if call.args.is_empty() || call.args[0].spread.is_some() {
+            if call.args.len() != 1 || call.args[0].spread.is_some() {
                 return None;
             }
             let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
@@ -1857,14 +2188,20 @@ fn match_ref_or_array_like_to_array(expr: &Expr, ref_ident: &Ident) -> Option<Op
             let Expr::Ident(helper) = callee.as_ref() else {
                 return None;
             };
+            let helper_key = binding_key(helper);
             if !matches!(
                 helper.sym.as_ref(),
                 "_arrayLikeToArray" | "_array_like_to_array"
-            ) {
+            ) && !array_like_to_array_helpers.contains(&helper_key)
+            {
                 return None;
             }
-            match_ref_or_array_like_to_array(call.args[0].expr.as_ref(), ref_ident)?;
-            Some(Some(binding_key(helper)))
+            match_ref_or_array_like_to_array(
+                call.args[0].expr.as_ref(),
+                ref_ident,
+                array_like_to_array_helpers,
+            )?;
+            Some(Some(helper_key))
         }
         _ => None,
     }
@@ -2251,13 +2588,28 @@ fn build_var_stmt_from_parts(
     })))
 }
 
-fn nest_param_destructuring(params: &mut [Param], body: &mut BlockStmt, unresolved_mark: Mark) {
+fn nest_param_destructuring(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
+) {
     for param in params.iter_mut() {
-        nest_pat_destructuring(&mut param.pat, &mut body.stmts, unresolved_mark);
+        nest_pat_destructuring(
+            &mut param.pat,
+            &mut body.stmts,
+            unresolved_mark,
+            array_like_to_array_helpers,
+        );
     }
 }
 
-fn nest_pat_destructuring(pat: &mut Pat, stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
+fn nest_pat_destructuring(
+    pat: &mut Pat,
+    stmts: &mut Vec<Stmt>,
+    unresolved_mark: Mark,
+    array_like_to_array_helpers: &HashSet<BindingKey>,
+) {
     let inner_pat = match pat {
         Pat::Assign(assign) => &mut *assign.left,
         other => other,
@@ -2286,6 +2638,7 @@ fn nest_pat_destructuring(pat: &mut Pat, stmts: &mut Vec<Stmt>, unresolved_mark:
             0,
             &binding.id,
             unresolved_mark,
+            array_like_to_array_helpers,
             &mut removed_temps,
             &mut consumed_helpers,
         );

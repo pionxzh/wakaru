@@ -209,11 +209,18 @@ Priority targets, roughly ordered by real-world frequency:
 | `createClass` | `_createClass` | — | `_create_class` | defineProperties for class methods |
 | `slicedToArray` | `_slicedToArray` | `__read` | `_sliced_to_array` | Destructuring arrays from iterables |
 | `toConsumableArray` | `_toConsumableArray` | `__spreadArray` | `_to_consumable_array` | `[...arr]` polyfill |
+| `arrayLikeToArray` | `_arrayLikeToArray` | — | `_array_like_to_array` | Array-rest copy sub-helper, including mangled declarations |
 | `objectWithoutProperties` | `_objectWithoutProperties` | `__rest` | `_object_without_properties` | `const {a, ...rest} = obj` |
 | `typeof` | `_typeof` | — | `_type_of` | Native `typeof`, including self-caching declarations |
 | `asyncToGenerator` | `_asyncToGenerator` | `__awaiter` + `__generator` | `_async_to_generator` | async/await (already handled in `un_async_await.rs`) |
 
 esbuild helpers (`__commonJS`, `__esm`, `__toESM`, `__toCommonJS`) are bundler-level and already handled in the unpacker, not here.
+
+`UnDestructuring` accepts a mangled `arrayLikeToArray` declaration only when
+its body proves the complete helper contract: the canonical null/length guard,
+an unresolved `Array(length)` allocation, a bounded element-for-element copy
+loop, and return of that exact allocation. Near-matches with a different guard,
+source index, output binding, or shadowed `Array` remain untouched.
 
 `UnSlicedToArray` also restores callback-local destructuring when a proven
 helper is applied directly to one callback parameter. It accepts either an
