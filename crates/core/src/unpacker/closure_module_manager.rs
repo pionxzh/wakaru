@@ -896,8 +896,9 @@ fn expr_target_key(expr: &Expr) -> Option<String> {
 
 fn module_filename(id: &str, seen: &mut HashSet<String>) -> String {
     let sanitized = sanitize_relative_path(id, "module");
+    let lowercase = sanitized.to_ascii_lowercase();
     let base =
-        if sanitized.ends_with(".js") || sanitized.ends_with(".mjs") || sanitized.ends_with(".cjs")
+        if lowercase.ends_with(".js") || lowercase.ends_with(".mjs") || lowercase.ends_with(".cjs")
         {
             sanitized
         } else {
@@ -971,6 +972,14 @@ mod tests {
     #[test]
     fn accepts_empty_graph_used_by_single_module_responses() {
         assert_eq!(decode_module_graph(""), Some(Vec::new()));
+    }
+
+    #[test]
+    fn preserves_case_insensitive_javascript_extensions() {
+        let mut seen = HashSet::new();
+        assert_eq!(module_filename("feature.JS", &mut seen), "feature.JS");
+        assert_eq!(module_filename("lazy.MjS", &mut seen), "lazy.MjS");
+        assert_eq!(module_filename("server.CJS", &mut seen), "server.CJS");
     }
 
     #[test]
