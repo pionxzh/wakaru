@@ -530,7 +530,12 @@ fn collect_segment_candidates(
     source: &str,
     known_ids: &HashSet<String>,
 ) -> Option<Vec<SegmentCandidate>> {
-    let mut previous_end = body.statement_floor;
+    let mut previous_end = match &body.render {
+        SegmentRender::Direct => body.statement_floor,
+        SegmentRender::Wrapper { body_span, .. } => {
+            span_byte_range(cm, *body_span)?.0.checked_add(1)?
+        }
+    };
     let mut candidates = Vec::new();
 
     for (index, stmt) in body.statements.iter().enumerate() {
@@ -607,7 +612,8 @@ fn markers_before_statement(source: &str, floor: u32, statement_start: u32) -> O
     let mut previous_marker_end = None;
     while let Some(relative_start) = gap[cursor..].find("/*_M:") {
         let marker_start = cursor + relative_start;
-        if previous_marker_end.is_some_and(|end| !gap[end..marker_start].trim().is_empty()) {
+        let preceding_end = previous_marker_end.unwrap_or(0);
+        if !gap[preceding_end..marker_start].trim().is_empty() {
             return None;
         }
         let marker_body_start = marker_start + "/*_M:".len();

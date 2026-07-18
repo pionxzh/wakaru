@@ -628,3 +628,17 @@ try {
 "#,
     );
 }
+
+#[test]
+fn marker_text_embedded_inside_a_comment_is_not_a_boundary() {
+    assert_not_detected(
+        r#"
+/* Documentation mentioning /*_M:not_a_module*/
+try {
+  work();
+} catch (error) {
+  shared._DumpException(error);
+}
+"#,
+    );
+}
