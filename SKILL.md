@@ -22,9 +22,10 @@ mangled locals stay short unless a source map is provided.
 
 - A file is one giant line, or full of `_interopRequireDefault`,
   `__awaiter`, `e,t,r` parameters, `void 0`, `!0`/`!1`.
-- You have a webpack bundle, supported Vercel ncc CommonJS/IIFE output, or an
-  esbuild/Bun/Metro/Browserify/Cocos Creator 2.x/Closure ModuleManager/SystemJS/
-  AMD/Rollup/Vite bundle and need the individual modules.
+- You have a webpack bundle, supported Vercel ncc CommonJS output with an IIFE
+  webpack bootstrap, or an esbuild/Bun/Metro/Browserify/Cocos Creator 2.x/
+  Closure ModuleManager/SystemJS/AMD/Rollup/Vite bundle and need the individual
+  modules.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`
   artifact for inspection.
 - A stack trace points into vendored/minified code you can't read.

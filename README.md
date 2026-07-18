@@ -64,10 +64,10 @@ Full flag reference: [docs/cli.md](./docs/cli.md).
 
 ## What it handles
 
-- **Bundle splitting** — webpack 4/5 (including Vercel ncc CommonJS/IIFE
-  output), esbuild, Bun, Browserify (including Cocos Creator 2.x project-script
-  bundles), Metro, Closure ModuleManager, SystemJS, AMD/UMD, plus heuristic
-  splitting of scope-hoisted ESM output (Rollup, Vite).
+- **Bundle splitting** — webpack 4/5 (including Vercel ncc CommonJS output
+  with an IIFE webpack bootstrap), esbuild, Bun, Browserify (including Cocos
+  Creator 2.x project-script bundles), Metro, Closure ModuleManager, SystemJS,
+  AMD/UMD, plus heuristic splitting of scope-hoisted ESM output (Rollup, Vite).
 - **Transpiler recovery** — Babel, TypeScript/tslib, and SWC runtime helpers:
   async/await from generator state machines, classes, spread/rest, enums,
   JSX, template literals, optional chaining, nullish coalescing, default
