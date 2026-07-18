@@ -83,11 +83,15 @@ pub(super) fn detect_from_module(
         .as_ref()
         .map(|initializer| initializer.loading_ids.as_slice())
         .unwrap_or_default();
-    let entry_id = loading_ids.first().cloned().or_else(|| {
-        candidates
-            .first()
-            .and_then(|candidate| candidate.id.clone())
-    });
+    let entry_id = initializer
+        .as_ref()
+        .and_then(|_| initializer_owner_id(&candidates))
+        .or_else(|| loading_ids.first().cloned())
+        .or_else(|| {
+            candidates
+                .first()
+                .and_then(|candidate| candidate.id.clone())
+        });
 
     let mut filenames = HashSet::new();
     let mut modules = Vec::with_capacity(candidates.len());
@@ -235,6 +239,13 @@ fn parse_initializer_call(call: &CallExpr) -> Option<Initializer> {
     }
 
     Some(Initializer { graph, loading_ids })
+}
+
+fn initializer_owner_id(candidates: &[SegmentCandidate]) -> Option<String> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.contains_initializer)
+        .and_then(|candidate| candidate.id.clone())
 }
 
 fn string_array_arg(arg: &ExprOrSpread) -> Option<Vec<String>> {
@@ -954,5 +965,39 @@ mod tests {
     #[test]
     fn accepts_empty_graph_used_by_single_module_responses() {
         assert_eq!(decode_module_graph(""), Some(Vec::new()));
+    }
+
+    #[test]
+    fn marks_the_initializer_segment_as_entry() {
+        let source = r#"
+(function(shared) {
+  try {
+    shared._ModuleManager_initialize("base/feature:0", ["feature"]);
+    shared.baseValue = 1;
+    shared.after();
+  } catch (error) {
+    shared._DumpException(error);
+  }
+  try {
+    shared.before("feature");
+    shared.featureValue = 2;
+    shared.after();
+  } catch (error) {
+    shared._DumpException(error);
+  }
+}).call(this, this.closureShared);
+"#;
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::super::parse_es_module(source, "closure-entry.js", cm.clone())
+            .expect("fixture should parse");
+        let result = detect_from_module(&module, cm, source).expect("fixture should unpack");
+        assert!(result
+            .modules
+            .iter()
+            .any(|module| module.id == "base" && module.is_entry));
+        assert!(result
+            .modules
+            .iter()
+            .all(|module| module.id != "feature" || !module.is_entry));
     }
 }
