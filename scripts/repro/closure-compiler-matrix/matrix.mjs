@@ -10,7 +10,11 @@ import {
   runMatrix,
 } from "../lib/runner.mjs";
 
-const CLOSURE_VERSION = "20260629.0.0";
+const CLOSURE_VERSIONS = [
+  "20240317.0.0",
+  "20250226.0.0",
+  "20260629.0.0",
+];
 
 const snippets = [
   {
@@ -90,10 +94,10 @@ consume(closureAvatar({ profile: { avatar: "ada.png" } }));
 
 const allSources = snippets.map((snippet) => snippet.source);
 
-function closureBatch(sources, languageOut) {
+function closureBatch(sources, languageOut, compilerVersion) {
   const toolDir = ensureNodeTool(
-    `closure-compiler-${CLOSURE_VERSION}`,
-    [`google-closure-compiler@${CLOSURE_VERSION}`],
+    `closure-compiler-${compilerVersion}`,
+    [`google-closure-compiler@${compilerVersion}`],
   );
   const executable = join(
     toolDir,
@@ -140,14 +144,21 @@ function closureBatch(sources, languageOut) {
   return outputs;
 }
 
-const es5 = batchRunner(() => closureBatch(allSources, "ECMASCRIPT5"));
-const es2020 = batchRunner(() => closureBatch(allSources, "ECMASCRIPT_2020"));
+const transformers = CLOSURE_VERSIONS.flatMap((compilerVersion) => {
+  const es5 = batchRunner(() =>
+    closureBatch(allSources, "ECMASCRIPT5", compilerVersion),
+  );
+  const es2020 = batchRunner(() =>
+    closureBatch(allSources, "ECMASCRIPT_2020", compilerVersion),
+  );
+  return [
+    { name: `closure-${compilerVersion}-simple-es5`, run: es5 },
+    { name: `closure-${compilerVersion}-simple-es2020`, run: es2020 },
+  ];
+});
 
 runMatrix({
   name: "closure-compiler",
   snippets,
-  transformers: [
-    { name: `closure-${CLOSURE_VERSION}-simple-es5`, run: es5 },
-    { name: `closure-${CLOSURE_VERSION}-simple-es2020`, run: es2020 },
-  ],
+  transformers,
 });

@@ -1,9 +1,9 @@
 {
-  "commit": "65b82297",
+  "commit": "9e291729",
   "date": "2026-07-18",
   "aggregate": {
-    "yes": 1771,
-    "total": 1819,
+    "yes": 1778,
+    "total": 1826,
     "pct": 97.4
   },
   "matrices": [
@@ -25,10 +25,10 @@
     },
     {
       "name": "closure-compiler",
-      "yes": 8,
+      "yes": 15,
       "no": 0,
       "error": 0,
-      "total": 8,
+      "total": 15,
       "pct": 100
     },
     {

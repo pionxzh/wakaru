@@ -1,7 +1,8 @@
 # Closure Compiler reproduction matrix
 
-This matrix pins Google Closure Compiler `20260629.0.0` and checks the
-reversible, stable syntax shapes Wakaru currently targets:
+This matrix pins three non-nightly Google Closure Compiler releases spanning
+more than two years—`20240317.0.0`, `20250226.0.0`, and `20260629.0.0`—and
+checks the reversible, stable syntax shapes Wakaru currently targets:
 
 - ES5 class/prototype lowering, including `$jscomp.inherits`;
 - ES5 iterable loops using `$jscomp.makeIterator`;
@@ -15,6 +16,12 @@ node scripts/repro/closure-compiler-matrix/matrix.mjs --level standard --details
 
 The script installs its pinned compiler under `target/repro-tools/`. `target/`
 is ignored by git.
+
+The versions represent the first release with portable native packages across
+the matrix's development platforms, a middle release, and the release used to
+develop the current recovery. This is deliberately a compatibility sample
+rather than every monthly compiler build, and it avoids requiring Java solely
+for older producer coverage.
 
 ## Scope boundaries
 
