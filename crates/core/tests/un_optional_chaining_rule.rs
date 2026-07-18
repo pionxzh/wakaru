@@ -291,6 +291,45 @@ const a = r?.foo?.bar?.baz;
 }
 
 #[test]
+fn standard_transforms_babel_flattened_strict_chain_with_direct_root() {
+    let input = r#"
+var _user$profile;
+const name = user === null || user === void 0 || (_user$profile = user.profile) === null || _user$profile === void 0 ? void 0 : _user$profile.name;
+"#;
+    let expected = r#"
+const name = user?.profile?.name;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_nested_strict_chain_with_direct_root() {
+    let input = r#"
+var _user$profile;
+const name = user === null || user === void 0 ? void 0 : (_user$profile = user.profile) === null || _user$profile === void 0 ? void 0 : _user$profile.name;
+"#;
+    let expected = r#"
+const name = user?.profile?.name;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_flattened_loose_chain_with_direct_root() {
+    let input = r#"
+var _user$profile;
+const name = user == null || (_user$profile = user.profile) == null ? void 0 : _user$profile.name;
+"#;
+    let expected = r#"
+const name = user?.profile?.name;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn minimal_does_not_transform_babel_flattened_strict_optional_member_chain() {
     let input = r#"
 var _r$foo$bar, _r;
@@ -308,6 +347,32 @@ const a = (_r$foo$bar = (_r = r) === null || _r === void 0 || (_r = _r.foo) === 
 "#;
     let expected = r#"
 const a = r?.foo?.bar?.baz ?? "fallback";
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn pipeline_recovers_babel_parameter_optional_chain_inside_classic_jsx() {
+    let input = r#"
+export function UserCard({
+  user,
+  theme = "dark"
+}) {
+  var _user$tags, _user$profile$name, _user$profile;
+  const tags = [...((_user$tags = user === null || user === void 0 ? void 0 : user.tags) !== null && _user$tags !== void 0 ? _user$tags : []), "active"];
+  return React.createElement("article", {
+    className: `card card--${theme}`
+  }, React.createElement("h2", null, (_user$profile$name = user === null || user === void 0 || (_user$profile = user.profile) === null || _user$profile === void 0 ? void 0 : _user$profile.name) !== null && _user$profile$name !== void 0 ? _user$profile$name : "Anonymous"), React.createElement("ul", null, tags.map(tag => React.createElement("li", {
+    key: tag
+  }, tag))));
+}
+"#;
+    let expected = r#"
+export function UserCard({ user, theme = "dark" }) {
+  const tags = [...user?.tags ?? [], "active"];
+  return <article className={`card card--${theme}`}><h2>{user?.profile?.name ?? "Anonymous"}</h2><ul>{tags.map((tag) => <li key={tag}>{tag}</li>)}</ul></article>;
+}
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);

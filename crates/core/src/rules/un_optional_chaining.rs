@@ -821,19 +821,31 @@ fn try_flattened_strict_optional_chain(
     }
 
     let first = extract_null_single(terms[0])?;
-    let (first_tmp, mut chain) =
-        extract_flattened_assignment_segment(&first, terms[1], unresolved_mark)?;
-    let mut temps = vec![first_tmp.clone()];
     let mut temp_values = HashMap::new();
     let mut temp_call_contexts = HashMap::new();
-    record_flattened_temp_value(
-        &first_tmp,
-        &chain,
-        None,
-        &mut temp_values,
-        &mut temp_call_contexts,
-    );
-    let mut current_tmp = Expr::Ident(first_tmp);
+    let mut temps = Vec::new();
+    let (mut chain, mut current_tmp) = if let Some((first_tmp, chain)) =
+        extract_flattened_assignment_segment(&first, terms[1], unresolved_mark)
+    {
+        record_flattened_temp_value(
+            &first_tmp,
+            &chain,
+            None,
+            &mut temp_values,
+            &mut temp_call_contexts,
+        );
+        temps.push(first_tmp.clone());
+        (chain, Expr::Ident(first_tmp))
+    } else {
+        let undefined_value = extract_undefined_single(terms[1], unresolved_mark)?;
+        if !exprs_structurally_equal(&first, &undefined_value)
+            || !matches!(strip_parens(&first), Expr::Ident(_))
+        {
+            return None;
+        }
+        let chain = *first;
+        (chain.clone(), chain)
+    };
 
     let mut index = 2;
     while index < terms.len() {
@@ -962,19 +974,28 @@ fn try_flattened_loose_optional_chain(
         return None;
     }
 
-    let (first_tmp, mut chain) =
-        extract_flattened_loose_assignment_segment(terms[0], unresolved_mark)?;
-    let mut temps = vec![first_tmp.clone()];
     let mut temp_values = HashMap::new();
     let mut temp_call_contexts = HashMap::new();
-    record_flattened_temp_value(
-        &first_tmp,
-        &chain,
-        None,
-        &mut temp_values,
-        &mut temp_call_contexts,
-    );
-    let mut current_tmp = Expr::Ident(first_tmp);
+    let mut temps = Vec::new();
+    let (mut chain, mut current_tmp) = if let Some((first_tmp, chain)) =
+        extract_flattened_loose_assignment_segment(terms[0], unresolved_mark)
+    {
+        record_flattened_temp_value(
+            &first_tmp,
+            &chain,
+            None,
+            &mut temp_values,
+            &mut temp_call_contexts,
+        );
+        temps.push(first_tmp.clone());
+        (chain, Expr::Ident(first_tmp))
+    } else {
+        let chain = extract_loose_null_single(terms[0], unresolved_mark)?;
+        if !matches!(strip_parens(&chain), Expr::Ident(_)) {
+            return None;
+        }
+        (chain.clone(), chain)
+    };
 
     for (index, term) in terms.iter().enumerate().skip(1) {
         let Some((next_tmp, real_rhs)) =
@@ -1446,6 +1467,32 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
             let replaced_obj = make_optional_chain(base, obj)?;
             Some(make_required_member_tail(replaced_obj, prop.clone()))
         }
+
+        // `x.member?.leaf` may have been recovered while visiting the nested
+        // conditional first. Add the leading optional segment without
+        // discarding the already-recovered segment.
+        Expr::OptChain(OptChainExpr {
+            base: opt_base,
+            optional,
+            ..
+        }) => match opt_base.as_ref() {
+            OptChainBase::Member(MemberExpr { obj, prop, .. }) => {
+                if exprs_structurally_equal(obj, &base) {
+                    return Some(access.clone());
+                }
+                let replaced_obj = make_optional_chain(base, obj)?;
+                Some(Expr::OptChain(OptChainExpr {
+                    span: DUMMY_SP,
+                    optional: *optional,
+                    base: Box::new(OptChainBase::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(replaced_obj),
+                        prop: prop.clone(),
+                    })),
+                }))
+            }
+            OptChainBase::Call(_) => None,
+        },
 
         // x(...) → x?.(...)
         Expr::Call(CallExpr {

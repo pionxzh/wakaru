@@ -2,7 +2,7 @@
 
 import {
   runMatrix, batchRunner, withTerserVariants,
-  ensureNodeTool, readOption, standardLowerers,
+  babelPresetEnvBatch, ensureNodeTool, readOption, standardLowerers,
 } from "../lib/runner.mjs";
 import { mangleValidator } from "../lib/compare.mjs";
 import { join } from "node:path";
@@ -14,6 +14,13 @@ const snippets = [
     name: "member-chain-nullish",
     source: "const out = obj?.foo?.bar ?? fallback;\n",
     expected: ["?.", "??"],
+  },
+  {
+    name: "parameter-member-chain-nullish",
+    source:
+      'function getName(user) { return user?.profile?.name ?? "Anonymous"; }\nuse(getName({ profile: { name: "Ada" } }));\n',
+    expected: ['user?.profile?.name ?? "Anonymous"'],
+    execute: {},
   },
   {
     name: "mixed-leading-required-members",
@@ -235,6 +242,11 @@ const transformers = [
         batchRunner(() => babelOptionalNullishBatch(allSources, profile, babelModeOptions(mode))),
       ),
     ),
+  ),
+  ...withTerserVariants(
+    "babel-7.29-preset-env-ie11",
+    allSources,
+    batchRunner(() => babelPresetEnvBatch(allSources)),
   ),
   ...standardLowerers(allSources),
 ];
