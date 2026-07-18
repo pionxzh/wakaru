@@ -733,8 +733,9 @@ fn extract_webpack5_modules(
 
     // Fallback: scan bootstrap for entry-module startup calls.
     if !has_synthetic_entry {
-        if let Some(entry_id) =
-            find_require_s_entry(bootstrap_body).or_else(|| find_require_o_entry(bootstrap_body))
+        if let Some(entry_id) = find_ncc_direct_entry(bootstrap_body)
+            .or_else(|| find_require_s_entry(bootstrap_body))
+            .or_else(|| find_require_o_entry(bootstrap_body))
         {
             for module in &mut modules {
                 if module.id == entry_id {
@@ -860,17 +861,7 @@ struct NccInlineEntry {
 fn extract_ncc_inline_entry(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
 ) -> Option<NccInlineEntry> {
-    let require_sym = bootstrap_body.stmts.iter().find_map(|stmt| {
-        let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(function)) = stmt else {
-            return None;
-        };
-        function
-            .ident
-            .sym
-            .as_ref()
-            .contains("nccwpck_require")
-            .then(|| function.ident.sym.clone())
-    })?;
+    let require_sym = find_ncc_require_sym(bootstrap_body)?;
 
     let exports_sym = bootstrap_body
         .stmts
@@ -897,6 +888,62 @@ fn extract_ncc_inline_entry(
         require_sym,
         exports_sym,
     })
+}
+
+fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<Atom> {
+    bootstrap_body.stmts.iter().find_map(|stmt| {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(function)) = stmt else {
+            return None;
+        };
+        function
+            .ident
+            .sym
+            .as_ref()
+            .contains("nccwpck_require")
+            .then(|| function.ident.sym.clone())
+    })
+}
+
+/// Recognize ncc's direct CommonJS startup:
+/// `module.exports = __nccwpck_require__(<entry id>)`.
+fn find_ncc_direct_entry(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+    let require_sym = find_ncc_require_sym(bootstrap_body)?;
+    bootstrap_body
+        .stmts
+        .iter()
+        .rev()
+        .find(|statement| !matches!(statement, Stmt::Empty(_)))
+        .and_then(|statement| ncc_direct_entry_from_statement(statement, &require_sym))
+}
+
+fn ncc_direct_entry_from_statement(statement: &Stmt, require_sym: &Atom) -> Option<String> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = statement else {
+        return None;
+    };
+    ncc_direct_entry_from_expr(expr, require_sym)
+}
+
+fn ncc_direct_entry_from_expr(expression: &Expr, require_sym: &Atom) -> Option<String> {
+    match strip_parens(expression) {
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+                return None;
+            };
+            let Expr::Ident(module) = strip_parens(&member.obj) else {
+                return None;
+            };
+            if module.sym.as_ref() != "module" || !member_prop_name_is(&member.prop, "exports") {
+                return None;
+            }
+            extract_require_call_id(&assign.right, require_sym)
+        }
+        Expr::Seq(sequence) => sequence
+            .exprs
+            .iter()
+            .rev()
+            .find_map(|expression| ncc_direct_entry_from_expr(expression, require_sym)),
+        _ => None,
+    }
 }
 
 fn ncc_module_exports_binding(statement: &Stmt) -> Option<Atom> {
@@ -1855,6 +1902,45 @@ const modules = {
             !entry.code.contains("__nccwpck_require__"),
             "ncc runtime name should not survive:\n{}",
             entry.code
+        );
+    }
+
+    #[test]
+    fn detects_ncc_direct_commonjs_entry() {
+        let mut source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/bundles/webpack-gen/dist/wp5-ncc/index.cjs"
+        ))
+        .expect("failed to read generated ncc fixture");
+        let entry_start = source
+            .find("var __webpack_exports__ = {};")
+            .expect("fixture should contain inline entry start");
+        let export = "module.exports = __webpack_exports__;";
+        let entry_end = source[entry_start..]
+            .find(export)
+            .map(|offset| entry_start + offset + export.len())
+            .expect("fixture should contain final CommonJS export");
+        source.replace_range(
+            entry_start..entry_end,
+            "module.exports = __nccwpck_require__(582);",
+        );
+
+        let result = detect_and_extract(&source).expect("direct ncc startup should be detected");
+        assert!(
+            result
+                .modules
+                .iter()
+                .any(|module| module.id == "582" && module.is_entry),
+            "the directly required module should be marked as entry: {:?}",
+            result
+                .modules
+                .iter()
+                .map(|module| (&module.id, module.is_entry))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result.modules.iter().all(|module| module.id != "entry"),
+            "direct startup should not fabricate a synthetic entry"
         );
     }
 
