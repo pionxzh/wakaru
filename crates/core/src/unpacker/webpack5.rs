@@ -1947,6 +1947,29 @@ const modules = {
     }
 
     #[test]
+    fn detects_ncc_export_assignment_in_sequence() {
+        let mut source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/bundles/webpack-gen/dist/wp5-ncc/index.cjs"
+        ))
+        .expect("failed to read generated ncc fixture");
+        source = source.replacen(
+            "module.exports = __webpack_exports__;",
+            "(recordStartup(), module.exports = __webpack_exports__);",
+            1,
+        );
+
+        let result = detect_and_extract(&source).expect("sequenced ncc export should be detected");
+        let entry = result
+            .modules
+            .iter()
+            .find(|module| module.id == "entry")
+            .expect("sequenced export should retain the synthetic entry");
+        assert!(entry.is_entry);
+        assert!(entry.code.contains("recordStartup()"), "{}", entry.code);
+    }
+
+    #[test]
     fn keeps_extracted_modules_when_synthetic_entry_emission_fails() {
         let mut modules = vec![UnpackedModule {
             id: "582".to_string(),
