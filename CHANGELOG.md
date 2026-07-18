@@ -1,5 +1,69 @@
 # Changelog
 
+## [1.8.0](https://github.com/pionxzh/wakaru/compare/v1.7.0...v1.8.0) (2026-07-18)
+
+### Features
+
+* **unpacker:** recover Browserify module filenames ([72924aa7](https://github.com/pionxzh/wakaru/commit/72924aa762e6b95344e1fd4bec9b497c7ff688ee))
+* **rules:** recover nested direct array rest ([b82bcae7](https://github.com/pionxzh/wakaru/commit/b82bcae7fe9bd65448fe5b49b292b110554f3e35))
+* **rules:** detect mangled array copy helpers ([8c1e64ff](https://github.com/pionxzh/wakaru/commit/8c1e64ffb1e3e5689cc5f418c026ef0d76b96929))
+* **rules:** recover nested array rest captures ([0ffe4900](https://github.com/pionxzh/wakaru/commit/0ffe4900cb3f7ef66cc63d281342416163a56c4a))
+* **core:** add Metro bundle unpacker ([1032ad59](https://github.com/pionxzh/wakaru/commit/1032ad59c47549deb9459defc7af866b3797bb2f))
+* **unpacker:** support Closure ModuleManager bundles ([d846d579](https://github.com/pionxzh/wakaru/commit/d846d579307434d35fcaedf03a4d23027dd38d08))
+* **unpacker:** support Cocos Creator 2.x bundles ([1fb4ef1d](https://github.com/pionxzh/wakaru/commit/1fb4ef1d1fda4d34fed7d62ff1aa08fdac55df41))
+* **namespace:** recover TypeScript augmentation IIFEs ([b0e0f2ee](https://github.com/pionxzh/wakaru/commit/b0e0f2eeb7d7a373c1bdedac73fdbc544749596a))
+* **declarations:** recover adjacent const initializers ([39fbb5d1](https://github.com/pionxzh/wakaru/commit/39fbb5d1bed53d6acded54921dd3ce7de6db821d))
+* **async-await:** recover guarded awaits at mid-machine joins ([bd458576](https://github.com/pionxzh/wakaru/commit/bd4585766b5be12ba65a3833644f4c78efdc9e04))
+* **destructuring:** recover sliced callback parameters ([33ce8790](https://github.com/pionxzh/wakaru/commit/33ce8790c44a1700b51ff25e0dbedaf8fc0ac7f1))
+* **define-property:** recover fresh object literals ([83c036e6](https://github.com/pionxzh/wakaru/commit/83c036e66bde47f34ae82fd2f0cee9c28e19e770))
+* **typeof:** recover self-caching helpers ([c4f82ebc](https://github.com/pionxzh/wakaru/commit/c4f82ebc32e64007dc5dfdf6840232f43634f368))
+* **esm:** recover static live re-exports ([5e630123](https://github.com/pionxzh/wakaru/commit/5e6301237eaccf32bcc23725cf0d3726b1e6586d))
+* **enum:** recover safe CommonJS exports ([85650bd7](https://github.com/pionxzh/wakaru/commit/85650bd7c110bdf64de4a5c82cfaf0b25ac6311c))
+* **async-await:** consume proven cross-module tslib helpers ([66839390](https://github.com/pionxzh/wakaru/commit/668393905df78b1728b66d7d8c8a612edf89e8f9))
+* **optional-chain:** recover guarded direct calls ([86ec7f7b](https://github.com/pionxzh/wakaru/commit/86ec7f7b445b4e4ab85edaa5678a80a32483b424))
+* **website:** redesign landing page ([ebaf0b06](https://github.com/pionxzh/wakaru/commit/ebaf0b06fafb51623aab03e73888bf59207a6ce8))
+
+### Bug Fixes
+
+* **unpacker:** deconflict runtime parameter renames ([a39d1dd0](https://github.com/pionxzh/wakaru/commit/a39d1dd0197d48d22beef39245f7d243d3774597))
+* **unpacker:** reject runtime parameter capture ([c6270d99](https://github.com/pionxzh/wakaru/commit/c6270d9974b1a8198c4210e22b7f4005822fc15e))
+* **unpacker:** preserve scope-owned helper siblings ([ecc4a612](https://github.com/pionxzh/wakaru/commit/ecc4a6126e378d6e0c257fea6dd4328401cbdbcb))
+* **unpacker:** preserve mapped Cocos external requests ([28f7f2db](https://github.com/pionxzh/wakaru/commit/28f7f2db898af19bc34b9b7bbb77644b26bd1ea9))
+* **unpacker:** preserve Closure filename extensions ([3ba41d3c](https://github.com/pionxzh/wakaru/commit/3ba41d3c1f1245e1bb89d36a99cb619fbf741220))
+* **unpacker:** reject embedded Closure markers ([70736d9b](https://github.com/pionxzh/wakaru/commit/70736d9b67370aac52bf7ed41b0ed328ee0162ae))
+* **unpacker:** attribute Closure entry to initializer ([907bcaee](https://github.com/pionxzh/wakaru/commit/907bcaee264a17104043f2b8446fb2f1818703e6))
+* **unpacker:** deduplicate Metro module filenames ([92970df3](https://github.com/pionxzh/wakaru/commit/92970df339da398750c3f4b47788401d1b5def1d))
+* **unpacker:** preserve writable Metro import temps ([bfef5aaf](https://github.com/pionxzh/wakaru/commit/bfef5aafe6b7fa40879f7854c4e6174d8b8e509d))
+* **unpacker:** accept dynamic Browserify dependency maps ([432a6e0b](https://github.com/pionxzh/wakaru/commit/432a6e0b03c2f3aecd8082d362dcb08407e01c33))
+* **unpacker:** model Cocos basename fallback ([e14210bc](https://github.com/pionxzh/wakaru/commit/e14210bc9e17a522e9c20a86b9e16b884c9d27b2))
+* **unpacker:** retain modules when entry emission fails ([2dbcd765](https://github.com/pionxzh/wakaru/commit/2dbcd765c8704697376bba2cbf3f17ad034d1380))
+* **unpacker:** detect direct ncc entry startup ([c83a8783](https://github.com/pionxzh/wakaru/commit/c83a87838144684ef593e486dcb0ea3b1209b9b4))
+* **unpacker:** recover ncc inline entries ([a923cac9](https://github.com/pionxzh/wakaru/commit/a923cac9db0216705d4d5d105ea40704b1d10376))
+* **core:** harden alias recovery safety ([34823965](https://github.com/pionxzh/wakaru/commit/34823965df3f902a53d4de7946de209e9795391c))
+* **enum:** preserve numeric mapping semantics ([e836dfd6](https://github.com/pionxzh/wakaru/commit/e836dfd682c2cd07b7f28effe2be47aa2f0fa358))
+* **async-await:** respect the awaiter thisArg when unwrapping ([9bc6b9f9](https://github.com/pionxzh/wakaru/commit/9bc6b9f97279d0ee3c3372cbb61925a74062b0ca))
+* **async-await:** scope generator rollback scan ([60bde115](https://github.com/pionxzh/wakaru/commit/60bde11541da1ba7b40c5c38bfb5a86a147faac1))
+* **enum:** preserve later CommonJS export uses ([56313c0e](https://github.com/pionxzh/wakaru/commit/56313c0ea1e0421bfd9bcd3d44f54986579eb358))
+* **enum:** avoid duplicate recovered exports ([673db2fa](https://github.com/pionxzh/wakaru/commit/673db2faef2f191a3d20ebb75829ad12423efe41))
+* **unpack:** reject bundle-level input source maps ([3b818f30](https://github.com/pionxzh/wakaru/commit/3b818f3085268e298be1d1c61fadc956bf2fe2a9))
+* **async-await:** roll back unsupported generator recovery ([c243d234](https://github.com/pionxzh/wakaru/commit/c243d23410452d27b09e48cbd8f131ff0024a407))
+* **scope-hoist:** merge cyclic synthesized clusters ([d48a27d0](https://github.com/pionxzh/wakaru/commit/d48a27d0ee04dda64b9974c8f9c87f49b727ebf5))
+* **core:** restrict class expression promotion ([29ea8602](https://github.com/pionxzh/wakaru/commit/29ea8602d64f13bb55bb4b78592d141f44766da4))
+* **core:** respect shadowed undefined returns ([177b16b0](https://github.com/pionxzh/wakaru/commit/177b16b0c63960a192dbea22c5d1a654b891b3be))
+* **core:** resolve tracked Test262 failures ([c87288ad](https://github.com/pionxzh/wakaru/commit/c87288ad392a783aeb338eb2eb9a86a40090cf3f))
+* **core:** restore conditional object spread branches ([18537770](https://github.com/pionxzh/wakaru/commit/18537770145ca76d0041638f9ee9a35ddb654804))
+* **core:** recover inline Babel default interop ([7403361a](https://github.com/pionxzh/wakaru/commit/7403361a04eabd2f7cc6cd93f7a10392f3ea8425))
+* **core:** safely inline generated const aliases ([ebccdb53](https://github.com/pionxzh/wakaru/commit/ebccdb5377524eedea2d16274cceae5514ac07a0))
+
+### Performance
+
+* **core:** reuse prepared webpack module ASTs ([7afdbc69](https://github.com/pionxzh/wakaru/commit/7afdbc692982ceaeb9611b4b52ac249d65ba95fe))
+* **core:** expose unpack phase timings ([642d0006](https://github.com/pionxzh/wakaru/commit/642d000666b590f6688351690e4a4c510c97596d))
+* **core:** defer async await rollback snapshots ([ed3d7de7](https://github.com/pionxzh/wakaru/commit/ed3d7de7177453d29ae6b38a7a5019d6f1a8bd2a))
+* **core:** avoid cloning statements in argument spread ([2e666504](https://github.com/pionxzh/wakaru/commit/2e666504192216d962c623235fdfe0a1840e39f5))
+* **core:** avoid cloning statements in smart inline ([7988531d](https://github.com/pionxzh/wakaru/commit/7988531d3712cae681fa3e4add0143b7ea4f7959))
+* **core:** hoist class promotion analysis ([47b8a06d](https://github.com/pionxzh/wakaru/commit/47b8a06df5be2e760e1ac78adf8ab4095bc43a65))
+
 ## [1.7.0](https://github.com/pionxzh/wakaru/compare/v1.6.0...v1.7.0) (2026-07-12)
 
 ### Experimental API Changes
