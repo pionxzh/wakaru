@@ -237,8 +237,14 @@ fn collect_factory_modules(
         let factory_expr = parts.elems[0].as_ref()?.expr.as_ref();
         let (params, body_stmts) = extract_factory_parts(factory_expr)?;
         let dependencies_expr = parts.elems[1].as_ref()?.expr.as_ref();
-        let Expr::Object(dependencies) = strip_parens(dependencies_expr) else {
-            return None;
+        let dependencies = match strip_parens(dependencies_expr) {
+            Expr::Object(dependencies) => match extract_dependency_map(dependencies) {
+                Some(dependencies) => dependencies,
+                None if dialect == TableDialect::Browserify => HashMap::new(),
+                None => return None,
+            },
+            _ if dialect == TableDialect::Browserify => HashMap::new(),
+            _ => return None,
         };
 
         result.push(FactoryModule {
@@ -246,7 +252,7 @@ fn collect_factory_modules(
             filename: String::new(),
             params,
             body_stmts,
-            dependencies: extract_dependency_map(dependencies)?,
+            dependencies,
             source_span: key_value.value.span(),
         });
     }

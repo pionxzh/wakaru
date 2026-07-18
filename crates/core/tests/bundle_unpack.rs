@@ -20,6 +20,35 @@ var sharedCache = {};
 }
 
 #[test]
+fn browserify_accepts_a_nonliteral_dependency_map() {
+    let source = r#"
+var entryDependencies = { "./value": 2 };
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = require("./value");
+  }, entryDependencies],
+  2: [function(require, module) {
+    module.exports = "value";
+  }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify dynamic dependency-map bundle should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Browserify]);
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("Browserify entry should exist");
+    assert!(
+        entry.contains(r#"require("./value")"#),
+        "an unproven dynamic map must preserve the original request:\n{entry}"
+    );
+}
+
+#[test]
 fn browserify_accepts_numeric_dependency_request_keys() {
     let source = r#"
 (function() { return function() {}; })()({
