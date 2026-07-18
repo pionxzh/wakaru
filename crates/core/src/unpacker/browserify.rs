@@ -192,7 +192,7 @@ fn extract_commonjs_table(
     let mut modules = Vec::with_capacity(descriptors.len());
     let mut prepared = Vec::with_capacity(descriptors.len());
     for descriptor in &descriptors {
-        let ast = prepare_factory_module(descriptor, &id_to_filename)?;
+        let ast = prepare_factory_module(descriptor, &id_to_filename, dialect)?;
         modules.push(UnpackedModule {
             id: descriptor.id.as_string(),
             is_entry: entry_set.contains(&descriptor.id),
@@ -435,10 +435,12 @@ fn top_level_expr_has_cc_rf_call(expression: &Expr, method: &str) -> bool {
 fn prepare_factory_module(
     descriptor: &FactoryModule<'_>,
     id_to_filename: &HashMap<ModuleId, String>,
+    dialect: TableDialect,
 ) -> Option<PreparedModuleAst> {
     let globals = Globals::new();
     let (module, unresolved_mark) = GLOBALS.set(&globals, || {
-        let (mut module, unresolved_mark) = normalize_factory_module(descriptor, id_to_filename);
+        let (mut module, unresolved_mark) =
+            normalize_factory_module(descriptor, id_to_filename, dialect);
         apply_fixer(&mut module).ok()?;
         Some((module, unresolved_mark))
     })?;
@@ -452,6 +454,7 @@ fn prepare_factory_module(
 fn normalize_factory_module(
     descriptor: &FactoryModule<'_>,
     id_to_filename: &HashMap<ModuleId, String>,
+    dialect: TableDialect,
 ) -> (Module, Mark) {
     let mut module = build_module_from_stmts(descriptor.body_stmts.to_vec());
     let param_symbols: Vec<Atom> = match descriptor.params {
@@ -499,6 +502,7 @@ fn normalize_factory_module(
         from_filename: &descriptor.filename,
         dependencies: &descriptor.dependencies,
         id_to_filename,
+        dialect,
     });
 
     (module, unresolved_mark)
@@ -509,6 +513,7 @@ struct DependencyMapRewriter<'a> {
     from_filename: &'a str,
     dependencies: &'a HashMap<String, ModuleId>,
     id_to_filename: &'a HashMap<ModuleId, String>,
+    dialect: TableDialect,
 }
 
 impl VisitMut for DependencyMapRewriter<'_> {
@@ -531,15 +536,21 @@ impl VisitMut for DependencyMapRewriter<'_> {
         let Some(request_id) = module_id_from_expr(&call.args[0].expr) else {
             return;
         };
-        let target_id = match &request_id {
-            ModuleId::Named(request) => self.dependencies.get(request).or_else(|| {
-                self.id_to_filename
-                    .contains_key(&request_id)
-                    .then_some(&request_id)
-            }),
-            ModuleId::Numeric(_) => Some(&request_id),
+        let filename = match &request_id {
+            ModuleId::Named(request) => self
+                .dependencies
+                .get(request)
+                .and_then(|id| self.id_to_filename.get(id))
+                .or_else(|| self.id_to_filename.get(&request_id))
+                .or_else(|| {
+                    (self.dialect == TableDialect::CocosCreator2)
+                        .then(|| cocos_basename_id(request))
+                        .flatten()
+                        .and_then(|id| self.id_to_filename.get(&id))
+                }),
+            ModuleId::Numeric(_) => self.id_to_filename.get(&request_id),
         };
-        let Some(filename) = target_id.and_then(|id| self.id_to_filename.get(id)) else {
+        let Some(filename) = filename else {
             return;
         };
         let specifier = relative_import_specifier(self.from_filename, filename);
@@ -550,6 +561,11 @@ impl VisitMut for DependencyMapRewriter<'_> {
             raw: None,
         }));
     }
+}
+
+fn cocos_basename_id(request: &str) -> Option<ModuleId> {
+    let basename = request.rsplit('/').next()?;
+    (!basename.is_empty()).then(|| ModuleId::Named(basename.to_string()))
 }
 
 fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {

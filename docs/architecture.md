@@ -101,10 +101,11 @@ not as a new public `BundleFormat`. The detector recognizes the assignment to
 tuples, and paired factory-scope `cc._RF.push/pop` registration markers. The
 marker scan accepts top-level comma sequences produced by minifiers without
 descending into nested functions. Dependency-map targets found in the same
-table are rewritten to relative emitted filenames; targets absent from that
-table remain unresolved because Cocos can delegate them to a previously loaded
-`__require` bundle. Registration markers are preserved because removing them
-would change Cocos runtime behavior.
+table are rewritten to relative emitted filenames. When a request is absent
+from the map, the extractor models Cocos's basename retry against named modules
+in the same table; requests still unresolved after that remain intact because
+Cocos can delegate them to a previously loaded `__require` bundle. Registration
+markers are preserved because removing them would change Cocos runtime behavior.
 
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no

@@ -105,6 +105,37 @@ fn cocos_creator_2x_rewrites_only_factory_require_binding() {
 }
 
 #[test]
+fn cocos_creator_2x_rewrites_missing_map_request_via_basename_fallback() {
+    let source = r#"
+window.__require = (function() { return function() {}; })({
+  UIBase: [function(require, module) {
+    cc._RF.push(module, "uiBaseFixtureUuid", "UIBase");
+    module.exports = class UIBase {};
+    cc._RF.pop();
+  }, {}],
+  Feature: [function(require, module) {
+    cc._RF.push(module, "featureFixtureUuid", "Feature");
+    module.exports = require("../UIBase");
+    cc._RF.pop();
+  }, {}]
+}, {}, ["Feature"]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Cocos basename-fallback bundle should unpack");
+    let feature = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "Feature.js")
+        .map(|(_, code)| code)
+        .expect("expected Feature module");
+    assert!(
+        feature.contains(r#"require("./UIBase.js")"#),
+        "Cocos basename fallback should target the emitted module:\n{feature}"
+    );
+}
+
+#[test]
 fn cocos_creator_2x_runs_the_normal_decompile_pipeline() {
     let source = cocos_bundle();
     let output = unpack(
