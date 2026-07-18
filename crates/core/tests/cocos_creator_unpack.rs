@@ -136,6 +136,41 @@ window.__require = (function() { return function() {}; })({
 }
 
 #[test]
+fn cocos_creator_2x_preserves_explicit_external_map_target() {
+    let source = r#"
+window.__require = (function() { return function() {}; })({
+  External: [function(require, module) {
+    cc._RF.push(module, "externalFixtureUuid", "External");
+    module.exports = "local";
+    cc._RF.pop();
+  }, {}],
+  Feature: [function(require, module) {
+    cc._RF.push(module, "featureFixtureUuid", "Feature");
+    module.exports = require("../External");
+    cc._RF.pop();
+  }, { "../External": "delegatedExternal" }]
+}, {}, ["Feature"]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Cocos external-map bundle should unpack");
+    let feature = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "Feature.js")
+        .map(|(_, code)| code)
+        .expect("expected Feature module");
+    assert!(
+        feature.contains(r#"require("../External")"#),
+        "an explicit target outside this table must remain unresolved:\n{feature}"
+    );
+    assert!(
+        !feature.contains(r#"require("./External.js")"#),
+        "basename fallback must not override an explicit dependency map:\n{feature}"
+    );
+}
+
+#[test]
 fn cocos_creator_2x_runs_the_normal_decompile_pipeline() {
     let source = cocos_bundle();
     let output = unpack(

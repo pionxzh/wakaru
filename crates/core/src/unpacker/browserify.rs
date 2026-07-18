@@ -543,17 +543,18 @@ impl VisitMut for DependencyMapRewriter<'_> {
             return;
         };
         let filename = match &request_id {
-            ModuleId::Named(request) => self
-                .dependencies
-                .get(request)
-                .and_then(|id| self.id_to_filename.get(id))
-                .or_else(|| self.id_to_filename.get(&request_id))
-                .or_else(|| {
+            ModuleId::Named(request) => match self.dependencies.get(request) {
+                // An explicit map entry is authoritative. If its target belongs to a
+                // different bundle, preserve the original request instead of binding
+                // it to an unrelated same-named module in this table.
+                Some(id) => self.id_to_filename.get(id),
+                None => self.id_to_filename.get(&request_id).or_else(|| {
                     (self.dialect == TableDialect::CocosCreator2)
                         .then(|| cocos_basename_id(request))
                         .flatten()
                         .and_then(|id| self.id_to_filename.get(&id))
                 }),
+            },
             ModuleId::Numeric(_) => self.id_to_filename.get(&request_id),
         };
         let Some(filename) = filename else {
