@@ -694,18 +694,8 @@ fn extract_webpack5_modules(
             &str_id_to_filename,
             Atom::from("__webpack_require__"),
             Atom::from("__webpack_exports__"),
-        )?;
-        modules.push(UnpackedModule {
-            id: "entry".to_string(),
-            is_entry: true,
-            code,
-            filename: "entry.js".to_string(),
-            source_ranges: entry_ranges,
-            source_input: String::new(),
-            generated_source_map: Vec::new(),
-        });
-        prepared.push(None);
-        true
+        );
+        append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else if let Some(entry) = extract_ncc_inline_entry(bootstrap_body) {
         let entry_ranges = spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span()));
         let code = emit_webpack5_entry_module(
@@ -715,18 +705,8 @@ fn extract_webpack5_modules(
             &str_id_to_filename,
             entry.require_sym,
             entry.exports_sym,
-        )?;
-        modules.push(UnpackedModule {
-            id: "entry".to_string(),
-            is_entry: true,
-            code,
-            filename: "entry.js".to_string(),
-            source_ranges: entry_ranges,
-            source_input: String::new(),
-            generated_source_map: Vec::new(),
-        });
-        prepared.push(None);
-        true
+        );
+        append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
     } else {
         false
     };
@@ -755,6 +735,28 @@ fn extract_webpack5_modules(
         prepared,
         cm,
     ))
+}
+
+fn append_synthetic_entry(
+    modules: &mut Vec<UnpackedModule>,
+    prepared: &mut Vec<Option<PreparedModuleAst>>,
+    source_ranges: Vec<(u32, u32)>,
+    code: Option<String>,
+) -> bool {
+    let Some(code) = code else {
+        return false;
+    };
+    modules.push(UnpackedModule {
+        id: "entry".to_string(),
+        is_entry: true,
+        code,
+        filename: "entry.js".to_string(),
+        source_ranges,
+        source_input: String::new(),
+        generated_source_map: Vec::new(),
+    });
+    prepared.push(None);
+    true
 }
 
 fn emit_webpack5_entry_module(
@@ -1942,6 +1944,26 @@ const modules = {
             result.modules.iter().all(|module| module.id != "entry"),
             "direct startup should not fabricate a synthetic entry"
         );
+    }
+
+    #[test]
+    fn keeps_extracted_modules_when_synthetic_entry_emission_fails() {
+        let mut modules = vec![UnpackedModule {
+            id: "582".to_string(),
+            filename: "module-582.js".to_string(),
+            ..Default::default()
+        }];
+        let mut prepared = vec![None];
+
+        assert!(!append_synthetic_entry(
+            &mut modules,
+            &mut prepared,
+            Vec::new(),
+            None,
+        ));
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].id, "582");
+        assert_eq!(prepared.len(), modules.len());
     }
 
     #[test]
