@@ -14,8 +14,9 @@ node scripts/repro/closure-compiler-matrix/matrix.mjs --level standard
 node scripts/repro/closure-compiler-matrix/matrix.mjs --level standard --details
 ```
 
-The script installs its pinned compiler under `target/repro-tools/`. `target/`
-is ignored by git.
+The script installs each compiler under `target/repro-tools/` with `npm ci`.
+Its exact package and transitive dependency tree is committed under
+`toolchains/<version>/`; `target/` is ignored by git.
 
 The versions represent the first release with portable native packages across
 the matrix's development platforms, a middle release, and the release used to

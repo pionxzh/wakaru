@@ -4,9 +4,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   batchRunner,
-  ensureNodeTool,
+  ensureLockedNodeTool,
   runMatrix,
 } from "../lib/runner.mjs";
 
@@ -97,9 +98,12 @@ consume(closureAvatar({ profile: { avatar: "ada.png" } }));
 const allSources = snippets.map((snippet) => snippet.source);
 
 function closureBatch(sources, languageOut, compilerVersion) {
-  const toolDir = ensureNodeTool(
+  const manifestDir = fileURLToPath(
+    new URL(`./toolchains/${compilerVersion}/`, import.meta.url),
+  );
+  const toolDir = ensureLockedNodeTool(
     `closure-compiler-${compilerVersion}`,
-    [`google-closure-compiler@${compilerVersion}`],
+    manifestDir,
   );
   const executable = join(
     toolDir,
