@@ -1409,6 +1409,19 @@ fn try_reconstruct_direct_array_group(
 
     let mut i = start + consumed;
     while i < stmts.len() {
+        if let Some((_, _, access, consumed, temps)) = try_extract_direct_nested_default_access(
+            stmts,
+            i,
+            Some(&source),
+            Some(group),
+            unresolved_mark,
+        ) {
+            accesses.push(access);
+            removed_temps.extend(temps);
+            i += consumed;
+            continue;
+        }
+
         let next_default = try_extract_direct_default_access(
             stmts,
             i,
@@ -1471,6 +1484,86 @@ fn try_reconstruct_direct_array_group(
         consumed: i - start,
         remove_prior_bindings: Vec::new(),
     })
+}
+
+fn try_extract_direct_nested_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    expected_group: Option<DeclGroup>,
+    unresolved_mark: Mark,
+) -> Option<(Ident, DeclGroup, Access, usize, Vec<BindingKey>)> {
+    let (group, temp, temp_init) = extract_grouped_binding_decl(stmts.get(index)?)?;
+    if expected_group.is_some_and(|expected| !same_decl_group_ignoring_kind(group, expected)) {
+        return None;
+    }
+    let (source, array_index) = extract_direct_array_index(temp_init, expected_source)?;
+
+    let (default_group, default_binding, default_init) =
+        extract_grouped_binding_decl(stmts.get(index + 1)?)?;
+    if !same_decl_group_ignoring_kind(default_group, group) {
+        return None;
+    }
+    let default = extract_default_value(default_init, &temp.id, unresolved_mark)?;
+    let temp_key = binding_key(&temp.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let mut accesses = Vec::new();
+    let mut removed_temps = Vec::new();
+    let mut i = index + 2;
+    while let Some((_, _, access, consumed, nested_temp)) = try_extract_direct_array_access(
+        stmts,
+        i,
+        Some(&default_binding.id),
+        Some(group),
+        unresolved_mark,
+    ) {
+        accesses.push(access);
+        if let Some(temp) = nested_temp {
+            removed_temps.push(temp);
+        }
+        i += consumed;
+    }
+
+    if !accesses
+        .iter()
+        .any(|access| matches!(access, Access::ArrayRest { .. }))
+        || accesses
+            .iter()
+            .any(|access| default_uses_any_removed_binding(access, &removed_temps))
+    {
+        return None;
+    }
+
+    let default_key = binding_key(&default_binding.id);
+    if ident_used_in_stmts(&stmts[i..], &default_key)
+        || removed_temps
+            .iter()
+            .any(|temp| ident_used_in_stmts(&stmts[i..], temp))
+    {
+        return None;
+    }
+
+    let nested_pat = build_array_pat(accesses)?;
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(nested_pat),
+        right: default,
+    });
+    removed_temps.push(temp_key);
+    removed_temps.push(default_key);
+    Some((
+        source,
+        group,
+        Access::Array {
+            index: array_index,
+            pat,
+        },
+        i - index,
+        removed_temps,
+    ))
 }
 
 fn try_extract_direct_array_access(

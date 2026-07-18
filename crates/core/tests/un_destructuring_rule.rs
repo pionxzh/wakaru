@@ -549,6 +549,42 @@ use(first, second, rest_items);
 }
 
 #[test]
+fn reconstructs_tsc_nested_array_rest() {
+    let input = r#"
+var first = items[0], _a = items[1], _b = _a === void 0 ? [] : _a, nested = _b[0], inner_rest = _b.slice(1), outer_rest = items.slice(2);
+use(first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+const [first, [nested, ...inner_rest] = [], ...outer_rest] = items;
+use(first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Aggressive),
+        expected,
+    );
+}
+
+#[test]
+fn preserves_tsc_nested_default_temp_used_later() {
+    let input = r#"
+var first = items[0], _a = items[1], _b = _a === void 0 ? [] : _a, nested = _b[0], inner_rest = _b.slice(1), outer_rest = items.slice(2);
+use(_b, first, nested, inner_rest, outer_rest);
+"#;
+    let expected = r#"
+const first = items[0];
+const _a = items[1];
+const _b = _a === undefined ? [] : _a;
+const [nested, ...inner_rest] = _b;
+const outer_rest = items.slice(2);
+use(_b, first, nested, inner_rest, outer_rest);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Aggressive),
+        expected,
+    );
+}
+
+#[test]
 fn standard_preserves_direct_array_rest_with_default_and_hole() {
     let input = r#"
 var first = items[0], _a = items[2], second = _a === void 0 ? fallback : _a, rest_items = items.slice(3);
