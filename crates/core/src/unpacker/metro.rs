@@ -142,18 +142,7 @@ pub(super) fn detect_from_module_prepared(
     let mut seen_ids = HashSet::new();
     descriptors.retain(|descriptor| seen_ids.insert(descriptor.id.clone()));
 
-    let filenames = descriptors
-        .iter()
-        .map(|descriptor| {
-            let is_entry = entry_ids.contains(&descriptor.id);
-            let filename = if is_entry {
-                descriptor.id.entry_filename(entry_count)
-            } else {
-                descriptor.id.module_filename()
-            };
-            (descriptor.id.clone(), filename)
-        })
-        .collect::<HashMap<_, _>>();
+    let filenames = assign_filenames(&descriptors, &entry_ids, entry_count);
 
     let mut modules = Vec::new();
     let mut prepared = Vec::new();
@@ -180,6 +169,50 @@ pub(super) fn detect_from_module_prepared(
         prepared,
         cm,
     ))
+}
+
+fn assign_filenames(
+    descriptors: &[MetroModuleDescriptor<'_>],
+    entry_ids: &HashSet<MetroModuleId>,
+    entry_count: usize,
+) -> HashMap<MetroModuleId, String> {
+    let mut filenames = HashMap::with_capacity(descriptors.len());
+    let mut seen = HashSet::new();
+
+    // Reserve canonical entry names before ordinary string IDs such as
+    // `entry.js`, then make every remaining collision explicit and stable.
+    for want_entry in [true, false] {
+        for descriptor in descriptors {
+            let is_entry = entry_ids.contains(&descriptor.id);
+            if is_entry != want_entry {
+                continue;
+            }
+            let candidate = if is_entry {
+                descriptor.id.entry_filename(entry_count)
+            } else {
+                descriptor.id.module_filename()
+            };
+            filenames.insert(descriptor.id.clone(), dedup_filename(&candidate, &mut seen));
+        }
+    }
+    filenames
+}
+
+fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
+    if seen.insert(filename.to_ascii_lowercase()) {
+        return filename.to_string();
+    }
+    let (stem, extension) = filename
+        .rsplit_once('.')
+        .map(|(stem, extension)| (stem, format!(".{extension}")))
+        .unwrap_or((filename, String::new()));
+    for suffix in 2.. {
+        let candidate = format!("{stem}-{suffix}{extension}");
+        if seen.insert(candidate.to_ascii_lowercase()) {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 fn expression_call(item: &ModuleItem) -> Option<&CallExpr> {

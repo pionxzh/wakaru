@@ -396,6 +396,38 @@ __r(20);
 }
 
 #[test]
+fn deduplicates_colliding_metro_output_filenames() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = [r(d[0]), r(d[1]), r(d[2])];
+}, 1, ["entry.js", 2, "module-2.js"]);
+__d(function(g, r, i, a, m, e, d) { m.exports = "named entry collision"; }, "entry.js", []);
+__d(function(g, r, i, a, m, e, d) { m.exports = "numeric module"; }, 2, []);
+__d(function(g, r, i, a, m, e, d) { m.exports = "named module collision"; }, "module-2.js", []);
+__r(1);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("colliding Metro filenames should unpack");
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec!["entry.js", "entry-2.js", "module-2.js", "module-2-2.js"]
+    );
+    let entry = &output.modules[0].1;
+    assert!(
+        entry.contains(r#"require("./entry-2.js")"#)
+            && entry.contains(r#"require("./module-2.js")"#)
+            && entry.contains(r#"require("./module-2-2.js")"#),
+        "dependency rewrites must use deduplicated filenames:\n{entry}"
+    );
+}
+
+#[test]
 fn rejects_unrelated_d_calls() {
     let source = r#"
 function __d(factory, id, values) {
