@@ -19,16 +19,6 @@ shape is valid producer output before loosening detection, keep the
 embedded-marker rejection test green, and add a synthetic fixture per newly
 accepted shape.
 
-## 2. Browserify: readable module filenames
-
-String-keyed dependency maps carry original-ish request paths (e.g.
-`./utils` → id 3), but numeric-id modules are still emitted as
-`module-<id>.js`. Deriving filenames from the union of dependency-map keys
-pointing at a module would give human-readable output. Needs collision rules
-(two requests mapping to one id, case-insensitive filesystems — reuse the
-dedup approach from the Metro filename work in
-`crates/core/src/unpacker/metro.rs`) and stable entry naming.
-
 ## See also
 
 - [metro-unpacker.md](metro-unpacker.md) — Metro scope; indexed/file RAM

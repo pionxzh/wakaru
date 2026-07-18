@@ -73,6 +73,109 @@ fn browserify_accepts_numeric_dependency_request_keys() {
 }
 
 #[test]
+fn browserify_uses_unambiguous_dependency_requests_as_filenames() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = require("./lib/utility");
+  }, { "./lib/utility": 2 }],
+  2: [function(require, module) {
+    module.exports = "utility";
+  }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify request-path bundle should unpack");
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["entry.js", "lib/utility.js"]);
+    let entry = &output.modules[0].1;
+    assert!(
+        entry.contains(r#"require("./lib/utility.js")"#),
+        "dependency rewrite must consume the readable filename:\n{entry}"
+    );
+}
+
+#[test]
+fn browserify_preserves_case_insensitive_javascript_extensions() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = require("./UTILITY.JS");
+  }, { "./UTILITY.JS": 2 }],
+  2: [function(require, module) {
+    module.exports = "utility";
+  }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify uppercase-extension bundle should unpack");
+    assert!(
+        output.modules.iter().any(|(name, _)| name == "UTILITY.JS"),
+        "an existing JavaScript extension must not be duplicated"
+    );
+    let entry = &output.modules[0].1;
+    assert!(
+        entry.contains(r#"require("./UTILITY.JS")"#),
+        "dependency rewrite must preserve the hinted extension:\n{entry}"
+    );
+}
+
+#[test]
+fn browserify_falls_back_when_requests_disagree_on_a_module_name() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = [require("./first"), require("./second")];
+  }, { "./first": 2, "./second": 2 }],
+  2: [function(require, module) {
+    module.exports = "shared";
+  }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify alias bundle should unpack");
+    assert!(
+        output.modules.iter().any(|(name, _)| name == "module-2.js"),
+        "ambiguous aliases must retain the stable numeric fallback"
+    );
+    let entry = &output.modules[0].1;
+    assert_eq!(entry.matches(r#"require("./module-2.js")"#).count(), 2);
+}
+
+#[test]
+fn browserify_reserves_entries_and_deduplicates_hint_paths_case_insensitively() {
+    let source = r#"
+(function() { return function() {}; })()({
+  1: [function(require, module) {
+    module.exports = [require("./entry"), require("./Utility"), require("./utility")];
+  }, { "./entry": 2, "./Utility": 3, "./utility": 4 }],
+  2: [function(require, module) { module.exports = "named like entry"; }, {}],
+  3: [function(require, module) { module.exports = "upper"; }, {}],
+  4: [function(require, module) { module.exports = "lower"; }, {}]
+}, {}, [1]);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("Browserify colliding-name bundle should unpack");
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["entry.js", "entry-2.js", "Utility.js", "utility-2.js"]
+    );
+}
+
+#[test]
 fn browserify_deconflicts_factory_param_rename_capture() {
     let source = r#"
 (function() { return function() {}; })()({
@@ -96,7 +199,7 @@ fn browserify_deconflicts_factory_param_rename_capture() {
         .expect("Browserify entry should exist");
     assert!(
         entry.contains("function invoke(_require)")
-            && entry.contains(r#"require("./module-2.js")"#),
+            && entry.contains(r#"require("./dependency.js")"#),
         "the nested binding must be renamed before the runtime loader:\n{entry}"
     );
 }
@@ -528,7 +631,7 @@ fn browserify_unpack_extracts_multiple_modules() {
         .map(|(_, code)| code)
         .expect("expected browserify entry module");
     assert!(
-        entry.contains(r#""./module-2.js""#) && entry.contains(r#""./module-3.js""#),
+        entry.contains(r#""./calculator.js""#) && entry.contains(r#""./greeting.js""#),
         "browserify dependency maps should target emitted module filenames:\n{entry}"
     );
     assert!(

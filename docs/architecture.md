@@ -109,6 +109,12 @@ in the same table; requests still unresolved after that remain intact because
 Cocos can delegate them to a previously loaded `__require` bundle. Registration
 markers are preserved because removing them would change Cocos runtime behavior.
 
+Ordinary Browserify numeric module tables use an unambiguous dependency-map
+request path as the emitted filename when every hint for that module agrees.
+Ambiguous or missing hints retain `module-<id>.js`; entry names remain
+`entry.js` / `entry-<id>.js`, and path collisions are suffixed
+case-insensitively. Dependency rewrites always use the final emitted filename.
+
 Factory-based webpack, Browserify/Cocos, and Metro extraction removes the
 factory wrapper and gives its runtime parameters canonical names. Before doing
 so, the unpackers check top-level collisions, pre-existing free references, and

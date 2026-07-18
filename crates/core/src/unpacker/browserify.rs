@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
@@ -345,21 +345,96 @@ fn assign_filenames(
 ) {
     let entry_set: HashSet<&ModuleId> = entries.iter().collect();
     let mut seen = HashSet::new();
-    for module in modules {
-        let candidate = match dialect {
-            TableDialect::CocosCreator2 => named_module_filename(&module.id),
-            TableDialect::Browserify => {
-                let id = module.id.as_string();
-                if entry_set.contains(&module.id) && entries.len() == 1 {
-                    "entry.js".to_string()
-                } else if entry_set.contains(&module.id) {
-                    format!("entry-{id}.js")
-                } else {
-                    format!("module-{id}.js")
-                }
+
+    if dialect == TableDialect::CocosCreator2 {
+        for module in modules {
+            let candidate = named_module_filename(&module.id);
+            module.filename = dedup_filename(&candidate, &mut seen);
+        }
+        return;
+    }
+
+    let hints = browserify_filename_hints(modules);
+
+    // Entry names are public/stable and must win collisions with request hints
+    // such as `./entry`. Non-entry modules then claim unambiguous readable
+    // names in table order, with case-insensitive suffixing.
+    for want_entry in [true, false] {
+        for module in &mut *modules {
+            let is_entry = entry_set.contains(&module.id);
+            if is_entry != want_entry {
+                continue;
             }
-        };
-        module.filename = dedup_filename(&candidate, &mut seen);
+            let id = module.id.as_string();
+            let candidate = if is_entry && entries.len() == 1 {
+                "entry.js".to_string()
+            } else if is_entry {
+                format!("entry-{id}.js")
+            } else {
+                hints
+                    .get(&module.id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("module-{id}.js"))
+            };
+            module.filename = dedup_filename(&candidate, &mut seen);
+        }
+    }
+}
+
+fn browserify_filename_hints(modules: &[FactoryModule<'_>]) -> HashMap<ModuleId, String> {
+    let known_ids = modules
+        .iter()
+        .map(|module| module.id.clone())
+        .collect::<HashSet<_>>();
+    let mut candidates: HashMap<ModuleId, BTreeMap<String, String>> = HashMap::new();
+
+    for module in modules {
+        for (request, target) in &module.dependencies {
+            if !known_ids.contains(target) {
+                continue;
+            }
+            let Some(candidate) = browserify_request_filename(request) else {
+                continue;
+            };
+            let case_folded = candidate.to_ascii_lowercase();
+            candidates
+                .entry(target.clone())
+                .or_default()
+                .entry(case_folded)
+                .and_modify(|existing| {
+                    if candidate < *existing {
+                        existing.clone_from(&candidate);
+                    }
+                })
+                .or_insert(candidate);
+        }
+    }
+
+    candidates
+        .into_iter()
+        .filter_map(|(id, mut names)| {
+            (names.len() == 1).then(|| (id, names.pop_first().expect("one filename hint").1))
+        })
+        .collect()
+}
+
+fn browserify_request_filename(request: &str) -> Option<String> {
+    if request.parse::<usize>().is_ok() || request.starts_with('/') || request.starts_with('\\') {
+        return None;
+    }
+
+    let sanitized = sanitize_relative_path(request, "");
+    if sanitized.is_empty() {
+        return None;
+    }
+    let lowercase = sanitized.to_ascii_lowercase();
+    if [".js", ".mjs", ".cjs"]
+        .iter()
+        .any(|extension| lowercase.ends_with(extension))
+    {
+        Some(sanitized)
+    } else {
+        Some(format!("{sanitized}.js"))
     }
 }
 

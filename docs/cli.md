@@ -40,6 +40,11 @@ its inline startup as `entry.js`; separately emitted asset files remain
 external to the recovered JavaScript modules. ncc `.mjs` output uses a
 top-level runtime and is not structurally split.
 
+For ordinary Browserify numeric module tables, unambiguous dependency-map
+request paths become readable output filenames. Missing or conflicting hints
+retain the stable `module-<id>.js` fallback; entry names remain stable and
+case-insensitive path collisions receive numeric suffixes.
+
 Cocos Creator 2.x project-script bundles using `window.__require` are handled
 as Browserify-family output. String-keyed factories are emitted as named
 modules, local dependency-map targets are rewritten to those filenames, and

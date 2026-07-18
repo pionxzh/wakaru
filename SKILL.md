@@ -84,6 +84,10 @@ wakaru dist/ --unpack --json -o out/          # scan a build-output directory
 wakaru entry.js chunk.js --unpack -o out/     # explicit entry + chunk files
 ```
 
+Ordinary Browserify bundles use unambiguous dependency-map request paths for
+readable module filenames. Conflicting or missing hints retain
+`module-<id>.js`, and entry names remain stable.
+
 ### 3. Recover names / original source when a map exists
 
 ```bash
