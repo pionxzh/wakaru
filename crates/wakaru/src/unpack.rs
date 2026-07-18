@@ -200,9 +200,7 @@ fn map_prepared_detection(
     detection: wakaru_core::driver::PreparedInputDetection,
 ) -> InputDetection {
     match detection {
-        wakaru_core::driver::PreparedInputDetection::Bundle(format) => {
-            InputDetection::Structural(map_bundle_format(format))
-        }
+        wakaru_core::driver::PreparedInputDetection::Bundle(format) => map_bundle_detection(format),
         wakaru_core::driver::PreparedInputDetection::ScopeHoisted => {
             InputDetection::HeuristicScopeHoisted
         }
@@ -210,19 +208,21 @@ fn map_prepared_detection(
     }
 }
 
-fn map_bundle_format(format: wakaru_core::BundleFormat) -> BundleFormat {
+fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
     match format {
-        wakaru_core::BundleFormat::Webpack5 => BundleFormat::Webpack5,
-        wakaru_core::BundleFormat::Webpack4 => BundleFormat::Webpack4,
-        wakaru_core::BundleFormat::Browserify => BundleFormat::Browserify,
-        wakaru_core::BundleFormat::ClosureModuleManager => BundleFormat::ClosureModuleManager,
-        wakaru_core::BundleFormat::Metro => BundleFormat::Metro,
-        wakaru_core::BundleFormat::SystemJs => BundleFormat::SystemJs,
-        wakaru_core::BundleFormat::Esbuild => BundleFormat::Esbuild,
-        wakaru_core::BundleFormat::Amd => BundleFormat::Amd,
-        wakaru_core::BundleFormat::ScopeHoisted => {
-            unreachable!("scope-hoisted detection is represented separately")
+        wakaru_core::BundleFormat::Webpack5 => InputDetection::Structural(BundleFormat::Webpack5),
+        wakaru_core::BundleFormat::Webpack4 => InputDetection::Structural(BundleFormat::Webpack4),
+        wakaru_core::BundleFormat::Browserify => {
+            InputDetection::Structural(BundleFormat::Browserify)
         }
+        wakaru_core::BundleFormat::ClosureModuleManager => {
+            InputDetection::Structural(BundleFormat::ClosureModuleManager)
+        }
+        wakaru_core::BundleFormat::Metro => InputDetection::Structural(BundleFormat::Metro),
+        wakaru_core::BundleFormat::SystemJs => InputDetection::Structural(BundleFormat::SystemJs),
+        wakaru_core::BundleFormat::Esbuild => InputDetection::Structural(BundleFormat::Esbuild),
+        wakaru_core::BundleFormat::Amd => InputDetection::Structural(BundleFormat::Amd),
+        wakaru_core::BundleFormat::ScopeHoisted => InputDetection::HeuristicScopeHoisted,
     }
 }
 
@@ -483,6 +483,16 @@ mod tests {
         }, 1, [], "index.js");
         __r(1);
     "#;
+
+    #[test]
+    fn bundle_level_scope_hoisted_detection_is_mapped_without_panicking() {
+        assert_eq!(
+            map_prepared_detection(wakaru_core::driver::PreparedInputDetection::Bundle(
+                wakaru_core::BundleFormat::ScopeHoisted,
+            )),
+            InputDetection::HeuristicScopeHoisted
+        );
+    }
 
     #[test]
     fn reports_closure_module_manager_detection() {
