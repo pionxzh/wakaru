@@ -8,6 +8,7 @@ use swc_core::ecma::ast::*;
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingRename};
 use crate::unpacker::{
@@ -553,6 +554,7 @@ fn rewrite_metro_import_declarations(module: &mut Module, rewriter: &MetroDepend
     // Metro passes distinct runtime functions for ESM default and namespace
     // imports. That provenance is stronger than a plain `require()` shape, so
     // recover the import kind while the factory parameter identity is available.
+    let binding_uses = BindingUseIndex::collect(module);
     let mut items = Vec::with_capacity(module.body.len());
     for item in std::mem::take(&mut module.body) {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -562,7 +564,8 @@ fn rewrite_metro_import_declarations(module: &mut Module, rewriter: &MetroDepend
 
         let mut remaining = Vec::new();
         for declarator in var.decls.iter().cloned() {
-            let Some(import) = metro_import_from_declarator(&declarator, rewriter) else {
+            let Some(import) = metro_import_from_declarator(&declarator, rewriter, &binding_uses)
+            else {
                 remaining.push(declarator);
                 continue;
             };
@@ -585,10 +588,15 @@ fn rewrite_metro_import_declarations(module: &mut Module, rewriter: &MetroDepend
 fn metro_import_from_declarator(
     declarator: &VarDeclarator,
     rewriter: &MetroDependencyRewriter<'_>,
+    binding_uses: &BindingUseIndex,
 ) -> Option<ImportDecl> {
     let Pat::Ident(binding) = &declarator.name else {
         return None;
     };
+    let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
+    if binding_uses.has_direct_write(&binding_id) {
+        return None;
+    }
     let Expr::Call(call) = strip_parens(declarator.init.as_ref()?) else {
         return None;
     };

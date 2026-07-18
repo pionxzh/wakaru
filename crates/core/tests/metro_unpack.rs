@@ -345,6 +345,36 @@ __r(1);
 }
 
 #[test]
+fn preserves_writable_metro_import_helper_temporary() {
+    let source = r#"
+__d(function(g, r, i, a, m, e, d) {
+  var value = i(d[0]);
+  value = "replacement";
+  m.exports = value;
+}, 1, [2]);
+__d(function(g, r, i, a, m, e, d) {
+  m.exports = { default: "original" };
+}, 2, []);
+__r(1);
+"#;
+
+    let output = unpack_raw(source, &DecompileOptions::default())
+        .expect("writable Metro helper temporary should unpack");
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry should exist");
+    assert!(
+        !entry.contains("import ")
+            && entry.contains(r#"require("./module-2.js").default"#)
+            && entry.contains("value = \"replacement\""),
+        "a written helper temporary must remain a mutable local:\n{entry}"
+    );
+}
+
+#[test]
 fn names_multiple_entry_modules_stably() {
     let source = r#"
 __d(function(g, r, i, a, m, e, d) { m.exports = 1; }, 10, []);
