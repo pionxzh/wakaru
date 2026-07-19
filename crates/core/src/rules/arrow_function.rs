@@ -3,13 +3,14 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Expr,
-    FnExpr, Function, Ident, KeyValueProp, MemberProp, MetaPropExpr, MetaPropKind, Module, Pat,
-    SimpleAssignTarget, ThisExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, Class, Expr, FnExpr, Function, Ident, KeyValueProp, Lit, MemberExpr,
+    MemberProp, MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, SimpleAssignTarget, ThisExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::analysis::binding_uses::BindingId;
 
 use super::decl_utils::has_duplicate_param_names;
 use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
@@ -18,15 +19,15 @@ pub struct ArrowFunction;
 
 impl VisitMut for ArrowFunction {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let constructed_bindings = collect_constructed_bindings(module);
+        let constructor_sensitive_values = collect_constructor_sensitive_values(module);
         module.visit_mut_with(&mut ArrowFunctionConverter {
-            constructed_bindings: &constructed_bindings,
+            constructor_sensitive_values: &constructor_sensitive_values,
         });
     }
 }
 
 struct ArrowFunctionConverter<'a> {
-    constructed_bindings: &'a HashSet<BindingId>,
+    constructor_sensitive_values: &'a HashSet<ValueKey>,
 }
 
 impl VisitMut for ArrowFunctionConverter<'_> {
@@ -50,14 +51,14 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 
     fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
         decl.name.visit_mut_with(self);
-        let is_constructed_binding =
-            declarator_binds_constructed_name(decl, self.constructed_bindings);
         let Some(init) = &mut decl.init else {
             return;
         };
 
-        if is_constructed_binding {
-            visit_fn_body_without_converting(init, self);
+        if pat_value_key(&decl.name)
+            .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
+        {
+            visit_constructor_value_without_converting(init, self);
             return;
         }
 
@@ -66,8 +67,10 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 
     fn visit_mut_assign_expr(&mut self, expr: &mut AssignExpr) {
         expr.left.visit_mut_with(self);
-        if assign_target_is_constructed_name(&expr.left, self.constructed_bindings) {
-            visit_fn_body_without_converting(&mut expr.right, self);
+        if assign_target_value_key(&expr.left)
+            .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
+        {
+            visit_constructor_value_without_converting(&mut expr.right, self);
             return;
         }
         expr.right.visit_mut_with(self);
@@ -78,13 +81,48 @@ impl VisitMut for ArrowFunctionConverter<'_> {
 
         let construct_call = is_construct_call(call);
         for (index, arg) in call.args.iter_mut().enumerate() {
-            if construct_call && index == 2 {
-                // Reflect.construct's newTarget must be constructible. An arrow
-                // cannot replace an anonymous function in this position.
-                visit_fn_body_without_converting(&mut arg.expr, self);
+            if construct_call && (index == 0 || index == 2) {
+                // Reflect.construct requires both target and newTarget to be
+                // constructible. Preserve ordinary functions in either slot.
+                visit_constructor_value_without_converting(&mut arg.expr, self);
             } else {
                 arg.visit_mut_with(self);
             }
+        }
+    }
+
+    fn visit_mut_new_expr(&mut self, expr: &mut NewExpr) {
+        visit_constructor_value_without_converting(&mut expr.callee, self);
+        expr.args.visit_mut_with(self);
+        expr.type_args.visit_mut_with(self);
+    }
+
+    fn visit_mut_bin_expr(&mut self, expr: &mut BinExpr) {
+        if expr.op == BinaryOp::InstanceOf {
+            expr.left.visit_mut_with(self);
+            visit_constructor_value_without_converting(&mut expr.right, self);
+        } else {
+            expr.visit_mut_children_with(self);
+        }
+    }
+
+    fn visit_mut_class(&mut self, class: &mut Class) {
+        let mut super_class = class.super_class.take();
+        class.visit_mut_children_with(self);
+        if let Some(super_class) = &mut super_class {
+            visit_constructor_value_without_converting(super_class, self);
+        }
+        class.super_class = super_class;
+    }
+
+    fn visit_mut_member_expr(&mut self, member: &mut MemberExpr) {
+        if static_member_name(&member.prop).is_some_and(|name| name == "prototype") {
+            visit_constructor_value_without_converting(&mut member.obj, self);
+            if let MemberProp::Computed(computed) = &mut member.prop {
+                computed.expr.visit_mut_with(self);
+            }
+        } else {
+            member.visit_mut_children_with(self);
         }
     }
 
@@ -126,48 +164,220 @@ fn is_construct_call(call: &CallExpr) -> bool {
     let Expr::Member(member) = callee.as_ref() else {
         return false;
     };
-    let MemberProp::Ident(property) = &member.prop else {
-        return false;
-    };
-
     // Conservatively preserve a function passed as the third argument to any
     // `.construct` call. Reflect.construct requires a constructible newTarget,
     // and skipping an arrow recovery for a user-defined method is harmless.
-    property.sym == "construct"
+    static_member_name(&member.prop).is_some_and(|name| name == "construct")
 }
 
-fn collect_constructed_bindings(module: &Module) -> HashSet<BindingId> {
-    BindingUseIndex::collect(module).new_callee_bindings()
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ValueKey {
+    root: BindingId,
+    properties: Vec<Atom>,
 }
 
-fn declarator_binds_constructed_name(
-    decl: &VarDeclarator,
-    constructed_bindings: &HashSet<BindingId>,
-) -> bool {
-    let Pat::Ident(binding) = &decl.name else {
-        return false;
-    };
-    constructed_bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
-}
-
-fn assign_target_is_constructed_name(
-    target: &AssignTarget,
-    constructed_bindings: &HashSet<BindingId>,
-) -> bool {
-    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = target else {
-        return false;
-    };
-    constructed_bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
-}
-
-fn visit_fn_body_without_converting(expr: &mut Expr, converter: &mut ArrowFunctionConverter<'_>) {
-    if let Expr::Fn(fn_expr) = expr {
-        if let Some(body) = &mut fn_expr.function.body {
-            body.visit_mut_with(converter);
+impl ValueKey {
+    fn binding(ident: &Ident) -> Self {
+        Self {
+            root: (ident.sym.clone(), ident.ctxt),
+            properties: Vec::new(),
         }
-    } else {
-        expr.visit_mut_with(converter);
     }
+}
+
+fn static_member_name(prop: &MemberProp) -> Option<Atom> {
+    match prop {
+        MemberProp::Ident(ident) => Some(ident.sym.clone()),
+        MemberProp::Computed(computed) => match computed.expr.as_ref() {
+            Expr::Lit(Lit::Str(value)) => value.value.as_str().map(Atom::from),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
+fn expr_value_key(expr: &Expr) -> Option<ValueKey> {
+    match expr {
+        Expr::Ident(ident) => Some(ValueKey::binding(ident)),
+        Expr::Member(member) => {
+            let mut key = expr_value_key(&member.obj)?;
+            key.properties.push(static_member_name(&member.prop)?);
+            Some(key)
+        }
+        Expr::Paren(paren) => expr_value_key(&paren.expr),
+        _ => None,
+    }
+}
+
+fn pat_value_key(pat: &Pat) -> Option<ValueKey> {
+    let Pat::Ident(binding) = pat else {
+        return None;
+    };
+    Some(ValueKey::binding(&binding.id))
+}
+
+fn assign_target_value_key(target: &AssignTarget) -> Option<ValueKey> {
+    let AssignTarget::Simple(target) = target else {
+        return None;
+    };
+    match target {
+        SimpleAssignTarget::Ident(binding) => Some(ValueKey::binding(&binding.id)),
+        SimpleAssignTarget::Member(member) => expr_value_key(&Expr::Member(member.clone())),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct ConstructorSensitiveUseCollector {
+    sensitive: HashSet<ValueKey>,
+    aliases: Vec<(ValueKey, ValueKey)>,
+}
+
+impl ConstructorSensitiveUseCollector {
+    fn mark_expr(&mut self, expr: &Expr) {
+        if let Some(key) = expr_value_key(expr) {
+            self.sensitive.insert(key);
+        }
+    }
+}
+
+impl Visit for ConstructorSensitiveUseCollector {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let (Some(target), Some(source)) = (
+            pat_value_key(&decl.name),
+            decl.init.as_deref().and_then(expr_value_key),
+        ) {
+            self.aliases.push((target, source));
+        }
+        decl.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, expr: &AssignExpr) {
+        if expr.op == AssignOp::Assign {
+            if let (Some(target), Some(source)) = (
+                assign_target_value_key(&expr.left),
+                expr_value_key(&expr.right),
+            ) {
+                self.aliases.push((target, source));
+            }
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, expr: &NewExpr) {
+        self.mark_expr(&expr.callee);
+        expr.visit_children_with(self);
+    }
+
+    fn visit_bin_expr(&mut self, expr: &BinExpr) {
+        if expr.op == BinaryOp::InstanceOf {
+            self.mark_expr(&expr.right);
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        if let Some(super_class) = &class.super_class {
+            self.mark_expr(super_class);
+        }
+        class.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if static_member_name(&member.prop).is_some_and(|name| name == "prototype") {
+            self.mark_expr(&member.obj);
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if is_construct_call(call) {
+            if let Some(target) = call.args.first() {
+                self.mark_expr(&target.expr);
+            }
+            if let Some(new_target) = call.args.get(2) {
+                self.mark_expr(&new_target.expr);
+            }
+        }
+        call.visit_children_with(self);
+    }
+}
+
+fn collect_constructor_sensitive_values(module: &Module) -> HashSet<ValueKey> {
+    let mut collector = ConstructorSensitiveUseCollector::default();
+    module.visit_with(&mut collector);
+
+    loop {
+        let mut changed = false;
+        for (target, source) in &collector.aliases {
+            if collector.sensitive.contains(target) {
+                changed |= collector.sensitive.insert(source.clone());
+            }
+        }
+        if !changed {
+            return collector.sensitive;
+        }
+    }
+}
+
+fn visit_constructor_value_without_converting(
+    expr: &mut Expr,
+    converter: &mut ArrowFunctionConverter<'_>,
+) {
+    match expr {
+        Expr::Fn(fn_expr) => {
+            if let Some(body) = &mut fn_expr.function.body {
+                body.visit_mut_with(converter);
+            }
+        }
+        Expr::Paren(paren) => {
+            visit_constructor_value_without_converting(&mut paren.expr, converter);
+        }
+        Expr::Seq(sequence) => {
+            if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
+                for expr in prefix {
+                    expr.visit_mut_with(converter);
+                }
+                visit_constructor_value_without_converting(last, converter);
+            }
+        }
+        Expr::Cond(conditional) => {
+            conditional.test.visit_mut_with(converter);
+            visit_constructor_value_without_converting(&mut conditional.cons, converter);
+            visit_constructor_value_without_converting(&mut conditional.alt, converter);
+        }
+        Expr::Bin(binary)
+            if matches!(
+                binary.op,
+                BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
+            ) =>
+        {
+            visit_constructor_value_without_converting(&mut binary.left, converter);
+            visit_constructor_value_without_converting(&mut binary.right, converter);
+        }
+        Expr::Call(call) if is_bind_call(call) => {
+            let Callee::Expr(callee) = &mut call.callee else {
+                unreachable!();
+            };
+            let Expr::Member(member) = callee.as_mut() else {
+                unreachable!();
+            };
+            visit_constructor_value_without_converting(&mut member.obj, converter);
+            call.args.visit_mut_with(converter);
+            call.type_args.visit_mut_with(converter);
+        }
+        _ => expr.visit_mut_with(converter),
+    }
+}
+
+fn is_bind_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    static_member_name(&member.prop).is_some_and(|name| name == "bind")
 }
 
 fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {

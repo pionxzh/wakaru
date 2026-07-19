@@ -233,6 +233,116 @@ Reflect.construct(Base, [], function() {});
 }
 
 #[test]
+fn reflect_construct_target_not_converted() {
+    let input = r#"
+Reflect.construct(function() {}, []);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn closure_reflect_construct_probe_keeps_constructor_binding() {
+    // Closure's ES5 runtime probes the target's prototype and passes it to
+    // Reflect.construct in both constructible positions.
+    let input = r#"
+function probe(Base) {
+    var Candidate = function() {
+        throw Error();
+    };
+    Object.defineProperty(Candidate.prototype, "value", {
+        set: function() {
+            throw Error();
+        }
+    });
+    Reflect.construct(Candidate, []);
+    Reflect.construct(Base, [], Candidate);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn prototype_observation_keeps_function() {
+    let input = r#"
+const Parser = function() {};
+Parser.prototype.parse = parse;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn instanceof_rhs_keeps_function() {
+    let input = r#"
+const Wrapper = function(value) {
+    return Object(value);
+};
+use(value instanceof Wrapper);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn class_super_keeps_function() {
+    let input = r#"
+const Base = function() {};
+class Derived extends Base {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn direct_new_callee_keeps_function() {
+    let input = r#"
+new (function() {})();
+"#;
+    let expected = r#"
+new function() {}();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn bound_constructor_keeps_function_target() {
+    let input = r#"
+const Bound = function() {}.bind(null);
+new Bound();
+"#;
+    let expected = r#"
+const Bound = (function() {}).bind(null);
+new Bound();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn constructor_use_propagates_through_alias() {
+    let input = r#"
+const Original = function() {};
+const Alias = Original;
+new Alias();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_to_member_assignment() {
+    let input = r#"
+namespace.C = function() {};
+new namespace.C();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn multi_params_arrow() {
     let input = r#"
 const add = function(a, b) { return a + b; };

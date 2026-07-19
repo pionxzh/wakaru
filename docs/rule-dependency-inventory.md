@@ -276,9 +276,11 @@ rationale, or level gating appear.
   `standard+`.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
-  expressions, bindings later used with `new`): arrows lack `prototype`,
-  cannot be constructed, and differ for `new.target`, so broad conversion is
-  not a `minimal`-safe transform.
+  expressions, `new.target`, and ordinary-function values required by `new`,
+  `Reflect.construct`, `extends`, `instanceof`, or `.prototype` observation).
+  Constructor-sensitive uses propagate backward through simple binding and
+  static-member aliases. Arrows lack `prototype` and cannot be constructed, so
+  broad conversion is not a `minimal`-safe transform.
 - **UnForOf** — `standard+`. TypeScript/Babel/SWC helper recovery is
   conservative: it requires the full emitted cleanup wrapper before removing
   iterator/error temporaries. Closure Compiler is a separate exact producer

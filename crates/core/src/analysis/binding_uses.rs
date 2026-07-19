@@ -103,18 +103,6 @@ impl BindingUseIndex {
             .collect()
     }
 
-    pub(crate) fn new_callee_bindings(&self) -> HashSet<BindingId> {
-        self.bindings
-            .iter()
-            .filter(|(_, info)| {
-                info.uses
-                    .iter()
-                    .any(|site| matches!(site.kind, UseKind::NewCallee))
-            })
-            .map(|(binding, _)| binding.clone())
-            .collect()
-    }
-
     pub(crate) fn use_count(&self, binding: &BindingId) -> usize {
         self.bindings
             .get(binding)
@@ -793,18 +781,6 @@ mod tests {
                 "`{stmt}` must not classify `x` as a direct write"
             );
         }
-    }
-
-    #[test]
-    fn exposes_direct_new_callee_bindings() {
-        let module = resolved("let C, ns; new C(); new ns.C(); C();");
-        let index = BindingUseIndex::collect(&module);
-        let c = binding(&module, "C");
-        let ns = binding(&module, "ns");
-        let new_callees = index.new_callee_bindings();
-
-        assert!(new_callees.contains(&c));
-        assert!(!new_callees.contains(&ns));
     }
 
     #[test]
