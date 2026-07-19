@@ -224,6 +224,15 @@ new C();
 }
 
 #[test]
+fn reflect_construct_new_target_not_converted() {
+    let input = r#"
+Reflect.construct(Base, [], function() {});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn multi_params_arrow() {
     let input = r#"
 const add = function(a, b) { return a + b; };

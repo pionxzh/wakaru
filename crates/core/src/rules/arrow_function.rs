@@ -73,6 +73,21 @@ impl VisitMut for ArrowFunctionConverter<'_> {
         expr.right.visit_mut_with(self);
     }
 
+    fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        call.callee.visit_mut_with(self);
+
+        let construct_call = is_construct_call(call);
+        for (index, arg) in call.args.iter_mut().enumerate() {
+            if construct_call && index == 2 {
+                // Reflect.construct's newTarget must be constructible. An arrow
+                // cannot replace an anonymous function in this position.
+                visit_fn_body_without_converting(&mut arg.expr, self);
+            } else {
+                arg.visit_mut_with(self);
+            }
+        }
+    }
+
     fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
         // Object property function values are handled by ObjMethodShorthand.
         // ArrowFunction must not convert them to arrows — that would produce
@@ -102,6 +117,23 @@ impl VisitMut for ArrowFunctionConverter<'_> {
             export.expr.visit_mut_with(self);
         }
     }
+}
+
+fn is_construct_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let MemberProp::Ident(property) = &member.prop else {
+        return false;
+    };
+
+    // Conservatively preserve a function passed as the third argument to any
+    // `.construct` call. Reflect.construct requires a constructible newTarget,
+    // and skipping an arrow recovery for a user-defined method is harmless.
+    property.sym == "construct"
 }
 
 fn collect_constructed_bindings(module: &Module) -> HashSet<BindingId> {
