@@ -274,13 +274,21 @@ rationale, or level gating appear.
 - **ArgRest → UnRestArrayCopy** — hard chain: UnRestArrayCopy detects the
   Babel copy loop for rest params that ArgRest just created. ArgRest is
   `standard+`.
+- **ObjMethodShorthand / ArrowFunction** — both consult the shared
+  constructor-sensitive value analysis before replacing ordinary function
+  values with non-constructible method or arrow syntax. The analysis recognizes
+  `new`, `Reflect.construct`, `extends`, `instanceof`, and `.prototype`, then
+  propagates requirements backward through exact static-member aliases. Plain
+  binding aliases also carry member suffixes (`alias = namespace; new alias.C()`
+  protects `namespace.C`) without recursively extending cyclic member paths.
+  ObjMethodShorthand is always enabled; its other eligibility checks remain
+  unchanged.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,
   `Reflect.construct`, `extends`, `instanceof`, or `.prototype` observation).
-  Constructor-sensitive uses propagate backward through simple binding and
-  static-member aliases. Arrows lack `prototype` and cannot be constructed, so
-  broad conversion is not a `minimal`-safe transform.
+  Arrows lack `prototype` and cannot be constructed, so broad conversion is not
+  a `minimal`-safe transform.
 - **UnForOf** — `standard+`. TypeScript/Babel/SWC helper recovery is
   conservative: it requires the full emitted cleanup wrapper before removing
   iterator/error temporaries. Closure Compiler is a separate exact producer

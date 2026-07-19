@@ -333,10 +333,48 @@ new Alias();
 }
 
 #[test]
+fn constructor_use_propagates_through_long_reverse_ordered_alias_chain() {
+    let mut input = String::from("const ctor0 = function() {};\n");
+    for index in 1..=256 {
+        input.push_str(&format!("const ctor{index} = ctor{};\n", index - 1));
+    }
+    input.push_str("new ctor256();\n");
+
+    let output = apply(&input);
+
+    assert!(output.contains("const ctor0 = function() {}"));
+    assert!(!output.contains("const ctor0 = ()=>{}"));
+}
+
+#[test]
 fn constructor_use_propagates_to_member_assignment() {
     let input = r#"
 namespace.C = function() {};
 new namespace.C();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_member_suffix_through_object_alias() {
+    let input = r#"
+const namespace = {};
+namespace.Constructor = function() {};
+const alias = namespace;
+new alias.Constructor();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_analysis_terminates_on_property_growing_alias_cycle() {
+    let input = r#"
+let first = second.left;
+let second = first.right;
+first.Constructor = function() {};
+new first.Constructor();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);

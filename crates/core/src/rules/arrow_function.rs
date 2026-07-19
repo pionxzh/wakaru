@@ -3,15 +3,16 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, Class, Expr, FnExpr, Function, Ident, KeyValueProp, Lit, MemberExpr,
-    MemberProp, MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, SimpleAssignTarget, ThisExpr,
-    VarDeclarator,
+    ArrowExpr, AssignExpr, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Class,
+    Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp, MetaPropExpr,
+    MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::analysis::binding_uses::BindingId;
-
+use super::constructor_sensitivity::{
+    assign_target_value_key, collect_constructor_sensitive_values, is_construct_call,
+    pat_value_key, static_member_name, ValueKey,
+};
 use super::decl_utils::has_duplicate_param_names;
 use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
 
@@ -153,169 +154,6 @@ impl VisitMut for ArrowFunctionConverter<'_> {
             }
         } else {
             export.expr.visit_mut_with(self);
-        }
-    }
-}
-
-fn is_construct_call(call: &CallExpr) -> bool {
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    let Expr::Member(member) = callee.as_ref() else {
-        return false;
-    };
-    // Conservatively preserve a function passed as the third argument to any
-    // `.construct` call. Reflect.construct requires a constructible newTarget,
-    // and skipping an arrow recovery for a user-defined method is harmless.
-    static_member_name(&member.prop).is_some_and(|name| name == "construct")
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ValueKey {
-    root: BindingId,
-    properties: Vec<Atom>,
-}
-
-impl ValueKey {
-    fn binding(ident: &Ident) -> Self {
-        Self {
-            root: (ident.sym.clone(), ident.ctxt),
-            properties: Vec::new(),
-        }
-    }
-}
-
-fn static_member_name(prop: &MemberProp) -> Option<Atom> {
-    match prop {
-        MemberProp::Ident(ident) => Some(ident.sym.clone()),
-        MemberProp::Computed(computed) => match computed.expr.as_ref() {
-            Expr::Lit(Lit::Str(value)) => value.value.as_str().map(Atom::from),
-            _ => None,
-        },
-        MemberProp::PrivateName(_) => None,
-    }
-}
-
-fn expr_value_key(expr: &Expr) -> Option<ValueKey> {
-    match expr {
-        Expr::Ident(ident) => Some(ValueKey::binding(ident)),
-        Expr::Member(member) => {
-            let mut key = expr_value_key(&member.obj)?;
-            key.properties.push(static_member_name(&member.prop)?);
-            Some(key)
-        }
-        Expr::Paren(paren) => expr_value_key(&paren.expr),
-        _ => None,
-    }
-}
-
-fn pat_value_key(pat: &Pat) -> Option<ValueKey> {
-    let Pat::Ident(binding) = pat else {
-        return None;
-    };
-    Some(ValueKey::binding(&binding.id))
-}
-
-fn assign_target_value_key(target: &AssignTarget) -> Option<ValueKey> {
-    let AssignTarget::Simple(target) = target else {
-        return None;
-    };
-    match target {
-        SimpleAssignTarget::Ident(binding) => Some(ValueKey::binding(&binding.id)),
-        SimpleAssignTarget::Member(member) => expr_value_key(&Expr::Member(member.clone())),
-        _ => None,
-    }
-}
-
-#[derive(Default)]
-struct ConstructorSensitiveUseCollector {
-    sensitive: HashSet<ValueKey>,
-    aliases: Vec<(ValueKey, ValueKey)>,
-}
-
-impl ConstructorSensitiveUseCollector {
-    fn mark_expr(&mut self, expr: &Expr) {
-        if let Some(key) = expr_value_key(expr) {
-            self.sensitive.insert(key);
-        }
-    }
-}
-
-impl Visit for ConstructorSensitiveUseCollector {
-    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-        if let (Some(target), Some(source)) = (
-            pat_value_key(&decl.name),
-            decl.init.as_deref().and_then(expr_value_key),
-        ) {
-            self.aliases.push((target, source));
-        }
-        decl.visit_children_with(self);
-    }
-
-    fn visit_assign_expr(&mut self, expr: &AssignExpr) {
-        if expr.op == AssignOp::Assign {
-            if let (Some(target), Some(source)) = (
-                assign_target_value_key(&expr.left),
-                expr_value_key(&expr.right),
-            ) {
-                self.aliases.push((target, source));
-            }
-        }
-        expr.visit_children_with(self);
-    }
-
-    fn visit_new_expr(&mut self, expr: &NewExpr) {
-        self.mark_expr(&expr.callee);
-        expr.visit_children_with(self);
-    }
-
-    fn visit_bin_expr(&mut self, expr: &BinExpr) {
-        if expr.op == BinaryOp::InstanceOf {
-            self.mark_expr(&expr.right);
-        }
-        expr.visit_children_with(self);
-    }
-
-    fn visit_class(&mut self, class: &Class) {
-        if let Some(super_class) = &class.super_class {
-            self.mark_expr(super_class);
-        }
-        class.visit_children_with(self);
-    }
-
-    fn visit_member_expr(&mut self, member: &MemberExpr) {
-        if static_member_name(&member.prop).is_some_and(|name| name == "prototype") {
-            self.mark_expr(&member.obj);
-        }
-        member.visit_children_with(self);
-    }
-
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        if is_construct_call(call) {
-            if let Some(target) = call.args.first() {
-                self.mark_expr(&target.expr);
-            }
-            if let Some(new_target) = call.args.get(2) {
-                self.mark_expr(&new_target.expr);
-            }
-        }
-        call.visit_children_with(self);
-    }
-}
-
-fn collect_constructor_sensitive_values(module: &Module) -> HashSet<ValueKey> {
-    let mut collector = ConstructorSensitiveUseCollector::default();
-    module.visit_with(&mut collector);
-
-    loop {
-        let mut changed = false;
-        for (target, source) in &collector.aliases {
-            if collector.sensitive.contains(target) {
-                changed |= collector.sensitive.insert(source.clone());
-            }
-        }
-        if !changed {
-            return collector.sensitive;
         }
     }
 }
