@@ -35,10 +35,10 @@ flattening. Closure ModuleManager bundle extraction is a separate unpacking
 concern and should preserve the shared runtime/namespace model instead of
 fabricating ESM imports and exports.
 
-The iterable and optional/nullish snippets invoke their recovered functions and
-use the shared execution-equivalence harness. Class inheritance remains a
-structural check because executing Closure's full ES5 class runtime also covers
-unrelated runtime-helper modernization outside this matrix's scope.
+Every snippet invokes the recovered behavior and uses the shared
+execution-equivalence harness. The class-inheritance case constructs the
+recovered subclass and compares its observable method result in addition to
+checking the recovered class syntax.
 
 When this matrix finds a new stable compiler shape, first minimize it into a
 focused Rust unit test. The matrix is a producer-coverage signal, not a

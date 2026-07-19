@@ -31,7 +31,9 @@ class ClosureChild extends ClosureBase {
   label() { return this.greet() + " " + this.name; }
 }
 window["ClosureChild"] = ClosureChild;
+consume(new ClosureChild("Ada").label());
 `,
+    execute: true,
     expected: [
       "class ClosureBase",
       "class ClosureChild extends ClosureBase",
