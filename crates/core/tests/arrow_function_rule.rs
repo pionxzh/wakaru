@@ -273,6 +273,48 @@ const fn = function() {
 }
 
 #[test]
+fn function_with_new_target_not_converted() {
+    let input = r#"
+const make = function() {
+    return new.target;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_with_new_target_in_nested_arrow_not_converted() {
+    let input = r#"
+const make = function() {
+    return () => new.target;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn nested_function_new_target_does_not_block_outer_arrow() {
+    let input = r#"
+const outer = function() {
+    return function() {
+        return new.target;
+    };
+};
+"#;
+    let expected = r#"
+const outer = () => {
+    return function() {
+        return new.target;
+    };
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn function_with_arguments_converted_via_arg_rest() {
     // ArgRest rewrites arguments[N] → args[N] first, then ArrowFunction can convert.
     // Arrow functions have no own `arguments`, but after ArgRest runs that is no

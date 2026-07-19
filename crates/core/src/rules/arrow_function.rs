@@ -4,8 +4,8 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Expr,
-    FnExpr, Function, Ident, KeyValueProp, MemberProp, Module, Pat, SimpleAssignTarget, ThisExpr,
-    VarDeclarator,
+    FnExpr, Function, Ident, KeyValueProp, MemberProp, MetaPropExpr, MetaPropKind, Module, Pat,
+    SimpleAssignTarget, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -378,6 +378,12 @@ impl Visit for HasThisOrArguments {
 
     fn visit_ident(&mut self, id: &Ident) {
         if id.sym == "arguments" {
+            self.0 = true;
+        }
+    }
+
+    fn visit_meta_prop_expr(&mut self, expr: &MetaPropExpr) {
+        if expr.kind == MetaPropKind::NewTarget {
             self.0 = true;
         }
     }
