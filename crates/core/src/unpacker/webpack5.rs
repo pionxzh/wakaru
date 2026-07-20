@@ -715,10 +715,10 @@ fn extract_webpack5_modules(
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
 
-    let modules_container = {
+    let (modules_container, modules_sym) = {
         let span = tracing::info_span!("webpack5: find modules object");
         let _enter = span.enter();
-        let mut found: Option<Webpack5ModulesContainer<'_>> = None;
+        let mut found: Option<(Webpack5ModulesContainer<'_>, Atom)> = None;
         for stmt in &bootstrap_body.stmts {
             let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
                 continue;
@@ -805,7 +805,8 @@ fn extract_webpack5_modules(
         false
     };
 
-    // Fallback: scan bootstrap for entry-module startup calls.
+    // Fallback: scan bootstrap for entry-module startup calls, then for an
+    // inline startup section (`var __webpack_exports__ = {};` + entry code).
     if !has_synthetic_entry {
         if let Some(entry_id) = find_ncc_direct_entry(bootstrap_body)
             .or_else(|| find_require_s_entry(bootstrap_body))
@@ -817,6 +818,18 @@ fn extract_webpack5_modules(
                     break;
                 }
             }
+        } else if let Some(startup) = extract_webpack5_inline_startup(bootstrap_body, &modules_sym)
+        {
+            let entry_ranges = spans_byte_ranges(&cm, startup.body_stmts.iter().map(|s| s.span()));
+            let code = emit_webpack5_entry_module(
+                startup.body_stmts,
+                cm.clone(),
+                &id_to_filename,
+                &str_id_to_filename,
+                startup.require_sym,
+                Some(startup.exports_sym),
+            );
+            append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code);
         }
     }
 
@@ -984,6 +997,156 @@ fn extract_ncc_inline_entry(
         body_stmts: bootstrap_body.stmts[entry_start..].to_vec(),
         require_sym,
     })
+}
+
+struct Webpack5InlineStartup {
+    body_stmts: Vec<Stmt>,
+    require_sym: Atom,
+    exports_sym: Atom,
+}
+
+/// Extract webpack 5's inline startup: when the entry module needs no IIFE
+/// wrapper and no `require.s`/`require.O` startup, the runtime emits
+/// `var __webpack_exports__ = {};` followed by the inlined entry statements at
+/// the end of the bootstrap.
+///
+/// The anchor is an empty-object var declaration positioned after the require
+/// function (which rules out the module cache — webpack declares it before the
+/// require function) with no webpack runtime definitions following it (which
+/// rules out runtime-section state like load-script's `var inProgress = {};`).
+/// Minifiers may merge the entry's leading declarators into the anchor
+/// statement (`var o = {}, e = r(9);`), so the anchor's trailing declarators
+/// are kept as entry code.
+fn extract_webpack5_inline_startup(
+    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    modules_sym: &Atom,
+) -> Option<Webpack5InlineStartup> {
+    let (require_idx, require_sym) = find_webpack5_require_fn(bootstrap_body, modules_sym)?;
+
+    // Runtime sections define helpers as assignments to require properties
+    // (`require.d = ...`, `require.f.j = ...`). The startup section is the
+    // only thing emitted after the last of them.
+    let last_runtime_idx = bootstrap_body
+        .stmts
+        .iter()
+        .rposition(|stmt| contains_require_member_assignment(stmt, &require_sym));
+
+    let startup_scan_from = last_runtime_idx
+        .map(|idx| idx + 1)
+        .unwrap_or(require_idx + 1)
+        .max(require_idx + 1);
+
+    for (idx, stmt) in bootstrap_body
+        .stmts
+        .iter()
+        .enumerate()
+        .skip(startup_scan_from)
+    {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
+            continue;
+        };
+        let first = var_decl.decls.first()?;
+        let Pat::Ident(binding) = &first.name else {
+            continue;
+        };
+        let Some(init) = &first.init else {
+            continue;
+        };
+        let Expr::Object(object) = strip_parens(init) else {
+            continue;
+        };
+        if !object.props.is_empty() {
+            continue;
+        }
+
+        let mut body_stmts: Vec<Stmt> = Vec::new();
+        if var_decl.decls.len() > 1 {
+            let mut rest = var_decl.clone();
+            rest.decls.remove(0);
+            body_stmts.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(rest)));
+        }
+        body_stmts.extend(bootstrap_body.stmts[idx + 1..].iter().cloned());
+        if body_stmts.is_empty() {
+            return None;
+        }
+        return Some(Webpack5InlineStartup {
+            body_stmts,
+            require_sym,
+            exports_sym: binding.id.sym.clone(),
+        });
+    }
+    None
+}
+
+/// Find the webpack require function: the function declaration whose body
+/// references the modules container binding.
+fn find_webpack5_require_fn(
+    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    modules_sym: &Atom,
+) -> Option<(usize, Atom)> {
+    bootstrap_body
+        .stmts
+        .iter()
+        .enumerate()
+        .find_map(|(idx, stmt)| {
+            let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) = stmt else {
+                return None;
+            };
+            let mut finder = SymUsageFinder {
+                sym: modules_sym,
+                found: false,
+            };
+            fn_decl.function.visit_with(&mut finder);
+            finder.found.then(|| (idx, fn_decl.ident.sym.clone()))
+        })
+}
+
+struct SymUsageFinder<'a> {
+    sym: &'a Atom,
+    found: bool,
+}
+
+impl Visit for SymUsageFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == *self.sym {
+            self.found = true;
+        }
+    }
+}
+
+/// Whether the statement assigns to a (possibly nested) member of the require
+/// binding, e.g. `require.d = ...` or `require.f.j = ...` — the shape of
+/// webpack runtime-section definitions.
+fn contains_require_member_assignment(stmt: &Stmt, require_sym: &Atom) -> bool {
+    let mut finder = RequireMemberAssignFinder {
+        require_sym,
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+struct RequireMemberAssignFinder<'a> {
+    require_sym: &'a Atom,
+    found: bool,
+}
+
+impl Visit for RequireMemberAssignFinder<'_> {
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        assign.visit_children_with(self);
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+            return;
+        };
+        let mut obj = &*member.obj;
+        while let Expr::Member(inner) = strip_parens(obj) {
+            obj = &inner.obj;
+        }
+        if let Expr::Ident(root) = strip_parens(obj) {
+            if root.sym == *self.require_sym {
+                self.found = true;
+            }
+        }
+    }
 }
 
 fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<Atom> {
@@ -1426,10 +1589,14 @@ fn descriptor_filename(module_id: &str) -> String {
     }
 }
 
-fn extract_webpack_modules_container(var_decl: &VarDecl) -> Option<Webpack5ModulesContainer<'_>> {
+fn extract_webpack_modules_container(
+    var_decl: &VarDecl,
+) -> Option<(Webpack5ModulesContainer<'_>, Atom)> {
     for decl in &var_decl.decls {
         let VarDeclarator {
-            init: Some(init), ..
+            name: Pat::Ident(binding),
+            init: Some(init),
+            ..
         } = decl
         else {
             continue;
@@ -1440,7 +1607,7 @@ fn extract_webpack_modules_container(var_decl: &VarDecl) -> Option<Webpack5Modul
         if !container.has_param_factory() {
             continue;
         }
-        return Some(container);
+        return Some((container, binding.id.sym.clone()));
     }
     None
 }
