@@ -188,3 +188,75 @@ fn webpack5_inline_startup_rewrites_exports_binding() {
         "the exports binding should be normalized, got:\n{entry}"
     );
 }
+
+#[test]
+fn webpack5_inline_startup_without_exports_anchor() {
+    // Minifiers drop the unused `var __webpack_exports__ = {}` anchor, and pack
+    // the runtime member assignments into a single comma sequence. The entry is
+    // whatever follows the last runtime definition and calls the require binding.
+    let source = r#"
+(() => {
+    var e = [
+        ,
+        (e, t) => { t.mix = function (a, b) { return a + b; }; },
+        (e, t, r) => { var n = r(1); t.run = function () { return n.mix(2, 3); }; }
+    ];
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e, r.d = (e, t) => {}, (() => {})();
+    var o = r(2);
+    console.log(o.run());
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("./module-2.js"),
+        "no-anchor entry should require ./module-2.js, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("exports:") && !entry.contains("r.m ="),
+        "entry must not include runtime code, got:\n{entry}"
+    );
+}
+
+#[test]
+fn webpack5_no_startup_after_runtime_is_not_an_entry() {
+    // If nothing after the runtime calls the require binding, no entry module
+    // should be synthesized (modules still extract).
+    let source = r#"
+(() => {
+    var e = [
+        ,
+        (e, t) => { t.value = 1; }
+    ];
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "modules should still extract, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "entry.js"),
+        "no entry.js should be synthesized without a startup call, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}

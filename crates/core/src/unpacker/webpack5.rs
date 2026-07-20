@@ -860,7 +860,7 @@ fn extract_webpack5_modules(
                 &id_to_filename,
                 &str_id_to_filename,
                 startup.require_sym,
-                Some(startup.exports_sym),
+                startup.exports_sym,
             );
             append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code);
         }
@@ -1035,21 +1035,25 @@ fn extract_ncc_inline_entry(
 struct Webpack5InlineStartup {
     body_stmts: Vec<Stmt>,
     require_sym: Atom,
-    exports_sym: Atom,
+    exports_sym: Option<Atom>,
 }
 
 /// Extract webpack 5's inline startup: when the entry module needs no IIFE
-/// wrapper and no `require.s`/`require.O` startup, the runtime emits
-/// `var __webpack_exports__ = {};` followed by the inlined entry statements at
-/// the end of the bootstrap.
+/// wrapper and no `require.s`/`require.O` startup, the runtime inlines the entry
+/// statements at the end of the bootstrap.
 ///
-/// The anchor is an empty-object var declaration positioned after the require
-/// function (which rules out the module cache — webpack declares it before the
-/// require function) with no webpack runtime definitions following it (which
-/// rules out runtime-section state like load-script's `var inProgress = {};`).
-/// Minifiers may merge the entry's leading declarators into the anchor
-/// statement (`var o = {}, e = r(9);`), so the anchor's trailing declarators
-/// are kept as entry code.
+/// In unminified output an empty-object var declaration
+/// (`var __webpack_exports__ = {};`) anchors the startup section. It sits after
+/// the require function (which rules out the module cache — webpack declares it
+/// before the require function) with no webpack runtime definitions following
+/// it (which rules out runtime-section state like load-script's
+/// `var inProgress = {};`). Minifiers may merge the entry's leading declarators
+/// into the anchor statement (`var o = {}, e = r(9);`), so the anchor's
+/// trailing declarators are kept as entry code.
+///
+/// Minifiers also drop the anchor entirely because nothing reads it. In that
+/// case everything after the last runtime definition is treated as the entry,
+/// provided it calls the require binding.
 fn extract_webpack5_inline_startup(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     modules_sym: &Atom,
@@ -1105,10 +1109,49 @@ fn extract_webpack5_inline_startup(
         return Some(Webpack5InlineStartup {
             body_stmts,
             require_sym,
-            exports_sym: binding.id.sym.clone(),
+            exports_sym: Some(binding.id.sym.clone()),
         });
     }
-    None
+
+    // No anchor (minified): the entry is everything after the last runtime
+    // definition, as long as it actually calls the require binding.
+    let body_stmts: Vec<Stmt> = bootstrap_body.stmts[startup_scan_from..].to_vec();
+    if body_stmts.is_empty() || !stmts_call_require(&body_stmts, &require_sym) {
+        return None;
+    }
+    Some(Webpack5InlineStartup {
+        body_stmts,
+        require_sym,
+        exports_sym: None,
+    })
+}
+
+/// Whether any statement calls the require binding, e.g. `r(1)`.
+fn stmts_call_require(stmts: &[Stmt], require_sym: &Atom) -> bool {
+    let mut finder = RequireCallFinder {
+        require_sym,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+struct RequireCallFinder<'a> {
+    require_sym: &'a Atom,
+    found: bool,
+}
+
+impl Visit for RequireCallFinder<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        call.visit_children_with(self);
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Ident(ident) = strip_parens(callee) {
+                if ident.sym == *self.require_sym {
+                    self.found = true;
+                }
+            }
+        }
+    }
 }
 
 /// Find the webpack require function: the function declaration whose body
