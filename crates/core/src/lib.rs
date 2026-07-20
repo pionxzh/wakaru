@@ -60,10 +60,57 @@ pub fn unpack_webpack4_raw(source: &str) -> Option<Vec<(String, String)>> {
 
 #[cfg(test)]
 pub(crate) mod test_tracing {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
 
     use tracing::{span::Attributes, Dispatch, Id, Subscriber};
     use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
+
+    /// tracing-core caches per-callsite `Interest`, and its single-dispatcher
+    /// fast path (`Rebuilder::JustOne`) evaluates that interest against the
+    /// *registering thread's* default dispatcher. Under `cargo test`'s
+    /// in-process parallelism, a concurrent test thread with no dispatcher can
+    /// therefore register a callsite with a permanently cached
+    /// `Interest::never`, hiding that span from a `record_spans` capture
+    /// running on another thread (nextest runs one process per test and never
+    /// hits this). This subscriber is installed once as the global default: it
+    /// reports `Interest::sometimes` for every callsite — forcing the
+    /// per-thread `enabled` check instead of a poisoned cache — while enabling
+    /// nothing itself.
+    struct NeutralInterestSubscriber;
+
+    impl Subscriber for NeutralInterestSubscriber {
+        fn register_callsite(
+            &self,
+            _metadata: &'static tracing::Metadata<'static>,
+        ) -> tracing::subscriber::Interest {
+            tracing::subscriber::Interest::sometimes()
+        }
+
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            false
+        }
+
+        fn new_span(&self, _attrs: &Attributes<'_>) -> Id {
+            Id::from_u64(u64::MAX)
+        }
+
+        fn record(&self, _id: &Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _id: &Id, _follows: &Id) {}
+
+        fn event(&self, _event: &tracing::Event<'_>) {}
+
+        fn enter(&self, _id: &Id) {}
+
+        fn exit(&self, _id: &Id) {}
+    }
+
+    fn install_neutral_global_default() {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            let _ = tracing::subscriber::set_global_default(NeutralInterestSubscriber);
+        });
+    }
 
     #[derive(Clone)]
     struct SpanNameRecorder(Arc<Mutex<Vec<String>>>);
@@ -81,6 +128,7 @@ pub(crate) mod test_tracing {
     }
 
     pub(crate) fn record_spans<T: Send>(f: impl FnOnce() -> T + Send) -> (T, Vec<String>) {
+        install_neutral_global_default();
         let names = Arc::new(Mutex::new(Vec::new()));
         let subscriber = Registry::default().with(SpanNameRecorder(names.clone()));
         let dispatch = Dispatch::new(subscriber);
