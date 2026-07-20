@@ -466,17 +466,26 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
         return None;
     }
 
-    // Branch on argument type: Array (numeric IDs) or Object (string IDs)
+    // Branch on argument type: Array (numeric IDs) or Object (string IDs).
+    // Dense numeric ids starting above zero render as `Array(n).concat([...])`
+    // with element indices offset by n.
     match &*call.args[0].expr {
-        Expr::Array(array_lit) => extract_webpack4_array_modules(array_lit, bootstrap_fn, cm),
+        Expr::Array(array_lit) => extract_webpack4_array_modules(array_lit, 0, bootstrap_fn, cm),
         Expr::Object(object_lit) => extract_webpack4_object_modules(object_lit, bootstrap_fn, cm),
+        Expr::Call(concat_call) => {
+            let (array_lit, id_offset) =
+                crate::unpacker::webpack5::split_array_concat(concat_call)?;
+            extract_webpack4_array_modules(array_lit, id_offset, bootstrap_fn, cm)
+        }
         _ => None,
     }
 }
 
 /// Extract modules from the array-form: `bootstrapFn([fn0, fn1, fn2])`
+/// or `bootstrapFn(Array(n).concat([fnN, fnN1, ...]))`.
 fn extract_webpack4_array_modules(
     array_lit: &swc_core::ecma::ast::ArrayLit,
+    id_offset: usize,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
 ) -> Option<UnpackResult> {
@@ -485,14 +494,15 @@ fn extract_webpack4_array_modules(
         return None;
     }
 
-    // Each element should be a FnExpr (or null for holes)
+    // Each element should be a FnExpr (or null for holes); unminified output
+    // wraps every factory in parens: `/***/ (function(...) {...})`.
     let module_fns: Vec<Option<&FnExpr>> = array_lit
         .elems
         .iter()
         .map(|elem| {
             match elem {
                 Some(ExprOrSpread { expr, .. }) => {
-                    if let Expr::Fn(fn_expr) = &**expr {
+                    if let Expr::Fn(fn_expr) = strip_parens(expr) {
                         Some(fn_expr)
                     } else {
                         None
@@ -515,22 +525,24 @@ fn extract_webpack4_array_modules(
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
 
-    // Build a map from module index -> filename so require(N) can be rewritten
+    // Build a map from module id (index + offset) -> filename so require(N)
+    // can be rewritten
     let id_to_filename: HashMap<usize, String> = {
         let total = module_fns.len();
         (0..total)
             .filter_map(|i| {
                 module_fns.get(i)?.as_ref()?;
-                let name = if entry_ids.contains(&ModuleId::Numeric(i)) {
+                let id = id_offset + i;
+                let name = if entry_ids.contains(&ModuleId::Numeric(id)) {
                     if entry_ids.len() == 1 {
                         "entry.js".to_string()
                     } else {
-                        format!("entry-{i}.js")
+                        format!("entry-{id}.js")
                     }
                 } else {
-                    format!("module-{i}.js")
+                    format!("module-{id}.js")
                 };
-                Some((i, name))
+                Some((id, name))
             })
             .collect()
     };
@@ -542,15 +554,16 @@ fn extract_webpack4_array_modules(
             continue;
         };
 
-        let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
+        let id = id_offset + idx;
+        let is_entry = entry_ids.contains(&ModuleId::Numeric(id));
         let filename = if is_entry {
             if entry_ids.len() == 1 {
                 "entry.js".to_string()
             } else {
-                format!("entry-{idx}.js")
+                format!("entry-{id}.js")
             }
         } else {
-            format!("module-{idx}.js")
+            format!("module-{id}.js")
         };
 
         let (mut synthetic_module, _) = normalize_extracted_webpack_module(
@@ -575,7 +588,7 @@ fn extract_webpack4_array_modules(
         };
 
         modules.push(UnpackedModule {
-            id: idx.to_string(),
+            id: id.to_string(),
             is_entry,
             code,
             filename,

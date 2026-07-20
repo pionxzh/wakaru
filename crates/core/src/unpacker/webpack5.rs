@@ -423,8 +423,9 @@ impl<'a> Webpack5ModulesContainer<'a> {
 }
 
 /// Match `Array(<n>).concat([...])` — webpack's sparse-array header when the
-/// smallest module id is non-zero.
-fn split_array_concat(call: &CallExpr) -> Option<(&ArrayLit, usize)> {
+/// smallest module id is non-zero. Emitted by both webpack 4 and 5, so the
+/// webpack4 unpacker reuses this matcher.
+pub(super) fn split_array_concat(call: &CallExpr) -> Option<(&ArrayLit, usize)> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
