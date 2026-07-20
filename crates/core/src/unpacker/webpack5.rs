@@ -265,7 +265,40 @@ pub(super) fn detect_from_module_prepared(
             return Some(result);
         }
     }
-    None
+    // Fallback: `output.iife: false` and `experiments.outputModule` emit the
+    // bootstrap statements at the top level instead of inside an IIFE.
+    detect_webpack5_top_level(module, cm)
+}
+
+/// Detect an unwrapped webpack 5 bootstrap (no IIFE): the modules container,
+/// require function, runtime, and entry all sit at the file's top level.
+fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
+    let stmts: Vec<Stmt> = module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(stmt) => Some(stmt.clone()),
+            ModuleItem::ModuleDecl(_) => None,
+        })
+        .collect();
+
+    // Guard against arbitrary top-level `var xs = [function(a){}]` arrays:
+    // require a modules container *and* a require function that indexes it.
+    // (The IIFE path relies on the wrapper itself as the signal.)
+    let modules_sym = stmts.iter().find_map(|stmt| {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
+            return None;
+        };
+        extract_webpack_modules_container(var_decl).map(|(_, sym)| sym)
+    })?;
+    find_webpack5_require_fn(&stmts, &modules_sym)?;
+
+    let bootstrap_body = swc_core::ecma::ast::BlockStmt {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        stmts,
+    };
+    extract_webpack5_modules(&bootstrap_body, cm)
 }
 
 pub(super) fn detect_runtime_entry_from_module(
@@ -1021,7 +1054,7 @@ fn extract_webpack5_inline_startup(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     modules_sym: &Atom,
 ) -> Option<Webpack5InlineStartup> {
-    let (require_idx, require_sym) = find_webpack5_require_fn(bootstrap_body, modules_sym)?;
+    let (require_idx, require_sym) = find_webpack5_require_fn(&bootstrap_body.stmts, modules_sym)?;
 
     // Runtime sections define helpers as assignments to require properties
     // (`require.d = ...`, `require.f.j = ...`). The startup section is the
@@ -1080,25 +1113,18 @@ fn extract_webpack5_inline_startup(
 
 /// Find the webpack require function: the function declaration whose body
 /// references the modules container binding.
-fn find_webpack5_require_fn(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
-    modules_sym: &Atom,
-) -> Option<(usize, Atom)> {
-    bootstrap_body
-        .stmts
-        .iter()
-        .enumerate()
-        .find_map(|(idx, stmt)| {
-            let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) = stmt else {
-                return None;
-            };
-            let mut finder = SymUsageFinder {
-                sym: modules_sym,
-                found: false,
-            };
-            fn_decl.function.visit_with(&mut finder);
-            finder.found.then(|| (idx, fn_decl.ident.sym.clone()))
-        })
+fn find_webpack5_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<(usize, Atom)> {
+    stmts.iter().enumerate().find_map(|(idx, stmt)| {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) = stmt else {
+            return None;
+        };
+        let mut finder = SymUsageFinder {
+            sym: modules_sym,
+            found: false,
+        };
+        fn_decl.function.visit_with(&mut finder);
+        finder.found.then(|| (idx, fn_decl.ident.sym.clone()))
+    })
 }
 
 struct SymUsageFinder<'a> {
