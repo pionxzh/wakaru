@@ -336,12 +336,14 @@ pub(super) fn detect_chunk_from_module_prepared(
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
-        if let Some(modules_object) = extract_chunk_push_modules(expr) {
-            let (modules, prepared) = extract_modules_from_object(modules_object, cm.clone())?;
+        if let Some(modules_container) = extract_chunk_push_modules(expr) {
+            let (modules, prepared) =
+                extract_modules_from_container(&modules_container, cm.clone())?;
             all_modules.extend(modules);
             all_prepared.extend(prepared);
-        } else if let Some(modules_object) = extract_commonjs_chunk_modules(expr) {
-            let (modules, prepared) = extract_modules_from_object(modules_object, cm.clone())?;
+        } else if let Some(modules_container) = extract_commonjs_chunk_modules(expr) {
+            let (modules, prepared) =
+                extract_modules_from_container(&modules_container, cm.clone())?;
             all_modules.extend(modules);
             all_prepared.extend(prepared);
         }
@@ -358,13 +360,117 @@ pub(super) fn detect_chunk_from_module_prepared(
     ))
 }
 
+/// The webpack 5 modules container. Usually an object keyed by module id, but
+/// `Template.getModulesArrayBounds` switches to a sparse array (indices are
+/// the ids) when ids are dense numerics, wrapped in `Array(minId).concat([...])`
+/// when the smallest id is non-zero.
+enum Webpack5ModulesContainer<'a> {
+    Object(&'a ObjectLit),
+    Array {
+        array: &'a ArrayLit,
+        id_offset: usize,
+    },
+}
+
+impl<'a> Webpack5ModulesContainer<'a> {
+    fn from_expr(expr: &'a Expr) -> Option<Self> {
+        match strip_parens(expr) {
+            Expr::Object(object_lit) => {
+                is_valid_modules_object(object_lit)?;
+                Some(Self::Object(object_lit))
+            }
+            Expr::Array(array) => {
+                is_valid_modules_array(array)?;
+                Some(Self::Array {
+                    array,
+                    id_offset: 0,
+                })
+            }
+            Expr::Call(call) => {
+                let (array, id_offset) = split_array_concat(call)?;
+                is_valid_modules_array(array)?;
+                Some(Self::Array { array, id_offset })
+            }
+            _ => None,
+        }
+    }
+
+    fn entry_count(&self) -> usize {
+        match self {
+            Self::Object(object_lit) => object_lit.props.len(),
+            Self::Array { array, .. } => array.elems.len(),
+        }
+    }
+
+    /// Whether some factory declares parameters. Arrays of zero-parameter
+    /// callbacks are a common shape in ordinary code, so the entry-bundle var
+    /// scan requires at least one factory taking (module, exports, require)-
+    /// style parameters before treating an array as a module table.
+    fn has_param_factory(&self) -> bool {
+        let Self::Array { array, .. } = self else {
+            return true;
+        };
+        array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| match extract_factory_parts(&elem.expr) {
+                Some((Webpack5FactoryParams::Function(params), _)) => !params.is_empty(),
+                Some((Webpack5FactoryParams::Arrow(params), _)) => !params.is_empty(),
+                None => false,
+            })
+    }
+}
+
+/// Match `Array(<n>).concat([...])` — webpack's sparse-array header when the
+/// smallest module id is non-zero.
+fn split_array_concat(call: &CallExpr) -> Option<(&ArrayLit, usize)> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee) else {
+        return None;
+    };
+    let MemberProp::Ident(concat_ident) = prop else {
+        return None;
+    };
+    if concat_ident.sym.as_ref() != "concat" {
+        return None;
+    }
+    let Expr::Call(array_call) = strip_parens(obj) else {
+        return None;
+    };
+    let Callee::Expr(array_callee) = &array_call.callee else {
+        return None;
+    };
+    let Expr::Ident(array_ident) = strip_parens(array_callee) else {
+        return None;
+    };
+    if array_ident.sym.as_ref() != "Array" {
+        return None;
+    }
+    if array_call.args.len() != 1 || array_call.args[0].spread.is_some() {
+        return None;
+    }
+    let id_offset = numeric_id_from_expr(&array_call.args[0].expr)?;
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Expr::Array(array) = strip_parens(&call.args[0].expr) else {
+        return None;
+    };
+    Some((array, id_offset))
+}
+
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
-/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`
-fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
+/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`.
+/// The modules payload may also be a sparse array — see
+/// [`Webpack5ModulesContainer`].
+fn extract_chunk_push_modules(expr: &Expr) -> Option<Webpack5ModulesContainer<'_>> {
     extract_chunk_push_parts(expr).map(|(_, modules)| modules)
 }
 
-fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, &ObjectLit)> {
+fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -432,23 +538,19 @@ fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, &ObjectLit)> {
     let Expr::Array(chunk_ids) = &*first.expr else {
         return None;
     };
-    // Second element: modules object
+    // Second element: modules container (object or sparse array)
     let Some(Some(second)) = push_elems.get(1) else {
         return None;
     };
-    let Expr::Object(modules_object) = &*second.expr else {
-        return None;
-    };
+    let modules_container = Webpack5ModulesContainer::from_expr(&second.expr)?;
 
-    is_valid_modules_object(modules_object)?;
-
-    Some((chunk_ids, modules_object))
+    Some((chunk_ids, modules_container))
 }
 
 /// Match CommonJS async chunk modules:
 /// `exports.modules = { ... }`
 /// or minified sequence forms like `exports.id=1,exports.modules={...}`.
-fn extract_commonjs_chunk_modules(expr: &Expr) -> Option<&ObjectLit> {
+fn extract_commonjs_chunk_modules(expr: &Expr) -> Option<Webpack5ModulesContainer<'_>> {
     match strip_parens(expr) {
         Expr::Assign(assign) => extract_commonjs_chunk_modules_from_assign(assign),
         Expr::Seq(seq) => seq
@@ -459,7 +561,9 @@ fn extract_commonjs_chunk_modules(expr: &Expr) -> Option<&ObjectLit> {
     }
 }
 
-fn extract_commonjs_chunk_modules_from_assign(assign: &AssignExpr) -> Option<&ObjectLit> {
+fn extract_commonjs_chunk_modules_from_assign(
+    assign: &AssignExpr,
+) -> Option<Webpack5ModulesContainer<'_>> {
     if assign.op != AssignOp::Assign {
         return None;
     }
@@ -475,11 +579,7 @@ fn extract_commonjs_chunk_modules_from_assign(assign: &AssignExpr) -> Option<&Ob
     if !member_prop_name_is(&member.prop, "modules") {
         return None;
     }
-    let Expr::Object(modules_object) = &*assign.right else {
-        return None;
-    };
-    is_valid_modules_object(modules_object)?;
-    Some(modules_object)
+    Webpack5ModulesContainer::from_expr(&assign.right)
 }
 
 fn extract_commonjs_chunk_ids(expr: &Expr) -> HashSet<usize> {
@@ -557,19 +657,20 @@ fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {
     }
 }
 
-/// Extract modules from an ObjectLit where keys are module IDs and values are factory functions.
+/// Extract modules from a modules container where keys (or array indices) are
+/// module IDs and values are factory functions.
 /// Used by both entry bundles and JSONP chunks.
-fn extract_modules_from_object(
-    modules_object: &ObjectLit,
+fn extract_modules_from_container(
+    modules_container: &Webpack5ModulesContainer<'_>,
     cm: Lrc<SourceMap>,
 ) -> Option<(Vec<UnpackedModule>, Vec<Option<PreparedModuleAst>>)> {
     let span = tracing::info_span!(
         "webpack5: extract_modules_from_object",
-        count = modules_object.props.len()
+        count = modules_container.entry_count()
     );
     let _enter = span.enter();
 
-    let module_entries = collect_module_descriptors(modules_object)?;
+    let module_entries = collect_module_descriptors(modules_container)?;
 
     let id_to_filename: HashMap<usize, String> = module_entries
         .iter()
@@ -613,18 +714,18 @@ fn extract_webpack5_modules(
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
 
-    let modules_object = {
+    let modules_container = {
         let span = tracing::info_span!("webpack5: find modules object");
         let _enter = span.enter();
-        let mut found: Option<&ObjectLit> = None;
+        let mut found: Option<Webpack5ModulesContainer<'_>> = None;
         for stmt in &bootstrap_body.stmts {
             let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
                 continue;
             };
-            let Some(object_lit) = extract_webpack_modules_object(var_decl) else {
+            let Some(container) = extract_webpack_modules_container(var_decl) else {
                 continue;
             };
-            found = Some(object_lit);
+            found = Some(container);
             break;
         }
         found?
@@ -633,7 +734,7 @@ fn extract_webpack5_modules(
     let module_entries = {
         let span = tracing::info_span!("webpack5: collect module entries");
         let _enter = span.enter();
-        collect_module_descriptors(modules_object)?
+        collect_module_descriptors(&modules_container)?
     };
 
     let id_to_filename: HashMap<usize, String> = module_entries
@@ -1221,17 +1322,69 @@ fn is_valid_modules_object(modules_object: &ObjectLit) -> Option<()> {
         .then_some(())
 }
 
-fn collect_module_descriptors(
-    modules_object: &ObjectLit,
-) -> Option<Vec<Webpack5ModuleDescriptor<'_>>> {
-    if modules_object.props.is_empty() {
-        return None;
+/// A sparse module array: every present element must be a factory function or
+/// a `false` placeholder (webpack renders a suppressed module source as the
+/// literal `false`), and at least one factory must exist.
+fn is_valid_modules_array(array: &ArrayLit) -> Option<()> {
+    let mut has_factory = false;
+    for elem in array.elems.iter().flatten() {
+        if elem.spread.is_some() {
+            return None;
+        }
+        if is_false_module_placeholder(&elem.expr) {
+            continue;
+        }
+        extract_factory_parts(&elem.expr)?;
+        has_factory = true;
     }
-    modules_object
-        .props
-        .iter()
-        .map(module_descriptor_from_prop)
-        .collect()
+    has_factory.then_some(())
+}
+
+fn is_false_module_placeholder(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Bool(lit)) if !lit.value)
+}
+
+fn collect_module_descriptors<'a>(
+    modules_container: &Webpack5ModulesContainer<'a>,
+) -> Option<Vec<Webpack5ModuleDescriptor<'a>>> {
+    match modules_container {
+        Webpack5ModulesContainer::Object(modules_object) => {
+            if modules_object.props.is_empty() {
+                return None;
+            }
+            modules_object
+                .props
+                .iter()
+                .map(module_descriptor_from_prop)
+                .collect()
+        }
+        Webpack5ModulesContainer::Array { array, id_offset } => {
+            let mut descriptors = Vec::new();
+            for (index, elem) in array.elems.iter().enumerate() {
+                let Some(elem) = elem else {
+                    continue; // array hole
+                };
+                if elem.spread.is_some() {
+                    return None;
+                }
+                if is_false_module_placeholder(&elem.expr) {
+                    continue;
+                }
+                let (params, body_stmts) = extract_factory_parts(&elem.expr)?;
+                let module_id = (id_offset + index).to_string();
+                descriptors.push(Webpack5ModuleDescriptor {
+                    filename: descriptor_filename(&module_id),
+                    id: module_id,
+                    params,
+                    body_stmts,
+                });
+            }
+            if descriptors.is_empty() {
+                return None;
+            }
+            Some(descriptors)
+        }
+    }
 }
 
 /// Borrow the factory function from a prop, handling both `Prop::KeyValue` and `Prop::Method`.
@@ -1256,20 +1409,23 @@ fn module_descriptor_from_prop(prop: &PropOrSpread) -> Option<Webpack5ModuleDesc
         }
         _ => return None,
     };
-    let filename = if module_id.contains('/') || module_id.contains('.') {
-        sanitize_filename(&module_id)
-    } else {
-        format!("module-{module_id}.js")
-    };
     Some(Webpack5ModuleDescriptor {
+        filename: descriptor_filename(&module_id),
         id: module_id,
-        filename,
         params,
         body_stmts,
     })
 }
 
-fn extract_webpack_modules_object(var_decl: &VarDecl) -> Option<&ObjectLit> {
+fn descriptor_filename(module_id: &str) -> String {
+    if module_id.contains('/') || module_id.contains('.') {
+        sanitize_filename(module_id)
+    } else {
+        format!("module-{module_id}.js")
+    }
+}
+
+fn extract_webpack_modules_container(var_decl: &VarDecl) -> Option<Webpack5ModulesContainer<'_>> {
     for decl in &var_decl.decls {
         let VarDeclarator {
             init: Some(init), ..
@@ -1277,16 +1433,13 @@ fn extract_webpack_modules_object(var_decl: &VarDecl) -> Option<&ObjectLit> {
         else {
             continue;
         };
-        let Expr::Object(object_lit) = strip_parens(init) else {
+        let Some(container) = Webpack5ModulesContainer::from_expr(init) else {
             continue;
         };
-        if object_lit.props.is_empty() {
+        if !container.has_param_factory() {
             continue;
         }
-        if is_valid_modules_object(object_lit).is_none() {
-            continue;
-        }
-        return Some(object_lit);
+        return Some(container);
     }
     None
 }
@@ -1668,7 +1821,7 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
-    fn parse_modules_object(source: &str) -> ObjectLit {
+    fn parse_first_var_init(source: &str) -> Box<Expr> {
         GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
             let module = super::super::parse_es_module(source, "test.js", cm.clone())
@@ -1678,15 +1831,19 @@ mod tests {
             else {
                 panic!("expected first statement to be var declaration");
             };
-            let init = var_decl.decls[0]
+            var_decl.decls[0]
                 .init
-                .as_ref()
-                .expect("declarator should have init");
-            let Expr::Object(object) = strip_parens(init) else {
-                panic!("expected object literal init");
-            };
-            object.clone()
+                .clone()
+                .expect("declarator should have init")
         })
+    }
+
+    fn parse_modules_object(source: &str) -> ObjectLit {
+        let init = parse_first_var_init(source);
+        let Expr::Object(object) = strip_parens(&init) else {
+            panic!("expected object literal init");
+        };
+        object.clone()
     }
 
     #[test]
@@ -1701,7 +1858,8 @@ const modules = {
 "#,
         );
 
-        let descriptors = collect_module_descriptors(&object).expect("descriptors should collect");
+        let descriptors = collect_module_descriptors(&Webpack5ModulesContainer::Object(&object))
+            .expect("descriptors should collect");
         assert_eq!(descriptors.len(), 3);
         assert_eq!(descriptors[0].id, "1");
         assert_eq!(descriptors[1].id, "2");
@@ -1729,7 +1887,9 @@ const modules = {
 };
 "#,
         );
-        assert!(collect_module_descriptors(&concise_arrow).is_none());
+        assert!(
+            collect_module_descriptors(&Webpack5ModulesContainer::Object(&concise_arrow)).is_none()
+        );
 
         let non_function = parse_modules_object(
             r#"
@@ -1738,7 +1898,68 @@ const modules = {
 };
 "#,
         );
-        assert!(collect_module_descriptors(&non_function).is_none());
+        assert!(
+            collect_module_descriptors(&Webpack5ModulesContainer::Object(&non_function)).is_none()
+        );
+    }
+
+    #[test]
+    fn array_container_collects_ids_from_holey_array() {
+        let init = parse_first_var_init(
+            r#"
+const modules = ([
+  ,
+  function(module, exports, require) { exports.a = 1; },
+  ,
+  (module, exports, require) => { exports.b = 2; }
+]);
+"#,
+        );
+        let container =
+            Webpack5ModulesContainer::from_expr(&init).expect("array container should match");
+        let descriptors =
+            collect_module_descriptors(&container).expect("descriptors should collect");
+        let ids: Vec<&str> = descriptors.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, vec!["1", "3"]);
+        assert_eq!(descriptors[0].filename, "module-1.js");
+    }
+
+    #[test]
+    fn array_container_applies_concat_offset_and_skips_false() {
+        let init = parse_first_var_init(
+            r#"
+const modules = Array(4).concat([
+  function(module, exports, require) { exports.a = 1; },
+  false,
+  function(module, exports, require) { exports.b = 2; }
+]);
+"#,
+        );
+        let container =
+            Webpack5ModulesContainer::from_expr(&init).expect("concat container should match");
+        let descriptors =
+            collect_module_descriptors(&container).expect("descriptors should collect");
+        let ids: Vec<&str> = descriptors.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, vec!["4", "6"]);
+    }
+
+    #[test]
+    fn array_container_rejects_invalid_shapes() {
+        // Non-function element
+        let non_function = parse_first_var_init("const modules = [function(m, e, r) {}, 42];");
+        assert!(Webpack5ModulesContainer::from_expr(&non_function).is_none());
+
+        // Spread element
+        let spread = parse_first_var_init("const modules = [...others];");
+        assert!(Webpack5ModulesContainer::from_expr(&spread).is_none());
+
+        // Only holes and placeholders — no factory
+        let empty = parse_first_var_init("const modules = [, false];");
+        assert!(Webpack5ModulesContainer::from_expr(&empty).is_none());
+
+        // Concise arrow body is not a factory
+        let concise = parse_first_var_init("const modules = [(m, e, r) => e.a];");
+        assert!(Webpack5ModulesContainer::from_expr(&concise).is_none());
     }
 
     #[test]
