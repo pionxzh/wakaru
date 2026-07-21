@@ -387,6 +387,66 @@ fn mutating_dispatcher_returning_context_exports_is_not_webpack5() {
 }
 
 #[test]
+fn shadowed_block_local_does_not_complete_dispatcher_lifecycle() {
+    // Lifecycle facts must belong to the same *binding*, not the same
+    // spelling: here an inner block-local `context` supplies the
+    // object-creation fact while the outer parameter `context` supplies the
+    // invocation and returned-exports facts. Merging them by name would
+    // classify this ordinary dispatcher as webpack.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "h0"; },
+        (ctx) => { ctx.exports = ctx.exports + "!"; }
+    ];
+    function dispatch(i, context) {
+        { const context = { exports: {} }; console.log(context); }
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(0, { exports: "" }));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "shadowed block-local must not complete the module lifecycle, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn dispatcher_reassigning_its_own_parameter_is_not_webpack5() {
+    // The creation fact must come from a binding declared in the function
+    // body. Assigning a fresh `{ exports: {} }` into a caller-supplied
+    // parameter is context mutation, not webpack's module lifecycle.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "h0"; },
+        (ctx) => { ctx.exports = ctx.exports + "!"; }
+    ];
+    function dispatch(i, context) {
+        context = { exports: {} };
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(0, null));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "parameter reassignment must not carry the creation fact, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,
