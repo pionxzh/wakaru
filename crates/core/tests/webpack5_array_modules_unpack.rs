@@ -504,6 +504,98 @@ fn dispatcher_var_redeclaring_param_is_not_webpack5() {
 }
 
 #[test]
+fn named_fn_expr_self_binding_is_not_the_table() {
+    // Inside `function handlers(i) { ... }` the name `handlers` is the
+    // function expression's own self-binding, shadowing the unrelated outer
+    // array. `handlers[i](...)` here indexes the *function object* (whose
+    // element is installed after the fact), not the outer table.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "outer"; }
+    ];
+    var dispatch = function handlers(i) {
+        var context = { exports: {} };
+        handlers[i](context);
+        return context.exports;
+    };
+    dispatch[0] = (ctx) => { ctx.exports = "inner"; };
+    console.log(dispatch(0));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "fn-expr self-binding must not be mistaken for the table, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn class_expr_name_shadowing_table_is_not_webpack5() {
+    // A class expression's name is visible inside its methods and shadows the
+    // outer array there — same identity rule as the fn-expr self-binding, one
+    // construct over.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "outer"; }
+    ];
+    var D = class handlers {
+        static dispatch(i) {
+            var context = { exports: {} };
+            handlers[i](context);
+            return context.exports;
+        }
+    };
+    handlers[0] = (ctx) => { ctx.exports = "static"; };
+    console.log(D.dispatch(0));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "class-expr name must not be mistaken for the table, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn closure_over_enclosing_param_is_not_the_table() {
+    // The inner function invokes `handlers`, but that resolves to the
+    // *enclosing* function's parameter — a caller-supplied table, not the
+    // region-level modules container. Only the region-level binding's
+    // identity counts as the table.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "outer"; }
+    ];
+    function make(handlers) {
+        return function (i) {
+            var context = { exports: {} };
+            handlers[i](context);
+            return context.exports;
+        };
+    }
+    console.log(make([(ctx) => { ctx.exports = "inner"; }])(0));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "closure over an enclosing param must not be mistaken for the table, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,
