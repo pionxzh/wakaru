@@ -447,6 +447,63 @@ fn dispatcher_reassigning_its_own_parameter_is_not_webpack5() {
 }
 
 #[test]
+fn dispatcher_param_shadowing_table_name_is_not_webpack5() {
+    // The dispatcher's parameter is spelled like the outer handler table, so a
+    // probe that dropped parameters would resolve `handlers[i](...)` to the
+    // outer table and complete the lifecycle. The parameter shadows the table
+    // — this is an ordinary dispatcher and must pass through.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "ok"; }
+    ];
+    function dispatch(handlers, i) {
+        var context = { exports: {} };
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(handlers, 0));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "param shadowing the table name must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn dispatcher_var_redeclaring_param_is_not_webpack5() {
+    // `var context` in the body shares the parameter's binding — JavaScript
+    // hoists both to the same function-scope variable. A caller-supplied
+    // parameter must not gain the creation fact through a `var` redeclaration.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "h0"; }
+    ];
+    function dispatch(i, context) {
+        var context = { exports: {} };
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(0, null));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "var redeclaration of a param must not carry the creation fact, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,

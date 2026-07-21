@@ -432,6 +432,46 @@ fn webpack5_named_class_expression_shadow_does_not_prove_anchor() {
 }
 
 #[test]
+fn webpack5_closure_helper_call_does_not_prove_anchor() {
+    // A nested function capturing the outer `const a = {}` calls `r.d(a, ...)`
+    // but may never run. Webpack emits export helpers in the startup scope
+    // itself, so closure evidence must not prove the anchor — even though the
+    // captured binding really is the outer one.
+    let source = r#"
+(() => {
+    var e = { 1: (m, x) => { x.A = 5; } };
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+    const a = {};
+    function helper() {
+        r.d(a, { x: () => 1 });
+    }
+    const dep = r(1);
+    a.value = dep.A;
+    console.log(a, helper);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("./module-1.js"),
+        "the import must be preserved, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const value") && !entry.contains("console.log(exports"),
+        "the captured local must not be rewritten to exports, got:\n{entry}"
+    );
+}
+
+#[test]
 fn webpack5_no_startup_after_runtime_is_not_an_entry() {
     // If nothing after the runtime calls the require binding, no entry module
     // should be synthesized (modules still extract).

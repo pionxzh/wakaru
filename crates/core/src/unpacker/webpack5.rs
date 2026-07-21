@@ -561,7 +561,12 @@ struct RequireFnFinder<'a> {
 impl Visit for RequireFnFinder<'_> {
     fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
         if let Some(body) = &function.body {
-            if body_is_webpack_require(&body.stmts, self.modules_sym) {
+            let params: Vec<Pat> = function
+                .params
+                .iter()
+                .map(|param| param.pat.clone())
+                .collect();
+            if body_is_webpack_require(&params, &body.stmts, self.modules_sym) {
                 self.found = true;
             }
         }
@@ -570,7 +575,7 @@ impl Visit for RequireFnFinder<'_> {
 
     fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
         if let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body {
-            if body_is_webpack_require(&body.stmts, self.modules_sym) {
+            if body_is_webpack_require(&arrow.params, &body.stmts, self.modules_sym) {
                 self.found = true;
             }
         }
@@ -588,23 +593,30 @@ impl Visit for RequireFnFinder<'_> {
 /// Facts are keyed by resolved binding identity ([`Id`] via [`resolve_probe`]),
 /// not identifier text: an inner block-local `const context = { exports: {} }`
 /// must not supply the creation fact for a same-named outer parameter that a
-/// dispatcher invokes the table with and returns `.exports` from. Bindings
-/// from outside the body (parameters, outer vars) resolve to the probe's
-/// unresolved context and can never carry the creation fact, so the lifecycle
-/// only matches a module object created in this very scope. The cheap
-/// symbol-level prefilter runs first because the bootstrap scan visits every
-/// function — including module factories — and cloning + resolving each would
-/// be wasteful.
-fn body_is_webpack_require(stmts: &[Stmt], modules_sym: &Atom) -> bool {
+/// dispatcher invokes the table with and returns `.exports` from. The probe
+/// keeps the function's own parameters, so a parameter spelled like the
+/// modules table is *not* the table (it shadows it), and a parameter can
+/// never carry the creation fact — not via reassignment and not via a
+/// same-name `var` redeclaration, which shares the parameter's binding. The
+/// creation fact therefore only matches a module object created in this very
+/// scope. The cheap symbol-level prefilter runs first because the bootstrap
+/// scan visits every function — including module factories — and cloning +
+/// resolving each would be wasteful.
+fn body_is_webpack_require(params: &[Pat], stmts: &[Stmt], modules_sym: &Atom) -> bool {
     if !body_invokes_table(stmts, modules_sym) {
         return false;
     }
-    let Some((probe_stmts, unresolved_ctxt)) = resolve_probe(stmts) else {
+    let Some((probe_params, probe_stmts, unresolved_ctxt)) = resolve_probe(params, stmts) else {
         return false;
     };
+    let mut param_ids = HashSet::new();
+    for pat in &probe_params {
+        collect_pat_binding_ids(pat, &mut param_ids);
+    }
     let mut scanner = RequireBodyScanner {
         modules_sym,
         unresolved_ctxt,
+        param_ids,
         local_modules: HashSet::new(),
         table_call_args: HashSet::new(),
         returned_exports_objs: HashSet::new(),
@@ -616,20 +628,30 @@ fn body_is_webpack_require(stmts: &[Stmt], modules_sym: &Atom) -> bool {
         .any(|m| scanner.table_call_args.contains(m) && scanner.returned_exports_objs.contains(m))
 }
 
-/// Clone `stmts` into a synthetic function and run the swc resolver over the
-/// clone, so every identifier carries a real binding identity ([`Id`]).
-/// Detection runs on pre-resolver ASTs whose `SyntaxContext`s are empty, and
-/// structural shadow tracking proved incomplete one lexical construct at a
-/// time (nested functions, then blocks/catch/for heads, then named class
-/// expressions) — hygiene marks handle every scope uniformly. Bindings
-/// declared *outside* `stmts` (parameters, the require binding, the modules
-/// table) resolve to the returned unresolved context.
-fn resolve_probe(stmts: &[Stmt]) -> Option<(Vec<Stmt>, SyntaxContext)> {
+/// Clone a function's parameters and body statements into a synthetic
+/// function and run the swc resolver over the clone, so every identifier
+/// carries a real binding identity ([`Id`]). Detection runs on pre-resolver
+/// ASTs whose `SyntaxContext`s are empty, and structural shadow tracking
+/// proved incomplete one lexical construct at a time (nested functions, then
+/// blocks/catch/for heads, then named class expressions) — hygiene marks
+/// handle every scope uniformly. The original parameters must be part of the
+/// probe: they are function-scope bindings, distinct from same-named outer
+/// bindings and unified with same-named `var` declarations in the body.
+/// Bindings declared *outside* params and `stmts` (the require binding, the
+/// modules table) resolve to the returned unresolved context.
+fn resolve_probe(params: &[Pat], stmts: &[Stmt]) -> Option<(Vec<Pat>, Vec<Stmt>, SyntaxContext)> {
     GLOBALS.set(&Default::default(), || {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         let probe_fn = swc_core::ecma::ast::Function {
-            params: Vec::new(),
+            params: params
+                .iter()
+                .map(|pat| swc_core::ecma::ast::Param {
+                    span: DUMMY_SP,
+                    decorators: Vec::new(),
+                    pat: pat.clone(),
+                })
+                .collect(),
             decorators: Vec::new(),
             span: DUMMY_SP,
             ctxt: SyntaxContext::empty(),
@@ -665,11 +687,43 @@ fn resolve_probe(stmts: &[Stmt]) -> Option<(Vec<Stmt>, SyntaxContext)> {
             return None;
         };
         let body = fn_decl.function.body?;
+        let params = fn_decl
+            .function
+            .params
+            .into_iter()
+            .map(|param| param.pat)
+            .collect();
         Some((
+            params,
             body.stmts,
             SyntaxContext::empty().apply_mark(unresolved_mark),
         ))
     })
+}
+
+/// Collect the binding [`Id`]s a (possibly destructuring) pattern declares.
+fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<Id>) {
+    use swc_core::ecma::ast::ObjectPatProp;
+    match pat {
+        Pat::Ident(binding) => {
+            ids.insert(binding.id.to_id());
+        }
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .for_each(|elem| collect_pat_binding_ids(elem, ids)),
+        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
+        Pat::Object(object) => object.props.iter().for_each(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => collect_pat_binding_ids(&kv.value, ids),
+            ObjectPatProp::Assign(assign) => {
+                ids.insert(assign.key.to_id());
+            }
+            ObjectPatProp::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
+        }),
+        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, ids),
+        Pat::Invalid(_) | Pat::Expr(_) => {}
+    }
 }
 
 /// Cheap prefilter for [`body_is_webpack_require`]: does this body (not
@@ -704,8 +758,11 @@ impl Visit for TableInvocationFinder<'_> {
 struct RequireBodyScanner<'a> {
     modules_sym: &'a Atom,
     /// Context of bindings that did not resolve inside the probe, i.e. live
-    /// outside the scanned body.
+    /// outside the scanned function entirely.
     unresolved_ctxt: SyntaxContext,
+    /// The function's own parameter bindings — caller-supplied values that
+    /// must never carry the creation fact.
+    param_ids: HashSet<Id>,
     /// Bindings initialized with a module object literal (`{ exports: ... }`).
     local_modules: HashSet<Id>,
     /// Bindings passed (bare or as `<ident>.exports`) to a table invocation.
@@ -742,7 +799,10 @@ impl Visit for RequireBodyScanner<'_> {
             return;
         };
         if let Some(init) = &declarator.init {
-            if is_module_object_literal(init) {
+            // A `var` redeclaration of a parameter shares the parameter's
+            // binding — that is still a caller-supplied value, not a module
+            // object created by this function.
+            if is_module_object_literal(init) && !self.param_ids.contains(&binding.id.to_id()) {
                 self.local_modules.insert(binding.id.to_id());
             }
         }
@@ -757,10 +817,14 @@ impl Visit for RequireBodyScanner<'_> {
             return;
         };
         // Only a binding declared in this body can carry the creation fact —
-        // assigning a fresh object into a caller-supplied parameter is not
-        // webpack's lifecycle (covers minifier-hoisted `var c; c = t[o] = ...`,
-        // where `c` still resolves locally).
-        if binding.id.ctxt != self.unresolved_ctxt && is_module_object_literal(&assign.right) {
+        // assigning a fresh object into a caller-supplied parameter or an
+        // outer binding is not webpack's lifecycle (still admits
+        // minifier-hoisted `var c; c = t[o] = ...`, where `c` resolves
+        // locally).
+        if binding.id.ctxt != self.unresolved_ctxt
+            && !self.param_ids.contains(&binding.id.to_id())
+            && is_module_object_literal(&assign.right)
+        {
             self.local_modules.insert(binding.id.to_id());
         }
     }
@@ -1501,13 +1565,18 @@ fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
 /// expression (`class a { static { require.d(a, ...) } }`) shadows the anchor,
 /// and helper calls on the shadow prove nothing about it. The region is
 /// probe-resolved (see [`resolve_probe`]) and compared by binding identity,
-/// which covers every lexical scope uniformly — including genuine evidence
-/// inside a closure over the real anchor. The require binding is declared
+/// which covers every lexical scope uniformly. The require binding is declared
 /// before the startup region, so real helper references resolve to the probe's
 /// unresolved context; a startup-region local shadowing the require binding is
 /// rejected the same way.
+///
+/// Evidence inside a nested function or arrow does NOT count even when it
+/// captures the real anchor: webpack emits its inline-startup export helpers
+/// in the startup scope itself, and a closure (`function helper() {
+/// require.d(a, ...) }`) may never run — treating it as proof would rewrite a
+/// live local to `exports` on the strength of dead code.
 fn binding_used_by_export_helper(stmts: &[Stmt], require_sym: &Atom, binding: &Atom) -> bool {
-    let Some((probe_stmts, unresolved_ctxt)) = resolve_probe(stmts) else {
+    let Some((_, probe_stmts, unresolved_ctxt)) = resolve_probe(&[], stmts) else {
         return false;
     };
     // The anchor is the first declarator of the region's first statement
@@ -1543,6 +1612,12 @@ struct ExportHelperFinder<'a> {
 }
 
 impl Visit for ExportHelperFinder<'_> {
+    // Webpack emits export helpers in the startup scope itself; a helper call
+    // inside a nested function may never execute and is not evidence (binding
+    // identity already handles shadowing, this handles liveness).
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
         let Callee::Expr(callee) = &call.callee else {
