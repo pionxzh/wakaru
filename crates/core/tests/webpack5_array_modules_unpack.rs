@@ -260,6 +260,47 @@ exports.id = 88, exports.ids = [88], exports.modules = [
 }
 
 #[test]
+fn webpack5_array_table_with_only_zero_param_factories() {
+    // Webpack omits unused (module, exports, require) parameters, so a valid
+    // array module table can consist entirely of zero-parameter factories
+    // (e.g. a side-effect-only dependency). Detection must rely on the
+    // require-function/table relationship, not on factory arity.
+    let source = r#"
+(() => {
+    var e = [
+        ,
+        () => { console.log("side effect dep"); }
+    ];
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+    r(1);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "zero-parameter array table should still extract, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    let mod_1 = pairs
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .expect("module-1.js should exist");
+    assert!(
+        mod_1.1.contains("side effect dep"),
+        "factory body should be recovered, got:\n{}",
+        mod_1.1
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,

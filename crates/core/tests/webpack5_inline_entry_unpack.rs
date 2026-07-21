@@ -228,6 +228,43 @@ fn webpack5_inline_startup_without_exports_anchor() {
 }
 
 #[test]
+fn webpack5_inline_entry_local_is_not_mistaken_for_exports_anchor() {
+    // Minifiers drop the real `__webpack_exports__` anchor. The entry here
+    // opens with a real import followed by an ordinary empty-object local
+    // (`const collector = {}`). The extractor must NOT treat that local as the
+    // anchor — doing so discards the import and rewrites the local to `exports`.
+    let source = r#"
+(() => {
+    var e = { 1: (m, x) => { x.A = 5; } };
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+    const dep = r(1);
+    const collector = {};
+    collector.value = dep.A;
+    console.log(collector);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("./module-1.js"),
+        "the leading import must be preserved, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const value") && !entry.contains("console.log(exports)"),
+        "the entry local must not be rewritten to exports, got:\n{entry}"
+    );
+}
+
+#[test]
 fn webpack5_no_startup_after_runtime_is_not_an_entry() {
     // If nothing after the runtime calls the require binding, no entry module
     // should be synthesized (modules still extract).

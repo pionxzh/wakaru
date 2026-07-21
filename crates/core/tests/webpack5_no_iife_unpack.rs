@@ -89,6 +89,26 @@ fn webpack5_no_iife_with_inline_entry() {
 }
 
 #[test]
+fn webpack5_output_module_with_top_level_exports_is_not_extracted() {
+    // experiments.outputModule drops the IIFE but emits top-level ESM
+    // export/import declarations carrying the library's public surface.
+    // Faithfully recovering those needs harmony-export reconstruction the
+    // pipeline does not do, so such a bundle must be left untouched rather than
+    // split into an entry that silently loses its exports.
+    let source = format!(
+        "{NO_IIFE_BODY}\nlet __webpack_exports__ = {{}};\nvar run = __webpack_require__(2);\nexport {{ run }};\n"
+    );
+    let pairs = expect_unpack(&source, "bundle.mjs");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "output.module bundle with top-level exports must not be split, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn plain_top_level_script_is_not_webpack5() {
     // A top-level script with a var + function must not be mistaken for an
     // unwrapped webpack bundle.

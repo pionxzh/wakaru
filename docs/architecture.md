@@ -45,8 +45,11 @@ Two main operations:
 Each unpacker detects a specific bundle format and extracts individual modules as raw JS strings. Detection is attempted in order — first match wins:
 
 1. **webpack5** — IIFE/arrow with module factory array or object, including
-   runtime-only entry files and inline startup (both webpack's own
-   `var __webpack_exports__ = {}` form and Vercel ncc's variant)
+   runtime-only entry files, inline startup (both webpack's own
+   `var __webpack_exports__ = {}` form and Vercel ncc's variant), and the
+   unwrapped `output.iife: false` form. `experiments.outputModule` bundles that
+   carry top-level ESM `export`/`import` declarations are left untouched — their
+   public surface can't yet be recovered faithfully
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **webpack5 chunk** — JSONP chunk push with a webpack module object
 4. **browserify family** — numeric-keyed

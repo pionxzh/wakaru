@@ -271,19 +271,26 @@ pub(super) fn detect_from_module_prepared(
 }
 
 /// Detect an unwrapped webpack 5 bootstrap (no IIFE): the modules container,
-/// require function, runtime, and entry all sit at the file's top level.
+/// require function, runtime, and entry all sit at the file's top level. This
+/// is `output.iife: false` (script/CommonJS output).
+///
+/// `experiments.outputModule` also drops the IIFE, but emits top-level ESM
+/// `import`/`export` declarations that carry the library's public surface.
+/// Recovering those faithfully needs harmony-export reconstruction the driver
+/// pipeline does not yet do, so a bundle with any top-level `ModuleDecl` is
+/// left untouched rather than extracted into an entry that silently loses its
+/// exports.
 fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
-    let stmts: Vec<Stmt> = module
-        .body
-        .iter()
-        .filter_map(|item| match item {
-            ModuleItem::Stmt(stmt) => Some(stmt.clone()),
-            ModuleItem::ModuleDecl(_) => None,
-        })
-        .collect();
+    let mut stmts: Vec<Stmt> = Vec::with_capacity(module.body.len());
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(stmt) => stmts.push(stmt.clone()),
+            ModuleItem::ModuleDecl(_) => return None,
+        }
+    }
 
     // Guard against arbitrary top-level `var xs = [function(a){}]` arrays:
-    // require a modules container *and* a require function that indexes it.
+    // require a modules container the file actually invokes as a module table.
     // (The IIFE path relies on the wrapper itself as the signal.)
     let modules_sym = stmts.iter().find_map(|stmt| {
         let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
@@ -291,7 +298,9 @@ fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<Dete
         };
         extract_webpack_modules_container(var_decl).map(|(_, sym)| sym)
     })?;
-    find_webpack5_require_fn(&stmts, &modules_sym)?;
+    if !modules_table_invoked(&stmts, &modules_sym) {
+        return None;
+    }
 
     let bootstrap_body = swc_core::ecma::ast::BlockStmt {
         span: DUMMY_SP,
@@ -434,24 +443,64 @@ impl<'a> Webpack5ModulesContainer<'a> {
             Self::Array { array, .. } => array.elems.len(),
         }
     }
+}
 
-    /// Whether some factory declares parameters. Arrays of zero-parameter
-    /// callbacks are a common shape in ordinary code, so the entry-bundle var
-    /// scan requires at least one factory taking (module, exports, require)-
-    /// style parameters before treating an array as a module table.
-    fn has_param_factory(&self) -> bool {
-        let Self::Array { array, .. } = self else {
-            return true;
+/// Whether the modules-table binding is invoked the way the webpack require
+/// function invokes a factory: `modules[id](module, module.exports, require)`
+/// (webpack 5) or `modules[id].call(module.exports, module, ...)` (webpack 4
+/// runtimes some bundles keep). This is the defining relationship between the
+/// require function and the module table, so it distinguishes a real table
+/// from an ordinary array of functions regardless of how the require function
+/// itself is written (declaration, expression, or minified/inlined). It also
+/// admits zero-parameter factories, which webpack emits for side-effect-only
+/// modules whose (module, exports, require) parameters are all unused.
+fn modules_table_invoked(stmts: &[Stmt], modules_sym: &Atom) -> bool {
+    let mut finder = ModulesTableInvocationFinder {
+        modules_sym,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+/// `expr` is `modules_sym[<computed>]`.
+fn is_modules_index(expr: &Expr, modules_sym: &Atom) -> bool {
+    let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+        return false;
+    };
+    if !matches!(prop, MemberProp::Computed(_)) {
+        return false;
+    }
+    matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *modules_sym)
+}
+
+struct ModulesTableInvocationFinder<'a> {
+    modules_sym: &'a Atom,
+    found: bool,
+}
+
+impl Visit for ModulesTableInvocationFinder<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        call.visit_children_with(self);
+        let Callee::Expr(callee) = &call.callee else {
+            return;
         };
-        array
-            .elems
-            .iter()
-            .flatten()
-            .any(|elem| match extract_factory_parts(&elem.expr) {
-                Some((Webpack5FactoryParams::Function(params), _)) => !params.is_empty(),
-                Some((Webpack5FactoryParams::Arrow(params), _)) => !params.is_empty(),
-                None => false,
-            })
+        let callee = strip_parens(callee);
+        // `modules[id](module, module.exports, require)` — factory receives at
+        // least the module object even when it declares no parameters.
+        if is_modules_index(callee, self.modules_sym) && !call.args.is_empty() {
+            self.found = true;
+            return;
+        }
+        // `modules[id].call(module.exports, module, module.exports, require)`
+        if let Expr::Member(MemberExpr { obj, prop, .. }) = callee {
+            if matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "call")
+                && is_modules_index(strip_parens(obj), self.modules_sym)
+                && call.args.len() >= 2
+            {
+                self.found = true;
+            }
+        }
     }
 }
 
@@ -756,10 +805,20 @@ fn extract_webpack5_modules(
             let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
                 continue;
             };
-            let Some(container) = extract_webpack_modules_container(var_decl) else {
+            let Some((container, modules_sym)) = extract_webpack_modules_container(var_decl) else {
                 continue;
             };
-            found = Some(container);
+            // An array of functions is ambiguous with ordinary code, so require
+            // the defining relationship: the bootstrap invokes it as a module
+            // table (`modules[id](module, ...)`). Object containers are keyed by
+            // explicit module ids and, inside the IIFE wrapper, are signal
+            // enough on their own.
+            if matches!(container, Webpack5ModulesContainer::Array { .. })
+                && !modules_table_invoked(&bootstrap_body.stmts, &modules_sym)
+            {
+                continue;
+            }
+            found = Some((container, modules_sym));
             break;
         }
         found?
@@ -1073,57 +1132,62 @@ fn extract_webpack5_inline_startup(
         .unwrap_or(require_idx + 1)
         .max(require_idx + 1);
 
-    for (idx, stmt) in bootstrap_body
-        .stmts
-        .iter()
-        .enumerate()
-        .skip(startup_scan_from)
-    {
-        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
-            continue;
-        };
-        let first = var_decl.decls.first()?;
-        let Pat::Ident(binding) = &first.name else {
-            continue;
-        };
-        let Some(init) = &first.init else {
-            continue;
-        };
-        let Expr::Object(object) = strip_parens(init) else {
-            continue;
-        };
-        if !object.props.is_empty() {
-            continue;
-        }
-
-        let mut body_stmts: Vec<Stmt> = Vec::new();
-        if var_decl.decls.len() > 1 {
-            let mut rest = var_decl.clone();
-            rest.decls.remove(0);
-            body_stmts.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(rest)));
-        }
-        body_stmts.extend(bootstrap_body.stmts[idx + 1..].iter().cloned());
-        if body_stmts.is_empty() {
-            return None;
-        }
-        return Some(Webpack5InlineStartup {
-            body_stmts,
-            require_sym,
-            exports_sym: Some(binding.id.sym.clone()),
-        });
+    let entry_region = &bootstrap_body.stmts[startup_scan_from..];
+    if entry_region.is_empty() {
+        return None;
     }
 
-    // No anchor (minified): the entry is everything after the last runtime
-    // definition, as long as it actually calls the require binding.
-    let body_stmts: Vec<Stmt> = bootstrap_body.stmts[startup_scan_from..].to_vec();
+    // The anchor, when present, is always the *first* statement of the startup
+    // section (webpack emits it immediately after the runtime). Only inspect
+    // that statement — scanning deeper would mistake an ordinary entry local
+    // such as `const app = {}` for the anchor and discard the statements before
+    // it (e.g. a real `const dep = require(1)` import).
+    let (body_stmts, exports_sym) = match empty_object_anchor(&entry_region[0]) {
+        Some((binding, var_decl)) => {
+            let mut body_stmts: Vec<Stmt> = Vec::new();
+            if var_decl.decls.len() > 1 {
+                let mut rest = var_decl.clone();
+                rest.decls.remove(0);
+                body_stmts.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(rest))));
+            }
+            body_stmts.extend(entry_region[1..].iter().cloned());
+            (body_stmts, Some(binding))
+        }
+        // No anchor (minified: the unused anchor is dropped): the whole region
+        // is the entry.
+        None => (entry_region.to_vec(), None),
+    };
+
+    // Require the recovered entry to actually call the require binding so a
+    // bundle with no startup does not synthesize a bogus entry.
     if body_stmts.is_empty() || !stmts_call_require(&body_stmts, &require_sym) {
         return None;
     }
     Some(Webpack5InlineStartup {
         body_stmts,
         require_sym,
-        exports_sym: None,
+        exports_sym,
     })
+}
+
+/// If `stmt` begins with an empty-object declarator (`var x = {}` — webpack's
+/// `__webpack_exports__` anchor), return its binding symbol and the var decl.
+fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
+    let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
+        return None;
+    };
+    let first = var_decl.decls.first()?;
+    let Pat::Ident(binding) = &first.name else {
+        return None;
+    };
+    let init = first.init.as_ref()?;
+    let Expr::Object(object) = strip_parens(init) else {
+        return None;
+    };
+    if !object.props.is_empty() {
+        return None;
+    }
+    Some((binding.id.sym.clone(), var_decl))
 }
 
 /// Whether any statement calls the require binding, e.g. `r(1)`.
@@ -1673,9 +1737,6 @@ fn extract_webpack_modules_container(
         let Some(container) = Webpack5ModulesContainer::from_expr(init) else {
             continue;
         };
-        if !container.has_param_factory() {
-            continue;
-        }
         return Some((container, binding.id.sym.clone()));
     }
     None
