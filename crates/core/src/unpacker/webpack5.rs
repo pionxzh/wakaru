@@ -477,7 +477,7 @@ fn webpack_require_fn_present(stmts: &[Stmt], modules_sym: &Atom) -> bool {
     if !region_invokes_table(stmts, modules_sym) {
         return false;
     }
-    let Some((probe_stmts, unresolved_ctxt)) = resolve_probe(stmts) else {
+    let Some((probe_stmts, _)) = resolve_probe(stmts) else {
         return false;
     };
     // The modules container is always a region-level var declaration; its
@@ -487,7 +487,6 @@ fn webpack_require_fn_present(stmts: &[Stmt], modules_sym: &Atom) -> bool {
     };
     let mut finder = RequireFnFinder {
         table_id,
-        unresolved_ctxt,
         pending_self_id: None,
         found: false,
     };
@@ -592,7 +591,6 @@ fn is_module_object_literal(expr: &Expr) -> bool {
 /// require function for the table.
 struct RequireFnFinder {
     table_id: Id,
-    unresolved_ctxt: SyntaxContext,
     /// Self-binding of the `FnExpr` whose inner `Function` is visited next —
     /// `FnExpr.ident` is not reachable from `visit_function` otherwise.
     pending_self_id: Option<Id>,
@@ -616,8 +614,7 @@ impl Visit for RequireFnFinder {
                 collect_pat_binding_ids(&param.pat, &mut excluded);
             }
             excluded.extend(self_id);
-            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id, self.unresolved_ctxt)
-            {
+            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id) {
                 self.found = true;
             }
         }
@@ -630,8 +627,7 @@ impl Visit for RequireFnFinder {
             for pat in &arrow.params {
                 collect_pat_binding_ids(pat, &mut excluded);
             }
-            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id, self.unresolved_ctxt)
-            {
+            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id) {
                 self.found = true;
             }
         }
@@ -654,18 +650,27 @@ impl Visit for RequireFnFinder {
 /// [`webpack_require_fn_present`]); `excluded` carries the candidate's
 /// caller-facing bindings — parameters (including their same-name `var`
 /// redeclarations, which share the binding) and a named function expression's
-/// self-binding — which can never carry the creation fact. The creation fact
-/// therefore only matches a module object created in this very scope.
-fn body_is_webpack_require(
-    excluded: &HashSet<Id>,
-    stmts: &[Stmt],
-    table_id: &Id,
-    unresolved_ctxt: SyntaxContext,
-) -> bool {
+/// self-binding — which can never carry the creation fact.
+///
+/// The creation fact must target a binding the candidate *owns*: whole-region
+/// resolution means "resolved" alone only proves the binding lives somewhere
+/// in the bootstrap, and webpack's module object is always the require
+/// function's own variable — an assignment into an enclosing region binding
+/// (`var context; function dispatch(i) { context = { exports: {} }; ... }`)
+/// is a dispatcher mutating shared state, not the module lifecycle. Declarator
+/// initializers are body-owned by construction (the scanner never descends
+/// into nested functions); assignment targets are checked against the body's
+/// own declared bindings.
+fn body_is_webpack_require(excluded: &HashSet<Id>, stmts: &[Stmt], table_id: &Id) -> bool {
+    let mut body_declared = HashSet::new();
+    let mut collector = BodyVarCollector {
+        ids: &mut body_declared,
+    };
+    stmts.visit_with(&mut collector);
     let mut scanner = RequireBodyScanner {
         table_id,
         excluded,
-        unresolved_ctxt,
+        body_declared: &body_declared,
         local_modules: HashSet::new(),
         table_call_args: HashSet::new(),
         returned_exports_objs: HashSet::new(),
@@ -675,6 +680,23 @@ fn body_is_webpack_require(
         .local_modules
         .iter()
         .any(|m| scanner.table_call_args.contains(m) && scanner.returned_exports_objs.contains(m))
+}
+
+/// Collects the binding [`Id`]s declared by the body's own statements
+/// (without descending into nested functions — their locals belong to them).
+struct BodyVarCollector<'a> {
+    ids: &'a mut HashSet<Id>,
+}
+
+impl Visit for BodyVarCollector<'_> {
+    // Stay within this function's own scope.
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        declarator.visit_children_with(self);
+        collect_pat_binding_ids(&declarator.name, self.ids);
+    }
 }
 
 /// Clone `stmts` into a synthetic function and run the swc resolver over the
@@ -792,8 +814,9 @@ struct RequireBodyScanner<'a> {
     /// The candidate's caller-facing bindings (parameters, fn-expr
     /// self-binding) — these must never carry the creation fact.
     excluded: &'a HashSet<Id>,
-    /// Context of bindings that did not resolve inside the region at all.
-    unresolved_ctxt: SyntaxContext,
+    /// Bindings declared by the body's own statements — the only ones an
+    /// assignment-based creation fact may target.
+    body_declared: &'a HashSet<Id>,
     /// Bindings initialized with a module object literal (`{ exports: ... }`).
     local_modules: HashSet<Id>,
     /// Bindings passed (bare or as `<ident>.exports`) to a table invocation.
@@ -847,11 +870,13 @@ impl Visit for RequireBodyScanner<'_> {
         let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
             return;
         };
-        // Only a binding declared in the region can carry the creation fact —
-        // assigning a fresh object into a caller-supplied parameter or a
-        // global is not webpack's lifecycle (still admits minifier-hoisted
-        // `var c; c = t[o] = ...`, where `c` resolves locally).
-        if binding.id.ctxt != self.unresolved_ctxt
+        // Only a binding this body itself declares can carry the creation
+        // fact — assigning a fresh object into a caller-supplied parameter,
+        // an enclosing region binding, or a global is not webpack's
+        // lifecycle. `body_declared` still admits minifier-hoisted
+        // `var c; c = t[o] = ...`; `excluded` still rejects a `var`
+        // redeclaration of a parameter (shared binding).
+        if self.body_declared.contains(&binding.id.to_id())
             && !self.excluded.contains(&binding.id.to_id())
             && is_module_object_literal(&assign.right)
         {

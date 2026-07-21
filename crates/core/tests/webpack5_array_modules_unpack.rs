@@ -596,6 +596,36 @@ fn closure_over_enclosing_param_is_not_the_table() {
 }
 
 #[test]
+fn dispatcher_writing_enclosing_context_is_not_webpack5() {
+    // `context` is declared in the enclosing scope, not in `dispatch`.
+    // Webpack's module object is always the require function's own variable —
+    // an assignment into shared enclosing state must not carry the creation
+    // fact, even though the binding resolves inside the region.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "ok"; }
+    ];
+    var context;
+    function dispatch(i) {
+        context = { exports: {} };
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(0));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "enclosing-scope context must not carry the creation fact, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,
