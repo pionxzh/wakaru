@@ -303,8 +303,8 @@ fn webpack5_array_table_with_only_zero_param_factories() {
 #[test]
 fn indexed_callback_dispatcher_is_not_mistaken_for_webpack5() {
     // An ordinary dispatch table calls `handlers[i](event)` — a computed member
-    // call with an argument, but without webpack's (module, module.exports)
-    // argument relationship. It must not be destructively unpacked.
+    // call with an argument, but not a webpack require function. It must not be
+    // destructively unpacked.
     let source = r#"
 (() => {
     var handlers = [
@@ -323,6 +323,34 @@ fn indexed_callback_dispatcher_is_not_mistaken_for_webpack5() {
             .iter()
             .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
         "indexed dispatcher must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn dispatcher_passing_module_exports_pair_is_not_webpack5() {
+    // A dispatcher may naturally pass `(module, module.exports)`, matching the
+    // webpack argument pair. Detection must instead require the require-function
+    // structure (invoke table + return `.exports`), which a dispatcher — whose
+    // call result is returned directly — does not have.
+    let source = r#"
+(() => {
+    var handlers = [
+        (module, exports) => { console.log(module); },
+        (module, exports) => { return module + 1; }
+    ];
+    function dispatch(i, module) {
+        return handlers[i](module, module.exports);
+    }
+    console.log(dispatch(0, {}));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "dispatcher passing (module, module.exports) must not unpack as webpack5, got {:?}",
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }

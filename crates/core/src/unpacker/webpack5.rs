@@ -6,9 +6,9 @@ use swc_core::common::{
 };
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
-    Callee, Expr, ExprOrSpread, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp,
-    Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget,
-    Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
+    Callee, Expr, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt,
+    Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -298,7 +298,7 @@ fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<Dete
         };
         extract_webpack_modules_container(var_decl).map(|(_, sym)| sym)
     })?;
-    if !modules_table_invoked(&stmts, &modules_sym) {
+    if !webpack_require_fn_present(&stmts, &modules_sym) {
         return None;
     }
 
@@ -445,20 +445,20 @@ impl<'a> Webpack5ModulesContainer<'a> {
     }
 }
 
-/// Whether the modules-table binding is invoked the way the webpack require
-/// function invokes a factory: `modules[id](module, module.exports, require)`
-/// (webpack 5) or `modules[id].call(module.exports, module, module.exports,
-/// require)` (webpack 4 runtimes some bundles keep).
+/// Whether the bootstrap contains a webpack require function for `modules_sym`.
 ///
-/// The distinguishing invariant is not just "a computed member of the table is
-/// called" — an ordinary `handlers[i](event)` dispatcher does that too — but
-/// webpack's argument relationship: some argument is a binding `m` immediately
-/// followed by that binding's `.exports` (the module object and its exports).
-/// This admits zero-parameter factories (webpack still passes all three
-/// arguments even when the factory declares none) while rejecting dispatch
-/// tables, and holds regardless of how the require function itself is written.
-fn modules_table_invoked(stmts: &[Stmt], modules_sym: &Atom) -> bool {
-    let mut finder = ModulesTableInvocationFinder {
+/// Merely calling a computed member of the table (`handlers[i](event)`, even
+/// `handlers[i](module, module.exports)`) is not enough — ordinary dispatch
+/// tables do that. The require function is identified by two structural facts
+/// holding together in one function scope: it invokes the table
+/// (`modules[id](...)` or `modules[id].call(...)`) and it returns a `.exports`
+/// member (the cached module's exports). That combination is webpack's runtime
+/// invariant and does not occur in dispatchers, whose call result is returned
+/// directly rather than a `.exports` access. It also holds regardless of how
+/// the require function is written (declaration, expression, minified) and
+/// admits zero-parameter factories.
+fn webpack_require_fn_present(stmts: &[Stmt], modules_sym: &Atom) -> bool {
+    let mut finder = RequireFnFinder {
         modules_sym,
         found: false,
     };
@@ -477,56 +477,97 @@ fn is_modules_index(expr: &Expr, modules_sym: &Atom) -> bool {
     matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *modules_sym)
 }
 
-/// Whether the argument list contains webpack's `(module, module.exports)`
-/// relationship: an argument `m` (an identifier) immediately followed by
-/// `m.exports`. Present in both the webpack 5 direct call
-/// `factory(module, module.exports, require)` and the webpack 4
-/// `factory.call(module.exports, module, module.exports, require)` form.
-fn args_have_module_exports_pair(args: &[ExprOrSpread]) -> bool {
-    args.windows(2).any(|pair| {
-        let [first, second] = pair else {
-            return false;
-        };
-        if first.spread.is_some() || second.spread.is_some() {
-            return false;
+/// `expr` is (or, for a sequence, ends in) a `<x>.exports` member access —
+/// webpack's `return module.exports` / `return factory(...), module.exports`.
+fn expr_yields_exports_member(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Member(MemberExpr { prop, .. }) => {
+            matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "exports")
         }
-        let Expr::Ident(module) = strip_parens(&first.expr) else {
-            return false;
-        };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(&second.expr) else {
-            return false;
-        };
-        matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "exports")
-            && matches!(strip_parens(obj), Expr::Ident(id) if id.sym == module.sym)
-    })
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .is_some_and(|last| expr_yields_exports_member(last)),
+        _ => false,
+    }
 }
 
-struct ModulesTableInvocationFinder<'a> {
+/// Finds a function whose own body is a webpack require function for the table.
+struct RequireFnFinder<'a> {
     modules_sym: &'a Atom,
     found: bool,
 }
 
-impl Visit for ModulesTableInvocationFinder<'_> {
+impl Visit for RequireFnFinder<'_> {
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        if let Some(body) = &function.body {
+            if body_is_webpack_require(&body.stmts, self.modules_sym) {
+                self.found = true;
+            }
+        }
+        function.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        if let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body {
+            if body_is_webpack_require(&body.stmts, self.modules_sym) {
+                self.found = true;
+            }
+        }
+        arrow.visit_children_with(self);
+    }
+}
+
+/// Whether one function body invokes the module table and returns a `.exports`
+/// member. Nested function scopes are not descended into, so facts from an
+/// unrelated inner function cannot combine to look like a require function.
+fn body_is_webpack_require(stmts: &[Stmt], modules_sym: &Atom) -> bool {
+    let mut scanner = RequireBodyScanner {
+        modules_sym,
+        invokes_table: false,
+        returns_exports: false,
+    };
+    stmts.visit_with(&mut scanner);
+    scanner.invokes_table && scanner.returns_exports
+}
+
+struct RequireBodyScanner<'a> {
+    modules_sym: &'a Atom,
+    invokes_table: bool,
+    returns_exports: bool,
+}
+
+impl Visit for RequireBodyScanner<'_> {
+    // Stay within this function's own scope.
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
-        if !args_have_module_exports_pair(&call.args) {
-            return;
-        }
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
         let callee = strip_parens(callee);
-        // `modules[id](module, module.exports, require)`
+        // `modules[id](...)`
         if is_modules_index(callee, self.modules_sym) {
-            self.found = true;
+            self.invokes_table = true;
             return;
         }
-        // `modules[id].call(module.exports, module, module.exports, require)`
+        // `modules[id].call(...)`
         if let Expr::Member(MemberExpr { obj, prop, .. }) = callee {
             if matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "call")
                 && is_modules_index(strip_parens(obj), self.modules_sym)
             {
-                self.found = true;
+                self.invokes_table = true;
+            }
+        }
+    }
+
+    fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
+        ret.visit_children_with(self);
+        if let Some(arg) = &ret.arg {
+            if expr_yields_exports_member(arg) {
+                self.returns_exports = true;
             }
         }
     }
@@ -842,7 +883,7 @@ fn extract_webpack5_modules(
             // explicit module ids and, inside the IIFE wrapper, are signal
             // enough on their own.
             if matches!(container, Webpack5ModulesContainer::Array { .. })
-                && !modules_table_invoked(&bootstrap_body.stmts, &modules_sym)
+                && !webpack_require_fn_present(&bootstrap_body.stmts, &modules_sym)
             {
                 continue;
             }
@@ -1236,6 +1277,13 @@ fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
 /// (esModule marker) or `require.d(binding, ...)` (define exports) — which is
 /// what identifies it as webpack's exports object rather than an ordinary
 /// empty-object local.
+///
+/// The scan stays in the startup region's own scope and does not descend into
+/// nested functions: `binding` is a startup-region local, and webpack emits its
+/// export helpers there, so a same-named parameter shadowed inside a nested
+/// `function helper(a) { require.d(a, ...) }` must not count as evidence.
+/// (Detection runs on freshly-parsed AST with no resolver contexts, so scope is
+/// tracked structurally rather than by `SyntaxContext`.)
 fn binding_used_by_export_helper(stmts: &[Stmt], require_sym: &Atom, binding: &Atom) -> bool {
     let mut finder = ExportHelperFinder {
         require_sym,
@@ -1253,6 +1301,11 @@ struct ExportHelperFinder<'a> {
 }
 
 impl Visit for ExportHelperFinder<'_> {
+    // A nested function opens a new scope where `binding` may be a different
+    // declaration; do not descend into it.
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
         let Callee::Expr(callee) = &call.callee else {
