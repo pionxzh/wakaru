@@ -330,9 +330,10 @@ fn indexed_callback_dispatcher_is_not_mistaken_for_webpack5() {
 #[test]
 fn dispatcher_passing_module_exports_pair_is_not_webpack5() {
     // A dispatcher may naturally pass `(module, module.exports)`, matching the
-    // webpack argument pair. Detection must instead require the require-function
-    // structure (invoke table + return `.exports`), which a dispatcher — whose
-    // call result is returned directly — does not have.
+    // webpack argument pair. Detection must instead require webpack's module
+    // lifecycle (a locally-created `{ exports: {} }` object passed to the
+    // table and its `.exports` returned), which a dispatcher — whose call
+    // result is returned directly — does not have.
     let source = r#"
 (() => {
     var handlers = [
@@ -351,6 +352,36 @@ fn dispatcher_passing_module_exports_pair_is_not_webpack5() {
             .iter()
             .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
         "dispatcher passing (module, module.exports) must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn mutating_dispatcher_returning_context_exports_is_not_webpack5() {
+    // A dispatcher that mutates a caller-supplied context and returns
+    // `context.exports` pairs a table invocation with a returned `.exports`
+    // member — the two loose facts alone. It must not match: webpack's require
+    // function *creates* the module object locally (`var m = cache[id] =
+    // { exports: {} }`), while this context is a parameter.
+    let source = r#"
+(() => {
+    var handlers = [
+        (ctx) => { ctx.exports = "h0"; },
+        (ctx) => { ctx.exports = ctx.exports + "!"; }
+    ];
+    function dispatch(i, context) {
+        handlers[i](context);
+        return context.exports;
+    }
+    console.log(dispatch(0, { exports: "" }));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "mutating dispatcher returning context.exports must not unpack as webpack5, got {:?}",
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }

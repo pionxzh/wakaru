@@ -310,6 +310,88 @@ fn webpack5_nested_export_helper_does_not_prove_outer_local_is_anchor() {
 }
 
 #[test]
+fn webpack5_block_scoped_shadow_does_not_prove_outer_local_is_anchor() {
+    // A nested block redeclares `a` with `const` and passes *that* binding to
+    // `r.d`. Lexical shadowing means this is evidence about a different
+    // variable — the unrelated outer `const a = {}` must not be rewritten to
+    // exports.
+    let source = r#"
+(() => {
+    var e = { 1: (m, x) => { x.A = 5; } };
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+    const a = {};
+    const dep = r(1);
+    a.value = dep.A;
+    {
+        const a = { local: true };
+        r.d(a, { x: () => 1 });
+    }
+    console.log(a);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("./module-1.js"),
+        "the import must be preserved, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const value") && !entry.contains("console.log(exports"),
+        "the outer local must not be rewritten to exports, got:\n{entry}"
+    );
+}
+
+#[test]
+fn webpack5_catch_param_shadow_does_not_prove_outer_local_is_anchor() {
+    // A catch clause parameter named `a` passed to `r.d` shadows the outer
+    // binding just like a block-scoped `const` — it must not count as anchor
+    // evidence for the outer `const a = {}`.
+    let source = r#"
+(() => {
+    var e = { 1: (m, x) => { x.A = 5; } };
+    var t = {};
+    function r(o) {
+        var n = t[o];
+        if (n !== undefined) return n.exports;
+        var c = t[o] = { exports: {} };
+        return e[o](c, c.exports, r), c.exports;
+    }
+    r.m = e;
+    const a = {};
+    const dep = r(1);
+    a.value = dep.A;
+    try {
+        throw { shadow: true };
+    } catch (a) {
+        r.d(a, { x: () => 1 });
+    }
+    console.log(a);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+
+    assert!(
+        entry.contains("./module-1.js"),
+        "the import must be preserved, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const value") && !entry.contains("console.log(exports"),
+        "the outer local must not be rewritten to exports, got:\n{entry}"
+    );
+}
+
+#[test]
 fn webpack5_no_startup_after_runtime_is_not_an_entry() {
     // If nothing after the runtime calls the require binding, no entry module
     // should be synthesized (modules still extract).

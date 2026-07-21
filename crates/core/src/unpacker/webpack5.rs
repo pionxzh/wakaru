@@ -447,16 +447,24 @@ impl<'a> Webpack5ModulesContainer<'a> {
 
 /// Whether the bootstrap contains a webpack require function for `modules_sym`.
 ///
-/// Merely calling a computed member of the table (`handlers[i](event)`, even
-/// `handlers[i](module, module.exports)`) is not enough — ordinary dispatch
-/// tables do that. The require function is identified by two structural facts
-/// holding together in one function scope: it invokes the table
-/// (`modules[id](...)` or `modules[id].call(...)`) and it returns a `.exports`
-/// member (the cached module's exports). That combination is webpack's runtime
-/// invariant and does not occur in dispatchers, whose call result is returned
-/// directly rather than a `.exports` access. It also holds regardless of how
-/// the require function is written (declaration, expression, minified) and
-/// admits zero-parameter factories.
+/// Merely calling a computed member of the table (`handlers[i](event)`) is not
+/// enough — ordinary dispatch tables do that, and a *mutating* dispatcher even
+/// pairs a table call with a returned `.exports` member
+/// (`handlers[i](context); return context.exports;`). The require function is
+/// identified by three structural facts tied to one binding `m` inside one
+/// function scope, webpack's module lifecycle:
+///
+/// 1. `m` is created locally as an object literal carrying an `exports`
+///    property (`var m = cache[id] = { exports: {} }`),
+/// 2. `m` (or `m.exports`) is passed to the table invocation
+///    (`modules[id](m, m.exports, require)` / `modules[id].call(...)`),
+/// 3. a return yields `m.exports`.
+///
+/// A dispatcher's context is a caller-supplied parameter, never a module object
+/// created in the same scope, so it fails fact 1. The lifecycle holds
+/// regardless of how the require function is written (declaration, expression,
+/// minified) and admits zero-parameter factories — webpack's shared call site
+/// always passes the module object even when factories declare no params.
 fn webpack_require_fn_present(stmts: &[Stmt], modules_sym: &Atom) -> bool {
     let mut finder = RequireFnFinder {
         modules_sym,
@@ -477,17 +485,47 @@ fn is_modules_index(expr: &Expr, modules_sym: &Atom) -> bool {
     matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *modules_sym)
 }
 
-/// `expr` is (or, for a sequence, ends in) a `<x>.exports` member access —
-/// webpack's `return module.exports` / `return factory(...), module.exports`.
-fn expr_yields_exports_member(expr: &Expr) -> bool {
+/// If `expr` is (or, for a sequence, ends in) an `<ident>.exports` member
+/// access — webpack's `return module.exports` /
+/// `return factory(...), module.exports` — return the object's symbol.
+fn exports_member_object_sym(expr: &Expr) -> Option<Atom> {
     match strip_parens(expr) {
-        Expr::Member(MemberExpr { prop, .. }) => {
-            matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "exports")
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "exports") {
+                return None;
+            }
+            match strip_parens(obj) {
+                Expr::Ident(ident) => Some(ident.sym.clone()),
+                _ => None,
+            }
         }
         Expr::Seq(seq) => seq
             .exprs
             .last()
-            .is_some_and(|last| expr_yields_exports_member(last)),
+            .and_then(|last| exports_member_object_sym(last)),
+        _ => None,
+    }
+}
+
+/// `expr` (after stripping parens and chained assignments like
+/// `cache[id] = { exports: {} }`) is an object literal with an `exports`
+/// property — webpack's freshly-created module object. Covers webpack 5's
+/// `{ exports: {} }` and webpack 4's `{ i: id, l: false, exports: {} }`.
+fn is_module_object_literal(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Assign(assign) => is_module_object_literal(&assign.right),
+        Expr::Object(object) => object.props.iter().any(|prop| match prop {
+            PropOrSpread::Prop(prop) => match prop.as_ref() {
+                Prop::KeyValue(kv) => match &kv.key {
+                    PropName::Ident(ident) => ident.sym.as_ref() == "exports",
+                    PropName::Str(s) => s.value.as_str() == Some("exports"),
+                    _ => false,
+                },
+                Prop::Shorthand(ident) => ident.sym.as_ref() == "exports",
+                _ => false,
+            },
+            PropOrSpread::Spread(_) => false,
+        }),
         _ => false,
     }
 }
@@ -518,23 +556,51 @@ impl Visit for RequireFnFinder<'_> {
     }
 }
 
-/// Whether one function body invokes the module table and returns a `.exports`
-/// member. Nested function scopes are not descended into, so facts from an
-/// unrelated inner function cannot combine to look like a require function.
+/// Whether one function body is a webpack require function: some binding is
+/// created locally as a module object literal, passed to the module-table
+/// invocation, and has its `.exports` returned (see
+/// [`webpack_require_fn_present`]). Nested function scopes are not descended
+/// into, so facts from an unrelated inner function cannot combine to look like
+/// a require function.
 fn body_is_webpack_require(stmts: &[Stmt], modules_sym: &Atom) -> bool {
     let mut scanner = RequireBodyScanner {
         modules_sym,
-        invokes_table: false,
-        returns_exports: false,
+        local_modules: HashSet::new(),
+        table_call_args: HashSet::new(),
+        returned_exports_objs: HashSet::new(),
     };
     stmts.visit_with(&mut scanner);
-    scanner.invokes_table && scanner.returns_exports
+    scanner
+        .local_modules
+        .iter()
+        .any(|m| scanner.table_call_args.contains(m) && scanner.returned_exports_objs.contains(m))
 }
 
 struct RequireBodyScanner<'a> {
     modules_sym: &'a Atom,
-    invokes_table: bool,
-    returns_exports: bool,
+    /// Bindings initialized with a module object literal (`{ exports: ... }`).
+    local_modules: HashSet<Atom>,
+    /// Idents passed (bare or as `<ident>.exports`) to a table invocation.
+    table_call_args: HashSet<Atom>,
+    /// Idents whose `.exports` member a return statement yields.
+    returned_exports_objs: HashSet<Atom>,
+}
+
+impl RequireBodyScanner<'_> {
+    fn record_table_call_args<'a>(&mut self, args: impl Iterator<Item = &'a Expr>) {
+        for arg in args {
+            match strip_parens(arg) {
+                Expr::Ident(ident) => {
+                    self.table_call_args.insert(ident.sym.clone());
+                }
+                expr => {
+                    if let Some(sym) = exports_member_object_sym(expr) {
+                        self.table_call_args.insert(sym);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Visit for RequireBodyScanner<'_> {
@@ -542,23 +608,56 @@ impl Visit for RequireBodyScanner<'_> {
     fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
     fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
 
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        declarator.visit_children_with(self);
+        let Pat::Ident(binding) = &declarator.name else {
+            return;
+        };
+        if let Some(init) = &declarator.init {
+            if is_module_object_literal(init) {
+                self.local_modules.insert(binding.id.sym.clone());
+            }
+        }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        assign.visit_children_with(self);
+        if assign.op != AssignOp::Assign {
+            return;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+            return;
+        };
+        if is_module_object_literal(&assign.right) {
+            self.local_modules.insert(binding.id.sym.clone());
+        }
+    }
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
         let callee = strip_parens(callee);
-        // `modules[id](...)`
+        // `modules[id](module, module.exports, require)`
         if is_modules_index(callee, self.modules_sym) {
-            self.invokes_table = true;
+            self.record_table_call_args(
+                call.args
+                    .iter()
+                    .filter_map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref())),
+            );
             return;
         }
-        // `modules[id].call(...)`
+        // `modules[id].call(module.exports, module, module.exports, require)`
         if let Expr::Member(MemberExpr { obj, prop, .. }) = callee {
             if matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "call")
                 && is_modules_index(strip_parens(obj), self.modules_sym)
             {
-                self.invokes_table = true;
+                self.record_table_call_args(
+                    call.args
+                        .iter()
+                        .filter_map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref())),
+                );
             }
         }
     }
@@ -566,8 +665,8 @@ impl Visit for RequireBodyScanner<'_> {
     fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
         ret.visit_children_with(self);
         if let Some(arg) = &ret.arg {
-            if expr_yields_exports_member(arg) {
-                self.returns_exports = true;
+            if let Some(sym) = exports_member_object_sym(arg) {
+                self.returned_exports_objs.insert(sym);
             }
         }
     }
@@ -1278,12 +1377,16 @@ fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
 /// what identifies it as webpack's exports object rather than an ordinary
 /// empty-object local.
 ///
-/// The scan stays in the startup region's own scope and does not descend into
-/// nested functions: `binding` is a startup-region local, and webpack emits its
-/// export helpers there, so a same-named parameter shadowed inside a nested
-/// `function helper(a) { require.d(a, ...) }` must not count as evidence.
-/// (Detection runs on freshly-parsed AST with no resolver contexts, so scope is
-/// tracked structurally rather than by `SyntaxContext`.)
+/// The scan stays in the scope where `binding` lives: webpack emits its export
+/// helpers in the startup region itself, so evidence found where the name is
+/// shadowed is about a *different* variable and must not count. That means not
+/// descending into nested functions (a parameter `a` in
+/// `function helper(a) { require.d(a, ...) }`) and skipping any lexical scope
+/// that redeclares the name — a block or switch with `let`/`const`/`class`/
+/// `function` declarations, a catch clause parameter, or a `for` head
+/// declaration (`{ const a = {}; require.d(a, ...) }`). (Detection runs on
+/// freshly-parsed AST with no resolver contexts, so scope is tracked
+/// structurally rather than by `SyntaxContext`.)
 fn binding_used_by_export_helper(stmts: &[Stmt], require_sym: &Atom, binding: &Atom) -> bool {
     let mut finder = ExportHelperFinder {
         require_sym,
@@ -1305,6 +1408,67 @@ impl Visit for ExportHelperFinder<'_> {
     // declaration; do not descend into it.
     fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
     fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
+    // A block that lexically redeclares the name shadows `binding`; anything
+    // inside is about the inner variable.
+    fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
+        if stmts_lexically_declare(&block.stmts, self.binding) {
+            return;
+        }
+        block.visit_children_with(self);
+    }
+
+    // All cases of a switch share one lexical scope.
+    fn visit_switch_stmt(&mut self, switch: &swc_core::ecma::ast::SwitchStmt) {
+        if switch
+            .cases
+            .iter()
+            .any(|case| stmts_lexically_declare(&case.cons, self.binding))
+        {
+            // The discriminant still evaluates in the outer scope.
+            switch.discriminant.visit_with(self);
+            return;
+        }
+        switch.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, catch: &swc_core::ecma::ast::CatchClause) {
+        if catch
+            .param
+            .as_ref()
+            .is_some_and(|param| pat_binds_name(param, self.binding))
+        {
+            return;
+        }
+        catch.visit_children_with(self);
+    }
+
+    fn visit_for_stmt(&mut self, for_stmt: &swc_core::ecma::ast::ForStmt) {
+        if let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(decl)) = &for_stmt.init {
+            if var_decl_lexically_declares(decl, self.binding) {
+                return;
+            }
+        }
+        for_stmt.visit_children_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, for_in: &swc_core::ecma::ast::ForInStmt) {
+        if let swc_core::ecma::ast::ForHead::VarDecl(decl) = &for_in.left {
+            if var_decl_lexically_declares(decl, self.binding) {
+                return;
+            }
+        }
+        for_in.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, for_of: &swc_core::ecma::ast::ForOfStmt) {
+        if let swc_core::ecma::ast::ForHead::VarDecl(decl) = &for_of.left {
+            if var_decl_lexically_declares(decl, self.binding) {
+                return;
+            }
+        }
+        for_of.visit_children_with(self);
+    }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
@@ -1330,6 +1494,53 @@ impl Visit for ExportHelperFinder<'_> {
         {
             self.found = true;
         }
+    }
+}
+
+/// Whether any statement lexically (re)declares `sym`: a `let`/`const`
+/// declarator binding it, or a `function`/`class` declaration of that name.
+/// `var` does not shadow — it hoists to the enclosing function scope, i.e. the
+/// same binding.
+fn stmts_lexically_declare(stmts: &[Stmt], sym: &Atom) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(decl) = stmt else {
+            return false;
+        };
+        match decl {
+            swc_core::ecma::ast::Decl::Var(var_decl) => var_decl_lexically_declares(var_decl, sym),
+            swc_core::ecma::ast::Decl::Fn(fn_decl) => fn_decl.ident.sym == *sym,
+            swc_core::ecma::ast::Decl::Class(class_decl) => class_decl.ident.sym == *sym,
+            _ => false,
+        }
+    })
+}
+
+fn var_decl_lexically_declares(var_decl: &VarDecl, sym: &Atom) -> bool {
+    var_decl.kind != swc_core::ecma::ast::VarDeclKind::Var
+        && var_decl
+            .decls
+            .iter()
+            .any(|declarator| pat_binds_name(&declarator.name, sym))
+}
+
+/// Whether `pat` binds the name `sym` (through nested destructuring patterns).
+fn pat_binds_name(pat: &Pat, sym: &Atom) -> bool {
+    use swc_core::ecma::ast::ObjectPatProp;
+    match pat {
+        Pat::Ident(binding) => binding.id.sym == *sym,
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| pat_binds_name(elem, sym)),
+        Pat::Rest(rest) => pat_binds_name(&rest.arg, sym),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => pat_binds_name(&kv.value, sym),
+            ObjectPatProp::Assign(assign) => assign.key.sym == *sym,
+            ObjectPatProp::Rest(rest) => pat_binds_name(&rest.arg, sym),
+        }),
+        Pat::Assign(assign) => pat_binds_name(&assign.left, sym),
+        Pat::Invalid(_) | Pat::Expr(_) => false,
     }
 }
 
