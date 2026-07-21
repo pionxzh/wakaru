@@ -6,9 +6,9 @@ use swc_core::common::{
 };
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
-    Callee, Expr, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt,
-    Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
+    Callee, Expr, ExprOrSpread, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget,
+    Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -447,13 +447,16 @@ impl<'a> Webpack5ModulesContainer<'a> {
 
 /// Whether the modules-table binding is invoked the way the webpack require
 /// function invokes a factory: `modules[id](module, module.exports, require)`
-/// (webpack 5) or `modules[id].call(module.exports, module, ...)` (webpack 4
-/// runtimes some bundles keep). This is the defining relationship between the
-/// require function and the module table, so it distinguishes a real table
-/// from an ordinary array of functions regardless of how the require function
-/// itself is written (declaration, expression, or minified/inlined). It also
-/// admits zero-parameter factories, which webpack emits for side-effect-only
-/// modules whose (module, exports, require) parameters are all unused.
+/// (webpack 5) or `modules[id].call(module.exports, module, module.exports,
+/// require)` (webpack 4 runtimes some bundles keep).
+///
+/// The distinguishing invariant is not just "a computed member of the table is
+/// called" — an ordinary `handlers[i](event)` dispatcher does that too — but
+/// webpack's argument relationship: some argument is a binding `m` immediately
+/// followed by that binding's `.exports` (the module object and its exports).
+/// This admits zero-parameter factories (webpack still passes all three
+/// arguments even when the factory declares none) while rejecting dispatch
+/// tables, and holds regardless of how the require function itself is written.
 fn modules_table_invoked(stmts: &[Stmt], modules_sym: &Atom) -> bool {
     let mut finder = ModulesTableInvocationFinder {
         modules_sym,
@@ -474,6 +477,30 @@ fn is_modules_index(expr: &Expr, modules_sym: &Atom) -> bool {
     matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *modules_sym)
 }
 
+/// Whether the argument list contains webpack's `(module, module.exports)`
+/// relationship: an argument `m` (an identifier) immediately followed by
+/// `m.exports`. Present in both the webpack 5 direct call
+/// `factory(module, module.exports, require)` and the webpack 4
+/// `factory.call(module.exports, module, module.exports, require)` form.
+fn args_have_module_exports_pair(args: &[ExprOrSpread]) -> bool {
+    args.windows(2).any(|pair| {
+        let [first, second] = pair else {
+            return false;
+        };
+        if first.spread.is_some() || second.spread.is_some() {
+            return false;
+        }
+        let Expr::Ident(module) = strip_parens(&first.expr) else {
+            return false;
+        };
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(&second.expr) else {
+            return false;
+        };
+        matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "exports")
+            && matches!(strip_parens(obj), Expr::Ident(id) if id.sym == module.sym)
+    })
+}
+
 struct ModulesTableInvocationFinder<'a> {
     modules_sym: &'a Atom,
     found: bool,
@@ -482,13 +509,15 @@ struct ModulesTableInvocationFinder<'a> {
 impl Visit for ModulesTableInvocationFinder<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
+        if !args_have_module_exports_pair(&call.args) {
+            return;
+        }
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
         let callee = strip_parens(callee);
-        // `modules[id](module, module.exports, require)` — factory receives at
-        // least the module object even when it declares no parameters.
-        if is_modules_index(callee, self.modules_sym) && !call.args.is_empty() {
+        // `modules[id](module, module.exports, require)`
+        if is_modules_index(callee, self.modules_sym) {
             self.found = true;
             return;
         }
@@ -496,7 +525,6 @@ impl Visit for ModulesTableInvocationFinder<'_> {
         if let Expr::Member(MemberExpr { obj, prop, .. }) = callee {
             if matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "call")
                 && is_modules_index(strip_parens(obj), self.modules_sym)
-                && call.args.len() >= 2
             {
                 self.found = true;
             }
@@ -1137,24 +1165,38 @@ fn extract_webpack5_inline_startup(
         return None;
     }
 
-    // The anchor, when present, is always the *first* statement of the startup
-    // section (webpack emits it immediately after the runtime). Only inspect
-    // that statement — scanning deeper would mistake an ordinary entry local
-    // such as `const app = {}` for the anchor and discard the statements before
-    // it (e.g. a real `const dep = require(1)` import).
+    // The anchor, when present, is the *first* statement of the startup section
+    // (webpack emits it immediately after the runtime). Position and `{}` shape
+    // are not enough to treat it as the exports object: when a minifier has
+    // dropped the real anchor, an ordinary entry local such as `const app = {}`
+    // is the first statement instead, and renaming it to `exports` (plus
+    // dropping its declaration) corrupts the entry.
     let (body_stmts, exports_sym) = match empty_object_anchor(&entry_region[0]) {
         Some((binding, var_decl)) => {
-            let mut body_stmts: Vec<Stmt> = Vec::new();
+            // The region with the empty-object declarator removed.
+            let mut without_anchor: Vec<Stmt> = Vec::new();
             if var_decl.decls.len() > 1 {
                 let mut rest = var_decl.clone();
                 rest.decls.remove(0);
-                body_stmts.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(rest))));
+                without_anchor.push(Stmt::Decl(swc_core::ecma::ast::Decl::Var(Box::new(rest))));
             }
-            body_stmts.extend(entry_region[1..].iter().cloned());
-            (body_stmts, Some(binding))
+            without_anchor.extend(entry_region[1..].iter().cloned());
+
+            if binding_used_by_export_helper(entry_region, &require_sym, &binding) {
+                // Real exports anchor (`require.r(binding)` / `require.d(binding,
+                // ...)`): drop the declaration and rename the binding to
+                // `exports` so the export helpers are recovered.
+                (without_anchor, Some(binding))
+            } else if !stmts_reference_ident(&without_anchor, &binding) {
+                // A dead `__webpack_exports__ = {}` (app entries with no
+                // exports): drop the inert declaration, but do not rename.
+                (without_anchor, None)
+            } else {
+                // An ordinary entry local that happens to be `{}` first: keep
+                // the whole region untouched.
+                (entry_region.to_vec(), None)
+            }
         }
-        // No anchor (minified: the unused anchor is dropped): the whole region
-        // is the entry.
         None => (entry_region.to_vec(), None),
     };
 
@@ -1188,6 +1230,61 @@ fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
         return None;
     }
     Some((binding.id.sym.clone(), var_decl))
+}
+
+/// Whether `binding` is passed to a webpack export helper — `require.r(binding)`
+/// (esModule marker) or `require.d(binding, ...)` (define exports) — which is
+/// what identifies it as webpack's exports object rather than an ordinary
+/// empty-object local.
+fn binding_used_by_export_helper(stmts: &[Stmt], require_sym: &Atom, binding: &Atom) -> bool {
+    let mut finder = ExportHelperFinder {
+        require_sym,
+        binding,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+struct ExportHelperFinder<'a> {
+    require_sym: &'a Atom,
+    binding: &'a Atom,
+    found: bool,
+}
+
+impl Visit for ExportHelperFinder<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        call.visit_children_with(self);
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        // callee is `require.r` or `require.d`
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee) else {
+            return;
+        };
+        if !matches!(strip_parens(obj), Expr::Ident(id) if id.sym == *self.require_sym) {
+            return;
+        }
+        if !matches!(prop, MemberProp::Ident(ident) if matches!(ident.sym.as_ref(), "r" | "d")) {
+            return;
+        }
+        // first argument is the exports binding
+        let Some(first) = call.args.first() else {
+            return;
+        };
+        if first.spread.is_none()
+            && matches!(strip_parens(&first.expr), Expr::Ident(id) if id.sym == *self.binding)
+        {
+            self.found = true;
+        }
+    }
+}
+
+/// Whether `sym` is referenced anywhere in `stmts`.
+fn stmts_reference_ident(stmts: &[Stmt], sym: &Atom) -> bool {
+    let mut finder = SymUsageFinder { sym, found: false };
+    stmts.visit_with(&mut finder);
+    finder.found
 }
 
 /// Whether any statement calls the require binding, e.g. `r(1)`.

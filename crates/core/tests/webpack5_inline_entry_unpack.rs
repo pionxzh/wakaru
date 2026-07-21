@@ -157,6 +157,8 @@ fn webpack5_inline_startup_with_mangled_names_and_merged_decls() {
 
 #[test]
 fn webpack5_inline_startup_rewrites_exports_binding() {
+    // A real exports anchor is populated through webpack's export helpers
+    // (`require.r` / `require.d`), which is what marks it as the exports object.
     let source = r#"
 (() => {
     var __webpack_modules__ = ({
@@ -175,8 +177,10 @@ fn webpack5_inline_startup_rewrites_exports_binding() {
         return module.exports;
     }
     var __webpack_exports__ = {};
+    __webpack_require__.r(__webpack_exports__);
+    __webpack_require__.d(__webpack_exports__, { doubled: () => doubled });
     var dep = __webpack_require__(3);
-    __webpack_exports__.doubled = dep.value * 2;
+    var doubled = dep.value * 2;
 })();
 "#;
 
@@ -186,6 +190,10 @@ fn webpack5_inline_startup_rewrites_exports_binding() {
     assert!(
         !entry.contains("__webpack_exports__"),
         "the exports binding should be normalized, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("./module-3.js"),
+        "the import should be recovered, got:\n{entry}"
     );
 }
 

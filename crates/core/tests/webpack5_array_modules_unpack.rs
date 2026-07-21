@@ -301,6 +301,33 @@ fn webpack5_array_table_with_only_zero_param_factories() {
 }
 
 #[test]
+fn indexed_callback_dispatcher_is_not_mistaken_for_webpack5() {
+    // An ordinary dispatch table calls `handlers[i](event)` — a computed member
+    // call with an argument, but without webpack's (module, module.exports)
+    // argument relationship. It must not be destructively unpacked.
+    let source = r#"
+(() => {
+    var handlers = [
+        (event) => { console.log(event); },
+        (event) => { return event + 1; }
+    ];
+    function dispatch(i, event) {
+        return handlers[i](event);
+    }
+    console.log(dispatch(0, "click"));
+})();
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "indexed dispatcher must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_callback_array_is_not_mistaken_for_webpack5() {
     // A plain array of zero-parameter callbacks in an IIFE must not trigger
     // webpack5 detection: real module factories receive (module, exports,
