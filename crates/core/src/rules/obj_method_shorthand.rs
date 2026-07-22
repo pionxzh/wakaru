@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, BinaryOp, Expr, Lit, MethodProp, Module, ObjectLit, Prop, PropName,
+    AssignExpr, AssignOp, BinaryOp, Expr, MethodProp, Module, ObjectLit, Prop, PropName,
     PropOrSpread, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::constructor_sensitivity::{
-    assign_target_value_key, collect_constructor_sensitive_values, pat_value_key, ValueKey,
+    assign_target_value_key, collect_constructor_sensitive_values, pat_value_key, static_prop_name,
+    ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
 
@@ -119,18 +119,6 @@ fn visit_mut_object_value(
         visit_mut_value_expr(&mut key_value.value, &value_key, converter);
         let constructor_sensitive = converter.constructor_sensitive_values.contains(&value_key);
         try_convert_prop(prop, constructor_sensitive);
-    }
-}
-
-fn static_prop_name(name: &PropName) -> Option<Atom> {
-    match name {
-        PropName::Ident(ident) => Some(ident.sym.clone()),
-        PropName::Str(value) => value.value.as_str().map(Atom::from),
-        PropName::Computed(computed) => match computed.expr.as_ref() {
-            Expr::Lit(Lit::Str(value)) => value.value.as_str().map(Atom::from),
-            _ => None,
-        },
-        PropName::Num(_) | PropName::BigInt(_) => None,
     }
 }
 

@@ -285,8 +285,11 @@ rationale, or level gating appear.
   shapes the converters protect syntactically — parentheses, sequence results,
   conditional/logical branches, assignment results, and `.bind` targets — so
   `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
-  underlying bindings. ObjMethodShorthand is always enabled; its other
-  eligibility checks remain unchanged.
+  underlying bindings. Aliases are also recorded for logical assignments
+  (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
+  including renames, nested patterns, defaults, and rest bindings).
+  ObjMethodShorthand is always enabled; its other eligibility checks remain
+  unchanged.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,

@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Class, Expr, Ident,
-    Lit, MemberProp, Module, NewExpr, Pat, SimpleAssignTarget, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, AssignTargetPat, BinExpr, BinaryOp, CallExpr, Callee,
+    Class, Expr, Ident, Lit, MemberProp, Module, NewExpr, ObjectPat, ObjectPatProp, Pat, PropName,
+    SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -38,6 +39,18 @@ pub(crate) fn static_member_name(prop: &MemberProp) -> Option<Atom> {
             _ => None,
         },
         MemberProp::PrivateName(_) => None,
+    }
+}
+
+pub(crate) fn static_prop_name(name: &PropName) -> Option<Atom> {
+    match name {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(value) => value.value.as_str().map(Atom::from),
+        PropName::Computed(computed) => match computed.expr.as_ref() {
+            Expr::Lit(Lit::Str(value)) => value.value.as_str().map(Atom::from),
+            _ => None,
+        },
+        PropName::Num(_) | PropName::BigInt(_) => None,
     }
 }
 
@@ -120,7 +133,15 @@ fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
             collect_value_sources(&binary.left, sources);
             collect_value_sources(&binary.right, sources);
         }
-        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+        Expr::Assign(assign)
+            if matches!(
+                assign.op,
+                AssignOp::Assign
+                    | AssignOp::OrAssign
+                    | AssignOp::AndAssign
+                    | AssignOp::NullishAssign
+            ) =>
+        {
             if let Some(target) = assign_target_value_key(&assign.left) {
                 sources.push(target);
             }
@@ -170,21 +191,96 @@ impl ConstructorSensitiveUseCollector {
             self.aliases.push((target.clone(), source));
         }
     }
+
+    /// Record aliases for a binding pattern: `const { C } = ns` makes `C` an
+    /// alias of `ns.C`, recursing through renames, nested object patterns,
+    /// defaults, and rest bindings (a rest object exposes the remaining
+    /// source properties, so it conservatively aliases the source itself).
+    fn record_pat_aliases(&mut self, pat: &Pat, sources: &[ValueKey]) {
+        match pat {
+            Pat::Ident(binding) => {
+                for source in sources {
+                    self.aliases
+                        .push((ValueKey::binding(&binding.id), source.clone()));
+                }
+            }
+            Pat::Expr(expr) => {
+                if let Some(target) = expr_value_key(expr) {
+                    for source in sources {
+                        self.aliases.push((target.clone(), source.clone()));
+                    }
+                }
+            }
+            Pat::Assign(assign) => {
+                self.record_pat_aliases(&assign.left, sources);
+                let default_sources = value_sources(&assign.right);
+                self.record_pat_aliases(&assign.left, &default_sources);
+            }
+            Pat::Object(object) => self.record_object_pat_aliases(object, sources),
+            _ => {}
+        }
+    }
+
+    fn record_object_pat_aliases(&mut self, object: &ObjectPat, sources: &[ValueKey]) {
+        for prop in &object.props {
+            match prop {
+                ObjectPatProp::Assign(assign) => {
+                    let target = ValueKey::binding(&assign.key.id);
+                    for source in sources {
+                        self.aliases.push((
+                            target.clone(),
+                            source.with_property(assign.key.id.sym.clone()),
+                        ));
+                    }
+                    if let Some(default) = &assign.value {
+                        self.record_aliases(target, default);
+                    }
+                }
+                ObjectPatProp::KeyValue(key_value) => {
+                    let Some(name) = static_prop_name(&key_value.key) else {
+                        continue;
+                    };
+                    let extended = sources
+                        .iter()
+                        .map(|source| source.with_property(name.clone()))
+                        .collect::<Vec<_>>();
+                    self.record_pat_aliases(&key_value.value, &extended);
+                }
+                ObjectPatProp::Rest(rest) => {
+                    self.record_pat_aliases(&rest.arg, sources);
+                }
+            }
+        }
+    }
 }
 
 impl Visit for ConstructorSensitiveUseCollector {
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-        if let (Some(target), Some(init)) = (pat_value_key(&decl.name), decl.init.as_deref()) {
-            self.record_aliases(target, init);
+        if let Some(init) = decl.init.as_deref() {
+            let sources = value_sources(init);
+            self.record_pat_aliases(&decl.name, &sources);
         }
         decl.visit_children_with(self);
     }
 
     fn visit_assign_expr(&mut self, expr: &AssignExpr) {
-        if expr.op == AssignOp::Assign {
-            if let Some(target) = assign_target_value_key(&expr.left) {
-                self.record_aliases(target, &expr.right);
+        match expr.op {
+            AssignOp::Assign => {
+                if let Some(target) = assign_target_value_key(&expr.left) {
+                    self.record_aliases(target, &expr.right);
+                } else if let AssignTarget::Pat(AssignTargetPat::Object(object)) = &expr.left {
+                    let sources = value_sources(&expr.right);
+                    self.record_object_pat_aliases(object, &sources);
+                }
             }
+            // A logical assignment may leave the right-hand value in the
+            // target, so it aliases the same sources a plain `=` would.
+            AssignOp::OrAssign | AssignOp::AndAssign | AssignOp::NullishAssign => {
+                if let Some(target) = assign_target_value_key(&expr.left) {
+                    self.record_aliases(target, &expr.right);
+                }
+            }
+            _ => {}
         }
         expr.visit_children_with(self);
     }

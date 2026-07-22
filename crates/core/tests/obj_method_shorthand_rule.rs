@@ -113,6 +113,21 @@ new (condition ? namespace.Constructor : fallback)(input);
 }
 
 #[test]
+fn constructible_object_property_stays_function_through_destructured_alias() {
+    let input = r#"
+const namespace = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+};
+const { Constructor } = namespace;
+new Constructor(input);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn duplicate_params_stay_key_value_function() {
     // Method parameter lists require unique names (UniqueFormalParameters);
     // a sloppy-mode function expression may carry duplicates.

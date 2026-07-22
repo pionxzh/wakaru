@@ -447,6 +447,78 @@ new chosen();
 }
 
 #[test]
+fn constructor_use_propagates_through_logical_assignment_alias() {
+    let input = r#"
+const ctor = function() {};
+let cached;
+cached ||= ctor;
+new cached();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_nullish_assignment_alias() {
+    let input = r#"
+const ctor = function() {};
+let cached;
+cached ??= ctor;
+new cached();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_destructured_alias() {
+    let input = r#"
+const namespace = {};
+namespace.Constructor = function() {};
+const { Constructor } = namespace;
+new Constructor();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_renamed_nested_destructured_alias() {
+    let input = r#"
+const wrapper = {};
+wrapper.inner = {};
+wrapper.inner.Constructor = function() {};
+const { inner: { Constructor: Local } } = wrapper;
+new Local();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_destructured_default_alias() {
+    let input = r#"
+const fallbackCtor = function() {};
+const { Constructor = fallbackCtor } = getNamespace();
+new Constructor();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_rest_destructured_alias() {
+    let input = r#"
+const namespace = {};
+namespace.Constructor = function() {};
+const { ignored, ...rest } = namespace;
+new rest.Constructor();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn multi_params_arrow() {
     let input = r#"
 const add = function(a, b) { return a + b; };
