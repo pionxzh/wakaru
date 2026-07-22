@@ -85,6 +85,73 @@ pub(crate) fn is_construct_call(call: &CallExpr) -> bool {
     static_member_name(&member.prop).is_some_and(|name| name == "construct")
 }
 
+pub(crate) fn is_bind_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    static_member_name(&member.prop).is_some_and(|name| name == "bind")
+}
+
+/// Collect the value keys an expression can evaluate to (or, for `.bind`,
+/// derive its constructibility from), walking the same wrapper shapes the
+/// consumers protect syntactically: parentheses, sequence results,
+/// conditional/logical branches, assignment results, and `.bind` targets.
+fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
+    match expr {
+        Expr::Paren(paren) => collect_value_sources(&paren.expr, sources),
+        Expr::Seq(sequence) => {
+            if let Some(last) = sequence.exprs.last() {
+                collect_value_sources(last, sources);
+            }
+        }
+        Expr::Cond(conditional) => {
+            collect_value_sources(&conditional.cons, sources);
+            collect_value_sources(&conditional.alt, sources);
+        }
+        Expr::Bin(binary)
+            if matches!(
+                binary.op,
+                BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
+            ) =>
+        {
+            collect_value_sources(&binary.left, sources);
+            collect_value_sources(&binary.right, sources);
+        }
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            if let Some(target) = assign_target_value_key(&assign.left) {
+                sources.push(target);
+            }
+            collect_value_sources(&assign.right, sources);
+        }
+        // A bound function is constructible iff its target is: `new B()` for
+        // `B = f.bind(...)` constructs `f`, so `f` must stay an ordinary
+        // function whenever the bound value is constructor-sensitive.
+        Expr::Call(call) if is_bind_call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            let Expr::Member(member) = callee.as_ref() else {
+                return;
+            };
+            collect_value_sources(&member.obj, sources);
+        }
+        _ => {
+            if let Some(key) = expr_value_key(expr) {
+                sources.push(key);
+            }
+        }
+    }
+}
+
+fn value_sources(expr: &Expr) -> Vec<ValueKey> {
+    let mut sources = Vec::new();
+    collect_value_sources(expr, &mut sources);
+    sources
+}
+
 #[derive(Default)]
 struct ConstructorSensitiveUseCollector {
     sensitive: HashSet<ValueKey>,
@@ -93,30 +160,30 @@ struct ConstructorSensitiveUseCollector {
 
 impl ConstructorSensitiveUseCollector {
     fn mark_expr(&mut self, expr: &Expr) {
-        if let Some(key) = expr_value_key(expr) {
+        for key in value_sources(expr) {
             self.sensitive.insert(key);
+        }
+    }
+
+    fn record_aliases(&mut self, target: ValueKey, source: &Expr) {
+        for source in value_sources(source) {
+            self.aliases.push((target.clone(), source));
         }
     }
 }
 
 impl Visit for ConstructorSensitiveUseCollector {
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-        if let (Some(target), Some(source)) = (
-            pat_value_key(&decl.name),
-            decl.init.as_deref().and_then(expr_value_key),
-        ) {
-            self.aliases.push((target, source));
+        if let (Some(target), Some(init)) = (pat_value_key(&decl.name), decl.init.as_deref()) {
+            self.record_aliases(target, init);
         }
         decl.visit_children_with(self);
     }
 
     fn visit_assign_expr(&mut self, expr: &AssignExpr) {
         if expr.op == AssignOp::Assign {
-            if let (Some(target), Some(source)) = (
-                assign_target_value_key(&expr.left),
-                expr_value_key(&expr.right),
-            ) {
-                self.aliases.push((target, source));
+            if let Some(target) = assign_target_value_key(&expr.left) {
+                self.record_aliases(target, &expr.right);
             }
         }
         expr.visit_children_with(self);

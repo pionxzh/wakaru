@@ -420,6 +420,22 @@ fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<Class
             continue;
         }
 
+        // An unconsumed `Foo.prototype = <expr>` anywhere in the scope
+        // (including inside a closure that may run at any time) replaces the
+        // whole prototype object. Recovering a class would bake the collected
+        // methods into the class prototype instead of the replacement object,
+        // and the leftover assignment would target a class's non-writable
+        // `prototype` (a strict-mode TypeError). This hazard is independent
+        // of the constructor's declaration shape.
+        let has_unconsumed_prototype_replacement = (0..len).any(|i| {
+            i != *fn_idx
+                && !candidate.consumed_indices.contains(&i)
+                && get_stmt(i).is_some_and(|stmt| contains_prototype_replacement(stmt, binding))
+        });
+        if has_unconsumed_prototype_replacement {
+            continue;
+        }
+
         // Only produce a candidate if we found at least one method
         if !candidate.members.is_empty() {
             globally_consumed.extend(&candidate.consumed_indices);
@@ -434,6 +450,37 @@ fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<Class
 fn is_call_referencing_binding(stmt: &Stmt, binding: &BindingKey) -> bool {
     matches!(stmt, Stmt::Expr(expr_stmt) if matches!(expr_stmt.expr.as_ref(), Expr::Call(_)))
         && references_binding(stmt, binding, true)
+}
+
+/// Check if a statement contains an assignment that replaces the whole
+/// prototype object (`Foo.prototype = <expr>`), in any position — top-level,
+/// chained, or inside a nested function that may run at any time.
+fn contains_prototype_replacement(stmt: &Stmt, ctor_binding: &BindingKey) -> bool {
+    struct ReplacementFinder<'a> {
+        binding: &'a BindingKey,
+        found: bool,
+    }
+    impl Visit for ReplacementFinder<'_> {
+        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left {
+                if let Expr::Ident(obj) = lhs.obj.as_ref() {
+                    if binding_key(obj) == *self.binding
+                        && matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype")
+                    {
+                        self.found = true;
+                    }
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut finder = ReplacementFinder {
+        binding: ctor_binding,
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
 }
 
 /// Check if a statement references a binding. Variable-function candidates
@@ -510,9 +557,12 @@ fn is_safe_to_relocate(stmt: &Stmt, binding: &BindingKey) -> bool {
         return matches!(assign.right.as_ref(), Expr::Ident(id) if binding_key(id) == *binding);
     }
 
-    // Pattern 3: Foo.<ident> = <expr> (static property/method assignment)
+    // Pattern 3: Foo.<ident> = <expr> (static property/method assignment).
+    // `Foo.prototype = <expr>` is excluded: relocating a prototype
+    // replacement after the class would strand the recovered methods on the
+    // class prototype (see contains_prototype_replacement).
     if binding_key(obj) == *binding {
-        return true;
+        return prop.sym.as_ref() != "prototype";
     }
 
     false

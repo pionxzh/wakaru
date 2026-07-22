@@ -381,6 +381,72 @@ new first.Constructor();
 }
 
 #[test]
+fn conditional_new_callee_keeps_function_bindings() {
+    let input = r#"
+const first = function() {};
+const second = function() {};
+new (condition ? first : second)();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn logical_new_callee_keeps_function_bindings() {
+    let input = r#"
+const primary = function() {};
+const fallback = function() {};
+new (primary || fallback)();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn sequence_new_callee_keeps_function_binding() {
+    let input = r#"
+const ctor = function() {};
+new (0, ctor)();
+"#;
+    let output = apply(input);
+    assert!(output.contains("const ctor = function() {}"), "{output}");
+}
+
+#[test]
+fn assignment_new_callee_keeps_function_binding() {
+    let input = r#"
+const makeCtor = function() {};
+let cache;
+new (cache = makeCtor)();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_bind_alias() {
+    let input = r#"
+const target = function() {};
+const bound = target.bind(null);
+new bound();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_use_propagates_through_conditional_alias() {
+    let input = r#"
+const first = function() {};
+const second = function() {};
+const chosen = condition ? first : second;
+new chosen();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn multi_params_arrow() {
     let input = r#"
 const add = function(a, b) { return a + b; };

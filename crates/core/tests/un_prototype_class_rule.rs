@@ -383,6 +383,74 @@ Child.prototype.run = function() { return this.base(); };
 }
 
 #[test]
+fn function_expression_class_preserves_interleaved_prototype_replacement() {
+    let input = r#"
+const Child = function() { this.x = 1; };
+Child.prototype = makeProto();
+Child.prototype.run = function() { return this.x; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn function_declaration_preserves_interleaved_prototype_replacement() {
+    let input = r#"
+function Child() { this.x = 1; }
+Child.prototype = makeProto();
+Child.prototype.run = function() { return this.x; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn function_declaration_preserves_trailing_prototype_replacement() {
+    // A replacement after the collected methods discards them from the
+    // original object graph; a recovered class would keep them instead.
+    let input = r#"
+function Child() { this.x = 1; }
+Child.prototype.run = function() { return this.x; };
+Child.prototype = makeProto();
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn function_declaration_preserves_pre_reference_prototype_replacement() {
+    let input = r#"
+Child.prototype = makeProto();
+function Child() { this.x = 1; }
+Child.prototype.run = function() { return this.x; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn function_declaration_preserves_prototype_replacement_inside_later_closure() {
+    let input = r#"
+function Child() { this.x = 1; }
+Child.prototype.run = function() { return this.x; };
+registerResetHook(function() {
+    Child.prototype = makeProto();
+});
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn function_declaration_preserves_prototype_replacement_inside_earlier_closure() {
+    // Hoisted function declarations tolerate most pre-references, but a
+    // closure that replaces the prototype can run after the methods attach.
+    let input = r#"
+registerResetHook(function() {
+    Child.prototype = makeProto();
+});
+function Child() { this.x = 1; }
+Child.prototype.run = function() { return this.x; };
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn function_declaration_keeps_recovery_across_define_property_call() {
     let input = r#"
 function RecordType() {}

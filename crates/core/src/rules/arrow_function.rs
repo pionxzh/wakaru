@@ -10,7 +10,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::constructor_sensitivity::{
-    assign_target_value_key, collect_constructor_sensitive_values, is_construct_call,
+    assign_target_value_key, collect_constructor_sensitive_values, is_bind_call, is_construct_call,
     pat_value_key, static_member_name, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
@@ -206,16 +206,6 @@ fn visit_constructor_value_without_converting(
         }
         _ => expr.visit_mut_with(converter),
     }
-}
-
-fn is_bind_call(call: &CallExpr) -> bool {
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    let Expr::Member(member) = callee.as_ref() else {
-        return false;
-    };
-    static_member_name(&member.prop).is_some_and(|name| name == "bind")
 }
 
 fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {

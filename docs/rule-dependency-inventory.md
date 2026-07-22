@@ -281,8 +281,12 @@ rationale, or level gating appear.
   propagates requirements backward through exact static-member aliases. Plain
   binding aliases also carry member suffixes (`alias = namespace; new alias.C()`
   protects `namespace.C`) without recursively extending cyclic member paths.
-  ObjMethodShorthand is always enabled; its other eligibility checks remain
-  unchanged.
+  Both the use-site marking and the alias graph walk the same value wrapper
+  shapes the converters protect syntactically — parentheses, sequence results,
+  conditional/logical branches, assignment results, and `.bind` targets — so
+  `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
+  underlying bindings. ObjMethodShorthand is always enabled; its other
+  eligibility checks remain unchanged.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
   even though it checks known blockers (`this`, `arguments`, named function
   expressions, `new.target`, and ordinary-function values required by `new`,
@@ -308,10 +312,14 @@ rationale, or level gating appear.
   declarators, or named function expressions are preserved because converting
   them would change binding or recursion semantics. Function-variable candidates
   also stay in prototype form when an unrecognized interstitial call involving
-  the constructor may replace its prototype; this safety gate is specific to the
+  the constructor may replace its prototype; this call gate is specific to the
   newly supported variable shape and does not change the existing
-  function-declaration recovery policy. ObjMethodShorthand remains an upstream
-  normalizer for method bodies.
+  function-declaration recovery policy. Independently of constructor kind, an
+  unconsumed whole-prototype write (`Foo.prototype = <expr>`) anywhere in the
+  scope — before the constructor, between methods, trailing, or inside a nested
+  function — blocks recovery: a class would bake the collected methods into its
+  own non-writable `prototype` instead of the replacement object.
+  ObjMethodShorthand remains an upstream normalizer for method bodies.
 
 ### Cleanup and renaming
 
