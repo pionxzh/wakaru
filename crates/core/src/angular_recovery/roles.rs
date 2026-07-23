@@ -336,22 +336,41 @@ pub(super) fn symbol_identity(
         }
         Expr::Ident(ident) => Some(SymbolIdentity::LocalBinding(binding_key(ident))),
         Expr::Member(member) => {
-            let Expr::Ident(object) = member.obj.as_ref() else {
-                return None;
-            };
             let property = member_prop_name(&member.prop)?;
-            if object.ctxt == unresolved_ctxt {
+            if let Expr::Ident(object) = member.obj.as_ref() {
+                if object.ctxt != unresolved_ctxt {
+                    return Some(SymbolIdentity::LocalMember {
+                        object: binding_key(object),
+                        property,
+                    });
+                }
                 Some(SymbolIdentity::GlobalMember {
                     object: object.sym.clone(),
                     property,
                 })
             } else {
-                Some(SymbolIdentity::LocalMember {
-                    object: binding_key(object),
+                Some(SymbolIdentity::GlobalMember {
+                    object: global_object_path(member.obj.as_ref(), unresolved_ctxt)?,
                     property,
                 })
             }
         }
+        _ => None,
+    }
+}
+
+fn global_object_path(expr: &Expr, unresolved_ctxt: SyntaxContext) -> Option<Atom> {
+    match expr {
+        Expr::This(_) => Some(Atom::from("this")),
+        Expr::Ident(identifier) if identifier.ctxt == unresolved_ctxt => {
+            Some(identifier.sym.clone())
+        }
+        Expr::Member(member) => {
+            let object = global_object_path(member.obj.as_ref(), unresolved_ctxt)?;
+            let property = member_prop_name(&member.prop)?;
+            Some(Atom::from(format!("{object}.{property}")))
+        }
+        Expr::Paren(paren) => global_object_path(paren.expr.as_ref(), unresolved_ctxt),
         _ => None,
     }
 }
