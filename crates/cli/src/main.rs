@@ -16,6 +16,7 @@ use wakaru_core::{
     DecompileOptions, RewriteLevel, RuleTraceOptions, VueSfcRecoveryOptions,
 };
 
+mod angular;
 mod bun_extract;
 mod color;
 mod discovery;
@@ -24,6 +25,14 @@ mod json_output;
 mod output;
 mod vue;
 
+#[cfg(test)]
+use angular::AngularArtifactSummary;
+use angular::{
+    angular_artifact_summary, ensure_angular_sidecar_does_not_overwrite_input,
+    format_angular_artifact_summary, is_angular_output_path, json_module_for_single_file_sidecar,
+    single_file_angular_metadata, single_file_angular_sidecar_path, write_angular_sidecars,
+    SingleFileArtifactSidecar,
+};
 use color::Styled;
 use discovery::{collect_directory_js_inputs, collect_validate_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
@@ -137,8 +146,12 @@ struct Cli {
     diagnostics: bool,
 
     /// Recover Vue 3 render functions into best-effort .vue single-file components.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "angular")]
     vue_sfc: bool,
+
+    /// Recover Angular Ivy definitions into inline-template .component.ts artifacts.
+    #[arg(long, alias = "angular-ivy", conflicts_with = "vue_sfc")]
+    angular: bool,
 
     /// Run a final formatter pass on decompiled output.
     #[arg(long)]
@@ -146,7 +159,7 @@ struct Cli {
 
     /// Emit a source map (.map) alongside each decompiled JavaScript output
     /// file, mapping the output back to the input. Requires -o/--output.
-    /// Vue SFC sidecars are not mapped.
+    /// Recovered framework sidecars are not mapped.
     #[arg(long = "emit-source-map")]
     emit_source_map: bool,
 
@@ -297,6 +310,9 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.vue_sfc && cli.raw {
         bail!("--vue-sfc cannot be combined with --raw");
     }
+    if cli.angular && cli.raw {
+        bail!("--angular cannot be combined with --raw");
+    }
     if cli.unpack.is_some() && cli.sourcemap.is_some() {
         bail!(
             "--source-map is not supported with --unpack because extracted module coordinates differ from bundle coordinates; --emit-source-map remains available for output maps"
@@ -337,6 +353,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
         cli.level.into(),
         cli.diagnostics,
         cli.emit_source_map,
+        cli.angular,
     )?;
     let scan_stats = execution.scan_stats;
     let single_input_name = execution.single_input_name;
@@ -362,12 +379,18 @@ fn run_unpack(cli: Cli) -> Result<()> {
         .collect();
 
     let provenance = output.provenance;
+    let angular_source_modules = output
+        .artifacts
+        .iter()
+        .filter_map(|artifact| artifact.source_filename.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut recovered_angular_artifacts = output.artifacts;
     let module_sources = cli
         .vue_sfc
         .then(|| output.modules.iter().cloned().collect::<HashMap<_, _>>());
     let modules = output.modules;
     let total_modules = modules.len();
-    let artifacts: Vec<CliOutputArtifact> = modules
+    let mut artifacts: Vec<CliOutputArtifact> = modules
         .into_par_iter()
         .flat_map(|(filename, code)| {
             let mut artifacts = Vec::new();
@@ -400,10 +423,14 @@ fn run_unpack(cli: Cli) -> Result<()> {
                 kind: JsonModuleKind::JavaScript,
                 status: if cli.vue_sfc {
                     vue_sfc_js_artifact_status(recovered_vue_sfc, likely_vue_sfc)
+                } else if cli.angular && angular_source_modules.contains(&filename) {
+                    JsonModuleStatus::AngularComponentSourceJs
                 } else {
                     JsonModuleStatus::Decompiled
                 },
-                source_filename: (cli.vue_sfc && recovered_vue_sfc).then(|| filename.clone()),
+                source_filename: ((cli.vue_sfc && recovered_vue_sfc)
+                    || (cli.angular && angular_source_modules.contains(&filename)))
+                .then(|| filename.clone()),
                 source_map_filename: Some(filename.clone()),
             });
 
@@ -425,6 +452,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
             artifacts
         })
         .collect();
+    artifacts.append(&mut recovered_angular_artifacts);
 
     let resolved: Vec<(PathBuf, &str)> = {
         let span = tracing::info_span!("cli_resolve_output_paths");
@@ -504,8 +532,8 @@ fn run_unpack(cli: Cli) -> Result<()> {
     } else if io::stderr().is_terminal() {
         if let Some(stats) = scan_stats {
             eprintln!(
-                "scanned: {} file(s), detected: {} bundle/chunk file(s), skipped: {} file(s)",
-                stats.scanned, stats.detected, stats.skipped
+                "scanned: {} file(s), detected: {} bundle/chunk file(s), processed: {} plain file(s), skipped: {} file(s)",
+                stats.scanned, stats.detected, stats.processed, stats.skipped
             );
         }
         if !output.detected_formats.is_empty() {
@@ -514,6 +542,9 @@ fn run_unpack(cli: Cli) -> Result<()> {
         }
         if let Some(summary) = vue_sfc_artifact_summary(&artifacts) {
             eprintln!("{}", format_vue_sfc_artifact_summary(summary));
+        }
+        if let Some(summary) = angular_artifact_summary(&artifacts) {
+            eprintln!("{}", format_angular_artifact_summary(summary));
         }
         let fail_info = if error_modules.is_empty() {
             String::new()
@@ -575,6 +606,14 @@ fn run_single(cli: Cli) -> Result<()> {
         && output_path
             .as_ref()
             .is_some_and(|path| !is_vue_output_path(path));
+    let angular_file_output = cli.angular
+        && output_path
+            .as_ref()
+            .is_some_and(|path| is_angular_output_path(path));
+    let js_primary_angular_output = cli.angular
+        && output_path
+            .as_ref()
+            .is_some_and(|path| !is_angular_output_path(path));
     let start = Instant::now();
     let vue_unpack_source = cli.vue_sfc.then(|| input.clone());
     let mut source = wakaru::Source::new(filename, input);
@@ -588,6 +627,7 @@ fn run_single(cli: Cli) -> Result<()> {
         source,
         wakaru::DecompileOptions::default()
             .with_rewrite(rewrite)
+            .with_recovery(wakaru::RecoveryOptions::default().with_angular_components(cli.angular))
             .with_diagnostics(cli.diagnostics)
             .with_output_source_map(cli.emit_source_map),
     )?;
@@ -628,6 +668,47 @@ fn run_single(cli: Cli) -> Result<()> {
             input_path_for_collision.as_deref(),
         )?;
     }
+
+    let mut recovered_angular_artifacts = std::mem::take(&mut output.artifacts);
+    if cli.angular && !js_primary_angular_output && recovered_angular_artifacts.len() > 1 {
+        bail!(
+            "--angular recovered {} components; choose a JavaScript output path for sidecars or use --unpack with an output directory",
+            recovered_angular_artifacts.len()
+        );
+    }
+    let selected_angular_artifact = if cli.angular && !js_primary_angular_output {
+        recovered_angular_artifacts.pop()
+    } else {
+        None
+    };
+    if angular_file_output && selected_angular_artifact.is_none() {
+        bail!("--angular did not recover an Angular component; cannot write component-only output");
+    }
+    if angular_file_output || (cli.angular && output_path.is_none()) {
+        if let Some(artifact) = &selected_angular_artifact {
+            output.code = artifact.code.clone();
+            output.source_map = None;
+        }
+    }
+    let angular_sidecars = output_path
+        .as_ref()
+        .filter(|_| js_primary_angular_output)
+        .map(|path| {
+            recovered_angular_artifacts
+                .into_iter()
+                .map(|artifact| SingleFileArtifactSidecar {
+                    path: single_file_angular_sidecar_path(&artifact.filename, path),
+                    artifact,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for sidecar in &angular_sidecars {
+        ensure_angular_sidecar_does_not_overwrite_input(
+            &sidecar.path,
+            input_path_for_collision.as_deref(),
+        )?;
+    }
     let elapsed = start.elapsed();
 
     if !cli.json {
@@ -645,8 +726,15 @@ fn run_single(cli: Cli) -> Result<()> {
         &output_filename,
         vue_sidecar_path.as_deref(),
     );
-    let formatter =
-        selected_formatter(cli.formatter && (!recovered_vue_sfc || js_primary_vue_output));
+    let angular_metadata = single_file_angular_metadata(
+        cli.angular,
+        selected_angular_artifact.as_ref(),
+        &angular_sidecars,
+        &output_filename,
+    );
+    let primary_is_framework_artifact =
+        (recovered_vue_sfc && !js_primary_vue_output) || selected_angular_artifact.is_some();
+    let formatter = selected_formatter(cli.formatter && !primary_is_framework_artifact);
     let code = format_cli_output(output.code, &output_filename, formatter);
 
     if cli.json {
@@ -659,6 +747,9 @@ fn run_single(cli: Cli) -> Result<()> {
             ensure_output_file(path, cli.force)?;
             if let Some(ref sidecar_path) = vue_sidecar_path {
                 ensure_output_file(sidecar_path, cli.force)?;
+            }
+            for sidecar in &angular_sidecars {
+                ensure_output_file(&sidecar.path, cli.force)?;
             }
             fs::write(path, &code)
                 .with_context(|| format!("failed to write {}", path.display()))?;
@@ -673,18 +764,39 @@ fn run_single(cli: Cli) -> Result<()> {
                 fs::write(sidecar_path, sidecar_code)
                     .with_context(|| format!("failed to write {}", sidecar_path.display()))?;
             }
+            write_angular_sidecars(&angular_sidecars)?;
         }
+        let metadata = vue_metadata
+            .as_ref()
+            .map(|metadata| {
+                (
+                    metadata.kind,
+                    metadata.status,
+                    metadata.source_filename.clone(),
+                )
+            })
+            .or_else(|| {
+                angular_metadata.as_ref().map(|metadata| {
+                    (
+                        metadata.kind,
+                        metadata.status,
+                        metadata.source_filename.clone(),
+                    )
+                })
+            });
         let json = JsonDecompileOutput {
             code: json_code,
             source_map: output.source_map.clone(),
-            kind: vue_metadata.as_ref().map(|metadata| metadata.kind),
-            status: vue_metadata.as_ref().map(|metadata| metadata.status),
-            source_filename: vue_metadata
-                .as_ref()
-                .and_then(|metadata| metadata.source_filename.clone()),
+            kind: metadata.as_ref().map(|metadata| metadata.0),
+            status: metadata.as_ref().map(|metadata| metadata.1),
+            source_filename: metadata.and_then(|metadata| metadata.2),
             vue_sidecar_filename: vue_metadata
                 .as_ref()
                 .and_then(|metadata| metadata.vue_sidecar_filename.clone()),
+            artifacts: angular_sidecars
+                .iter()
+                .map(json_module_for_single_file_sidecar)
+                .collect(),
             warnings: output.warnings.iter().map(CliWarning::to_json).collect(),
             elapsed_ms: elapsed.as_millis() as u64,
         };
@@ -699,6 +811,9 @@ fn run_single(cli: Cli) -> Result<()> {
                 if let Some(ref sidecar_path) = vue_sidecar_path {
                     ensure_output_file(sidecar_path, cli.force)?;
                 }
+                for sidecar in &angular_sidecars {
+                    ensure_output_file(&sidecar.path, cli.force)?;
+                }
                 fs::write(&path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
                 if let Some(ref map_json) = output.source_map {
@@ -712,6 +827,7 @@ fn run_single(cli: Cli) -> Result<()> {
                     fs::write(sidecar_path, sidecar_code)
                         .with_context(|| format!("failed to write {}", sidecar_path.display()))?;
                 }
+                write_angular_sidecars(&angular_sidecars)?;
             }
             None => {
                 print!("{code}");
@@ -1018,6 +1134,7 @@ struct PublicUnpackExecution {
 struct CliDecompileOutput {
     code: String,
     source_map: Option<String>,
+    artifacts: Vec<CliOutputArtifact>,
     warnings: Vec<CliWarning>,
 }
 
@@ -1098,6 +1215,7 @@ struct CliModuleProvenance {
 
 struct CliUnpackOutput {
     modules: Vec<(String, String)>,
+    artifacts: Vec<CliOutputArtifact>,
     provenance: Vec<CliModuleProvenance>,
     warnings: Vec<CliWarning>,
     detected_formats: Vec<CliBundleFormat>,
@@ -1107,9 +1225,15 @@ struct CliUnpackOutput {
 
 fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompileOutput {
     let filename = output.module.filename.clone();
+    let module_filenames = vec![filename.clone()];
     CliDecompileOutput {
         code: output.module.code,
         source_map: output.module.source_map,
+        artifacts: output
+            .artifacts
+            .into_iter()
+            .filter_map(|artifact| cli_artifact_from_public(artifact, &module_filenames))
+            .collect(),
         warnings: output
             .diagnostics
             .into_iter()
@@ -1127,6 +1251,7 @@ fn run_public_unpack(
     level: RewriteLevel,
     diagnostics: bool,
     emit_source_map: bool,
+    angular: bool,
 ) -> Result<PublicUnpackExecution> {
     let saw_directory = paths.iter().any(|path| path.is_dir());
     let rewrite = wakaru::RewriteOptions::default()
@@ -1140,6 +1265,7 @@ fn run_public_unpack(
         })
         .with_mode(public_unpack_mode(unpack_mode))
         .with_unmatched(wakaru::UnmatchedInput::Process)
+        .with_recovery(wakaru::RecoveryOptions::default().with_angular_components(angular))
         .with_diagnostics(diagnostics)
         .with_output_source_maps(emit_source_map);
     let mut job = wakaru::UnpackJob::new(options)?;
@@ -1173,9 +1299,22 @@ fn run_public_unpack(
                     stats.scanned += 1;
                     let code = fs::read_to_string(&candidate)
                         .with_context(|| format!("failed to read {}", candidate.display()))?;
+                    let source_filename = if angular {
+                        candidate
+                            .strip_prefix(path)
+                            .unwrap_or(&candidate)
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                    } else {
+                        candidate.to_string_lossy().into_owned()
+                    };
                     let receipt = match job.push_with_unmatched(
-                        wakaru::Source::new(candidate.to_string_lossy().to_string(), code),
-                        wakaru::UnmatchedInput::Skip,
+                        wakaru::Source::new(source_filename, code),
+                        if angular {
+                            wakaru::UnmatchedInput::Process
+                        } else {
+                            wakaru::UnmatchedInput::Skip
+                        },
                     ) {
                         Ok(receipt) => receipt,
                         Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
@@ -1186,7 +1325,11 @@ fn run_public_unpack(
                     };
                     pushed_inputs += 1;
                     if receipt.detection == wakaru::InputDetection::Plain {
-                        stats.skipped += 1;
+                        if angular {
+                            stats.processed += 1;
+                        } else {
+                            stats.skipped += 1;
+                        }
                     } else {
                         stats.detected += 1;
                     }
@@ -1408,6 +1551,16 @@ fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
                 .map(|map| (module.filename.clone(), map.clone()))
         })
         .collect();
+    let module_filenames = output
+        .modules
+        .iter()
+        .map(|module| module.filename.clone())
+        .collect::<Vec<_>>();
+    let artifacts = output
+        .artifacts
+        .into_iter()
+        .filter_map(|artifact| cli_artifact_from_public(artifact, &module_filenames))
+        .collect();
     let modules = output
         .modules
         .into_iter()
@@ -1415,12 +1568,41 @@ fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
         .collect();
     CliUnpackOutput {
         modules,
+        artifacts,
         provenance,
         warnings,
         detected_formats,
         source_maps,
         safety,
     }
+}
+
+fn cli_artifact_from_public(
+    artifact: wakaru::ArtifactOutput,
+    module_filenames: &[String],
+) -> Option<CliOutputArtifact> {
+    let kind = match artifact.kind {
+        wakaru::ArtifactKind::AngularComponent => JsonModuleKind::AngularComponent,
+        _ => return None,
+    };
+    let status = match artifact.status {
+        wakaru::ArtifactStatus::Complete => JsonModuleStatus::RecoveredAngularComponent,
+        wakaru::ArtifactStatus::Partial => JsonModuleStatus::PartialAngularComponent,
+        _ => JsonModuleStatus::PartialAngularComponent,
+    };
+    let source_filename = artifact
+        .module_indices
+        .first()
+        .and_then(|index| module_filenames.get(*index))
+        .cloned();
+    Some(CliOutputArtifact {
+        filename: artifact.filename,
+        code: artifact.code,
+        kind,
+        status,
+        source_filename,
+        source_map_filename: None,
+    })
 }
 
 /// Append `.map` to a path's extension: `foo.js` → `foo.js.map`.
