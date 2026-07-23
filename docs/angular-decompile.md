@@ -100,6 +100,14 @@ The workspace records `"ɵɵelementStart" → b`; it does not globally rename
 while normal JavaScript output keeps the actual binding. This prevents the Ivy
 analyzer from depending on any one minifier or bundle format.
 
+For ordinary production chunk sets, the workspace also records direct
+default, named, and namespace ESM import/export equivalences across resolved
+relative filenames. Those edges carry binding identity only. The Ivy role
+table projects semantic evidence across an equivalence group afterward, and a
+conflicting role makes the whole group ambiguous rather than selecting one
+side. This is the same generic workspace operation regardless of how a module
+was produced.
+
 Descriptor property names may also be renamed. Recovery therefore prefers a
 known canonical key when available, then classifies a value from structural
 evidence:
