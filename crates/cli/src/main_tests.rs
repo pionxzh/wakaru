@@ -18,6 +18,26 @@ fn public_unpack_maps_cli_profiles() {
 }
 
 #[test]
+fn angular_directory_auto_preserves_intact_production_chunks() {
+    assert_eq!(
+        effective_directory_unpack_mode(UnpackMode::Auto, true, true),
+        UnpackMode::Strict
+    );
+    assert_eq!(
+        effective_directory_unpack_mode(UnpackMode::Auto, true, false),
+        UnpackMode::Auto
+    );
+    assert_eq!(
+        effective_directory_unpack_mode(UnpackMode::Inspect, true, true),
+        UnpackMode::Inspect
+    );
+    assert_eq!(
+        effective_directory_unpack_mode(UnpackMode::Auto, false, true),
+        UnpackMode::Auto
+    );
+}
+
+#[test]
 fn parses_unpack_inspect_profile() {
     let cli = Cli::try_parse_from(["wakaru", "bundle.js", "--unpack=inspect", "-o", "out"])
         .expect("inspect should be an unpack profile");
