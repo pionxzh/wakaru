@@ -59,6 +59,7 @@ pub struct AngularModuleSource<'a> {
 pub struct AngularRecoveryOptions {}
 
 struct PreparedAngularModule {
+    filename: String,
     module: Module,
     unresolved_ctxt: SyntaxContext,
     cm: Lrc<SourceMap>,
@@ -192,6 +193,7 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
     );
 
     Ok(PreparedAngularModule {
+        filename: source.filename.to_string(),
         module,
         unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
         cm,
@@ -250,6 +252,13 @@ impl Visit for ComponentClassCollector {
                 binding.id.sym.as_ref(),
                 class.class.as_ref(),
             );
+            if let Some(inner) = &class.ident {
+                self.record(
+                    &Expr::Ident(inner.clone()),
+                    binding.id.sym.as_ref(),
+                    class.class.as_ref(),
+                );
+            }
         }
         declarator.visit_children_with(self);
     }
@@ -258,6 +267,13 @@ impl Visit for ComponentClassCollector {
         if let Expr::Class(class) = assignment.right.as_ref() {
             if let Some((target, name)) = class_assignment_target(&assignment.left) {
                 self.record(&target, name.as_ref(), class.class.as_ref());
+                if let Some(inner) = &class.ident {
+                    self.record(
+                        &Expr::Ident(inner.clone()),
+                        name.as_ref(),
+                        class.class.as_ref(),
+                    );
+                }
             }
         }
         assignment.visit_children_with(self);

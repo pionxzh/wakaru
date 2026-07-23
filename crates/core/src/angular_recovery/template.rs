@@ -218,7 +218,14 @@ fn collect_statement(
             program,
         ),
         Stmt::If(if_statement) => {
-            let branch_phase = render_flag_mask(if_statement.test.as_ref(), render_flags).or(phase);
+            let branch_phase = collect_if_test(
+                if_statement.test.as_ref(),
+                phase,
+                render_flags,
+                roles,
+                unresolved_ctxt,
+                program,
+            );
             collect_statement(
                 if_statement.cons.as_ref(),
                 branch_phase,
@@ -248,6 +255,34 @@ fn collect_statement(
         ),
         _ => {}
     }
+}
+
+fn collect_if_test(
+    test: &Expr,
+    phase: Option<u8>,
+    render_flags: &BindingKey,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    program: &mut TemplateProgram,
+) -> Option<u8> {
+    let test = strip_parentheses(test);
+    let Expr::Seq(sequence) = test else {
+        return render_flag_mask(test, render_flags).or(phase);
+    };
+    let Some((condition, effects)) = sequence.exprs.split_last() else {
+        return phase;
+    };
+    for effect in effects {
+        collect_expression(
+            effect.as_ref(),
+            phase,
+            render_flags,
+            roles,
+            unresolved_ctxt,
+            program,
+        );
+    }
+    render_flag_mask(strip_parentheses(condition), render_flags).or(phase)
 }
 
 fn collect_expression(
@@ -299,7 +334,9 @@ fn collect_expression(
                     if !program.unsupported_instructions.contains(&name) {
                         program.unsupported_instructions.push(name);
                     }
-                } else if roles.is_known_runtime_member(root, unresolved_ctxt) {
+                } else if matches!(phase, Some(1 | 2))
+                    || roles.is_known_runtime_member(root, unresolved_ctxt)
+                {
                     let name = "unknown-runtime-instruction".to_string();
                     if !program.unsupported_instructions.contains(&name) {
                         program.unsupported_instructions.push(name);
@@ -319,6 +356,13 @@ fn collect_expression(
         }
         _ => {}
     }
+}
+
+fn strip_parentheses(mut expression: &Expr) -> &Expr {
+    while let Expr::Paren(parenthesized) = expression {
+        expression = parenthesized.expr.as_ref();
+    }
+    expression
 }
 
 fn render_flag_mask(expression: &Expr, render_flags: &BindingKey) -> Option<u8> {
