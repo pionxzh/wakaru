@@ -132,7 +132,13 @@ fallback is on by default for `--unpack` (disabled by `--unpack=strict`) and
 requires a minimum declaration count plus at least two clusters; otherwise
 the file goes through single-file decompile. The same splitter also runs on
 detected modules to break up scope-hoisted chunks nested inside another
-bundle format.
+bundle format. Synthetic clusters that form an import cycle are merged before
+normal emission so the recovered ESM graph preserves the original single-file
+initialization order. Internally, the splitter first builds a scope-hoist plan
+containing the finest useful clusters and their reference graph, then selects
+an emission policy. `--unpack=inspect` renders that plan recursively without
+merging cyclic components; its finer module graph is for static inspection and
+may not execute.
 
 Unpackers emit module metadata with source text and, when available, a private
 prepared normalized AST sidecar. They do not run the normal decompile rule

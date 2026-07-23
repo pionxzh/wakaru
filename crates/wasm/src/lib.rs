@@ -94,10 +94,10 @@ pub fn unpack(
     let rewrite = wakaru::RewriteOptions::default().with_level(level);
     let options = wakaru::UnpackOptions::default()
         .with_modules(wakaru::ModuleMode::Decompile(rewrite))
-        .with_scope_hoist(if heuristic_split.unwrap_or(true) {
-            wakaru::ScopeHoistMode::Fallback
+        .with_mode(if heuristic_split.unwrap_or(true) {
+            wakaru::UnpackMode::Auto
         } else {
-            wakaru::ScopeHoistMode::Disabled
+            wakaru::UnpackMode::Strict
         })
         .with_diagnostics(diagnostics.unwrap_or(false))
         .with_output_source_maps(emit_source_map.unwrap_or(false));

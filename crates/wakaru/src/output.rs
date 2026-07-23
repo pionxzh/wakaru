@@ -115,12 +115,23 @@ pub struct InputReport {
     pub module_indices: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OutputSafety {
+    /// Normal unpacking policy was used.
+    Normal,
+    /// Fine-grained inspection boundaries were retained. The emitted module
+    /// graph may not preserve the input bundle's initialization order.
+    InspectionOnly,
+}
+
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct UnpackOutput {
     pub modules: Vec<ModuleOutput>,
     pub inputs: Vec<InputReport>,
     pub diagnostics: Vec<Diagnostic>,
+    pub safety: OutputSafety,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,11 +6,11 @@ use anyhow::anyhow;
 use crate::decompile::diagnostic_from_core;
 use crate::error::{from_core_driver_error, Error, ErrorKind, Result};
 use crate::options::{
-    DceMode, ModuleMode, RewriteLevel, ScopeHoistMode, UnmatchedInput, UnpackOptions,
+    DceMode, ModuleMode, RewriteLevel, UnmatchedInput, UnpackMode, UnpackOptions,
 };
 use crate::output::{
     BundleFormat, Diagnostic, EntryStatus, InputAction, InputDetection, InputId, InputReceipt,
-    InputReport, ModuleOutput, ModuleStatus, SourceSpan, UnpackOutput,
+    InputReport, ModuleOutput, ModuleStatus, OutputSafety, SourceSpan, UnpackOutput,
 };
 use crate::source::Source;
 
@@ -92,12 +92,12 @@ impl UnpackJob {
 
         let parts = input.into_parts();
         let input_filename = parts.filename.clone();
-        let prepared = wakaru_core::driver::prepare_unpack_input(
+        let prepared = wakaru_core::driver::prepare_unpack_input_with_policy(
             parts.filename,
             parts.code,
-            self.options.scope_hoist() != ScopeHoistMode::Disabled,
             matches!(self.options.modules(), ModuleMode::Decompile(_))
                 && unmatched == UnmatchedInput::Process,
+            core_scope_hoist_policy(&self.options),
         )
         .map_err(|error| {
             let kind = from_core_driver_error(error.kind());
@@ -192,6 +192,11 @@ impl UnpackJob {
             modules,
             inputs: self.reports,
             diagnostics,
+            safety: if self.options.mode() == UnpackMode::Inspect {
+                OutputSafety::InspectionOnly
+            } else {
+                OutputSafety::Normal
+            },
         })
     }
 }
@@ -241,19 +246,34 @@ fn run_core_unpack(
         sourcemap: None,
         dce_mode: dce_mode.into_core(),
         level: level.into_core(),
-        heuristic_split: options.scope_hoist() != ScopeHoistMode::Disabled,
+        heuristic_split: options.mode() != UnpackMode::Strict,
         diagnostics: !raw && options.diagnostics(),
         emit_source_map: options.output_source_maps(),
     };
     let core_inputs = inputs.into_iter().map(|input| input.prepared).collect();
 
-    let result = wakaru_core::driver::unpack_prepared_inputs(
+    let result = wakaru_core::driver::unpack_prepared_inputs_with_policy(
         core_inputs,
         core_options,
         raw,
-        options.scope_hoist() == ScopeHoistMode::Recursive,
+        core_scope_hoist_policy(options),
     );
     result.map_err(|error| Error::new(ErrorKind::Internal, None, error))
+}
+
+fn core_scope_hoist_policy(options: &UnpackOptions) -> wakaru_core::driver::ScopeHoistPolicy {
+    match options.mode() {
+        UnpackMode::Strict => wakaru_core::driver::ScopeHoistPolicy::Disabled,
+        UnpackMode::Inspect => wakaru_core::driver::ScopeHoistPolicy::Inspect,
+        UnpackMode::Auto => match options.modules() {
+            ModuleMode::Decompile(rewrite) if rewrite.level() == RewriteLevel::Aggressive => {
+                wakaru_core::driver::ScopeHoistPolicy::Recursive
+            }
+            ModuleMode::Raw | ModuleMode::Decompile(_) => {
+                wakaru_core::driver::ScopeHoistPolicy::Fallback
+            }
+        },
+    }
 }
 
 struct ConvertedOutput {
@@ -495,6 +515,58 @@ mod tests {
     }
 
     #[test]
+    fn inspect_mode_exposes_fine_grained_clusters_and_marks_output() {
+        let source = r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#;
+        let options = UnpackOptions::default()
+            .with_modules(ModuleMode::Raw)
+            .with_mode(UnpackMode::Inspect);
+
+        let output = unpack(vec![Source::new("bundle.js", source)], options)
+            .expect("inspection split should unpack");
+
+        assert_eq!(output.modules.len(), 6);
+        assert_eq!(output.safety, OutputSafety::InspectionOnly);
+        assert!(output
+            .modules
+            .iter()
+            .any(|module| module.code.contains("from \"./entry.js\"")));
+    }
+
+    #[test]
+    fn unpack_profiles_map_to_valid_internal_policies() {
+        assert_eq!(
+            core_scope_hoist_policy(&UnpackOptions::default()),
+            wakaru_core::driver::ScopeHoistPolicy::Fallback
+        );
+        assert_eq!(
+            core_scope_hoist_policy(
+                &UnpackOptions::default().with_modules(ModuleMode::Decompile(
+                    crate::RewriteOptions::default().with_level(RewriteLevel::Aggressive),
+                )),
+            ),
+            wakaru_core::driver::ScopeHoistPolicy::Recursive
+        );
+        assert_eq!(
+            core_scope_hoist_policy(&UnpackOptions::default().with_mode(UnpackMode::Strict)),
+            wakaru_core::driver::ScopeHoistPolicy::Disabled
+        );
+        assert_eq!(
+            core_scope_hoist_policy(&UnpackOptions::default().with_mode(UnpackMode::Inspect)),
+            wakaru_core::driver::ScopeHoistPolicy::Inspect
+        );
+    }
+
+    #[test]
     fn reports_closure_module_manager_detection() {
         let mut job = UnpackJob::new(UnpackOptions::default().with_modules(ModuleMode::Raw))
             .expect("options should be valid");
@@ -588,7 +660,7 @@ mod tests {
     fn per_push_unmatched_policy_composes_explicit_and_candidate_inputs() {
         let mut job = UnpackJob::new(
             UnpackOptions::default()
-                .with_scope_hoist(ScopeHoistMode::Disabled)
+                .with_mode(UnpackMode::Strict)
                 .with_unmatched(UnmatchedInput::Process),
         )
         .expect("options should be valid");
@@ -614,7 +686,7 @@ mod tests {
     fn all_skipped_inputs_return_an_empty_successful_output() {
         let mut job = UnpackJob::new(
             UnpackOptions::default()
-                .with_scope_hoist(ScopeHoistMode::Disabled)
+                .with_mode(UnpackMode::Strict)
                 .with_unmatched(UnmatchedInput::Skip),
         )
         .expect("options should be valid");
@@ -634,7 +706,7 @@ mod tests {
     fn unmatched_error_is_deferred_until_finish() {
         let mut job = UnpackJob::new(
             UnpackOptions::default()
-                .with_scope_hoist(ScopeHoistMode::Disabled)
+                .with_mode(UnpackMode::Strict)
                 .with_unmatched(UnmatchedInput::Error),
         )
         .expect("options should be valid");
@@ -670,7 +742,7 @@ mod tests {
         let output = unpack(
             vec![Source::new("plain.js", source)],
             UnpackOptions::default()
-                .with_scope_hoist(ScopeHoistMode::Disabled)
+                .with_mode(UnpackMode::Strict)
                 .with_unmatched(UnmatchedInput::Preserve),
         )
         .expect("preserve should succeed");
@@ -699,7 +771,7 @@ mod tests {
                 Source::new("same.js", "export const first = 1;"),
                 Source::new("same.js", "export const second = 2;"),
             ],
-            UnpackOptions::default().with_scope_hoist(ScopeHoistMode::Disabled),
+            UnpackOptions::default().with_mode(UnpackMode::Strict),
         )
         .expect("duplicate physical filenames should remain distinguishable");
 
@@ -760,7 +832,7 @@ mod tests {
                 "duplicate-label.js",
                 "label: label: break label;",
             )],
-            UnpackOptions::default().with_scope_hoist(ScopeHoistMode::Disabled),
+            UnpackOptions::default().with_mode(UnpackMode::Strict),
         )
         .expect("recoverable input should produce output");
 

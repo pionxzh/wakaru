@@ -12,29 +12,61 @@ use super::{
 
 const MIN_DECLARATIONS: usize = 10;
 
+/// Selects how a completed scope-hoist plan is rendered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ScopeHoistRenderMode {
+    /// Merge cyclic components before emitting the recovered ESM graph.
+    #[default]
+    Executable,
+    /// Retain the finer planned clusters for static inspection.
+    Inspect,
+}
+
 pub fn split_scope_hoisted(source: &str) -> Option<UnpackResult> {
+    split_scope_hoisted_with_mode(source, ScopeHoistRenderMode::Executable)
+}
+
+pub(crate) fn split_scope_hoisted_with_mode(
+    source: &str,
+    render_mode: ScopeHoistRenderMode,
+) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "bundle.js", cm.clone()).ok()?;
-        split_from_module(&module, cm)
+        split_from_module(&module, cm, render_mode)
     })
 }
 
-pub(crate) fn split_scope_hoisted_module(
+pub(crate) fn split_scope_hoisted_module_with_mode(
     module: &Module,
     cm: Lrc<SourceMap>,
+    render_mode: ScopeHoistRenderMode,
 ) -> Option<UnpackResult> {
-    split_from_module(module, cm)
+    split_from_module(module, cm, render_mode)
 }
 
-fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+fn split_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    render_mode: ScopeHoistRenderMode,
+) -> Option<UnpackResult> {
     // Unwrap IIFE wrapper if present: `(()=>{ ... })()` or `(function(){ ... })()`
     let iife_body = unwrap_iife(module);
     let body = iife_body.as_deref().unwrap_or(&module.body);
 
+    let plan = analyze_scope_hoist(body)?;
+    render_scope_hoist_plan(body, plan, cm, render_mode)
+}
+
+struct ScopeHoistPlan {
+    items: Vec<TopLevelItem>,
+    graph: ReferenceGraph,
+    clusters: Vec<Cluster>,
+}
+
+fn analyze_scope_hoist(body: &[ModuleItem]) -> Option<ScopeHoistPlan> {
     // Phase 1: collect top-level items with metadata.
     let items = collect_top_level_items(body);
-
     let decl_count = items
         .iter()
         .filter(|i| !i.declared_names.is_empty())
@@ -50,14 +82,31 @@ fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult
     let mut uf = UnionFind::new(items.len());
     apply_merge_signals(&items, &graph, &mut uf);
 
-    // Phase 4: extract clusters and identify entry.
-    let clusters = merge_cyclic_clusters(extract_clusters(&items, &mut uf), &graph);
+    // Phase 4: extract the finest useful clusters and identify the entry.
+    let clusters = extract_clusters(&items, &mut uf);
+    (clusters.len() >= 2).then_some(ScopeHoistPlan {
+        items,
+        graph,
+        clusters,
+    })
+}
+
+fn render_scope_hoist_plan(
+    body: &[ModuleItem],
+    plan: ScopeHoistPlan,
+    cm: Lrc<SourceMap>,
+    render_mode: ScopeHoistRenderMode,
+) -> Option<UnpackResult> {
+    let clusters = match render_mode {
+        ScopeHoistRenderMode::Executable => merge_cyclic_clusters(plan.clusters, &plan.graph),
+        ScopeHoistRenderMode::Inspect => plan.clusters,
+    };
     if clusters.len() < 2 {
         return None;
     }
 
     // Phase 5: emit modules.
-    let modules = emit_clusters(body, &items, clusters, cm);
+    let modules = emit_clusters(body, &plan.items, clusters, cm);
     Some(UnpackResult::without_cycle_premerge(
         modules,
         BundleFormat::ScopeHoisted,

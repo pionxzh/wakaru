@@ -46,6 +46,9 @@ enum UnpackMode {
     Auto,
     /// Structural detection only (webpack, browserify, esbuild). No heuristic fallback.
     Strict,
+    /// Retain fine-grained scope-hoist boundaries for static inspection.
+    /// The emitted module graph may not be safe to execute.
+    Inspect,
 }
 
 impl From<CliRewriteLevel> for RewriteLevel {
@@ -87,6 +90,7 @@ struct Cli {
     /// Modes:
     ///   --unpack / --unpack=auto    Auto-detect + heuristic fallback for scope-hoisted bundles
     ///   --unpack=strict             Structural detection only (no heuristic fallback)
+    ///   --unpack=inspect            Fine-grained static inspection (may not execute)
     #[arg(short, long, value_enum, num_args = 0..=1, default_missing_value = "auto")]
     unpack: Option<UnpackMode>,
 
@@ -269,8 +273,6 @@ fn run_default(cli: Cli) -> Result<()> {
             "--source-map is not supported with --unpack because extracted module coordinates differ from bundle coordinates; --emit-source-map remains available for output maps"
         );
     }
-
-    let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
     let js_formatter = selected_formatter(cli.formatter);
     let styled = if cli.json {
         Styled::off()
@@ -278,7 +280,7 @@ fn run_default(cli: Cli) -> Result<()> {
         Styled::for_stderr()
     };
 
-    if cli.unpack.is_some() {
+    if let Some(unpack_mode) = cli.unpack {
         let dce_mode = if cli.dce {
             DceMode::Full
         } else {
@@ -293,7 +295,7 @@ fn run_default(cli: Cli) -> Result<()> {
         let execution = run_public_unpack(
             &cli.inputs,
             cli.raw,
-            heuristic_split,
+            unpack_mode,
             dce_mode,
             cli.level.into(),
             cli.diagnostics,
@@ -304,6 +306,12 @@ fn run_default(cli: Cli) -> Result<()> {
         let output = execution.output;
         let elapsed = start.elapsed();
 
+        if output.safety == wakaru::OutputSafety::InspectionOnly {
+            eprintln!(
+                "{}: --unpack=inspect output may not preserve runtime initialization order",
+                styled.warning("warning")
+            );
+        }
         if !cli.json {
             print_warnings(&output.warnings, &styled);
         }
@@ -446,6 +454,7 @@ fn run_default(cli: Cli) -> Result<()> {
         if cli.json {
             let json = json_unpack_output_for_artifacts(
                 &output.detected_formats,
+                output.safety,
                 &artifacts,
                 &output.warnings,
                 total_modules,
@@ -880,7 +889,6 @@ fn recover_single_file_vue_after_unpack(
         vec![wakaru::Source::new(filename, code)],
         wakaru::UnpackOptions::default()
             .with_modules(wakaru::ModuleMode::Decompile(rewrite))
-            .with_scope_hoist(wakaru::ScopeHoistMode::Fallback)
             .with_unmatched(wakaru::UnmatchedInput::Process)
             .with_diagnostics(diagnostics),
     )
@@ -918,6 +926,7 @@ fn json_module_for_artifact(artifact: &CliOutputArtifact) -> JsonModule {
 
 fn json_unpack_output_for_artifacts(
     detected_formats: &[CliBundleFormat],
+    safety: wakaru::OutputSafety,
     artifacts: &[CliOutputArtifact],
     warnings: &[CliWarning],
     total_modules: usize,
@@ -929,6 +938,12 @@ fn json_unpack_output_for_artifacts(
             .iter()
             .map(|format| format.as_str().to_string())
             .collect(),
+        safety: match safety {
+            wakaru::OutputSafety::Normal => "normal",
+            wakaru::OutputSafety::InspectionOnly => "inspection-only",
+            _ => "unknown",
+        }
+        .to_string(),
         modules: artifacts.iter().map(json_module_for_artifact).collect(),
         warnings: warnings.iter().map(CliWarning::to_json).collect(),
         total: total_modules,
@@ -1230,6 +1245,7 @@ struct CliUnpackOutput {
     warnings: Vec<CliWarning>,
     detected_formats: Vec<CliBundleFormat>,
     source_maps: Vec<(String, String)>,
+    safety: wakaru::OutputSafety,
 }
 
 fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompileOutput {
@@ -1249,7 +1265,7 @@ fn adapt_public_decompile_output(output: wakaru::DecompileOutput) -> CliDecompil
 fn run_public_unpack(
     paths: &[PathBuf],
     raw: bool,
-    heuristic_split: bool,
+    unpack_mode: UnpackMode,
     dce_mode: DceMode,
     level: RewriteLevel,
     diagnostics: bool,
@@ -1265,7 +1281,7 @@ fn run_public_unpack(
         } else {
             wakaru::ModuleMode::Decompile(rewrite)
         })
-        .with_scope_hoist(public_scope_hoist_mode(heuristic_split, level))
+        .with_mode(public_unpack_mode(unpack_mode))
         .with_unmatched(wakaru::UnmatchedInput::Process)
         .with_diagnostics(diagnostics)
         .with_output_source_maps(emit_source_map);
@@ -1342,11 +1358,11 @@ fn public_rewrite_level(level: RewriteLevel) -> wakaru::RewriteLevel {
     }
 }
 
-fn public_scope_hoist_mode(heuristic_split: bool, level: RewriteLevel) -> wakaru::ScopeHoistMode {
-    match (heuristic_split, level) {
-        (false, _) => wakaru::ScopeHoistMode::Disabled,
-        (true, RewriteLevel::Aggressive) => wakaru::ScopeHoistMode::Recursive,
-        (true, _) => wakaru::ScopeHoistMode::Fallback,
+fn public_unpack_mode(mode: UnpackMode) -> wakaru::UnpackMode {
+    match mode {
+        UnpackMode::Auto => wakaru::UnpackMode::Auto,
+        UnpackMode::Strict => wakaru::UnpackMode::Strict,
+        UnpackMode::Inspect => wakaru::UnpackMode::Inspect,
     }
 }
 
@@ -1361,6 +1377,7 @@ fn public_dce_mode(mode: DceMode) -> wakaru::DceMode {
 fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
     let span = tracing::info_span!("cli_adapt_public_unpack_output");
     let _enter = span.enter();
+    let safety = output.safety;
     let input_names = output
         .inputs
         .iter()
@@ -1442,6 +1459,7 @@ fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
         warnings,
         detected_formats,
         source_maps,
+        safety,
     }
 }
 

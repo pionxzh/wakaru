@@ -368,6 +368,32 @@ fn cluster_cycle_merge_preserves_original_initialization_order() {
 }
 
 #[test]
+fn inspection_rendering_keeps_synthetic_clusters_separate() {
+    let input = r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#;
+
+    let result = split_scope_hoisted_with_mode(input, ScopeHoistRenderMode::Inspect)
+        .expect("inspection mode should split");
+    assert_eq!(result.modules.len(), 6, "cycle should remain split");
+    assert!(
+        result
+            .modules
+            .iter()
+            .any(|module| module.code.contains("from \"./entry.js\"")),
+        "inspection output should retain the synthetic import cycle"
+    );
+}
+
+#[test]
 fn vite_fixture_minified_clusters() {
     let input = include_str!("../../tests/bundles/vite-gen/dist/es-min/bundle.mjs");
     let clusters = debug_clusters(input);

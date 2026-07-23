@@ -199,14 +199,14 @@ impl DecompileOptions {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ScopeHoistMode {
-    /// Run structural bundle detectors only.
-    Disabled,
-    /// Try heuristic scope-hoist splitting only when structural detection
-    /// does not match.
-    Fallback,
-    /// Also try heuristic splitting inside structurally extracted modules.
-    Recursive,
+pub enum UnpackMode {
+    /// Structural detection with safe heuristic scope-hoist fallback.
+    Auto,
+    /// Structural bundle detection only.
+    Strict,
+    /// Recursively retain fine-grained boundaries for static inspection.
+    /// The resulting module graph may not be safe to execute.
+    Inspect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,12 +239,12 @@ pub struct UnpackOptions {
 
 impl UnpackOptions {
     pub fn modules(&self) -> &ModuleMode;
-    pub fn scope_hoist(&self) -> ScopeHoistMode;
+    pub fn mode(&self) -> UnpackMode;
     pub fn unmatched(&self) -> UnmatchedInput;
     pub fn diagnostics(&self) -> bool;
     pub fn output_source_maps(&self) -> bool;
     pub fn with_modules(self, modules: ModuleMode) -> Self;
-    pub fn with_scope_hoist(self, mode: ScopeHoistMode) -> Self;
+    pub fn with_mode(self, mode: UnpackMode) -> Self;
     pub fn with_unmatched(self, unmatched: UnmatchedInput) -> Self;
     pub fn with_diagnostics(self, enabled: bool) -> Self;
     pub fn with_output_source_maps(self, enabled: bool) -> Self;
@@ -260,8 +260,8 @@ Recommended defaults:
 `RewriteOptions::default()` selects `RewriteLevel::Standard` and
 `DceMode::Off`. `DecompileOptions::default()` disables optional diagnostics and
 source-map output. `UnpackOptions::default()` decompiles modules using default
-rewrite options, uses `ScopeHoistMode::Fallback`, processes unmatched inputs,
-and disables optional diagnostics and source-map output.
+rewrite options, uses `UnpackMode::Auto`, processes unmatched inputs, and
+disables optional diagnostics and source-map output.
 
 CLI defaults can continue to select `DceMode::TransformOnly` without making
 that behavior the library default.
@@ -282,6 +282,12 @@ modules, decompilation disables DCE for that output set. The heuristic split
 does not establish a complete enough reachability graph to apply the requested
 DCE mode safely. Structural bundle output, including recursively split
 structural modules, continues to honor the selected `DceMode`.
+
+`UnpackMode::Inspect` retains finer synthetic clusters even when their emitted
+imports form a cycle that changes eager ESM initialization order. It is an
+inspection policy, not an execution-safe reconstruction policy. `ModuleMode`
+remains independent: callers can inspect raw extraction output or run the
+normal rewrite pipeline over the retained boundaries.
 
 ## Output artifacts
 
@@ -427,6 +433,13 @@ pub struct InputReport {
     pub module_indices: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OutputSafety {
+    Normal,
+    InspectionOnly,
+}
+
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct UnpackOutput {
@@ -434,6 +447,7 @@ pub struct UnpackOutput {
     /// One report per input, in input order.
     pub inputs: Vec<InputReport>,
     pub diagnostics: Vec<Diagnostic>,
+    pub safety: OutputSafety,
 }
 ```
 
@@ -444,6 +458,11 @@ only within the returned operation result.
 `BundleFormat` contains structural detector results only. Heuristic
 scope-hoist recovery is represented by `InputDetection::HeuristicScopeHoisted`
 rather than pretending it identified a bundler.
+
+`OutputSafety::InspectionOnly` is returned whenever `UnpackMode::Inspect` was
+requested. It marks the operation's output contract even if a particular input
+does not happen to contain a retained cycle; callers must not infer execution
+safety by inspecting filenames or diagnostics.
 
 ## Diagnostics and fatal errors
 
@@ -729,8 +748,8 @@ Bundle/chunk set:
 
 ```rust
 use wakaru::{
-    unpack, DceMode, ModuleMode, RewriteLevel, RewriteOptions, ScopeHoistMode,
-    Source, UnmatchedInput, UnpackOptions,
+    unpack, DceMode, ModuleMode, RewriteLevel, RewriteOptions, Source,
+    UnmatchedInput, UnpackMode, UnpackOptions,
 };
 
 let output = unpack(
@@ -744,7 +763,7 @@ let output = unpack(
                 .with_level(RewriteLevel::Standard)
                 .with_dce(DceMode::TransformOnly),
         ))
-        .with_scope_hoist(ScopeHoistMode::Fallback)
+        .with_mode(UnpackMode::Auto)
         .with_unmatched(UnmatchedInput::Process)
         .with_diagnostics(true),
 )?;

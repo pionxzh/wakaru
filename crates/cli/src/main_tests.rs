@@ -2,19 +2,40 @@ use super::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
-fn public_unpack_preserves_cli_scope_hoist_level_semantics() {
+fn public_unpack_maps_cli_profiles() {
     assert_eq!(
-        public_scope_hoist_mode(false, RewriteLevel::Aggressive),
-        wakaru::ScopeHoistMode::Disabled
+        public_unpack_mode(UnpackMode::Auto),
+        wakaru::UnpackMode::Auto
     );
     assert_eq!(
-        public_scope_hoist_mode(true, RewriteLevel::Standard),
-        wakaru::ScopeHoistMode::Fallback
+        public_unpack_mode(UnpackMode::Strict),
+        wakaru::UnpackMode::Strict
     );
     assert_eq!(
-        public_scope_hoist_mode(true, RewriteLevel::Aggressive),
-        wakaru::ScopeHoistMode::Recursive
+        public_unpack_mode(UnpackMode::Inspect),
+        wakaru::UnpackMode::Inspect
     );
+}
+
+#[test]
+fn parses_unpack_inspect_profile() {
+    let cli = Cli::try_parse_from(["wakaru", "bundle.js", "--unpack=inspect", "-o", "out"])
+        .expect("inspect should be an unpack profile");
+
+    assert!(matches!(cli.unpack, Some(UnpackMode::Inspect)));
+}
+
+#[test]
+fn rejects_removed_scope_hoist_analysis_flag() {
+    assert!(Cli::try_parse_from([
+        "wakaru",
+        "bundle.js",
+        "--unpack",
+        "--scope-hoist-analysis",
+        "-o",
+        "out",
+    ])
+    .is_err());
 }
 
 #[test]
@@ -898,11 +919,19 @@ fn json_unpack_total_counts_input_modules_not_artifacts() {
         },
     ];
 
-    let json =
-        json_unpack_output_for_artifacts(&[], &artifacts, &[], 1, 0, Duration::from_millis(12));
+    let json = json_unpack_output_for_artifacts(
+        &[],
+        wakaru::OutputSafety::Normal,
+        &artifacts,
+        &[],
+        1,
+        0,
+        Duration::from_millis(12),
+    );
 
     assert_eq!(json.total, 1);
     assert_eq!(json.modules.len(), 2);
+    assert_eq!(json.safety, "normal");
     assert_eq!(json.elapsed_ms, 12);
 }
 
@@ -1293,7 +1322,7 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
     let execution = run_public_unpack(
         std::slice::from_ref(&dir),
         false,
-        false,
+        UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
         false,
@@ -1344,7 +1373,7 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
     let execution = run_public_unpack(
         &[explicit.clone(), chunks],
         false,
-        false,
+        UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
         false,
@@ -1392,7 +1421,7 @@ fn unpack_directory_skips_malformed_javascript_candidate() {
     let execution = run_public_unpack(
         std::slice::from_ref(&dir),
         false,
-        false,
+        UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
         false,
@@ -1422,7 +1451,7 @@ fn unpack_directory_without_detected_files_errors() {
     let err = run_public_unpack(
         std::slice::from_ref(&dir),
         false,
-        false,
+        UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
         false,

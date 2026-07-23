@@ -3,6 +3,7 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct JsonUnpackOutput {
     pub detected_formats: Vec<String>,
+    pub safety: String,
     pub modules: Vec<JsonModule>,
     pub warnings: Vec<JsonWarning>,
     pub total: usize,

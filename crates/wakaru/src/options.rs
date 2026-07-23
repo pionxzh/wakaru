@@ -100,11 +100,17 @@ impl DecompileOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ScopeHoistMode {
-    Disabled,
+pub enum UnpackMode {
+    /// Detect structural bundles and fall back to safe heuristic scope-hoist
+    /// splitting. Aggressive rewrites also enable safe recursive splitting.
     #[default]
-    Fallback,
-    Recursive,
+    Auto,
+    /// Run structural bundle detectors without heuristic scope-hoist
+    /// splitting.
+    Strict,
+    /// Recursively retain fine-grained scope-hoist clusters for static
+    /// inspection. The resulting module graph may not be safe to execute.
+    Inspect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +139,7 @@ pub enum UnmatchedInput {
 #[derive(Debug, Clone, Default)]
 pub struct UnpackOptions {
     modules: ModuleMode,
-    scope_hoist: ScopeHoistMode,
+    mode: UnpackMode,
     unmatched: UnmatchedInput,
     diagnostics: bool,
     output_source_maps: bool,
@@ -144,8 +150,8 @@ impl UnpackOptions {
         &self.modules
     }
 
-    pub fn scope_hoist(&self) -> ScopeHoistMode {
-        self.scope_hoist
+    pub fn mode(&self) -> UnpackMode {
+        self.mode
     }
 
     pub fn unmatched(&self) -> UnmatchedInput {
@@ -165,8 +171,8 @@ impl UnpackOptions {
         self
     }
 
-    pub fn with_scope_hoist(mut self, mode: ScopeHoistMode) -> Self {
-        self.scope_hoist = mode;
+    pub fn with_mode(mut self, mode: UnpackMode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -198,7 +204,7 @@ mod tests {
 
         let unpack = UnpackOptions::default();
         assert!(matches!(unpack.modules(), ModuleMode::Decompile(_)));
-        assert_eq!(unpack.scope_hoist(), ScopeHoistMode::Fallback);
+        assert_eq!(unpack.mode(), UnpackMode::Auto);
         assert_eq!(unpack.unmatched(), UnmatchedInput::Process);
         assert!(!unpack.diagnostics());
         assert!(!unpack.output_source_maps());
@@ -211,12 +217,12 @@ mod tests {
             .with_dce(DceMode::TransformOnly);
         let options = UnpackOptions::default()
             .with_modules(ModuleMode::Decompile(rewrite))
-            .with_scope_hoist(ScopeHoistMode::Recursive)
+            .with_mode(UnpackMode::Inspect)
             .with_unmatched(UnmatchedInput::Skip)
             .with_diagnostics(true)
             .with_output_source_maps(true);
 
-        assert_eq!(options.scope_hoist(), ScopeHoistMode::Recursive);
+        assert_eq!(options.mode(), UnpackMode::Inspect);
         assert_eq!(options.unmatched(), UnmatchedInput::Skip);
         assert!(options.diagnostics());
         assert!(options.output_source_maps());

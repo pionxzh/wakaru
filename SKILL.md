@@ -142,6 +142,10 @@ npx @wakaru/cli deobfuscated.js --unpack -o out/
 - `--level standard` — default; balanced readability and correctness.
 - `--level aggressive` — maximum readability; stronger heuristics that may
   alter edge-case behavior. Use when you just need to understand the code.
+- `--unpack=inspect` — recursively retain finer scope-hoist boundaries for
+  static inspection. The resulting module graph may not preserve runtime
+  initialization order; the CLI prints a warning whenever this mode is used.
+  Add `--raw` independently to skip readability transforms.
 
 By default, Wakaru removes only dead code introduced by its own transforms and
 preserves dead code already present in the input. Use `--dce` when a full

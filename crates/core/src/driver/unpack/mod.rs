@@ -47,6 +47,38 @@ pub enum PreparedInputDetection {
     Plain,
 }
 
+/// Internal scope-hoist profile used by the public façade.
+///
+/// This is exported through `wakaru_core::driver` only because the façade is a
+/// separate lockstep crate. It is not a supported integration surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScopeHoistPolicy {
+    Disabled,
+    #[default]
+    Fallback,
+    Recursive,
+    Inspect,
+}
+
+impl ScopeHoistPolicy {
+    fn heuristic_enabled(self) -> bool {
+        self != Self::Disabled
+    }
+
+    fn recursive(self) -> bool {
+        matches!(self, Self::Recursive | Self::Inspect)
+    }
+
+    fn render_mode(self) -> scope_hoist::ScopeHoistRenderMode {
+        match self {
+            Self::Inspect => scope_hoist::ScopeHoistRenderMode::Inspect,
+            Self::Disabled | Self::Fallback | Self::Recursive => {
+                scope_hoist::ScopeHoistRenderMode::Executable
+            }
+        }
+    }
+}
+
 const PREPARED_INPUT_PREFIX: &str = "\0wakaru-input:";
 
 pub fn prepared_input_index(source_input: &str) -> Option<usize> {
@@ -97,6 +129,24 @@ pub fn prepare_unpack_input(
     source: String,
     heuristic_scope_hoist: bool,
     prepare_plain_ast: bool,
+) -> DriverResult<PreparedUnpackInput> {
+    prepare_unpack_input_with_policy(
+        filename,
+        source,
+        prepare_plain_ast,
+        if heuristic_scope_hoist {
+            ScopeHoistPolicy::Fallback
+        } else {
+            ScopeHoistPolicy::Disabled
+        },
+    )
+}
+
+pub fn prepare_unpack_input_with_policy(
+    filename: String,
+    source: String,
+    prepare_plain_ast: bool,
+    scope_hoist_policy: ScopeHoistPolicy,
 ) -> DriverResult<PreparedUnpackInput> {
     let prepared = match try_prepare_source(&source, &filename, prepare_plain_ast) {
         Ok(prepared) => prepared,
@@ -163,9 +213,10 @@ pub fn prepare_unpack_input(
         }
     }
 
-    if heuristic_scope_hoist {
+    if scope_hoist_policy.heuristic_enabled() {
         if let Some(result) =
-            scope_hoist::split_scope_hoisted(&source).filter(|result| result.modules.len() > 1)
+            scope_hoist::split_scope_hoisted_with_mode(&source, scope_hoist_policy.render_mode())
+                .filter(|result| result.modules.len() > 1)
         {
             return Ok(PreparedUnpackInput {
                 filename,
@@ -208,9 +259,27 @@ fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<Prepar
 
 pub fn unpack_prepared_inputs(
     inputs: Vec<PreparedUnpackInput>,
-    mut options: DecompileOptions,
+    options: DecompileOptions,
     raw: bool,
     recursive_scope_hoist: bool,
+) -> Result<UnpackOutput> {
+    unpack_prepared_inputs_with_policy(
+        inputs,
+        options,
+        raw,
+        if recursive_scope_hoist {
+            ScopeHoistPolicy::Recursive
+        } else {
+            ScopeHoistPolicy::Fallback
+        },
+    )
+}
+
+pub fn unpack_prepared_inputs_with_policy(
+    inputs: Vec<PreparedUnpackInput>,
+    mut options: DecompileOptions,
+    raw: bool,
+    scope_hoist_policy: ScopeHoistPolicy,
 ) -> Result<UnpackOutput> {
     if inputs.is_empty() {
         return Err(anyhow!("at least one prepared input is required"));
@@ -240,13 +309,15 @@ pub fn unpack_prepared_inputs(
                     let result = detected.materialize()?;
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
                         result,
-                        recursive_scope_hoist,
+                        scope_hoist_policy.recursive(),
+                        scope_hoist_policy.render_mode(),
                     ))
                 } else {
                     maybe_split_detected_bundle(
                         detected,
-                        recursive_scope_hoist,
+                        scope_hoist_policy.recursive(),
                         options.emit_source_map,
+                        scope_hoist_policy.render_mode(),
                     )?
                 };
                 let (result, prepared) = detected.into_parts();
@@ -528,12 +599,13 @@ fn maybe_split_detected_bundle(
     result: DetectedBundle,
     split_nested_scope: bool,
     materialize: bool,
+    render_mode: scope_hoist::ScopeHoistRenderMode,
 ) -> Result<DetectedBundle> {
     if !split_nested_scope && !materialize {
         return Ok(result);
     }
     let result = result.materialize()?;
-    let result = maybe_split_scope_hoisted_modules(result, split_nested_scope);
+    let result = maybe_split_scope_hoisted_modules(result, split_nested_scope, render_mode);
     Ok(DetectedBundle::from_result(result))
 }
 

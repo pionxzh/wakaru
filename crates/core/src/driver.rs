@@ -23,7 +23,8 @@ pub use types::{
     UnpackWarning, UnpackWarningKind,
 };
 pub use unpack::{
-    prepare_unpack_input, prepared_input_index, unpack_prepared_inputs, PreparedInputDetection,
-    PreparedUnpackInput,
+    prepare_unpack_input, prepare_unpack_input_with_policy, prepared_input_index,
+    unpack_prepared_inputs, unpack_prepared_inputs_with_policy, PreparedInputDetection,
+    PreparedUnpackInput, ScopeHoistPolicy,
 };
 pub use unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};

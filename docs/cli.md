@@ -21,6 +21,7 @@ cat input.js | wakaru > output.js
 wakaru bundle.js --unpack -o out/
 wakaru bundle.js --unpack --raw -o out/       # raw split, no readability transforms
 wakaru bundle.js --unpack=strict -o out/      # structural detection only, no heuristic fallback
+wakaru bundle.js --unpack=inspect -o out/     # finer boundaries for static inspection
 wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
 wakaru dist/ --unpack -o out/                 # recursively scan a directory
 ```
@@ -39,6 +40,14 @@ supported ncc output, Wakaru extracts the webpack module table and preserves
 its inline startup as `entry.js`; separately emitted asset files remain
 external to the recovered JavaScript modules. ncc `.mjs` output uses a
 top-level runtime and is not structurally split.
+
+`--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
+including synthetic clusters whose emitted ESM imports form a cycle. The
+resulting module graph may not preserve the bundle's initialization order and
+must not be treated as executable reconstruction; the CLI always prints a
+warning for this mode. `--raw` remains independent: without it Wakaru still
+runs the normal readability pipeline over each inspection module. Normal
+`--unpack` continues to merge cyclic components before emission.
 
 For ordinary Browserify numeric module tables, unambiguous dependency-map
 request paths become readable output filenames. Missing or conflicting hints

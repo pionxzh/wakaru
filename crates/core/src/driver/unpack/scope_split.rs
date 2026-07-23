@@ -19,6 +19,7 @@ use crate::unpacker::{scope_hoist, GeneratedSourceMapPoint, UnpackResult, Unpack
 pub(super) fn maybe_split_scope_hoisted_modules(
     result: UnpackResult,
     enabled: bool,
+    render_mode: scope_hoist::ScopeHoistRenderMode,
 ) -> UnpackResult {
     if !enabled {
         return result;
@@ -33,7 +34,7 @@ pub(super) fn maybe_split_scope_hoisted_modules(
         .collect();
 
     for module in result.modules {
-        match split_nested_scope_hoisted_module(&module) {
+        match split_nested_scope_hoisted_module(&module, render_mode) {
             Some(split) => {
                 let parent_filename = module.filename.clone();
                 let split_modules = namespace_scope_hoisted_split(&module, split.modules);
@@ -61,8 +62,11 @@ pub(super) fn maybe_split_scope_hoisted_modules(
     }
 }
 
-fn split_nested_scope_hoisted_module(module: &UnpackedModule) -> Option<UnpackResult> {
-    let raw_split = scope_hoist::split_scope_hoisted(&module.code);
+fn split_nested_scope_hoisted_module(
+    module: &UnpackedModule,
+    render_mode: scope_hoist::ScopeHoistRenderMode,
+) -> Option<UnpackResult> {
+    let raw_split = scope_hoist::split_scope_hoisted_with_mode(&module.code, render_mode);
     if raw_split.as_ref().is_some_and(is_usable_nested_split) {
         return raw_split;
     }
@@ -70,7 +74,7 @@ fn split_nested_scope_hoisted_module(module: &UnpackedModule) -> Option<UnpackRe
         return None;
     }
 
-    split_esm_recovered_scope_hoisted_module(&module.code, &module.filename)
+    split_esm_recovered_scope_hoisted_module(&module.code, &module.filename, render_mode)
         .filter(is_usable_nested_split)
 }
 
@@ -86,7 +90,11 @@ fn has_nontrivial_scope_split_entry(split: &UnpackResult) -> bool {
         .is_some_and(|module| module.code.contains("from \"./"))
 }
 
-fn split_esm_recovered_scope_hoisted_module(source: &str, filename: &str) -> Option<UnpackResult> {
+fn split_esm_recovered_scope_hoisted_module(
+    source: &str,
+    filename: &str,
+    render_mode: scope_hoist::ScopeHoistRenderMode,
+) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let mut module = parse_js(source, filename, cm.clone()).ok()?;
@@ -107,7 +115,7 @@ fn split_esm_recovered_scope_hoisted_module(source: &str, filename: &str) -> Opt
                 export_rename: false,
             },
         );
-        scope_hoist::split_scope_hoisted_module(&module, cm)
+        scope_hoist::split_scope_hoisted_module_with_mode(&module, cm, render_mode)
     })
 }
 
@@ -500,7 +508,11 @@ mod tests {
             format: BundleFormat::Webpack5,
         };
 
-        let output = maybe_split_scope_hoisted_modules(result, false);
+        let output = maybe_split_scope_hoisted_modules(
+            result,
+            false,
+            scope_hoist::ScopeHoistRenderMode::Executable,
+        );
 
         assert_eq!(output.modules.len(), 1);
         assert_eq!(output.modules[0].id, "100");
@@ -522,7 +534,11 @@ mod tests {
             format: BundleFormat::Webpack5,
         };
 
-        let output = maybe_split_scope_hoisted_modules(result, true);
+        let output = maybe_split_scope_hoisted_modules(
+            result,
+            true,
+            scope_hoist::ScopeHoistRenderMode::Executable,
+        );
         let names: HashSet<_> = output
             .modules
             .iter()
@@ -543,6 +559,37 @@ mod tests {
         assert!(
             !output.allow_cycle_premerge,
             "recursive scope split should disable later cycle premerge"
+        );
+    }
+
+    #[test]
+    fn nested_inspection_split_keeps_cyclic_clusters_separate() {
+        let split = |render_mode| {
+            maybe_split_scope_hoisted_modules(
+                UnpackResult {
+                    modules: vec![UnpackedModule {
+                        id: "100".to_string(),
+                        is_entry: false,
+                        code: nested_scope_hoist_cycle_fixture(),
+                        filename: "module-100.js".to_string(),
+                        ..Default::default()
+                    }],
+                    allow_cycle_premerge: true,
+                    format: BundleFormat::Webpack5,
+                },
+                true,
+                render_mode,
+            )
+        };
+
+        let safe = split(scope_hoist::ScopeHoistRenderMode::Executable);
+        let inspection = split(scope_hoist::ScopeHoistRenderMode::Inspect);
+
+        assert_eq!(safe.modules.len(), 5, "safe mode should merge the cycle");
+        assert_eq!(
+            inspection.modules.len(),
+            6,
+            "inspection mode should retain the finer cyclic clusters"
         );
     }
 
@@ -691,6 +738,21 @@ console.log(value);
             function publicB() { return helperB4(); }
 
             const result = publicA() + publicB();
+            export { result };
+        "#
+        .to_string()
+    }
+
+    fn nested_scope_hoist_cycle_fixture() -> String {
+        r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
             export { result };
         "#
         .to_string()
