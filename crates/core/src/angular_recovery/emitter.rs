@@ -20,13 +20,19 @@ pub(super) struct ComponentEmitInput<'a> {
     pub(super) roles: &'a IvyRoleTable,
     pub(super) unresolved_ctxt: SyntaxContext,
     pub(super) template: &'a RecoveredTemplate,
+    pub(super) definition_field: Option<&'a Atom>,
 }
 
 pub(super) fn emit_component_source(
     input: ComponentEmitInput<'_>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
-    let class = clean_component_class(input.class, input.roles, input.unresolved_ctxt);
+    let class = clean_component_class(
+        input.class,
+        input.definition_field,
+        input.roles,
+        input.unresolved_ctxt,
+    );
     let class_source = print_component_class(input.name, class, cm)?;
 
     let mut metadata = String::new();
@@ -55,6 +61,7 @@ pub(super) fn emit_component_source(
 
 fn clean_component_class(
     class: &Class,
+    definition_field: Option<&Atom>,
     roles: &IvyRoleTable,
     unresolved_ctxt: SyntaxContext,
 ) -> Box<Class> {
@@ -64,6 +71,8 @@ fn clean_component_class(
         ClassMember::ClassProp(property) if property.is_static => {
             let canonical_ivy_field =
                 prop_name(&property.key).is_some_and(|name| name.starts_with('ɵ'));
+            let assigned_component_field = definition_field
+                .is_some_and(|field| prop_name(&property.key).as_deref() == Some(field.as_ref()));
             let component_initializer = property.value.as_deref().is_some_and(|value| {
                 let Expr::Call(call) = value else {
                     return false;
@@ -71,7 +80,7 @@ fn clean_component_class(
                 roles.instruction_for_callee(&call.callee, unresolved_ctxt)
                     == Some(IvyInstruction::DefineComponent)
             });
-            !canonical_ivy_field && !component_initializer
+            !canonical_ivy_field && !assigned_component_field && !component_initializer
         }
         _ => true,
     });
