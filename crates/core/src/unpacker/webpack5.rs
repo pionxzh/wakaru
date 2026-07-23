@@ -1847,7 +1847,7 @@ fn find_webpack5_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<(usize
                 found: false,
             };
             candidate.body.visit_with(&mut finder);
-            finder.found.then(|| (candidate.stmt_idx, candidate.sym))
+            finder.found.then_some((candidate.stmt_idx, candidate.sym))
         })
 }
 
