@@ -105,6 +105,7 @@ impl RewriteOptions {
 #[derive(Debug, Clone, Default)]
 pub struct DecompileOptions {
     rewrite: RewriteOptions,
+    recovery: RecoveryOptions,
     diagnostics: bool,
     output_source_map: bool,
 }
@@ -118,12 +119,21 @@ impl DecompileOptions {
         self.diagnostics
     }
 
+    pub fn recovery(&self) -> RecoveryOptions {
+        self.recovery
+    }
+
     pub fn output_source_map(&self) -> bool {
         self.output_source_map
     }
 
     pub fn with_rewrite(mut self, rewrite: RewriteOptions) -> Self {
         self.rewrite = rewrite;
+        self
+    }
+
+    pub fn with_recovery(mut self, recovery: RecoveryOptions) -> Self {
+        self.recovery = recovery;
         self
     }
 
@@ -134,6 +144,22 @@ impl DecompileOptions {
 
     pub fn with_output_source_map(mut self, enabled: bool) -> Self {
         self.output_source_map = enabled;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecoveryOptions {
+    angular_components: bool,
+}
+
+impl RecoveryOptions {
+    pub fn angular_components(&self) -> bool {
+        self.angular_components
+    }
+
+    pub fn with_angular_components(mut self, enabled: bool) -> Self {
+        self.angular_components = enabled;
         self
     }
 }
@@ -215,6 +241,7 @@ pub struct UnpackOptions {
     modules: ModuleMode,
     mode: UnpackMode,
     unmatched: UnmatchedInput,
+    recovery: RecoveryOptions,
     diagnostics: bool,
     output_source_maps: bool,
 }
@@ -230,6 +257,10 @@ impl UnpackOptions {
 
     pub fn unmatched(&self) -> UnmatchedInput {
         self.unmatched
+    }
+
+    pub fn recovery(&self) -> RecoveryOptions {
+        self.recovery
     }
 
     pub fn diagnostics(&self) -> bool {
@@ -252,6 +283,11 @@ impl UnpackOptions {
 
     pub fn with_unmatched(mut self, unmatched: UnmatchedInput) -> Self {
         self.unmatched = unmatched;
+        self
+    }
+
+    pub fn with_recovery(mut self, recovery: RecoveryOptions) -> Self {
+        self.recovery = recovery;
         self
     }
 
@@ -280,6 +316,7 @@ mod tests {
         assert!(matches!(unpack.modules(), ModuleMode::Decompile(_)));
         assert_eq!(unpack.mode(), UnpackMode::Auto);
         assert_eq!(unpack.unmatched(), UnmatchedInput::Process);
+        assert!(!unpack.recovery().angular_components());
         assert!(!unpack.diagnostics());
         assert!(!unpack.output_source_maps());
     }
@@ -293,11 +330,13 @@ mod tests {
             .with_modules(ModuleMode::Decompile(rewrite))
             .with_mode(UnpackMode::Inspect)
             .with_unmatched(UnmatchedInput::Skip)
+            .with_recovery(RecoveryOptions::default().with_angular_components(true))
             .with_diagnostics(true)
             .with_output_source_maps(true);
 
         assert_eq!(options.mode(), UnpackMode::Inspect);
         assert_eq!(options.unmatched(), UnmatchedInput::Skip);
+        assert!(options.recovery().angular_components());
         assert!(options.diagnostics());
         assert!(options.output_source_maps());
     }
