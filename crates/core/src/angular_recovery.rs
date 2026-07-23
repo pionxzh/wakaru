@@ -8,6 +8,7 @@ mod emitter;
 mod roles;
 mod syntax;
 mod template;
+mod workspace;
 
 use std::collections::HashMap;
 
@@ -42,6 +43,9 @@ pub struct RecoveredAngularComponent {
     pub selector: String,
     pub source: String,
     pub completeness: AngularRecoveryCompleteness,
+    /// Index into the `AngularModuleSource` slice that contained the
+    /// component definition.
+    pub module_index: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,7 +103,7 @@ pub fn recover_angular_components_from_modules(
         let roles = IvyRoleTable::collect(&modules);
 
         let mut recovered = Vec::new();
-        for prepared in &modules {
+        for (module_index, prepared) in modules.iter().enumerate() {
             let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
             let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
             prepared.module.visit_with(&mut calls);
@@ -141,6 +145,7 @@ pub fn recover_angular_components_from_modules(
                     } else {
                         AngularRecoveryCompleteness::Partial
                     },
+                    module_index,
                 });
             }
         }
@@ -181,6 +186,10 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
     module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+    workspace::canonicalize_immediate_iife_namespace_aliases(
+        &mut module,
+        SyntaxContext::empty().apply_mark(unresolved_mark),
+    );
 
     Ok(PreparedAngularModule {
         module,
