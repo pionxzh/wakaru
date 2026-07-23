@@ -163,6 +163,32 @@ Recovery confidence is structural, not a percentage:
 
 No artifact is emitted when component identity itself is ambiguous.
 
+## Production feasibility validation
+
+The implementation is validated with ignored local artifacts rather than a
+committed application bundle. A generated Angular 22 production-AOT project
+was built as a multi-chunk application, flattened into a canonical single-file
+variant, and passed through Closure Compiler at `WHITESPACE_ONLY`, `SIMPLE`,
+and `ADVANCED` optimization levels.
+
+All profiles recovered the three application component definitions with
+non-empty inline templates. The recovered regions include element structure,
+static text, interpolation, event listeners, property bindings, and scoped
+styles. Modern conditional, repeater, and deferred-view instructions remain
+explicit partial regions, matching the scope above.
+
+Closure output is requested with UTF-8 encoding because Angular's generated
+field names contain Unicode identifiers. A non-UTF-8 compiler output profile
+can replace those identifier characters and produce text that is not valid
+JavaScript. `ADVANCED` validation also retains component-definition roots:
+whole-program dead-code elimination can otherwise remove an application
+component completely, leaving no artifact for a decompiler to recover.
+
+A separate complete multi-file local corpus was also analyzed as one workspace
+to confirm that Ivy runtime evidence in companion files is available during
+component recovery. Its code, filenames, module labels, and provenance remain
+outside the repository.
+
 ## Tests and local corpus policy
 
 Committed tests use small synthetic production fixtures and generated,
