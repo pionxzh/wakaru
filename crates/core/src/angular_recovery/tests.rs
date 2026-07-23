@@ -177,3 +177,126 @@ fn marks_unsupported_ivy_regions_as_partial() {
         .source
         .contains("<!-- Unsupported Ivy instruction: ɵɵprojection -->"));
 }
+
+#[test]
+fn recovers_renamed_instructions_and_descriptor_fields_from_export_evidence() {
+    let source = r#"
+        function d(value) { return value; }
+        function s() { return s; }
+        function e() { return e; }
+        function x() {}
+        function a() {}
+        function i() {}
+        const publicRuntime = {
+            "ɵɵdefineComponent": d,
+            "ɵɵelementStart": s,
+            "ɵɵelementEnd": e,
+            "ɵɵtext": x,
+            "ɵɵadvance": a,
+            "ɵɵtextInterpolate": i,
+        };
+
+        class a0 {
+            label = "Renamed";
+            static q;
+        }
+        a0.q = d({
+            type: a0,
+            k: [["renamed-card"]],
+            c: [
+                ["class", "box"]
+            ],
+            t: function(r, v) {
+                r & 1 && (s(0, "article", 0)(1, "h2"), x(2), e()());
+                r & 2 && (a(2), i(v.label));
+            },
+            z: [
+                "article[_ngcontent-%COMP%] { border: 1px solid; }"
+            ],
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("renamed production Ivy should parse");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "renamed-card");
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(recovered[0].source.contains("<article class=\"box\">"));
+    assert!(recovered[0].source.contains("<h2>{{ label }}</h2>"));
+    assert!(recovered[0]
+        .source
+        .contains("article { border: 1px solid; }"));
+    assert!(!recovered[0].source.contains("static q"));
+}
+
+#[test]
+fn shares_unresolved_namespace_roles_across_module_sources() {
+    let runtime = r#"
+        shared.publicRuntime = {
+            "ɵɵdefineComponent": shared.d,
+            "ɵɵelement": shared.e,
+        };
+    "#;
+    let component = r#"
+        class CrossModuleComponent {
+            static x;
+        }
+        CrossModuleComponent.x = shared.d({
+            type: CrossModuleComponent,
+            p: [["cross-module"]],
+            t: function(r) {
+                if (r & 1) {
+                    shared.e(0, "hr");
+                }
+            },
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_modules(
+        &[
+            AngularModuleSource {
+                filename: "runtime.js",
+                source: runtime,
+            },
+            AngularModuleSource {
+                filename: "component.js",
+                source: component,
+            },
+        ],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("the generic module workspace should share unresolved symbol roles");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "cross-module");
+    assert!(recovered[0].source.contains("<hr />"));
+    assert!(!recovered[0].source.contains("static x"));
+}
+
+#[test]
+fn rejects_conflicting_export_role_evidence() {
+    let source = r#"
+        function ambiguous() {}
+        const publicRuntime = {
+            "ɵɵdefineComponent": ambiguous,
+            "ɵɵelement": ambiguous,
+        };
+        class AmbiguousComponent {}
+        AmbiguousComponent.value = ambiguous({
+            type: AmbiguousComponent,
+            p: [["ambiguous-component"]],
+            t: function(r) {
+                if (r & 1) ambiguous(0, "div");
+            },
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("conflicting role evidence should not make parsing fail");
+    assert!(recovered.is_empty());
+}
