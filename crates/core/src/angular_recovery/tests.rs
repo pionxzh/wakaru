@@ -126,6 +126,74 @@ fn accepts_named_ivy_instruction_imports() {
 }
 
 #[test]
+fn derives_a_readable_component_name_from_the_selector() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        const a = class b {
+            static compiled = define({
+                type: b,
+                selectors: [["project-panel"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "hr");
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("minified component bindings should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].name, "ProjectPanelComponent");
+    assert!(recovered[0]
+        .source
+        .contains("export class ProjectPanelComponent"));
+}
+
+#[test]
+fn restores_the_listener_event_parameter_name() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class EventCardComponent {
+            change(value) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: EventCardComponent,
+                selectors: [["event-card"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "input");
+                        core.ɵɵlistener("input", function(a) {
+                            return context.change(a.target.value);
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("listener parameter recovery should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert!(
+        recovered[0]
+            .source
+            .contains("<input (input)=\"change($event.target.value)\" />"),
+        "{}",
+        recovered[0].source
+    );
+}
+
+#[test]
 fn accepts_modern_dom_instruction_imports() {
     let source = r#"
         import {
