@@ -1807,7 +1807,11 @@ fn stmts_reference_ident(stmts: &[Stmt], sym: &Atom) -> bool {
     finder.found
 }
 
-/// Whether any statement calls the require binding, e.g. `r(1)`.
+/// Whether any statement uses the require binding as a loader: a direct call
+/// (`r(1)`) or a call through one of its members — webpack's eager
+/// `import()` startup has no direct call, only
+/// `Promise.resolve().then(r.bind(r, 1))`, and chunked startups call
+/// `r.e(...)`.
 fn stmts_call_require(stmts: &[Stmt], require_sym: &Atom) -> bool {
     let mut finder = RequireCallFinder {
         require_sym,
@@ -1825,12 +1829,22 @@ struct RequireCallFinder<'a> {
 impl Visit for RequireCallFinder<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
         call.visit_children_with(self);
-        if let Callee::Expr(callee) = &call.callee {
-            if let Expr::Ident(ident) = strip_parens(callee) {
-                if ident.sym == *self.require_sym {
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        match strip_parens(callee) {
+            Expr::Ident(ident) if ident.sym == *self.require_sym => {
+                self.found = true;
+            }
+            // `r.bind(r, 1)`, `r.e(1)`, `r.t(...)` — a member call on the
+            // require binding is still the loader in use.
+            Expr::Member(MemberExpr { obj, .. }) => {
+                if matches!(strip_parens(obj), Expr::Ident(ident) if ident.sym == *self.require_sym)
+                {
                     self.found = true;
                 }
             }
+            _ => {}
         }
     }
 }

@@ -565,3 +565,66 @@ fn fn_expr_require_with_object_table_recovers_entry() {
         "fn-expr require startup must be recovered via the loose locate, got:\n{entry}"
     );
 }
+
+#[test]
+fn eager_only_startup_recovers_entry() {
+    // webpack 5's eager `import()` startup has no direct require call — only
+    // `Promise.resolve().then(r.bind(r, 1))`. The startup gate must count a
+    // member call on the require binding as loader use, or the entry (and all
+    // its side effects) is silently dropped while the modules still unpack.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = 42; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    Promise.resolve().then(r.bind(r, 1)).then((v) => console.log(v));
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js"),
+        "eager-only startup must be recovered with the bound id rewritten, got:\n{entry}"
+    );
+}
+
+#[test]
+fn eager_bound_require_id_is_rewritten() {
+    // A mixed startup (direct require + eager import) recovered its entry via
+    // the direct call, but the bound loader kept its numeric id:
+    // `require.bind(require, 2)` invokes the host require with a bare module
+    // id once the webpack runtime is gone. The bound argument gets the same
+    // filename rewrite as direct calls.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = 41; }, (e) => { e.exports = 42; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    var d = r(1);
+    console.log(d);
+    Promise.resolve().then(r.bind(r, 2)).then((v) => console.log(v));
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && entry.contains("./module-2.js"),
+        "both the direct and the bound module ids must be rewritten, got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("bind(require, 2)"),
+        "bound require id must not survive as a numeric id, got:\n{entry}"
+    );
+}

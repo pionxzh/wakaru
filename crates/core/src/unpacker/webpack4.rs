@@ -144,8 +144,44 @@ impl WebpackRuntimeNormalizer {
     }
 }
 
+/// Which argument of `call` carries a module id for the require binding:
+/// a direct `require(id)` call (argument 0), or the bound loader webpack
+/// emits for eager `import()` — `require.bind(require, id)` (webpack 5) /
+/// `require.bind(null, id)` (webpack 4) — where the id is argument 1.
+fn require_id_arg_index(
+    call: &CallExpr,
+    require_sym: &Atom,
+    unresolved_mark: Mark,
+) -> Option<usize> {
+    let is_require_ident = |expr: &Expr| {
+        matches!(expr, Expr::Ident(ident)
+            if ident.sym == *require_sym && ident.ctxt.outer() == unresolved_mark)
+    };
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    if is_require_ident(callee_expr) {
+        return (call.args.len() == 1 && call.args[0].spread.is_none()).then_some(0);
+    }
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return None;
+    };
+    if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "bind")
+        || !is_require_ident(obj)
+    {
+        return None;
+    }
+    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let this_arg = &*call.args[0].expr;
+    (is_require_ident(this_arg) || matches!(this_arg, Expr::Lit(Lit::Null(_)))).then_some(1)
+}
+
 /// Rewrites `require(N)` calls (where N is a numeric literal) to `require("./filename.js")`.
-/// This lets un-esm convert them to proper ES import statements.
+/// This lets un-esm convert them to proper ES import statements. The bound
+/// eager-import form (`require.bind(require, N)`) gets the same id rewrite so
+/// a recovered entry never invokes the host require with a bare module id.
 pub(crate) struct RequireIdRewriter<'a> {
     pub(crate) require_sym: Atom,
     pub(crate) unresolved_mark: Mark,
@@ -158,21 +194,11 @@ impl VisitMut for RequireIdRewriter<'_> {
         // Recurse first
         call.visit_mut_children_with(self);
 
-        // Match: require(N) where callee is the require ident
-        let Callee::Expr(callee_expr) = &call.callee else {
+        let Some(arg_idx) = require_id_arg_index(call, &self.require_sym, self.unresolved_mark)
+        else {
             return;
         };
-        let Expr::Ident(callee_ident) = &**callee_expr else {
-            return;
-        };
-        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark
-        {
-            return;
-        }
-        if call.args.len() != 1 || call.args[0].spread.is_some() {
-            return;
-        }
-        let Expr::Lit(Lit::Num(Number { value, .. })) = &*call.args[0].expr else {
+        let Expr::Lit(Lit::Num(Number { value, .. })) = &*call.args[arg_idx].expr else {
             return;
         };
 
@@ -184,7 +210,7 @@ impl VisitMut for RequireIdRewriter<'_> {
 
         if let Some(filename) = self.id_to_filename.get(&id) {
             let path = relative_import_specifier(self.from_filename, filename);
-            *call.args[0].expr = Expr::Lit(Lit::Str(Str {
+            *call.args[arg_idx].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
                 value: path.into(),
                 raw: None,
@@ -208,21 +234,13 @@ impl VisitMut for RequireStringIdRewriter<'_> {
         // Recurse first
         call.visit_mut_children_with(self);
 
-        // Match: require("./src/foo.js") where callee is the require ident
-        let Callee::Expr(callee_expr) = &call.callee else {
+        // Match: require("./src/foo.js") (or the bound eager-import form)
+        // where the loader is the require ident.
+        let Some(arg_idx) = require_id_arg_index(call, &self.require_sym, self.unresolved_mark)
+        else {
             return;
         };
-        let Expr::Ident(callee_ident) = &**callee_expr else {
-            return;
-        };
-        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark
-        {
-            return;
-        }
-        if call.args.len() != 1 || call.args[0].spread.is_some() {
-            return;
-        }
-        let Expr::Lit(Lit::Str(s)) = &*call.args[0].expr else {
+        let Expr::Lit(Lit::Str(s)) = &*call.args[arg_idx].expr else {
             return;
         };
         let Some(key) = s.value.as_str() else {
@@ -231,7 +249,7 @@ impl VisitMut for RequireStringIdRewriter<'_> {
 
         if let Some(filename) = self.id_to_filename.get(key) {
             let path = relative_import_specifier(self.from_filename, filename);
-            *call.args[0].expr = Expr::Lit(Lit::Str(Str {
+            *call.args[arg_idx].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
                 value: path.into(),
                 raw: None,
