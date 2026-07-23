@@ -145,6 +145,12 @@ agent that reads skills, and the agent knows when and how to unpack a bundle,
 read the recovered modules like ordinary source, and pick the right rewrite
 level.
 
+Agents that support the skills format can install it with:
+
+```bash
+npx skills add pionxzh/wakaru
+```
+
 ## Install
 
 ```bash
