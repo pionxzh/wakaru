@@ -113,19 +113,28 @@ Ambiguous values are left unknown. Object-literal order alone is not proof.
 
 ## Pipeline placement
 
-Integrated recovery runs after the ordinary rewrite pipeline and before final
-AST materialization:
+Root recovery runs after the ordinary rewrite pipeline:
 
-1. Retain each finalized module AST in the generic module workspace.
-2. Collect symbol-role evidence across all modules.
-3. Analyze component definitions using the shared role table.
-4. Emit normal JavaScript and recovered artifacts independently.
+1. Finalize normal JavaScript without any Ivy-dependent rewrite.
+2. Build one generic module workspace from all finalized modules.
+3. Collect symbol-role evidence across the workspace.
+4. Analyze component definitions using the shared role table.
+5. Emit recovered artifacts independently from the JavaScript modules.
 
 This placement lets a regular AOT module and modules obtained from any unpacker
-use the same analyzer. It also avoids parsing emitted JavaScript once per
-framework. Standalone `angular::recover` is allowed to parse owned sources as a
-separate convenience operation, matching the public API boundary documented in
+use the same analyzer. The experimental implementation currently parses the
+finalized owned workspace once. Retaining finalized ASTs through root artifact
+recovery is a planned performance optimization; it must not alter the module
+workspace contract or move Ivy semantics into an unpacker. Standalone
+`angular::recover` is allowed to parse owned sources as a separate convenience
+operation, matching the public API boundary documented in
 [public-api.md](public-api.md).
+
+The workspace may canonicalize a stable namespace argument passed into an
+immediately invoked function when the corresponding parameter is never
+reassigned. This is generic symbol-edge normalization. It neither identifies a
+bundle format nor assigns an Ivy role; role classification remains in the Ivy
+analyzer.
 
 ## Artifact contract
 
