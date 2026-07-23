@@ -7,6 +7,7 @@
 )]
 
 pub(crate) mod analysis;
+pub mod angular_recovery;
 pub mod collections;
 pub(crate) mod commonjs_default_object_composition;
 pub(crate) mod commonjs_export_residual;
@@ -28,6 +29,11 @@ pub mod utils;
 pub mod vue_recovery;
 pub mod vue_template;
 
+pub use angular_recovery::{
+    recover_angular_components_from_js, recover_angular_components_from_modules,
+    AngularModuleSource, AngularRecoveryCompleteness, AngularRecoveryOptions,
+    RecoveredAngularComponent,
+};
 pub use driver::{
     decompile, deduplicate_path, explain_commonjs_exports, format_trace_events,
     is_detected_unpack_input, normalize, safe_relative_module_path, trace_rules, BundleFormat,
