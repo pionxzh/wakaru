@@ -80,6 +80,13 @@ impl UnpackJob {
                 anyhow!("raw unpack mode does not support output source maps"),
             ));
         }
+        if matches!(options.modules(), ModuleMode::Raw) && options.recovery().angular_components() {
+            return Err(Error::new(
+                ErrorKind::InvalidOptions,
+                None,
+                anyhow!("raw unpack mode does not support component recovery"),
+            ));
+        }
         Ok(Self {
             options,
             reports: Vec::new(),
@@ -219,9 +226,13 @@ impl UnpackJob {
         }
 
         append_preserved_modules(&mut modules, &mut self.reports, preserved);
+        let (artifacts, recovery_diagnostics) =
+            crate::artifacts::recover_artifacts(&modules, self.options.recovery());
+        diagnostics.extend(recovery_diagnostics);
 
         Ok(UnpackOutput {
             modules,
+            artifacts,
             inputs: self.reports,
             diagnostics,
             safety: if self.options.mode() == UnpackMode::Inspect {
@@ -519,6 +530,55 @@ mod tests {
 
     const CLOSURE_MODULE_MANAGER_FIXTURE: &str =
         include_str!("../../core/tests/bundles/closure-module-manager/synthetic.js");
+    const CLOSURE_ANGULAR_COMPONENT_FIXTURE: &str = r#"
+        "use strict";
+        this.localSuite = this.localSuite || {};
+        (function(shared) {
+          var window = this;
+
+          /*_M:runtime*/
+          try {
+            shared.before("runtime");
+            shared._ModuleManager_initialize(
+              "runtime/component:0",
+              ["runtime", "component"]
+            );
+            shared.define = function(value) {
+              return value;
+            };
+            shared.element = function() {
+              return shared.element;
+            };
+            shared.publicRuntime = {
+              "ɵɵdefineComponent": shared.define,
+              "ɵɵelement": shared.element
+            };
+            shared.after();
+          } catch (error) {
+            shared._DumpException(error);
+          }
+
+          /*_M:component*/
+          try {
+            shared.before("component");
+            shared.Card = class CardComponent {
+              title = "Local";
+            };
+            shared.Card.definition = shared.define({
+              type: shared.Card,
+              selectors: [["local-card"]],
+              template: function(renderFlags) {
+                if (renderFlags & 1) {
+                  shared.element(0, "article");
+                }
+              }
+            });
+            shared.after();
+          } catch (error) {
+            shared._DumpException(error);
+          }
+        }).call(this, this.localSuite);
+    "#;
     const METRO_FIXTURE: &str = r#"
         __d(function(global, require, importDefault, importAll, module, exports, dependencyMap) {
             module.exports = 1;
@@ -656,6 +716,39 @@ mod tests {
         let output = job.finish().expect("Closure bundle should unpack");
         assert!(!output.modules.is_empty());
         assert_eq!(output.inputs[0].detection, receipt.detection);
+    }
+
+    #[test]
+    fn closure_unpack_and_angular_recovery_remain_separate_root_phases() {
+        let options = UnpackOptions::default()
+            .with_recovery(crate::RecoveryOptions::default().with_angular_components(true));
+        let output = unpack(
+            vec![Source::new(
+                "local-closure-bundle.js",
+                CLOSURE_ANGULAR_COMPONENT_FIXTURE,
+            )],
+            options,
+        )
+        .expect("synthetic Closure bundle should unpack and recover artifacts");
+
+        assert_eq!(
+            output.inputs[0].detection,
+            InputDetection::Structural(BundleFormat::ClosureModuleManager)
+        );
+        assert_eq!(
+            output.artifacts.len(),
+            1,
+            "modules: {:#?}\ndiagnostics: {:#?}",
+            output.modules,
+            output.diagnostics
+        );
+        let artifact = &output.artifacts[0];
+        assert_eq!(artifact.kind, crate::ArtifactKind::AngularComponent);
+        assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
+        assert_eq!(artifact.filename, "local-card.component.ts");
+        assert_eq!(artifact.module_indices.len(), 1);
+        assert!(artifact.code.contains("<article></article>"));
+        assert!(!artifact.code.contains("shared."));
     }
 
     #[test]
@@ -833,6 +926,17 @@ mod tests {
                 .with_output_source_maps(true),
         )
         .expect_err("invalid combination should fail");
+        assert_eq!(error.kind(), ErrorKind::InvalidOptions);
+    }
+
+    #[test]
+    fn raw_output_rejects_component_recovery() {
+        let error = UnpackJob::new(
+            UnpackOptions::default()
+                .with_modules(ModuleMode::Raw)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect_err("raw mode should not run component recovery");
         assert_eq!(error.kind(), ErrorKind::InvalidOptions);
     }
 
