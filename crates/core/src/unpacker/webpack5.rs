@@ -18,6 +18,7 @@ use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
+use crate::unpacker::webpack_common::{numeric_id_from_expr, split_array_concat};
 use crate::unpacker::{
     deconflict_runtime_binding_renames, emit_module_with_source_map, source_fallback_for_stmts,
     spans_byte_ranges, BundleFormat, DetectedBundle, PreparedModuleAst, UnpackResult,
@@ -1037,47 +1038,6 @@ impl Visit for RequireBodyScanner<'_> {
     }
 }
 
-/// Match `Array(<n>).concat([...])` — webpack's sparse-array header when the
-/// smallest module id is non-zero. Emitted by both webpack 4 and 5, so the
-/// webpack4 unpacker reuses this matcher.
-pub(super) fn split_array_concat(call: &CallExpr) -> Option<(&ArrayLit, usize)> {
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee) else {
-        return None;
-    };
-    let MemberProp::Ident(concat_ident) = prop else {
-        return None;
-    };
-    if concat_ident.sym.as_ref() != "concat" {
-        return None;
-    }
-    let Expr::Call(array_call) = strip_parens(obj) else {
-        return None;
-    };
-    let Callee::Expr(array_callee) = &array_call.callee else {
-        return None;
-    };
-    let Expr::Ident(array_ident) = strip_parens(array_callee) else {
-        return None;
-    };
-    if array_ident.sym.as_ref() != "Array" {
-        return None;
-    }
-    if array_call.args.len() != 1 || array_call.args[0].spread.is_some() {
-        return None;
-    }
-    let id_offset = numeric_id_from_expr(&array_call.args[0].expr)?;
-    if call.args.len() != 1 || call.args[0].spread.is_some() {
-        return None;
-    }
-    let Expr::Array(array) = strip_parens(&call.args[0].expr) else {
-        return None;
-    };
-    Some((array, id_offset))
-}
-
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
 /// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`.
 /// The modules payload may also be a sparse array — see
@@ -1247,17 +1207,6 @@ fn numeric_ids_from_array(array: &ArrayLit) -> HashSet<usize> {
         .filter_map(|elem| elem.as_ref())
         .filter_map(|elem| numeric_id_from_expr(&elem.expr))
         .collect()
-}
-
-fn numeric_id_from_expr(expr: &Expr) -> Option<usize> {
-    let Expr::Lit(Lit::Num(number)) = strip_parens(expr) else {
-        return None;
-    };
-    let value = number.value;
-    if value < 0.0 || value.fract() != 0.0 {
-        return None;
-    }
-    Some(value as usize)
 }
 
 fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {

@@ -474,7 +474,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
         Expr::Object(object_lit) => extract_webpack4_object_modules(object_lit, bootstrap_fn, cm),
         Expr::Call(concat_call) => {
             let (array_lit, id_offset) =
-                crate::unpacker::webpack5::split_array_concat(concat_call)?;
+                crate::unpacker::webpack_common::split_array_concat(concat_call)?;
             extract_webpack4_array_modules(array_lit, id_offset, bootstrap_fn, cm)
         }
         _ => None,

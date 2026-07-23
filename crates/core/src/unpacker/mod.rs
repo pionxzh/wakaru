@@ -7,6 +7,7 @@ pub mod scope_hoist;
 pub mod systemjs;
 pub mod webpack4;
 pub mod webpack5;
+mod webpack_common;
 mod wrappers;
 
 use std::panic::{self, AssertUnwindSafe};
