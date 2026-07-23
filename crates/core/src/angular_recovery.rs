@@ -23,7 +23,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
-use crate::js_names::to_valid_identifier_name;
+use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use emitter::{emit_component_source, ComponentEmitInput};
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use syntax::{prop_name, string_lit};
@@ -123,7 +123,8 @@ pub fn recover_angular_components_from_modules(
                     prepared.unresolved_ctxt,
                     prepared.cm.clone(),
                 )?;
-                let name = descriptor.class.name.to_string();
+                let name =
+                    recovered_component_name(descriptor.class.name.as_ref(), &descriptor.selector);
                 let source = emit_component_source(
                     ComponentEmitInput {
                         name: &name,
@@ -595,6 +596,45 @@ fn string_array(expr: &Expr) -> Option<Vec<String>> {
         .iter()
         .map(|element| string_lit(element.as_ref()?.expr.as_ref()))
         .collect()
+}
+
+fn recovered_component_name(binding: &str, selector: &str) -> String {
+    if !is_likely_generated_alias(binding) {
+        return binding
+            .strip_prefix('_')
+            .filter(|name| name.ends_with("Component"))
+            .unwrap_or(binding)
+            .to_string();
+    }
+
+    selector_component_name(selector).unwrap_or_else(|| binding.to_string())
+}
+
+fn selector_component_name(selector: &str) -> Option<String> {
+    if selector.is_empty()
+        || !selector
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return None;
+    }
+
+    let mut name = String::new();
+    for segment in selector
+        .split(['-', '_'])
+        .filter(|segment| !segment.is_empty())
+    {
+        let mut characters = segment.chars();
+        name.extend(characters.next()?.to_uppercase());
+        name.extend(characters);
+    }
+    if name.is_empty() {
+        return None;
+    }
+    if !name.ends_with("Component") {
+        name.push_str("Component");
+    }
+    Some(to_valid_identifier_name(&name))
 }
 
 #[cfg(test)]
