@@ -1,0 +1,251 @@
+use anyhow::{anyhow, Result};
+use swc_core::atoms::Atom;
+use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::{
+    BindingIdent, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, Expr, Ident, Module,
+    ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+};
+use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use super::roles::{IvyInstruction, IvyRoleTable};
+use super::syntax::{binding_key, prop_name, BindingKey};
+use super::template::RecoveredTemplate;
+
+pub(super) struct ComponentEmitInput<'a> {
+    pub(super) name: &'a str,
+    pub(super) selector: &'a str,
+    pub(super) styles: &'a [String],
+    pub(super) class: &'a Class,
+    pub(super) roles: &'a IvyRoleTable,
+    pub(super) unresolved_ctxt: SyntaxContext,
+    pub(super) template: &'a RecoveredTemplate,
+}
+
+pub(super) fn emit_component_source(
+    input: ComponentEmitInput<'_>,
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    let class = clean_component_class(input.class, input.roles, input.unresolved_ctxt);
+    let class_source = print_component_class(input.name, class, cm)?;
+
+    let mut metadata = String::new();
+    metadata.push_str("@Component({\n");
+    metadata.push_str("  selector: ");
+    metadata.push_str(&quoted_js_string(input.selector));
+    metadata.push_str(",\n");
+    metadata.push_str("  template: `\n");
+    metadata.push_str(&indent_template_literal(&input.template.source, 4));
+    metadata.push_str("\n  `,\n");
+    if !input.styles.is_empty() {
+        metadata.push_str("  styles: [\n");
+        for style in input.styles {
+            metadata.push_str("    `\n");
+            metadata.push_str(&indent_template_literal(&recover_scoped_styles(style), 6));
+            metadata.push_str("\n    `,\n");
+        }
+        metadata.push_str("  ],\n");
+    }
+    metadata.push_str("})\n");
+
+    Ok(format!(
+        "import {{ Component }} from \"@angular/core\";\n\n{metadata}{class_source}"
+    ))
+}
+
+fn clean_component_class(
+    class: &Class,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> Box<Class> {
+    let mut class = Box::new(class.clone());
+    class.decorators.clear();
+    class.body.retain(|member| match member {
+        ClassMember::ClassProp(property) if property.is_static => {
+            let canonical_ivy_field =
+                prop_name(&property.key).is_some_and(|name| name.starts_with('ɵ'));
+            let component_initializer = property.value.as_deref().is_some_and(|value| {
+                let Expr::Call(call) = value else {
+                    return false;
+                };
+                roles.instruction_for_callee(&call.callee, unresolved_ctxt)
+                    == Some(IvyInstruction::DefineComponent)
+            });
+            !canonical_ivy_field && !component_initializer
+        }
+        _ => true,
+    });
+    class
+}
+
+fn print_component_class(name: &str, class: Box<Class>, cm: Lrc<SourceMap>) -> Result<String> {
+    let module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
+            swc_core::ecma::ast::ExportDecl {
+                span: DUMMY_SP,
+                decl: Decl::Class(ClassDecl {
+                    ident: Ident::new(Atom::from(name), DUMMY_SP, SyntaxContext::empty()),
+                    declare: false,
+                    class,
+                }),
+            },
+        ))],
+        shebang: None,
+    };
+    print_module(&module, cm)
+}
+
+pub(super) fn handler_expression(
+    expression: &Expr,
+    context: Option<&BindingKey>,
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    match expression {
+        Expr::Fn(function) => {
+            let body = function.function.body.as_ref();
+            if let Some(expression) = body.and_then(single_return_expression) {
+                print_template_expression(expression, context, cm)
+            } else {
+                print_expression(expression, cm)
+            }
+        }
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::Expr(expression) => print_template_expression(expression, context, cm),
+            BlockStmtOrExpr::BlockStmt(block) => {
+                if let Some(expression) = single_return_expression(block) {
+                    print_template_expression(expression, context, cm)
+                } else {
+                    print_expression(expression, cm)
+                }
+            }
+        },
+        _ => print_template_expression(expression, context, cm),
+    }
+}
+
+fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&Expr> {
+    let [Stmt::Return(ReturnStmt {
+        arg: Some(expression),
+        ..
+    })] = block.stmts.as_slice()
+    else {
+        return None;
+    };
+    Some(expression.as_ref())
+}
+
+pub(super) fn print_template_expression(
+    expression: &Expr,
+    context: Option<&BindingKey>,
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    let mut expression = expression.clone();
+    if let Some(context) = context {
+        expression.visit_mut_with(&mut ContextPrefixCleaner { context });
+    }
+    print_expression(&expression, cm)
+}
+
+fn print_expression(expression: &Expr, cm: Lrc<SourceMap>) -> Result<String> {
+    let module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            kind: VarDeclKind::Const,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: Ident::new("__wakaru_ivy_expr".into(), DUMMY_SP, SyntaxContext::empty()),
+                    type_ann: None,
+                }),
+                init: Some(Box::new(expression.clone())),
+                definite: false,
+            }],
+        }))))],
+        shebang: None,
+    };
+    let source = print_module(&module, cm)?;
+    Ok(source
+        .trim()
+        .strip_prefix("const __wakaru_ivy_expr = ")
+        .unwrap_or(source.trim())
+        .trim_end_matches(';')
+        .trim()
+        .to_string())
+}
+
+fn print_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
+    let mut output = Vec::new();
+    {
+        let mut emitter = Emitter {
+            cfg: Config::default().with_minify(false),
+            cm: cm.clone(),
+            comments: None,
+            wr: JsWriter::new(cm, "\n", &mut output, None),
+        };
+        emitter
+            .emit_module(module)
+            .map_err(|error| anyhow!("failed to print Angular artifact: {error:?}"))?;
+    }
+    String::from_utf8(output)
+        .map(|source| source.trim().to_string())
+        .map_err(|error| anyhow!("Angular artifact is not UTF-8: {error}"))
+}
+
+struct ContextPrefixCleaner<'a> {
+    context: &'a BindingKey,
+}
+
+impl VisitMut for ContextPrefixCleaner<'_> {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        expression.visit_mut_children_with(self);
+        let Expr::Member(member) = expression else {
+            return;
+        };
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            return;
+        };
+        if binding_key(object) != *self.context {
+            return;
+        }
+        let swc_core::ecma::ast::MemberProp::Ident(property) = &member.prop else {
+            return;
+        };
+        *expression = Expr::Ident(Ident::new(
+            property.sym.clone(),
+            property.span,
+            SyntaxContext::empty(),
+        ));
+    }
+}
+
+fn recover_scoped_styles(style: &str) -> String {
+    style
+        .replace("[_nghost-%COMP%]", ":host")
+        .replace("[_ngcontent-%COMP%]", "")
+        .trim()
+        .to_string()
+}
+
+fn indent_template_literal(value: &str, spaces: usize) -> String {
+    let indent = " ".repeat(spaces);
+    value
+        .replace('`', "\\`")
+        .replace("${", "\\${")
+        .lines()
+        .map(|line| format!("{indent}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn quoted_js_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("\"{escaped}\"")
+}
