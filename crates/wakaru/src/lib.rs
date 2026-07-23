@@ -106,8 +106,8 @@
 //! # }
 //! ```
 
-pub mod bun;
 mod artifacts;
+pub mod bun;
 pub mod debug;
 mod decompile;
 mod error;

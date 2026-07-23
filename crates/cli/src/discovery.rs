@@ -17,6 +17,7 @@ pub struct DirectoryScanStats {
     pub scanned: usize,
     pub detected: usize,
     pub refused: usize,
+    pub processed: usize,
     pub skipped: usize,
 }
 
