@@ -61,7 +61,7 @@ enum CliRewriteLevel {
     Aggressive,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum UnpackMode {
     /// Auto-detect bundle format, with heuristic fallback for scope-hoisted bundles.
     Auto,
@@ -1282,6 +1282,7 @@ fn run_public_unpack(
     angular: bool,
 ) -> Result<PublicUnpackExecution> {
     let saw_directory = paths.iter().any(|path| path.is_dir());
+    let unpack_mode = effective_directory_unpack_mode(unpack_mode, angular, saw_directory);
     let rewrite = wakaru::RewriteOptions::default()
         .with_level(public_rewrite_level(level))
         .with_dce(public_dce_mode(dce_mode));
@@ -1474,6 +1475,18 @@ fn sanitize_bun_embedded_path(name: &str, index: u32) -> String {
         sanitized.push_str(".js");
     }
     sanitized
+}
+
+fn effective_directory_unpack_mode(
+    requested: UnpackMode,
+    angular: bool,
+    saw_directory: bool,
+) -> UnpackMode {
+    if angular && saw_directory && requested == UnpackMode::Auto {
+        UnpackMode::Strict
+    } else {
+        requested
+    }
 }
 
 fn public_rewrite_level(level: RewriteLevel) -> wakaru::RewriteLevel {
