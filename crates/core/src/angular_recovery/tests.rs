@@ -300,3 +300,154 @@ fn rejects_conflicting_export_role_evidence() {
         .expect("conflicting role evidence should not make parsing fail");
     assert!(recovered.is_empty());
 }
+
+#[test]
+fn recovers_a_component_class_assigned_to_a_namespace_member() {
+    let source = r#"
+        function define(value) { return value; }
+        function element() { return element; }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+            "ɵɵelement": element,
+        };
+
+        scope.NamespaceCard = class {
+            title = "Namespaced";
+            static metadata;
+        };
+        scope.NamespaceCard.metadata = define({
+            type: scope.NamespaceCard,
+            selectors: [["namespace-card"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    element(0, "section");
+                }
+            },
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("namespace-assigned classes should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].name, "NamespaceCard");
+    assert!(recovered[0].source.contains("<section></section>"));
+    assert!(!recovered[0].source.contains("static metadata"));
+}
+
+#[test]
+fn infers_renamed_component_and_element_helpers_from_runtime_shapes() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+
+        scope.StructuralCard = class {
+            label = "Structural";
+            static compiled;
+        };
+        scope.StructuralCard.compiled = runtime.component({
+            type: scope.StructuralCard,
+            x: [["structural-card"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    runtime.element(0, "article");
+                }
+            },
+            styles: ["article { display: block; }"],
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("structural runtime evidence should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].name, "StructuralCard");
+    assert_eq!(recovered[0].selector, "structural-card");
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(recovered[0].source.contains("<article></article>"));
+    assert!(recovered[0].source.contains("article { display: block; }"));
+    assert!(!recovered[0].source.contains("static compiled"));
+}
+
+#[test]
+fn rejects_a_config_normalizer_that_only_resembles_component_definition() {
+    let source = r#"
+        runtime.normalize = function(config) {
+            return {
+                template: config.template,
+                dependencies: config.dependencies,
+                styles: config.styles,
+            };
+        };
+        scope.Unrelated = class {};
+        scope.Unrelated.value = runtime.normalize({
+            type: scope.Unrelated,
+            selectors: [["unrelated-value"]],
+            template: function() {},
+            dependencies: [],
+            styles: [],
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("lookalike configuration code should parse");
+    assert!(recovered.is_empty());
+}
+
+#[test]
+fn marks_unclassified_calls_on_a_proven_runtime_namespace_as_partial() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelement": runtime.element,
+        };
+        class ConservativeComponent {}
+        ConservativeComponent.compiled = runtime.define({
+            type: ConservativeComponent,
+            selectors: [["conservative-card"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    runtime.element(0, "article");
+                    runtime.q(1);
+                }
+            },
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("unclassified runtime calls should not prevent partial recovery");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Partial
+    );
+    assert!(recovered[0]
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+    assert!(!recovered[0].source.contains("runtime.q"));
+}
