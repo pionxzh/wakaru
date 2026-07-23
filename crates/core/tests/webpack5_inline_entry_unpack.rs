@@ -661,3 +661,104 @@ fn entry_scope_shadow_does_not_move_runtime_boundary() {
         "the whole startup (load + shadowing helper) must be recovered, got:\n{entry}"
     );
 }
+
+#[test]
+fn startup_merged_into_runtime_sequence_is_recovered() {
+    // Terser merges consecutive expression statements, so the last runtime
+    // definitions and the startup can share one comma sequence:
+    // `r.o = ..., r.d = ..., loadEntry()`. Statement-granular boundary
+    // slicing marked the whole statement as runtime and silently dropped the
+    // startup tail.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key), r.d = (exp, def) => { exp[def] = 1; }, console.log(r(1).value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && !entry.contains("r.d"),
+        "the sequence tail after the last runtime assignment must become the entry, got:\n{entry}"
+    );
+}
+
+#[test]
+fn library_anchor_consumed_by_wrapper_keeps_its_declaration() {
+    // In a minified CommonJS library the export-helper anchor is also the
+    // library value: `var t = {}; r.r(t); r.d(t, ...); module.exports = t;`.
+    // Renaming it to a free `exports` and dropping the declaration leaves
+    // `module.exports = exports` with no `exports` binding — a runtime
+    // ReferenceError after ESM recovery. Such an anchor must stay untouched.
+    let source = r#"
+(() => {
+    var e = ({
+        1: (e, o) => { o.greet = () => "hi"; }
+    });
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.d = (exp, def) => { for (var k in def) exp[k] = def[k]; };
+    var t = {};
+    r.d(t, { greet: () => r(1).greet });
+    module.exports = t;
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("= {}"),
+        "the anchor declaration must be kept when the wrapper consumes it, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("export default t"),
+        "the wrapper tail must survive (as the recovered default export), got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export default exports") && !entry.contains("module.exports = exports"),
+        "the anchor must not be renamed to a free `exports`, got:\n{entry}"
+    );
+}
+
+#[test]
+fn inlined_esmodule_marker_is_dropped_from_entry() {
+    // When the minifier inlines the unused exports anchor into the marker
+    // call (`var t = {}; r.r(t)` becomes `r.r({})`), the call is a semantic
+    // no-op and must not survive in the recovered entry — it rides the same
+    // sequence as the last runtime definition.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 3 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key), r.r({});
+    var v = r(1);
+    console.log(v.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && !entry.contains("require.r"),
+        "the inlined esModule marker must be dropped, got:\n{entry}"
+    );
+}

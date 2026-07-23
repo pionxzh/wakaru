@@ -735,3 +735,35 @@ fn huge_array_concat_offset_does_not_panic() {
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn u32_boundary_concat_offset_does_not_overflow_32bit_usize() {
+    // On wasm32 `usize` is 32 bits: an offset that passes a u32 bound still
+    // overflows `id_offset + index` for the second element. Ids are bounded
+    // to i32::MAX, so this container must fall through everywhere.
+    let source = r#"
+(() => {
+    var __webpack_modules__ = Array(4294967295).concat([
+        ((module, exports, __webpack_require__) => { module.exports = 1; }),
+        ((module, exports, __webpack_require__) => { module.exports = 2; })
+    ]);
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    __webpack_require__(4294967295);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name.starts_with("module-")),
+        "u32-boundary offsets must fall through, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}

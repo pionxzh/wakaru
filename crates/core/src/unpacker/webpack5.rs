@@ -133,8 +133,19 @@ impl Webpack5RuntimeNormalizer {
         };
 
         match prop_name.sym.as_ref() {
-            "r" => None,
-            "d" => None,
+            // `require.r({})` — the esModule marker applied to a
+            // minifier-inlined, otherwise-unused exports object (webpack's
+            // `var t = {}; require.r(t)` after the anchor was inlined) — a
+            // semantic no-op.
+            "r" if call.args.len() == 1
+                && call.args[0].spread.is_none()
+                && matches!(
+                    strip_parens(&call.args[0].expr),
+                    Expr::Object(object) if object.props.is_empty()
+                ) =>
+            {
+                Some(vec![])
+            }
             _ => None,
         }
     }
@@ -1640,7 +1651,60 @@ fn extract_webpack5_inline_startup(
         .unwrap_or(require_idx + 1)
         .max(require_idx + 1);
 
-    let entry_region = &bootstrap_body.stmts[startup_scan_from..];
+    // Minifiers may merge the last runtime assignments and the startup into
+    // one comma sequence (`r.d = ..., r.o = ..., loadEntry()`). When the
+    // boundary statement is such a sequence, its tail after the final runtime
+    // assignment is startup code and belongs to the entry region.
+    let mut entry_region: Vec<Stmt> = Vec::new();
+    if let Some(idx) = last_runtime_idx {
+        if idx + 1 == startup_scan_from {
+            if let (Some(Stmt::Expr(probe_stmt)), Some(Stmt::Expr(orig_stmt))) =
+                (probe_stmts.get(idx), bootstrap_body.stmts.get(idx))
+            {
+                if let (Expr::Seq(probe_seq), Expr::Seq(orig_seq)) = (
+                    strip_parens(&probe_stmt.expr),
+                    strip_parens(&orig_stmt.expr),
+                ) {
+                    if probe_seq.exprs.len() == orig_seq.exprs.len() {
+                        if let Some(split) = last_require_assign_in_seq(probe_seq, &require_id) {
+                            for tail in &orig_seq.exprs[split + 1..] {
+                                entry_region.push(Stmt::Expr(ExprStmt {
+                                    span: tail.span(),
+                                    expr: tail.clone(),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    entry_region.extend(bootstrap_body.stmts[startup_scan_from..].iter().cloned());
+    if entry_region.is_empty() {
+        return None;
+    }
+
+    // The region may end at an enclosing UMD/AMD factory's `return` —
+    // wrapper plumbing, and illegal at the top level of a module. Keep a
+    // side-effectful argument as an expression statement (a minified library
+    // may start up directly in the return, `return r(5)`); drop inert values
+    // like the minified `return {}`. Lowering runs before the anchor analysis
+    // so an inert `return t` does not count as a wrapper use of the anchor.
+    if matches!(entry_region.last(), Some(Stmt::Return(_))) {
+        if let Some(Stmt::Return(ret)) = entry_region.pop() {
+            if let Some(arg) = ret.arg {
+                if matches!(
+                    strip_parens(&arg),
+                    Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
+                ) {
+                    entry_region.push(Stmt::Expr(ExprStmt {
+                        span: ret.span,
+                        expr: arg,
+                    }));
+                }
+            }
+        }
+    }
     if entry_region.is_empty() {
         return None;
     }
@@ -1662,7 +1726,8 @@ fn extract_webpack5_inline_startup(
             }
             without_anchor.extend(entry_region[1..].iter().cloned());
 
-            if binding_used_by_export_helper(entry_region, &require_sym, &binding) {
+            let evidence = anchor_export_helper_evidence(&entry_region, &require_sym, &binding);
+            if evidence.helper && !evidence.other_uses {
                 // Real exports anchor (`require.r(binding)` / `require.d(binding,
                 // ...)`): drop the declaration and rename the binding to
                 // `exports` so the export helpers are recovered.
@@ -1672,35 +1737,15 @@ fn extract_webpack5_inline_startup(
                 // exports): drop the inert declaration, but do not rename.
                 (without_anchor, None)
             } else {
-                // An ordinary entry local that happens to be `{}` first: keep
+                // An ordinary entry local that happens to be `{}` first, or a
+                // library anchor a wrapper tail still consumes (`module.exports
+                // = t`) — dropping its declaration would break that use: keep
                 // the whole region untouched.
-                (entry_region.to_vec(), None)
+                (entry_region.clone(), None)
             }
         }
-        None => (entry_region.to_vec(), None),
+        None => (entry_region.clone(), None),
     };
-    let mut body_stmts = body_stmts;
-
-    // The region may end at an enclosing UMD/AMD factory's `return` —
-    // wrapper plumbing, and illegal at the top level of a module. Keep a
-    // side-effectful argument as an expression statement (a minified library
-    // may start up directly in the return, `return r(5)`); drop inert values
-    // like the minified `return {}`.
-    if matches!(body_stmts.last(), Some(Stmt::Return(_))) {
-        if let Some(Stmt::Return(ret)) = body_stmts.pop() {
-            if let Some(arg) = ret.arg {
-                if matches!(
-                    strip_parens(&arg),
-                    Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
-                ) {
-                    body_stmts.push(Stmt::Expr(ExprStmt {
-                        span: ret.span,
-                        expr: arg,
-                    }));
-                }
-            }
-        }
-    }
 
     // Require the recovered entry to actually call the require binding so a
     // bundle with no startup does not synthesize a bogus entry.
@@ -1754,40 +1799,69 @@ fn empty_object_anchor(stmt: &Stmt) -> Option<(Atom, &VarDecl)> {
 /// in the startup scope itself, and a closure (`function helper() {
 /// require.d(a, ...) }`) may never run — treating it as proof would rewrite a
 /// live local to `exports` on the strength of dead code.
-fn binding_used_by_export_helper(stmts: &[Stmt], require_sym: &Atom, binding: &Atom) -> bool {
+fn anchor_export_helper_evidence(
+    stmts: &[Stmt],
+    require_sym: &Atom,
+    binding: &Atom,
+) -> AnchorEvidence {
+    const NONE: AnchorEvidence = AnchorEvidence {
+        helper: false,
+        other_uses: false,
+    };
     let Some((probe_stmts, unresolved_ctxt)) = resolve_probe(stmts) else {
-        return false;
+        return NONE;
     };
     // The anchor is the first declarator of the region's first statement
     // (mirrors `empty_object_anchor`); take its resolved identity from the
     // probe.
     let Some(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl))) = probe_stmts.first() else {
-        return false;
+        return NONE;
     };
     let Some(first) = var_decl.decls.first() else {
-        return false;
+        return NONE;
     };
     let Pat::Ident(anchor) = &first.name else {
-        return false;
+        return NONE;
     };
     if anchor.id.sym != *binding {
-        return false;
+        return NONE;
     }
+    let anchor_id = anchor.id.to_id();
     let mut finder = ExportHelperFinder {
         require_sym,
         unresolved_ctxt,
-        anchor_id: anchor.id.to_id(),
-        found: false,
+        anchor_id: anchor_id.clone(),
+        helper_args: 0,
     };
     probe_stmts.visit_with(&mut finder);
-    finder.found
+    let mut counter = AnchorUseCounter {
+        anchor_id,
+        count: 0,
+    };
+    probe_stmts.visit_with(&mut counter);
+    AnchorEvidence {
+        helper: finder.helper_args > 0,
+        other_uses: counter.count > finder.helper_args,
+    }
+}
+
+/// What the startup region does with the empty-object anchor binding.
+struct AnchorEvidence {
+    /// The startup scope passes the anchor to `require.r` / `require.d` —
+    /// webpack's export machinery.
+    helper: bool,
+    /// The anchor has uses beyond those helper calls — wrapper plumbing such
+    /// as `module.exports = t`, or a closure capturing it. Dropping the
+    /// declaration and renaming to a free `exports` would break these.
+    other_uses: bool,
 }
 
 struct ExportHelperFinder<'a> {
     require_sym: &'a Atom,
     unresolved_ctxt: SyntaxContext,
     anchor_id: Id,
-    found: bool,
+    /// Number of helper calls whose first argument is the anchor.
+    helper_args: usize,
 }
 
 impl Visit for ExportHelperFinder<'_> {
@@ -1822,7 +1896,29 @@ impl Visit for ExportHelperFinder<'_> {
         if first.spread.is_none()
             && matches!(strip_parens(&first.expr), Expr::Ident(id) if id.to_id() == self.anchor_id)
         {
-            self.found = true;
+            self.helper_args += 1;
+        }
+    }
+}
+
+/// Counts references to the anchor binding at any depth. Declarator names are
+/// declarations, not uses, and are skipped; a use inside a nested function
+/// counts — even a never-called closure keeps the declaration alive.
+struct AnchorUseCounter {
+    anchor_id: Id,
+    count: usize,
+}
+
+impl Visit for AnchorUseCounter {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.to_id() == self.anchor_id {
+            self.count += 1;
         }
     }
 }
@@ -1903,6 +1999,20 @@ impl Visit for SymUsageFinder<'_> {
             self.found = true;
         }
     }
+}
+
+/// Index of the last expression in `seq` containing an assignment to a member
+/// of the require binding — the split point between minifier-merged runtime
+/// definitions and the startup tail that follows them.
+fn last_require_assign_in_seq(seq: &SeqExpr, require_id: &Id) -> Option<usize> {
+    seq.exprs.iter().rposition(|expr| {
+        let mut finder = RequireMemberAssignFinder {
+            require_id,
+            found: false,
+        };
+        expr.visit_with(&mut finder);
+        finder.found
+    })
 }
 
 /// The [`Id`] `stmt` declares under `sym` — a function declaration's name or
