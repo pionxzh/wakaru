@@ -11,6 +11,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, prop_name, BindingKey};
 use super::template::RecoveredTemplate;
+use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
 pub(super) struct ComponentEmitInput<'a> {
     pub(super) name: &'a str,
@@ -110,13 +111,15 @@ pub(super) fn handler_expression(
     context: Option<&BindingKey>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
-    match expression {
+    let mut expression = expression.clone();
+    restore_event_parameter(&mut expression);
+    match &expression {
         Expr::Fn(function) => {
             let body = function.function.body.as_ref();
             if let Some(expression) = body.and_then(single_return_expression) {
                 print_template_expression(expression, context, cm)
             } else {
-                print_expression(expression, cm)
+                print_expression(&expression, cm)
             }
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
@@ -125,12 +128,34 @@ pub(super) fn handler_expression(
                 if let Some(expression) = single_return_expression(block) {
                     print_template_expression(expression, context, cm)
                 } else {
-                    print_expression(expression, cm)
+                    print_expression(&expression, cm)
                 }
             }
         },
-        _ => print_template_expression(expression, context, cm),
+        _ => print_template_expression(&expression, context, cm),
     }
+}
+
+fn restore_event_parameter(expression: &mut Expr) {
+    let parameter = match expression {
+        Expr::Fn(function) => function.function.params.first().map(|param| &param.pat),
+        Expr::Arrow(arrow) => arrow.params.first(),
+        _ => None,
+    };
+    let Some(Pat::Ident(parameter)) = parameter else {
+        return;
+    };
+    let old = binding_key(&parameter.id);
+    if old.0.as_ref() == "$event" {
+        return;
+    }
+    rename_bindings(
+        expression,
+        &[BindingRename {
+            old,
+            new: Atom::from("$event"),
+        }],
+    );
 }
 
 fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&Expr> {
