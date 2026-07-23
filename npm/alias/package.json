@@ -1,0 +1,30 @@
+{
+  "name": "wakaru",
+  "version": "1.8.0",
+  "description": "JavaScript decompiler — unpack bundles and turn minified, transpiled production code back into readable modules. Written in Rust.",
+  "author": "Pionxzh",
+  "license": "Apache-2.0",
+  "bin": {
+    "wakaru": "./bin/wakaru"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pionxzh/wakaru.git",
+    "directory": "npm/alias"
+  },
+  "homepage": "https://wakarujs.com",
+  "keywords": [
+    "decompile",
+    "unminify",
+    "webpack",
+    "javascript",
+    "rust"
+  ],
+  "dependencies": {
+    "@wakaru/cli": "1.8.0"
+  }
+}

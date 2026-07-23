@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+
+// Alias shim: `wakaru` delegates to the `wakaru` bin of @wakaru/cli.
+
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+let pkgPath;
+try {
+  pkgPath = require.resolve("@wakaru/cli/package.json");
+} catch {
+  console.error(
+    "Could not find @wakaru/cli.\n" +
+      "The dependency may not have been installed correctly.\n" +
+      "Try reinstalling: npm install wakaru"
+  );
+  process.exit(1);
+}
+
+const pkg = require(pkgPath);
+const bin =
+  typeof pkg.bin === "string" ? pkg.bin : pkg.bin && pkg.bin.wakaru;
+
+if (!bin) {
+  console.error("@wakaru/cli does not declare a `wakaru` bin entry.");
+  process.exit(1);
+}
+
+const binPath = path.join(path.dirname(pkgPath), bin);
+
+const result = spawnSync(process.execPath, [binPath, ...process.argv.slice(2)], {
+  stdio: "inherit",
+  shell: false,
+});
+
+if (result.error) {
+  throw result.error;
+}
+
+process.exitCode = result.status === null ? 1 : result.status;

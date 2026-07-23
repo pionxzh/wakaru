@@ -134,3 +134,23 @@ jobs:
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           npm publish --tag latest --access public
+
+      - name: Publish wakaru alias package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd npm/alias
+          # Regenerate README from npm/README.md (single source of truth)
+          {
+            echo "# wakaru"
+            echo
+            echo "> \`wakaru\` is the bare-name alias for [\`@wakaru/cli\`](https://www.npmjs.com/package/@wakaru/cli): the same CLI under a shorter name."
+            tail -n +2 ../README.md | sed 's|@wakaru/cli|wakaru|g'
+          } > README.md
+          # Update version and pin the @wakaru/cli dependency to it
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = '$VERSION';
+            pkg.dependencies['@wakaru/cli'] = '$VERSION';
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          npm publish --tag latest --access public

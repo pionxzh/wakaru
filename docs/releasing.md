@@ -27,3 +27,11 @@ Before publishing:
    `wakaru` façade after the registry has indexed the engine version.
 5. Check `git tag -l vX.Y.Z` is empty before creating the tag.
 6. Inspect `CHANGELOG.md` against `git log --no-merges vPREV..HEAD`.
+
+The bare `wakaru` npm package (`npm/alias/`) is a thin shim around
+`@wakaru/cli`, pinned to the exact release version. The release workflow
+publishes it automatically after the main package: it regenerates
+`npm/alias/README.md` from `npm/README.md` (title and install commands
+rewritten to the bare name — edit `npm/README.md`, never the alias copy) and
+rewrites the version plus the pinned dependency. The committed alias README
+is just the latest generated snapshot.
