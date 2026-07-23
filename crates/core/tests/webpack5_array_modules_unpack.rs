@@ -649,3 +649,58 @@ fn generic_callback_array_is_not_mistaken_for_webpack5() {
         pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn dispatcher_creating_local_module_object_is_not_webpack5() {
+    // A dispatcher may create its own `{ exports: {} }` context, pass it to
+    // the table, and return `context.exports` — satisfying every lifecycle
+    // fact except webpack's module-cache write. Without requiring the cache
+    // write (`m = cache[id] = {...}` indexed by the binding that also indexes
+    // the table), this ordinary handler pattern was destructively unpacked
+    // into module-0.js + entry.js.
+    let source = r#"
+var handlers = [function (ctx) { ctx.exports.ready = true; }];
+function dispatch(i) {
+    var context = { exports: {} };
+    handlers[i](context);
+    return context.exports;
+}
+console.log(dispatch(0).ready);
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "dispatcher creating a local module object must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn memoizing_dispatcher_without_shared_index_is_not_webpack5() {
+    // Even with a cache write, the cache index must be the same binding that
+    // indexes the table invocation — webpack's require memoizes and invokes
+    // under one `moduleId`. A dispatcher caching under an unrelated key does
+    // not have that relationship.
+    let source = r#"
+var handlers = [function (ctx) { ctx.exports.ready = true; }];
+var slots = {};
+var nextSlot = 0;
+function dispatch(i) {
+    var key = nextSlot++;
+    var context = slots[key] = { exports: {} };
+    handlers[i](context);
+    return context.exports;
+}
+console.log(dispatch(0).ready);
+"#;
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "cache write under an unrelated key must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}

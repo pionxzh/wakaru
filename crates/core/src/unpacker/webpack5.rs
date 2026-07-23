@@ -281,33 +281,46 @@ pub(super) fn detect_from_module_prepared(
 /// left untouched rather than extracted into an entry that silently loses its
 /// exports.
 fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
-    let mut stmts: Vec<Stmt> = Vec::with_capacity(module.body.len());
+    // This fallback runs for every input the IIFE scan rejects, so decide by
+    // reference before cloning anything: bail on any top-level ModuleDecl and
+    // find the modules container in the same pass.
+    let mut modules_sym: Option<Atom> = None;
     for item in &module.body {
         match item {
-            ModuleItem::Stmt(stmt) => stmts.push(stmt.clone()),
             ModuleItem::ModuleDecl(_) => return None,
+            ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl))) => {
+                if modules_sym.is_none() {
+                    if let Some((_, sym)) = extract_webpack_modules_container(var_decl) {
+                        modules_sym = Some(sym);
+                    }
+                }
+            }
+            ModuleItem::Stmt(_) => {}
         }
     }
+    let modules_sym = modules_sym?;
+
+    let stmts: Vec<Stmt> = module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(stmt) => Some(stmt.clone()),
+            ModuleItem::ModuleDecl(_) => None,
+        })
+        .collect();
 
     // Guard against arbitrary top-level `var xs = [function(a){}]` arrays:
-    // require a modules container the file actually invokes as a module table.
-    // (The IIFE path relies on the wrapper itself as the signal.)
-    let modules_sym = stmts.iter().find_map(|stmt| {
-        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) = stmt else {
-            return None;
-        };
-        extract_webpack_modules_container(var_decl).map(|(_, sym)| sym)
-    })?;
-    if !webpack_require_fn_present(&stmts, &modules_sym) {
-        return None;
-    }
+    // require a webpack require function for the container. (The IIFE path
+    // relies on the wrapper itself as the signal.) The plan is reused by
+    // entry extraction below.
+    let require_plan = plan_webpack_require_fn(&stmts, &modules_sym)?;
 
     let bootstrap_body = swc_core::ecma::ast::BlockStmt {
         span: DUMMY_SP,
         ctxt: SyntaxContext::empty(),
         stmts,
     };
-    extract_webpack5_modules(&bootstrap_body, cm)
+    extract_webpack5_modules_with_plan(&bootstrap_body, cm, Some(require_plan))
 }
 
 pub(super) fn detect_runtime_entry_from_module(
@@ -454,17 +467,24 @@ impl<'a> Webpack5ModulesContainer<'a> {
 /// identified by three structural facts tied to one binding `m` inside one
 /// function scope, webpack's module lifecycle:
 ///
-/// 1. `m` is created locally as an object literal carrying an `exports`
-///    property (`var m = cache[id] = { exports: {} }`),
-/// 2. `m` (or `m.exports`) is passed to the table invocation
-///    (`modules[id](m, m.exports, require)` / `modules[id].call(...)`),
+/// 1. `m` is created as a *module-cache write* — an object literal carrying an
+///    `exports` property, written into a cache under the id being required
+///    (`var m = cache[id] = { exports: {} }`),
+/// 2. `m` (or `m.exports`) is passed to the table invocation *indexed by the
+///    same id binding* (`modules[id](m, m.exports, require)` /
+///    `modules[id].call(...)`),
 /// 3. a return yields `m.exports`.
 ///
-/// A dispatcher's context is a caller-supplied parameter, never a module object
-/// created in the same scope, so it fails fact 1. The lifecycle holds
-/// regardless of how the require function is written (declaration, expression,
-/// minified) and admits zero-parameter factories — webpack's shared call site
-/// always passes the module object even when factories declare no params.
+/// The cache write and the shared index are what make the proof
+/// producer-specific: webpack's generated require always memoizes the module
+/// object under `moduleId` and invokes the factory under the same `moduleId`.
+/// A dispatcher allocating a bare `var context = { exports: {} }` and passing
+/// it to `handlers[i](context)` has no cache write, so it fails fact 1 even
+/// though it creates the object locally; a dispatcher whose context is a
+/// caller-supplied parameter fails it too. The lifecycle holds regardless of
+/// how the require function is written (declaration, expression, minified)
+/// and admits zero-parameter factories — webpack's shared call site always
+/// passes the module object even when factories declare no params.
 ///
 /// The *entire region* is resolved once (see [`resolve_probe`]) and the table
 /// is identified by the resolved [`Id`] of its declaration — not by name — so
@@ -472,26 +492,38 @@ impl<'a> Webpack5ModulesContainer<'a> {
 /// named function expression's self-binding, a class expression's name, an
 /// enclosing function's parameter captured by a closure) is a different
 /// identity and never mistaken for the table.
-fn webpack_require_fn_present(stmts: &[Stmt], modules_sym: &Atom) -> bool {
+///
+/// Candidates are the region-level function declarations webpack emits its
+/// require function as (see [`region_fn_candidates`]). The returned plan says
+/// *which statement* declares it and under *what name* — entry extraction
+/// consumes the same plan instead of re-discovering the require function with
+/// a different (weaker) model, so a bundle can never be detected via one
+/// shape and then lose its entry because extraction only knew another.
+fn plan_webpack_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<RequireFnPlan> {
     // Cheap symbol-level early-out before cloning + resolving the region.
     if !region_invokes_table(stmts, modules_sym) {
-        return false;
+        return None;
     }
-    let Some((probe_stmts, _)) = resolve_probe(stmts) else {
-        return false;
-    };
+    let (probe_stmts, _) = resolve_probe(stmts)?;
     // The modules container is always a region-level var declaration; its
     // resolved identity is what candidates must invoke.
-    let Some(table_id) = region_level_binding_id(&probe_stmts, modules_sym) else {
-        return false;
-    };
-    let mut finder = RequireFnFinder {
-        table_id,
-        pending_self_id: None,
-        found: false,
-    };
-    probe_stmts.visit_with(&mut finder);
-    finder.found
+    let table_id = region_level_binding_id(&probe_stmts, modules_sym)?;
+    region_fn_candidates(&probe_stmts)
+        .into_iter()
+        .find(|candidate| body_is_webpack_require(&candidate.excluded, candidate.body, &table_id))
+        .map(|candidate| RequireFnPlan {
+            stmt_idx: candidate.stmt_idx,
+            sym: candidate.sym,
+        })
+}
+
+/// Where the bootstrap region declares its require function: the statement
+/// index and the binding name. Statement indices refer to the region the plan
+/// was computed for; [`resolve_probe`] clones statements in order, so indices
+/// from a probed clone are valid for the original region.
+struct RequireFnPlan {
+    stmt_idx: usize,
+    sym: Atom,
 }
 
 /// Resolved [`Id`] of the region-level `var` declarator binding `sym`.
@@ -509,29 +541,31 @@ fn region_level_binding_id(stmts: &[Stmt], sym: &Atom) -> Option<Id> {
     })
 }
 
-/// If `expr` is `<ident>[<computed>]`, return the base ident.
-fn computed_index_base(expr: &Expr) -> Option<&Ident> {
+/// If `expr` is `<ident>[<computed>]`, return the base ident and the index
+/// expression (parens stripped).
+fn computed_index_parts(expr: &Expr) -> Option<(&Ident, &Expr)> {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return None;
     };
-    if !matches!(prop, MemberProp::Computed(_)) {
+    let MemberProp::Computed(computed) = prop else {
         return None;
-    }
+    };
     match strip_parens(obj) {
-        Expr::Ident(ident) => Some(ident),
+        Expr::Ident(ident) => Some((ident, strip_parens(&computed.expr))),
         _ => None,
     }
 }
 
 /// If `call` invokes a computed member of a table — `table[id](...)` or
-/// `table[id].call(...)` — return the table's base ident.
-fn table_invocation_base(call: &CallExpr) -> Option<&Ident> {
+/// `table[id].call(...)` — return the table's base ident and the index
+/// expression.
+fn table_invocation_parts(call: &CallExpr) -> Option<(&Ident, &Expr)> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
     let callee = strip_parens(callee);
-    if let Some(base) = computed_index_base(callee) {
-        return Some(base);
+    if let Some(parts) = computed_index_parts(callee) {
+        return Some(parts);
     }
     let Expr::Member(MemberExpr { obj, prop, .. }) = callee else {
         return None;
@@ -539,7 +573,13 @@ fn table_invocation_base(call: &CallExpr) -> Option<&Ident> {
     if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "call") {
         return None;
     }
-    computed_index_base(strip_parens(obj))
+    computed_index_parts(strip_parens(obj))
+}
+
+/// If `call` invokes a computed member of a table, return the table's base
+/// ident.
+fn table_invocation_base(call: &CallExpr) -> Option<&Ident> {
+    table_invocation_parts(call).map(|(base, _)| base)
 }
 
 /// If `expr` is (or, for a sequence, ends in) an `<ident>.exports` member
@@ -562,6 +602,37 @@ fn exports_member_object_ident(expr: &Expr) -> Option<&Ident> {
             .and_then(|last| exports_member_object_ident(last)),
         _ => None,
     }
+}
+
+/// If `expr` is webpack's chained module-cache write ending in a module
+/// object literal — `cache[id] = { exports: {} }`, possibly nested inside
+/// further plain assignments — return the resolved identity of the `id`
+/// binding indexing the cache.
+///
+/// webpack's require function never creates the module object bare: it is
+/// always written into the module cache under the id being required
+/// (`var module = cache[moduleId] = { exports: {} }` in webpack 5,
+/// `installedModules[moduleId] = { i: moduleId, ... }` in webpack 4). An
+/// ordinary dispatcher allocating a plain `var context = { exports: {} }`
+/// has no cache write and yields no index here.
+fn module_object_cache_index(expr: &Expr) -> Option<Id> {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !is_module_object_literal(&assign.right) {
+        return None;
+    }
+    let index = match &assign.left {
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => match &member.prop {
+            MemberProp::Computed(computed) => match strip_parens(&computed.expr) {
+                Expr::Ident(ident) => Some(ident.to_id()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    };
+    index.or_else(|| module_object_cache_index(&assign.right))
 }
 
 /// `expr` (after stripping parens and chained assignments like
@@ -587,67 +658,109 @@ fn is_module_object_literal(expr: &Expr) -> bool {
     }
 }
 
-/// Finds a function in the resolved region whose own body is a webpack
-/// require function for the table.
-struct RequireFnFinder {
-    table_id: Id,
-    /// Self-binding of the `FnExpr` whose inner `Function` is visited next —
-    /// `FnExpr.ident` is not reachable from `visit_function` otherwise.
-    pending_self_id: Option<Id>,
-    found: bool,
+/// A region-level function declaration: the only shapes webpack (and the
+/// minifiers run over its output) emits the require function as — a function
+/// declaration, or a `var`-bound function expression or arrow
+/// (`var require = function (id) { ... }`).
+struct RegionFnCandidate<'a> {
+    /// Index of the declaring statement in the region.
+    stmt_idx: usize,
+    /// The region-level binding the function is reachable under.
+    sym: Atom,
+    /// Caller-facing bindings: parameters and, for a named function
+    /// expression, its self-binding. Neither may carry the creation fact.
+    excluded: HashSet<Id>,
+    body: &'a [Stmt],
 }
 
-impl Visit for RequireFnFinder {
-    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
-        self.pending_self_id = fn_expr.ident.as_ref().map(|ident| ident.to_id());
-        fn_expr.visit_children_with(self);
-    }
-
-    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
-        let self_id = self.pending_self_id.take();
-        if let Some(body) = &function.body {
-            // Caller-facing bindings of this candidate: its parameters and,
-            // for a named function expression, its self-binding. Neither may
-            // carry the creation fact.
-            let mut excluded: HashSet<Id> = HashSet::new();
-            for param in &function.params {
-                collect_pat_binding_ids(&param.pat, &mut excluded);
+/// Collect the region-level function declarations of `stmts`, in order. Both
+/// detection ([`plan_webpack_require_fn`]) and loose entry-extraction
+/// discovery ([`find_webpack5_require_fn`]) draw candidates from here, so the
+/// set of require-function shapes they understand cannot drift apart.
+fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
+    let mut candidates = Vec::new();
+    for (stmt_idx, stmt) in stmts.iter().enumerate() {
+        match stmt {
+            Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) => {
+                let Some(body) = &fn_decl.function.body else {
+                    continue;
+                };
+                let mut excluded: HashSet<Id> = HashSet::new();
+                for param in &fn_decl.function.params {
+                    collect_pat_binding_ids(&param.pat, &mut excluded);
+                }
+                candidates.push(RegionFnCandidate {
+                    stmt_idx,
+                    sym: fn_decl.ident.sym.clone(),
+                    excluded,
+                    body: &body.stmts,
+                });
             }
-            excluded.extend(self_id);
-            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id) {
-                self.found = true;
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
+                for declarator in &var_decl.decls {
+                    let Pat::Ident(binding) = &declarator.name else {
+                        continue;
+                    };
+                    let Some(init) = &declarator.init else {
+                        continue;
+                    };
+                    match strip_parens(init) {
+                        Expr::Fn(fn_expr) => {
+                            let Some(body) = &fn_expr.function.body else {
+                                continue;
+                            };
+                            let mut excluded: HashSet<Id> = HashSet::new();
+                            for param in &fn_expr.function.params {
+                                collect_pat_binding_ids(&param.pat, &mut excluded);
+                            }
+                            if let Some(self_ident) = &fn_expr.ident {
+                                excluded.insert(self_ident.to_id());
+                            }
+                            candidates.push(RegionFnCandidate {
+                                stmt_idx,
+                                sym: binding.id.sym.clone(),
+                                excluded,
+                                body: &body.stmts,
+                            });
+                        }
+                        Expr::Arrow(arrow) => {
+                            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+                                continue;
+                            };
+                            let mut excluded: HashSet<Id> = HashSet::new();
+                            for pat in &arrow.params {
+                                collect_pat_binding_ids(pat, &mut excluded);
+                            }
+                            candidates.push(RegionFnCandidate {
+                                stmt_idx,
+                                sym: binding.id.sym.clone(),
+                                excluded,
+                                body: &body.stmts,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
             }
+            _ => {}
         }
-        function.visit_children_with(self);
     }
-
-    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
-        if let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body {
-            let mut excluded: HashSet<Id> = HashSet::new();
-            for pat in &arrow.params {
-                collect_pat_binding_ids(pat, &mut excluded);
-            }
-            if body_is_webpack_require(&excluded, &body.stmts, &self.table_id) {
-                self.found = true;
-            }
-        }
-        arrow.visit_children_with(self);
-    }
+    candidates
 }
 
 /// Whether one function body is a webpack require function: some binding is
-/// created locally as a module object literal, passed to the module-table
-/// invocation, and has its `.exports` returned (see
-/// [`webpack_require_fn_present`]). Nested function scopes are not descended
-/// into, so facts from an unrelated inner function cannot combine to look like
-/// a require function.
+/// created locally via a module-cache write (`m = cache[id] = {exports: {}}`),
+/// passed to the module-table invocation indexed by the same `id` binding,
+/// and has its `.exports` returned (see [`plan_webpack_require_fn`]).
+/// Nested function scopes are not descended into, so facts from an unrelated
+/// inner function cannot combine to look like a require function.
 ///
 /// Facts are keyed by resolved binding identity ([`Id`]), not identifier
 /// text: an inner block-local `const context = { exports: {} }` must not
 /// supply the creation fact for a same-named outer parameter that a
 /// dispatcher invokes the table with and returns `.exports` from. `stmts` are
 /// already resolved (the whole region is resolved once by
-/// [`webpack_require_fn_present`]); `excluded` carries the candidate's
+/// [`plan_webpack_require_fn`]); `excluded` carries the candidate's
 /// caller-facing bindings — parameters (including their same-name `var`
 /// redeclarations, which share the binding) and a named function expression's
 /// self-binding — which can never carry the creation fact.
@@ -671,15 +784,17 @@ fn body_is_webpack_require(excluded: &HashSet<Id>, stmts: &[Stmt], table_id: &Id
         table_id,
         excluded,
         body_declared: &body_declared,
-        local_modules: HashSet::new(),
+        local_modules: HashMap::new(),
         table_call_args: HashSet::new(),
         returned_exports_objs: HashSet::new(),
     };
     stmts.visit_with(&mut scanner);
-    scanner
-        .local_modules
-        .iter()
-        .any(|m| scanner.table_call_args.contains(m) && scanner.returned_exports_objs.contains(m))
+    scanner.local_modules.iter().any(|(module, cache_index)| {
+        scanner.returned_exports_objs.contains(module)
+            && scanner
+                .table_call_args
+                .contains(&(module.clone(), cache_index.clone()))
+    })
 }
 
 /// Collects the binding [`Id`]s declared by the body's own statements
@@ -782,7 +897,7 @@ fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<Id>) {
     }
 }
 
-/// Cheap symbol-level prefilter for [`webpack_require_fn_present`]: does the
+/// Cheap symbol-level prefilter for [`plan_webpack_require_fn`]: does the
 /// region invoke `modules_sym` as a table anywhere (at any nesting depth)?
 /// Avoids cloning + resolving regions that cannot possibly match.
 fn region_invokes_table(stmts: &[Stmt], modules_sym: &Atom) -> bool {
@@ -817,24 +932,27 @@ struct RequireBodyScanner<'a> {
     /// Bindings declared by the body's own statements — the only ones an
     /// assignment-based creation fact may target.
     body_declared: &'a HashSet<Id>,
-    /// Bindings initialized with a module object literal (`{ exports: ... }`).
-    local_modules: HashSet<Id>,
-    /// Bindings passed (bare or as `<ident>.exports`) to a table invocation.
-    table_call_args: HashSet<Id>,
+    /// Bindings created via a module-cache write
+    /// (`m = cache[id] = { exports: ... }`), mapped to the resolved identity
+    /// of the cache index binding `id`.
+    local_modules: HashMap<Id, Id>,
+    /// (binding, invocation index) pairs: the binding was passed (bare or as
+    /// `<ident>.exports`) to a `table[index](...)` invocation.
+    table_call_args: HashSet<(Id, Id)>,
     /// Bindings whose `.exports` member a return statement yields.
     returned_exports_objs: HashSet<Id>,
 }
 
 impl RequireBodyScanner<'_> {
-    fn record_table_call_args<'a>(&mut self, args: impl Iterator<Item = &'a Expr>) {
+    fn record_table_call_args<'a>(&mut self, index: Id, args: impl Iterator<Item = &'a Expr>) {
         for arg in args {
             match strip_parens(arg) {
                 Expr::Ident(ident) => {
-                    self.table_call_args.insert(ident.to_id());
+                    self.table_call_args.insert((ident.to_id(), index.clone()));
                 }
                 expr => {
                     if let Some(ident) = exports_member_object_ident(expr) {
-                        self.table_call_args.insert(ident.to_id());
+                        self.table_call_args.insert((ident.to_id(), index.clone()));
                     }
                 }
             }
@@ -856,8 +974,10 @@ impl Visit for RequireBodyScanner<'_> {
             // A `var` redeclaration of a parameter shares the parameter's
             // binding — that is still a caller-supplied value, not a module
             // object created by this function.
-            if is_module_object_literal(init) && !self.excluded.contains(&binding.id.to_id()) {
-                self.local_modules.insert(binding.id.to_id());
+            if !self.excluded.contains(&binding.id.to_id()) {
+                if let Some(cache_index) = module_object_cache_index(init) {
+                    self.local_modules.insert(binding.id.to_id(), cache_index);
+                }
             }
         }
     }
@@ -878,9 +998,10 @@ impl Visit for RequireBodyScanner<'_> {
         // redeclaration of a parameter (shared binding).
         if self.body_declared.contains(&binding.id.to_id())
             && !self.excluded.contains(&binding.id.to_id())
-            && is_module_object_literal(&assign.right)
         {
-            self.local_modules.insert(binding.id.to_id());
+            if let Some(cache_index) = module_object_cache_index(&assign.right) {
+                self.local_modules.insert(binding.id.to_id(), cache_index);
+            }
         }
     }
 
@@ -888,13 +1009,21 @@ impl Visit for RequireBodyScanner<'_> {
         call.visit_children_with(self);
         // The invoked table must be the *resolved* modules-table binding — a
         // shadow of its name at any depth (parameter, fn-expr self-binding,
-        // class name) is a different identity.
-        if table_invocation_base(call).is_some_and(|base| base.to_id() == *self.table_id) {
-            self.record_table_call_args(
-                call.args
-                    .iter()
-                    .filter_map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref())),
-            );
+        // class name) is a different identity. The invocation index must be a
+        // plain binding so it can be compared with the cache-write index —
+        // webpack's shared call site always indexes both with the same
+        // `moduleId`.
+        if let Some((base, index)) = table_invocation_parts(call) {
+            if base.to_id() == *self.table_id {
+                if let Expr::Ident(index_ident) = index {
+                    self.record_table_call_args(
+                        index_ident.to_id(),
+                        call.args
+                            .iter()
+                            .filter_map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref())),
+                    );
+                }
+            }
         }
     }
 
@@ -1198,6 +1327,17 @@ fn extract_webpack5_modules(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     cm: Lrc<SourceMap>,
 ) -> Option<DetectedBundle> {
+    extract_webpack5_modules_with_plan(bootstrap_body, cm, None)
+}
+
+/// `require_plan`, when the caller already gated the region (the top-level
+/// no-IIFE path), is reused for both the array-container gate and entry
+/// extraction instead of resolving the region again.
+fn extract_webpack5_modules_with_plan(
+    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    cm: Lrc<SourceMap>,
+    mut require_plan: Option<RequireFnPlan>,
+) -> Option<DetectedBundle> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
 
@@ -1213,14 +1353,16 @@ fn extract_webpack5_modules(
                 continue;
             };
             // An array of functions is ambiguous with ordinary code, so require
-            // the defining relationship: the bootstrap invokes it as a module
+            // the defining relationship: a webpack require function for the
             // table (`modules[id](module, ...)`). Object containers are keyed by
             // explicit module ids and, inside the IIFE wrapper, are signal
             // enough on their own.
-            if matches!(container, Webpack5ModulesContainer::Array { .. })
-                && !webpack_require_fn_present(&bootstrap_body.stmts, &modules_sym)
+            if matches!(container, Webpack5ModulesContainer::Array { .. }) && require_plan.is_none()
             {
-                continue;
+                match plan_webpack_require_fn(&bootstrap_body.stmts, &modules_sym) {
+                    Some(plan) => require_plan = Some(plan),
+                    None => continue,
+                }
             }
             found = Some((container, modules_sym));
             break;
@@ -1314,7 +1456,8 @@ fn extract_webpack5_modules(
                     break;
                 }
             }
-        } else if let Some(startup) = extract_webpack5_inline_startup(bootstrap_body, &modules_sym)
+        } else if let Some(startup) =
+            extract_webpack5_inline_startup(bootstrap_body, &modules_sym, require_plan.as_ref())
         {
             let entry_ranges = spans_byte_ranges(&cm, startup.body_stmts.iter().map(|s| s.span()));
             let code = emit_webpack5_entry_module(
@@ -1520,8 +1663,15 @@ struct Webpack5InlineStartup {
 fn extract_webpack5_inline_startup(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     modules_sym: &Atom,
+    require_plan: Option<&RequireFnPlan>,
 ) -> Option<Webpack5InlineStartup> {
-    let (require_idx, require_sym) = find_webpack5_require_fn(&bootstrap_body.stmts, modules_sym)?;
+    // Reuse the detection plan when the region was already gated; otherwise
+    // (object containers, which detection accepts on shape alone) locate the
+    // require function loosely — same candidate shapes, weaker content check.
+    let (require_idx, require_sym) = match require_plan {
+        Some(plan) => (plan.stmt_idx, plan.sym.clone()),
+        None => find_webpack5_require_fn(&bootstrap_body.stmts, modules_sym)?,
+    };
 
     // Runtime sections define helpers as assignments to require properties
     // (`require.d = ...`, `require.f.j = ...`). The startup section is the
@@ -1736,20 +1886,20 @@ impl Visit for RequireCallFinder<'_> {
     }
 }
 
-/// Find the webpack require function: the function declaration whose body
+/// Find the webpack require function loosely: the first region-level function
+/// declaration (any shape [`region_fn_candidates`] knows) whose body
 /// references the modules container binding.
 fn find_webpack5_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<(usize, Atom)> {
-    stmts.iter().enumerate().find_map(|(idx, stmt)| {
-        let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) = stmt else {
-            return None;
-        };
-        let mut finder = SymUsageFinder {
-            sym: modules_sym,
-            found: false,
-        };
-        fn_decl.function.visit_with(&mut finder);
-        finder.found.then(|| (idx, fn_decl.ident.sym.clone()))
-    })
+    region_fn_candidates(stmts)
+        .into_iter()
+        .find_map(|candidate| {
+            let mut finder = SymUsageFinder {
+                sym: modules_sym,
+                found: false,
+            };
+            candidate.body.visit_with(&mut finder);
+            finder.found.then(|| (candidate.stmt_idx, candidate.sym))
+        })
 }
 
 struct SymUsageFinder<'a> {

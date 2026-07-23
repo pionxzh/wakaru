@@ -129,3 +129,38 @@ console.log(dispatch(0));
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn webpack5_no_iife_fn_expr_require_recovers_entry() {
+    // The require function may be a var-bound function expression rather than
+    // a function declaration. Detection accepted this shape while entry
+    // extraction only knew top-level FnDecls, so the bundle was split but the
+    // startup (`console.log(load(0))`) was silently dropped.
+    let source = r#"
+var __webpack_modules__ = [function (module, exports, require) { module.exports = 42; }];
+var __webpack_module_cache__ = {};
+var __webpack_require__ = function (moduleId) {
+    var cached = __webpack_module_cache__[moduleId];
+    if (cached) return cached.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+};
+console.log(__webpack_require__(0));
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(
+        filenames.contains(&"module-0.js"),
+        "fn-expr require bundle should split, got {filenames:?}"
+    );
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .unwrap_or_else(|| panic!("entry.js should exist, got {filenames:?}"));
+    assert!(
+        entry.1.contains("./module-0.js"),
+        "startup must be recovered as the entry, got:\n{}",
+        entry.1
+    );
+}

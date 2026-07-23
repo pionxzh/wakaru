@@ -504,3 +504,64 @@ fn webpack5_no_startup_after_runtime_is_not_an_entry() {
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn arrow_require_with_array_table_recovers_entry() {
+    // Arrow-bound require: detection plans the require function once and
+    // entry extraction reuses the plan, so any accepted shape also recovers
+    // its inline startup.
+    let source = r#"
+(() => {
+    var __webpack_modules__ = [, (module, exports) => { exports.value = 7; }];
+    var __webpack_module_cache__ = {};
+    var __webpack_require__ = (moduleId) => {
+        var cached = __webpack_module_cache__[moduleId];
+        if (cached !== undefined) return cached.exports;
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    };
+    var __webpack_exports__ = {};
+    var lib = __webpack_require__(1);
+    console.log(lib.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js"),
+        "arrow-require startup must be recovered, got:\n{entry}"
+    );
+}
+
+#[test]
+fn fn_expr_require_with_object_table_recovers_entry() {
+    // Object containers are accepted on shape alone (no lifecycle plan), so
+    // entry extraction falls back to the loose locate — which must understand
+    // the same candidate shapes as detection, including a var-bound function
+    // expression.
+    let source = r#"
+(() => {
+    var __webpack_modules__ = ({
+        1: (module, exports) => { exports.value = 9; }
+    });
+    var __webpack_module_cache__ = {};
+    var __webpack_require__ = function (moduleId) {
+        var cached = __webpack_module_cache__[moduleId];
+        if (cached !== undefined) return cached.exports;
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    };
+    var __webpack_exports__ = {};
+    var lib = __webpack_require__(1);
+    console.log(lib.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js"),
+        "fn-expr require startup must be recovered via the loose locate, got:\n{entry}"
+    );
+}
