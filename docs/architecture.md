@@ -29,14 +29,21 @@ Two main operations:
         ┌───────────────────────────────────────────┐
         │              Decompile pipeline            │
         │                                            │
-        │  parse → resolver → rules → fixer → emit  │
+        │  parse → resolver → rules → fixer          │
         │                                            │
         │  (parallel via rayon when unpacking)        │
         └───────────────────────────────────────────┘
-              │                │                │
-              ▼                ▼                ▼
-         readable JS      readable JS      readable JS
+                               │
+                   ┌───────────┴───────────┐
+                   ▼                       ▼
+                 emit JS           optional artifact
+                                      recovery
 ```
+
+Framework artifact recovery consumes the generic finalized module workspace;
+it is not part of bundle detection or the ordered JavaScript rewrite registry.
+See [angular-decompile.md](angular-decompile.md) for the Angular Ivy boundary
+and [vue-decompile.md](vue-decompile.md) for the existing Vue recovery path.
 
 ## Components
 
