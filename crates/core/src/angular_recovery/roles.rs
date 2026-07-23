@@ -9,6 +9,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::syntax::{binding_key, member_prop_name, wtf8_to_string, BindingKey};
+use super::workspace::{WorkspaceSymbol, WorkspaceSymbolAlias};
 use super::PreparedAngularModule;
 
 mod structural;
@@ -41,11 +42,11 @@ impl IvyInstruction {
     fn from_export_name(name: &str) -> Option<Self> {
         Some(match name {
             "ɵɵdefineComponent" => Self::DefineComponent,
-            "ɵɵelementStart" => Self::ElementStart,
-            "ɵɵelementEnd" => Self::ElementEnd,
-            "ɵɵelement" => Self::Element,
+            "ɵɵelementStart" | "ɵɵdomElementStart" => Self::ElementStart,
+            "ɵɵelementEnd" | "ɵɵdomElementEnd" => Self::ElementEnd,
+            "ɵɵelement" | "ɵɵdomElement" => Self::Element,
             "ɵɵtext" => Self::Text,
-            "ɵɵlistener" => Self::Listener,
+            "ɵɵlistener" | "ɵɵdomListener" => Self::Listener,
             "ɵɵadvance" => Self::Advance,
             "ɵɵtextInterpolate" => Self::TextInterpolate,
             "ɵɵtextInterpolate1" => Self::TextInterpolate1,
@@ -56,12 +57,37 @@ impl IvyInstruction {
             "ɵɵtextInterpolate6" => Self::TextInterpolate6,
             "ɵɵtextInterpolate7" => Self::TextInterpolate7,
             "ɵɵtextInterpolate8" => Self::TextInterpolate8,
-            "ɵɵproperty" => Self::Property,
+            "ɵɵproperty" | "ɵɵdomProperty" => Self::Property,
             "ɵɵattribute" => Self::Attribute,
             "ɵɵclassProp" => Self::ClassProp,
             "ɵɵstyleProp" => Self::StyleProp,
             _ => return None,
         })
+    }
+
+    fn canonical_export_name(self) -> &'static str {
+        match self {
+            Self::DefineComponent => "ɵɵdefineComponent",
+            Self::ElementStart => "ɵɵelementStart",
+            Self::ElementEnd => "ɵɵelementEnd",
+            Self::Element => "ɵɵelement",
+            Self::Text => "ɵɵtext",
+            Self::Listener => "ɵɵlistener",
+            Self::Advance => "ɵɵadvance",
+            Self::TextInterpolate => "ɵɵtextInterpolate",
+            Self::TextInterpolate1 => "ɵɵtextInterpolate1",
+            Self::TextInterpolate2 => "ɵɵtextInterpolate2",
+            Self::TextInterpolate3 => "ɵɵtextInterpolate3",
+            Self::TextInterpolate4 => "ɵɵtextInterpolate4",
+            Self::TextInterpolate5 => "ɵɵtextInterpolate5",
+            Self::TextInterpolate6 => "ɵɵtextInterpolate6",
+            Self::TextInterpolate7 => "ɵɵtextInterpolate7",
+            Self::TextInterpolate8 => "ɵɵtextInterpolate8",
+            Self::Property => "ɵɵproperty",
+            Self::Attribute => "ɵɵattribute",
+            Self::ClassProp => "ɵɵclassProp",
+            Self::StyleProp => "ɵɵstyleProp",
+        }
     }
 }
 
@@ -78,6 +104,8 @@ pub(super) struct IvyRoleTable {
     ivy_names: HashMap<SymbolIdentity, String>,
     ambiguous_symbols: HashSet<SymbolIdentity>,
     core_namespaces: HashSet<BindingKey>,
+    alias_groups: Vec<Vec<SymbolIdentity>>,
+    alias_group_by_symbol: HashMap<SymbolIdentity, usize>,
 }
 
 impl IvyRoleTable {
@@ -92,9 +120,13 @@ impl IvyRoleTable {
         for (identity, name) in structural::infer_ivy_roles(modules) {
             table.record_mapping(identity, name.to_string());
         }
+        let aliases = super::workspace::collect_esm_symbol_aliases(modules);
+        table.install_aliases(&aliases);
+        table.propagate_aliases();
         for (identity, name) in structural::infer_template_roles(modules, &table) {
             table.record_mapping(identity, name.to_string());
         }
+        table.propagate_aliases();
         table
     }
 
@@ -142,6 +174,9 @@ impl IvyRoleTable {
     }
 
     fn record_mapping(&mut self, identity: SymbolIdentity, name: String) {
+        let name = IvyInstruction::from_export_name(&name)
+            .map(|instruction| instruction.canonical_export_name().to_string())
+            .unwrap_or(name);
         if self.ambiguous_symbols.contains(&identity) {
             return;
         }
@@ -155,6 +190,75 @@ impl IvyRoleTable {
             return;
         }
         self.ivy_names.insert(identity, name);
+    }
+
+    fn install_aliases(&mut self, aliases: &[WorkspaceSymbolAlias]) {
+        let mut adjacency: HashMap<SymbolIdentity, Vec<SymbolIdentity>> = HashMap::new();
+        for alias in aliases {
+            let left = workspace_symbol_identity(&alias.left);
+            let right = workspace_symbol_identity(&alias.right);
+            adjacency
+                .entry(left.clone())
+                .or_default()
+                .push(right.clone());
+            adjacency.entry(right).or_default().push(left);
+        }
+
+        let mut visited = HashSet::new();
+        for start in adjacency.keys() {
+            if visited.contains(start) {
+                continue;
+            }
+            let mut stack = vec![start.clone()];
+            let mut component = Vec::new();
+            while let Some(identity) = stack.pop() {
+                if !visited.insert(identity.clone()) {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&identity) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+                component.push(identity);
+            }
+            let group_index = self.alias_groups.len();
+            for identity in &component {
+                self.alias_group_by_symbol
+                    .insert(identity.clone(), group_index);
+            }
+            self.alias_groups.push(component);
+        }
+    }
+
+    fn propagate_aliases(&mut self) {
+        for component in self.alias_groups.clone() {
+            let names = component
+                .iter()
+                .filter_map(|identity| self.ivy_names.get(identity).cloned())
+                .collect::<HashSet<_>>();
+            let is_ambiguous = component
+                .iter()
+                .any(|identity| self.ambiguous_symbols.contains(identity))
+                || names.len() > 1;
+            if is_ambiguous {
+                for identity in component {
+                    self.ivy_names.remove(&identity);
+                    self.ambiguous_symbols.insert(identity);
+                }
+            } else if let Some(name) = names.into_iter().next() {
+                for identity in component {
+                    self.ivy_names.insert(identity, name.clone());
+                }
+            }
+        }
+    }
+
+    pub(super) fn symbols_equivalent(&self, left: &SymbolIdentity, right: &SymbolIdentity) -> bool {
+        left == right
+            || self
+                .alias_group_by_symbol
+                .get(left)
+                .zip(self.alias_group_by_symbol.get(right))
+                .is_some_and(|(left, right)| left == right)
     }
 
     pub(super) fn instruction_for_callee(
@@ -238,6 +342,16 @@ impl IvyRoleTable {
             }),
             SymbolIdentity::LocalBinding(_) | SymbolIdentity::GlobalBinding(_) => false,
         }
+    }
+}
+
+fn workspace_symbol_identity(symbol: &WorkspaceSymbol) -> SymbolIdentity {
+    match symbol {
+        WorkspaceSymbol::Binding(binding) => SymbolIdentity::LocalBinding(binding.clone()),
+        WorkspaceSymbol::Member { object, property } => SymbolIdentity::LocalMember {
+            object: object.clone(),
+            property: property.clone(),
+        },
     }
 }
 

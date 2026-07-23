@@ -1,13 +1,261 @@
 use std::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, MemberProp, Pat,
+    AssignExpr, AssignTarget, CallExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr,
+    ExprOrSpread, ImportSpecifier, MemberProp, ModuleDecl, ModuleExportName, ModuleItem, Pat,
     SimpleAssignTarget, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::syntax::{binding_key, member_prop_name, BindingKey};
+use super::PreparedAngularModule;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) enum WorkspaceSymbol {
+    Binding(BindingKey),
+    Member { object: BindingKey, property: Atom },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceSymbolAlias {
+    pub(super) left: WorkspaceSymbol,
+    pub(super) right: WorkspaceSymbol,
+}
+
+/// Collect symbol equivalences expressed by ordinary ESM imports and exports.
+///
+/// This records module transport only: it does not assign framework meaning to
+/// either endpoint. Role analyzers can project their own semantic facts across
+/// these proven edges.
+pub(super) fn collect_esm_symbol_aliases(
+    modules: &[PreparedAngularModule],
+) -> Vec<WorkspaceSymbolAlias> {
+    let lookup = ModuleLookup::new(modules);
+    let exports = modules
+        .iter()
+        .map(|module| collect_local_exports(&module.module))
+        .collect::<Vec<_>>();
+    let mut aliases = Vec::new();
+
+    for module in modules {
+        for item in &module.module.body {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                continue;
+            };
+            if import.type_only {
+                continue;
+            }
+            let source = import
+                .src
+                .value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| import.src.value.to_string_lossy().into_owned());
+            let Some(target_index) = lookup.resolve(&module.filename, &source) else {
+                continue;
+            };
+
+            for specifier in &import.specifiers {
+                match specifier {
+                    ImportSpecifier::Default(default) => {
+                        record_import_alias(
+                            &mut aliases,
+                            WorkspaceSymbol::Binding(binding_key(&default.local)),
+                            "default",
+                            &exports[target_index],
+                        );
+                    }
+                    ImportSpecifier::Named(named) => {
+                        let imported = named
+                            .imported
+                            .as_ref()
+                            .map(module_export_name)
+                            .unwrap_or_else(|| named.local.sym.to_string());
+                        record_import_alias(
+                            &mut aliases,
+                            WorkspaceSymbol::Binding(binding_key(&named.local)),
+                            &imported,
+                            &exports[target_index],
+                        );
+                    }
+                    ImportSpecifier::Namespace(namespace) => {
+                        let object = binding_key(&namespace.local);
+                        for (exported, target) in &exports[target_index] {
+                            aliases.push(WorkspaceSymbolAlias {
+                                left: WorkspaceSymbol::Member {
+                                    object: object.clone(),
+                                    property: Atom::from(exported.as_str()),
+                                },
+                                right: target.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    aliases
+}
+
+fn record_import_alias(
+    aliases: &mut Vec<WorkspaceSymbolAlias>,
+    local: WorkspaceSymbol,
+    imported: &str,
+    exports: &HashMap<String, WorkspaceSymbol>,
+) {
+    let Some(target) = exports.get(imported) else {
+        return;
+    };
+    aliases.push(WorkspaceSymbolAlias {
+        left: local,
+        right: target.clone(),
+    });
+}
+
+fn collect_local_exports(module: &swc_core::ecma::ast::Module) -> HashMap<String, WorkspaceSymbol> {
+    let mut exports = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(declaration) = item else {
+            continue;
+        };
+        match declaration {
+            ModuleDecl::ExportDecl(export) => match &export.decl {
+                Decl::Class(class) => {
+                    exports.insert(
+                        class.ident.sym.to_string(),
+                        WorkspaceSymbol::Binding(binding_key(&class.ident)),
+                    );
+                }
+                Decl::Fn(function) => {
+                    exports.insert(
+                        function.ident.sym.to_string(),
+                        WorkspaceSymbol::Binding(binding_key(&function.ident)),
+                    );
+                }
+                Decl::Var(variable) => {
+                    for declaration in &variable.decls {
+                        if let Pat::Ident(binding) = &declaration.name {
+                            exports.insert(
+                                binding.id.sym.to_string(),
+                                WorkspaceSymbol::Binding(binding_key(&binding.id)),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let ModuleExportName::Ident(local) = &named.orig else {
+                        continue;
+                    };
+                    let exported = named
+                        .exported
+                        .as_ref()
+                        .map(module_export_name)
+                        .unwrap_or_else(|| local.sym.to_string());
+                    exports.insert(exported, WorkspaceSymbol::Binding(binding_key(local)));
+                }
+            }
+            ModuleDecl::ExportDefaultDecl(default) => {
+                let local = match &default.decl {
+                    DefaultDecl::Class(class) => class.ident.as_ref(),
+                    DefaultDecl::Fn(function) => function.ident.as_ref(),
+                    DefaultDecl::TsInterfaceDecl(_) => None,
+                };
+                if let Some(local) = local {
+                    exports.insert(
+                        "default".to_string(),
+                        WorkspaceSymbol::Binding(binding_key(local)),
+                    );
+                }
+            }
+            ModuleDecl::ExportDefaultExpr(default) => {
+                if let Expr::Ident(local) = default.expr.as_ref() {
+                    exports.insert(
+                        "default".to_string(),
+                        WorkspaceSymbol::Binding(binding_key(local)),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    exports
+}
+
+fn module_export_name(name: &ModuleExportName) -> String {
+    match name {
+        ModuleExportName::Ident(identifier) => identifier.sym.to_string(),
+        ModuleExportName::Str(string) => string
+            .value
+            .as_str()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| string.value.to_string_lossy().into_owned()),
+    }
+}
+
+struct ModuleLookup {
+    filenames: HashMap<String, usize>,
+}
+
+impl ModuleLookup {
+    fn new(modules: &[PreparedAngularModule]) -> Self {
+        let filenames = modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| (normalize_filename(&module.filename), index))
+            .collect();
+        Self { filenames }
+    }
+
+    fn resolve(&self, from_filename: &str, specifier: &str) -> Option<usize> {
+        let resolved = crate::module_path::resolve_relative_specifier(from_filename, specifier)?;
+        self.resolve_normalized(&resolved)
+    }
+
+    fn resolve_normalized(&self, filename: &str) -> Option<usize> {
+        let filename = normalize_filename(filename);
+        if let Some(index) = self.filenames.get(&filename) {
+            return Some(*index);
+        }
+        if !has_module_extension(&filename) {
+            for extension in [".js", ".jsx", ".mjs", ".cjs"] {
+                if let Some(index) = self.filenames.get(&format!("{filename}{extension}")) {
+                    return Some(*index);
+                }
+            }
+        }
+        for extension in [".js", ".jsx", ".mjs", ".cjs"] {
+            if let Some(stem) = filename.strip_suffix(extension) {
+                if let Some(index) = self.filenames.get(stem) {
+                    return Some(*index);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn normalize_filename(filename: &str) -> String {
+    let normalized = filename.replace('\\', "/");
+    normalized
+        .strip_prefix("./")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn has_module_extension(filename: &str) -> bool {
+    [".js", ".jsx", ".mjs", ".cjs"]
+        .iter()
+        .any(|extension| filename.ends_with(extension))
+}
 
 /// Canonicalize stable namespace arguments passed into immediately invoked
 /// functions. This is generic module-workspace normalization: it does not
