@@ -51,13 +51,16 @@ pub(super) fn split_array_concat(call: &CallExpr) -> Option<(&ArrayLit, usize)> 
     Some((array, id_offset))
 }
 
-/// A non-negative integer literal module id.
+/// A non-negative integer literal module id. Bounded to `u32::MAX`: real
+/// module ids sit far below it, and an unbounded literal
+/// (`Array(1e100).concat([...])`) would saturate the float→usize cast and
+/// overflow the `id_offset + index` arithmetic downstream.
 pub(super) fn numeric_id_from_expr(expr: &Expr) -> Option<usize> {
     let Expr::Lit(Lit::Num(number)) = strip_parens(expr) else {
         return None;
     };
     let value = number.value;
-    if value < 0.0 || value.fract() != 0.0 {
+    if value < 0.0 || value.fract() != 0.0 || value > f64::from(u32::MAX) {
         return None;
     }
     Some(value as usize)

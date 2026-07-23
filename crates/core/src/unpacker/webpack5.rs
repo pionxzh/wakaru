@@ -1624,11 +1624,16 @@ fn extract_webpack5_inline_startup(
 
     // Runtime sections define helpers as assignments to require properties
     // (`require.d = ...`, `require.f.j = ...`). The startup section is the
-    // only thing emitted after the last of them.
-    let last_runtime_idx = bootstrap_body
-        .stmts
+    // only thing emitted after the last of them. The scan must descend into
+    // nested functions — webpack wraps each runtime helper in its own IIFE —
+    // so the require binding is compared by resolved identity: a nested
+    // shadow (`function decorate(r) { r.flag = true; }` in the entry) is a
+    // different binding and must not move the boundary past real startup.
+    let (probe_stmts, _) = resolve_probe(&bootstrap_body.stmts)?;
+    let require_id = declared_binding_id(probe_stmts.get(require_idx)?, &require_sym)?;
+    let last_runtime_idx = probe_stmts
         .iter()
-        .rposition(|stmt| contains_require_member_assignment(stmt, &require_sym));
+        .rposition(|stmt| contains_require_member_assignment(stmt, &require_id));
 
     let startup_scan_from = last_runtime_idx
         .map(|idx| idx + 1)
@@ -1674,6 +1679,28 @@ fn extract_webpack5_inline_startup(
         }
         None => (entry_region.to_vec(), None),
     };
+    let mut body_stmts = body_stmts;
+
+    // The region may end at an enclosing UMD/AMD factory's `return` —
+    // wrapper plumbing, and illegal at the top level of a module. Keep a
+    // side-effectful argument as an expression statement (a minified library
+    // may start up directly in the return, `return r(5)`); drop inert values
+    // like the minified `return {}`.
+    if matches!(body_stmts.last(), Some(Stmt::Return(_))) {
+        if let Some(Stmt::Return(ret)) = body_stmts.pop() {
+            if let Some(arg) = ret.arg {
+                if matches!(
+                    strip_parens(&arg),
+                    Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Await(_) | Expr::Seq(_)
+                ) {
+                    body_stmts.push(Stmt::Expr(ExprStmt {
+                        span: ret.span,
+                        expr: arg,
+                    }));
+                }
+            }
+        }
+    }
 
     // Require the recovered entry to actually call the require binding so a
     // bundle with no startup does not synthesize a bogus entry.
@@ -1878,12 +1905,34 @@ impl Visit for SymUsageFinder<'_> {
     }
 }
 
+/// The [`Id`] `stmt` declares under `sym` — a function declaration's name or
+/// a `var` declarator's binding.
+fn declared_binding_id(stmt: &Stmt, sym: &Atom) -> Option<Id> {
+    match stmt {
+        Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) if fn_decl.ident.sym == *sym => {
+            Some(fn_decl.ident.to_id())
+        }
+        Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
+            var_decl.decls.iter().find_map(|declarator| {
+                let Pat::Ident(binding) = &declarator.name else {
+                    return None;
+                };
+                (binding.id.sym == *sym).then(|| binding.id.to_id())
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Whether the statement assigns to a (possibly nested) member of the require
 /// binding, e.g. `require.d = ...` or `require.f.j = ...` — the shape of
-/// webpack runtime-section definitions.
-fn contains_require_member_assignment(stmt: &Stmt, require_sym: &Atom) -> bool {
+/// webpack runtime-section definitions. `stmt` must come from a probe-resolved
+/// region (see [`resolve_probe`]): the scan descends into nested functions
+/// (webpack wraps runtime helpers in IIFEs that capture the real binding), so
+/// only resolved identity separates those from same-named shadows.
+fn contains_require_member_assignment(stmt: &Stmt, require_id: &Id) -> bool {
     let mut finder = RequireMemberAssignFinder {
-        require_sym,
+        require_id,
         found: false,
     };
     stmt.visit_with(&mut finder);
@@ -1891,7 +1940,7 @@ fn contains_require_member_assignment(stmt: &Stmt, require_sym: &Atom) -> bool {
 }
 
 struct RequireMemberAssignFinder<'a> {
-    require_sym: &'a Atom,
+    require_id: &'a Id,
     found: bool,
 }
 
@@ -1906,7 +1955,7 @@ impl Visit for RequireMemberAssignFinder<'_> {
             obj = &inner.obj;
         }
         if let Expr::Ident(root) = strip_parens(obj) {
-            if root.sym == *self.require_sym {
+            if root.to_id() == *self.require_id {
                 self.found = true;
             }
         }

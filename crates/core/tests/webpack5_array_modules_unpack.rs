@@ -704,3 +704,34 @@ console.log(dispatch(0).ready);
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn huge_array_concat_offset_does_not_panic() {
+    // `Array(1e100).concat([...])` saturates a float→usize cast to usize::MAX
+    // and `id_offset + index` overflows. The offset must be rejected (the
+    // bundle passes through) instead of panicking.
+    let source = r#"
+(() => {
+    var __webpack_modules__ = Array(1e100).concat([
+        ((module, exports, __webpack_require__) => { module.exports = 1; })
+    ]);
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    __webpack_require__(1e100);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        !pairs.iter().any(|(name, _)| name.starts_with("module-")),
+        "overflowing offsets must fall through, got {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}

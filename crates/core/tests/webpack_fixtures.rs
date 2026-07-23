@@ -624,3 +624,34 @@ fn wp5_array_concat_chunk() {
         mod_18.1
     );
 }
+
+#[test]
+fn wp5_umd_min_entry_is_a_valid_module() {
+    // The minified UMD factory ends with `return console.log(...), ..., {}` —
+    // the startup slice reaches that wrapper return, and a recovered entry
+    // carrying a top-level `return` is not a legal module. The return is
+    // lowered: its side-effectful sequence stays, the inert tail value goes.
+    let pairs = unpack_fixture("wp5-umd-min/bundle.js");
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .unwrap_or_else(|| {
+            panic!(
+                "wp5-umd-min: entry.js should exist, got {:?}",
+                filenames(&pairs)
+            )
+        });
+    assert!(
+        entry.1.contains("greet"),
+        "startup calls must be recovered, got:\n{}",
+        entry.1
+    );
+    assert!(
+        !entry
+            .1
+            .lines()
+            .any(|line| line.trim_start().starts_with("return")),
+        "no top-level return may survive in entry.js, got:\n{}",
+        entry.1
+    );
+}

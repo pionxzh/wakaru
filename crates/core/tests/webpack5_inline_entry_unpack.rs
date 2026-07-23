@@ -628,3 +628,36 @@ fn eager_bound_require_id_is_rewritten() {
         "bound require id must not survive as a numeric id, got:\n{entry}"
     );
 }
+
+#[test]
+fn entry_scope_shadow_does_not_move_runtime_boundary() {
+    // The runtime boundary is the last `require.<member> = ...` assignment.
+    // A nested function in the entry shadowing the require binding
+    // (`function decorate(r) { r.flag = true; }`) must not count as a runtime
+    // definition — that would slice the startup after it and silently drop
+    // the real loads before it.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { mark: (o) => { o.flag = true; } }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    var dep = r(1);
+    function decorate(r) { r.flag = true; }
+    decorate(dep);
+    console.log(dep.flag);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && entry.contains("decorate"),
+        "the whole startup (load + shadowing helper) must be recovered, got:\n{entry}"
+    );
+}
