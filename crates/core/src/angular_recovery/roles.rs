@@ -11,6 +11,8 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use super::syntax::{binding_key, member_prop_name, wtf8_to_string, BindingKey};
 use super::PreparedAngularModule;
 
+mod structural;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum IvyInstruction {
     DefineComponent,
@@ -64,7 +66,7 @@ impl IvyInstruction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum SymbolIdentity {
+pub(super) enum SymbolIdentity {
     LocalBinding(BindingKey),
     LocalMember { object: BindingKey, property: Atom },
     GlobalBinding(Atom),
@@ -86,6 +88,9 @@ impl IvyRoleTable {
         }
         for prepared in modules {
             table.collect_export_maps(&prepared.module, prepared.unresolved_ctxt);
+        }
+        for (identity, name) in structural::infer_ivy_roles(modules) {
+            table.record_mapping(identity, name.to_string());
         }
         table
     }
@@ -197,6 +202,40 @@ impl IvyRoleTable {
             _ => None,
         }
     }
+
+    pub(super) fn is_known_runtime_member(
+        &self,
+        expr: &Expr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> bool {
+        let Some(identity) = symbol_identity(expr, unresolved_ctxt) else {
+            return false;
+        };
+        match identity {
+            SymbolIdentity::LocalMember { object, .. } => {
+                self.core_namespaces.contains(&object)
+                    || self.ivy_names.keys().any(|identity| {
+                        matches!(
+                            identity,
+                            SymbolIdentity::LocalMember {
+                                object: known_object,
+                                ..
+                            } if known_object == &object
+                        )
+                    })
+            }
+            SymbolIdentity::GlobalMember { object, .. } => self.ivy_names.keys().any(|identity| {
+                matches!(
+                    identity,
+                    SymbolIdentity::GlobalMember {
+                        object: known_object,
+                        ..
+                    } if known_object == &object
+                )
+            }),
+            SymbolIdentity::LocalBinding(_) | SymbolIdentity::GlobalBinding(_) => false,
+        }
+    }
 }
 
 pub(super) struct IvyCallCollector<'a> {
@@ -284,7 +323,10 @@ fn prop_name_atom(name: &PropName) -> Option<Atom> {
     }
 }
 
-fn symbol_identity(expr: &Expr, unresolved_ctxt: SyntaxContext) -> Option<SymbolIdentity> {
+pub(super) fn symbol_identity(
+    expr: &Expr,
+    unresolved_ctxt: SyntaxContext,
+) -> Option<SymbolIdentity> {
     match expr {
         Expr::Ident(ident) if ident.ctxt == unresolved_ctxt => {
             Some(SymbolIdentity::GlobalBinding(ident.sym.clone()))

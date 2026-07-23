@@ -299,6 +299,11 @@ fn collect_expression(
                     if !program.unsupported_instructions.contains(&name) {
                         program.unsupported_instructions.push(name);
                     }
+                } else if roles.is_known_runtime_member(root, unresolved_ctxt) {
+                    let name = "unknown-runtime-instruction".to_string();
+                    if !program.unsupported_instructions.contains(&name) {
+                        program.unsupported_instructions.push(name);
+                    }
                 }
                 return;
             };
