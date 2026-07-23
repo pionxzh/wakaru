@@ -523,3 +523,101 @@ fn infers_text_listener_and_advance_from_runtime_and_template_shapes() {
         .contains("<button (click)=\"select()\">Choose</button>"));
     assert!(!recovered[0].source.contains("unknown-runtime-instruction"));
 }
+
+#[test]
+fn infers_text_interpolation_and_property_binding_relationships() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.next = function(delta = 1) {
+            selectIndex(currentIndex() + delta);
+        };
+        runtime.interpolateOne = function(prefix, value, suffix) {
+            const view = getView();
+            const rendered = interpolateValue(view, prefix, value, suffix);
+            if (rendered !== noChange) {
+                updateText(view, getSelectedIndex(), rendered);
+            }
+            return runtime.interpolateOne;
+        };
+        runtime.interpolate = function(value) {
+            runtime.interpolateOne("", value);
+            return runtime.interpolate;
+        };
+        runtime.property = function(name, value, sanitizer) {
+            const view = getView();
+            const binding = nextBindingIndex();
+            if (bindingChanged(view, binding, value)) {
+                const node = getSelectedNode();
+                writeProperty(node, view, name, value, view[0], sanitizer);
+            }
+            return runtime.property;
+        };
+        runtime.style = function(name, value, suffix) {
+            writeStyle(name, value, suffix, false);
+            return runtime.style;
+        };
+
+        class BoundCard {
+            label = "Bound";
+            disabled = false;
+        }
+        BoundCard.compiled = runtime.component({
+            type: BoundCard,
+            x: [["bound-card"]],
+            template: function(renderFlags, context) {
+                if (renderFlags & 1) {
+                    runtime.start(0, "article");
+                    runtime.text(1);
+                    runtime.end();
+                    runtime.element(2, "button");
+                }
+                if (renderFlags & 2) {
+                    runtime.next();
+                    runtime.interpolate(context.label);
+                    runtime.next();
+                    runtime.property("disabled", context.disabled);
+                }
+            },
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("relationship-backed binding roles should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(recovered[0]
+        .source
+        .contains("<article>{{ label }}</article>"));
+    assert!(recovered[0]
+        .source
+        .contains("<button [disabled]=\"disabled\"></button>"));
+    assert!(!recovered[0].source.contains("[style.disabled]"));
+}

@@ -64,11 +64,11 @@ pub(super) fn infer_template_roles(
             .push(observation);
     }
 
-    let mut inferred = Vec::new();
-    for (identity, observations) in by_identity {
+    let mut inferred = infer_text_interpolation_family(&functions, &by_identity);
+    for (identity, observations) in &by_identity {
         let mut definitions = functions
             .iter()
-            .filter(|function| function.identity == identity);
+            .filter(|function| function.identity == *identity);
         let Some(definition) = definitions.next() else {
             continue;
         };
@@ -77,17 +77,20 @@ pub(super) fn infer_template_roles(
         }
 
         let mut matches = Vec::new();
-        if is_text_shape(definition, &observations) {
+        if is_text_shape(definition, observations) {
             matches.push("ɵɵtext");
         }
-        if is_listener_shape(definition, &observations) {
+        if is_listener_shape(definition, observations) {
             matches.push("ɵɵlistener");
         }
-        if is_advance_shape(definition, &observations) {
+        if is_advance_shape(definition, observations) {
             matches.push("ɵɵadvance");
         }
+        if is_property_shape(definition, observations) {
+            matches.push("ɵɵproperty");
+        }
         if let [name] = matches.as_slice() {
-            inferred.push((identity, *name));
+            inferred.push((identity.clone(), *name));
         }
     }
     inferred
@@ -339,6 +342,103 @@ fn is_advance_shape(
         })
 }
 
+fn is_property_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    if parameters.len() != 3
+        || !returns_identity(definition, &definition.identity)
+        || !observations.iter().all(|observation| {
+            observation.phase == 2
+                && matches!(observation.arguments.len(), 2 | 3)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+        })
+    {
+        return false;
+    }
+
+    let calls = direct_calls(definition);
+    calls.len() >= 4
+        && calls.iter().any(|call| {
+            call.arguments.len() >= 6 && forwards_parameters_in_order(call, &parameters)
+        })
+}
+
+fn infer_text_interpolation_family(
+    functions: &[RuntimeFunction],
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut inferred = Vec::new();
+    for (identity, calls_in_templates) in observations {
+        if !calls_in_templates
+            .iter()
+            .all(|observation| observation.phase == 2 && observation.arguments.len() == 1)
+        {
+            continue;
+        }
+        let Some(wrapper) = unique_runtime_function(functions, identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(wrapper) else {
+            continue;
+        };
+        if parameters.len() != 1 || !returns_identity(wrapper, identity) {
+            continue;
+        }
+        let wrapper_calls = direct_calls(wrapper);
+        let [target_call] = wrapper_calls.as_slice() else {
+            continue;
+        };
+        if target_call.callee == *identity
+            || !matches!(target_call.arguments.len(), 2 | 3)
+            || !target_call
+                .arguments
+                .first()
+                .is_some_and(|argument| is_empty_string_literal(argument.as_ref()))
+            || !target_call.arguments.get(1).is_some_and(|argument| {
+                matches!(
+                    argument.as_ref(),
+                    Expr::Ident(identifier) if binding_key(identifier) == parameters[0]
+                )
+            })
+        {
+            continue;
+        }
+        let Some(target) = unique_runtime_function(functions, &target_call.callee) else {
+            continue;
+        };
+        let Some(target_parameters) = plain_parameter_bindings(target) else {
+            continue;
+        };
+        if target_parameters.len() != 3
+            || !returns_identity(target, &target.identity)
+            || direct_calls(target).len() < 3
+        {
+            continue;
+        }
+        inferred.push((identity.clone(), "ɵɵtextInterpolate"));
+        inferred.push((target.identity.clone(), "ɵɵtextInterpolate1"));
+    }
+    inferred
+}
+
+fn unique_runtime_function<'a>(
+    functions: &'a [RuntimeFunction],
+    identity: &SymbolIdentity,
+) -> Option<&'a RuntimeFunction> {
+    let mut candidates = functions
+        .iter()
+        .filter(|function| function.identity == *identity);
+    let candidate = candidates.next()?;
+    candidates.next().is_none().then_some(candidate)
+}
+
 fn is_empty_string_default(pattern: &Pat) -> bool {
     let Pat::Assign(assignment) = pattern else {
         return false;
@@ -373,6 +473,17 @@ fn is_string_literal(expression: &Expr) -> bool {
             expression,
             Expr::Tpl(template) if template.exprs.is_empty() && template.quasis.len() == 1
         )
+}
+
+fn is_empty_string_literal(expression: &Expr) -> bool {
+    match expression {
+        Expr::Lit(Lit::Str(string)) => string.value.is_empty(),
+        Expr::Tpl(template) if template.exprs.is_empty() && template.quasis.len() == 1 => template
+            .quasis
+            .first()
+            .is_some_and(|quasi| quasi.raw.is_empty()),
+        _ => false,
+    }
 }
 
 impl RuntimeFunctionCollector {
@@ -724,6 +835,23 @@ fn forwards_parameters(call: &DirectCall, parameters: &[BindingKey]) -> bool {
                     Expr::Ident(identifier) if binding_key(identifier) == *parameter
                 )
             })
+}
+
+fn forwards_parameters_in_order(call: &DirectCall, parameters: &[BindingKey]) -> bool {
+    let mut next_parameter = 0;
+    for argument in &call.arguments {
+        if next_parameter == parameters.len() {
+            break;
+        }
+        if matches!(
+            argument.as_ref(),
+            Expr::Ident(identifier)
+                if binding_key(identifier) == parameters[next_parameter]
+        ) {
+            next_parameter += 1;
+        }
+    }
+    next_parameter == parameters.len()
 }
 
 fn has_unique_self_returning_arity(
