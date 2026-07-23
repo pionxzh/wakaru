@@ -63,6 +63,7 @@ npx wakaru dist/ --unpack -o out/              # scan a bundle output directory
 npx wakaru ./compiled-app --unpack -o out/     # extract a Bun single-file executable
 npx wakaru bun extract ./compiled-app -o raw/  # dump every embedded Bun file byte-for-byte
 npx wakaru bundle.js --unpack --angular -o out/ # recover inline-template Angular artifacts
+npx wakaru dist/ --unpack --angular -o out/    # inspect a production Angular chunk set
 ```
 
 Full flag reference: [docs/cli.md](./docs/cli.md).

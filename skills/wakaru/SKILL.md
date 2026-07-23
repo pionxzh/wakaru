@@ -205,7 +205,9 @@ component-only and requires exactly one recovered component. A JavaScript
 output path keeps the decompiled JavaScript and writes all recovered
 components as sibling sidecars. `--unpack --angular` is preferred for bundles,
 chunks, or directories; directory mode processes ordinary JavaScript modules
-as well as detected bundles.
+as well as detected bundles. In default directory mode it preserves ordinary
+production chunks intact so relative ESM symbol edges remain available to the
+Ivy analyzer; structural bundle detection still runs.
 
 In JSON, recovered artifacts use `kind: "angular_component"` and status
 `recovered_angular_component` or `partial_angular_component`. Paired
