@@ -211,6 +211,22 @@ fn parses_vue_sfc_option() {
 }
 
 #[test]
+fn parses_angular_option_and_alias() {
+    let cli =
+        Cli::try_parse_from(["wakaru", "input.js", "--angular"]).expect("Angular option parses");
+    assert!(cli.angular);
+
+    let cli = Cli::try_parse_from(["wakaru", "input.js", "--angular-ivy"])
+        .expect("Angular option alias parses");
+    assert!(cli.angular);
+}
+
+#[test]
+fn rejects_angular_and_vue_recovery_together() {
+    assert!(Cli::try_parse_from(["wakaru", "input.js", "--angular", "--vue-sfc"]).is_err());
+}
+
+#[test]
 fn rejects_vue_sfc_with_raw_unpack() {
     let cli = Cli::try_parse_from([
         "wakaru",
@@ -227,6 +243,27 @@ fn rejects_vue_sfc_with_raw_unpack() {
     assert!(
         err.to_string()
             .contains("--vue-sfc cannot be combined with --raw"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_angular_with_raw_unpack() {
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "bundle.js",
+        "--unpack",
+        "--raw",
+        "--angular",
+        "-o",
+        "out",
+    ])
+    .expect("raw Angular unpack args should parse before runtime validation");
+
+    let err = run_default(cli).expect_err("raw Angular output should be rejected");
+    assert!(
+        err.to_string()
+            .contains("--angular cannot be combined with --raw"),
         "unexpected error: {err}"
     );
 }
@@ -472,6 +509,136 @@ fn vue_sfc_single_file_js_primary_output_writes_source_map_only_for_js() {
 }
 
 #[test]
+fn angular_writes_recovered_single_file_component_with_inline_template() {
+    let dir = temp_test_dir("angular-component-output");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("compiled.js");
+    let output_path = dir.join("DemoCard.component.ts");
+    fs::write(&input_path, angular_component_module_source())
+        .expect("write Angular component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--angular",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular CLI should parse");
+    run_default(cli).expect("Angular component recovery should succeed");
+
+    let artifact = fs::read_to_string(&output_path).expect("read Angular artifact");
+    assert!(artifact.contains("@Component({"));
+    assert!(artifact.contains("template: `"));
+    assert!(artifact.contains("<article>{{ title }}</article>"));
+    assert!(artifact.contains("export class DemoCardComponent"));
+    assert!(!artifact.contains("ɵɵdefineComponent"));
+    assert!(
+        !append_map_extension(&output_path).exists(),
+        "TypeScript recovery artifact must not get a JavaScript source map"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn angular_single_file_js_primary_output_writes_multiple_sidecars() {
+    let dir = temp_test_dir("angular-component-sidecars");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("compiled.js");
+    let output_path = dir.join("readable.js");
+    let first_sidecar = dir.join("first-card.component.ts");
+    let second_sidecar = dir.join("second-card.component.ts");
+    fs::write(&input_path, two_angular_components_module_source())
+        .expect("write Angular component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--angular",
+        "--emit-source-map",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular CLI should parse");
+    run_default(cli).expect("Angular JS-primary recovery should succeed");
+
+    let javascript = fs::read_to_string(&output_path).expect("read JavaScript primary");
+    assert!(javascript.contains("ɵɵdefineComponent"));
+    assert!(first_sidecar.exists());
+    assert!(second_sidecar.exists());
+    assert!(fs::read_to_string(&first_sidecar)
+        .expect("read first sidecar")
+        .contains("<section></section>"));
+    assert!(fs::read_to_string(&second_sidecar)
+        .expect("read second sidecar")
+        .contains("<aside></aside>"));
+    assert!(append_map_extension(&output_path).exists());
+    assert!(!append_map_extension(&first_sidecar).exists());
+    assert!(!append_map_extension(&second_sidecar).exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn angular_component_only_output_rejects_multiple_components() {
+    let dir = temp_test_dir("angular-component-only-multiple");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("compiled.js");
+    let output_path = dir.join("Component.ts");
+    fs::write(&input_path, two_angular_components_module_source())
+        .expect("write Angular component input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--angular",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular CLI should parse");
+    let error = run_default(cli).expect_err("multiple components need sidecars or unpack");
+    assert!(
+        error
+            .to_string()
+            .contains("--angular recovered 2 components"),
+        "unexpected error: {error}"
+    );
+    assert!(!output_path.exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn angular_component_only_output_errors_when_not_recovered() {
+    let dir = temp_test_dir("angular-component-only-miss");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("plain.js");
+    let output_path = dir.join("Component.ts");
+    fs::write(&input_path, "const value = 1;").expect("write plain input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--angular",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular CLI should parse");
+    let error = run_default(cli).expect_err("component-only output should require recovery");
+    assert!(
+        error
+            .to_string()
+            .contains("--angular did not recover an Angular component"),
+        "unexpected error: {error}"
+    );
+    assert!(!output_path.exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn vue_sfc_recovers_single_system_register_module() {
     let dir = temp_test_dir("vue-sfc-system-register");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -680,6 +847,37 @@ fn vue_sfc_unpack_writes_source_maps_only_for_js_artifacts() {
 }
 
 #[test]
+fn angular_unpack_writes_component_artifact_from_generic_module_workspace() {
+    let dir = temp_test_dir("angular-closure-unpack");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("bundle.js");
+    fs::write(&input_path, closure_angular_component_bundle_source())
+        .expect("write synthetic bundle");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--angular",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular unpack CLI should parse");
+    run_default(cli).expect("Angular unpack should succeed");
+
+    assert!(out_dir.join("runtime.js").exists());
+    assert!(out_dir.join("component.js").exists());
+    let artifact_path = out_dir.join("local-card.component.ts");
+    let artifact = fs::read_to_string(&artifact_path).expect("read Angular artifact");
+    assert!(artifact.contains("template: `"));
+    assert!(artifact.contains("<article></article>"));
+    assert!(!artifact.contains("shared."));
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
@@ -695,7 +893,7 @@ fn parses_json_with_unpack() {
 }
 
 #[test]
-fn json_modules_describe_vue_sfc_artifact_roles() {
+fn json_modules_describe_framework_artifact_roles() {
     let modules = vec![
         json_module_for_artifact(&CliOutputArtifact {
             filename: "src/plain.js".to_string(),
@@ -729,6 +927,22 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
             source_filename: None,
             source_map_filename: Some("src/Broken.vue".to_string()),
         }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/card.js".to_string(),
+            code: "export {};".to_string(),
+            kind: JsonModuleKind::JavaScript,
+            status: JsonModuleStatus::AngularComponentSourceJs,
+            source_filename: Some("src/card.js".to_string()),
+            source_map_filename: Some("src/card.js".to_string()),
+        }),
+        json_module_for_artifact(&CliOutputArtifact {
+            filename: "src/demo-card.component.ts".to_string(),
+            code: "@Component({}) class DemoCard {}".to_string(),
+            kind: JsonModuleKind::AngularComponent,
+            status: JsonModuleStatus::PartialAngularComponent,
+            source_filename: Some("src/card.js".to_string()),
+            source_map_filename: None,
+        }),
     ];
 
     assert_eq!(
@@ -755,9 +969,50 @@ fn json_modules_describe_vue_sfc_artifact_roles() {
                 "filename": "src/Broken.vue.js",
                 "kind": "javascript",
                 "status": "vue_sfc_fallback_js"
+            },
+            {
+                "filename": "src/card.js",
+                "kind": "javascript",
+                "status": "angular_component_source_js",
+                "source_filename": "src/card.js"
+            },
+            {
+                "filename": "src/demo-card.component.ts",
+                "kind": "angular_component",
+                "status": "partial_angular_component",
+                "source_filename": "src/card.js"
             }
         ])
     );
+}
+
+#[test]
+fn single_file_angular_metadata_distinguishes_primary_and_sidecar_output() {
+    let selected = CliOutputArtifact {
+        filename: "demo-card.component.ts".to_string(),
+        code: "@Component({}) class DemoCard {}".to_string(),
+        kind: JsonModuleKind::AngularComponent,
+        status: JsonModuleStatus::RecoveredAngularComponent,
+        source_filename: Some("compiled.js".to_string()),
+        source_map_filename: None,
+    };
+    let primary = single_file_angular_metadata(true, Some(&selected), &[], "compiled.js")
+        .expect("Angular metadata should be present");
+    assert_eq!(primary.kind, JsonModuleKind::AngularComponent);
+    assert_eq!(primary.status, JsonModuleStatus::RecoveredAngularComponent);
+
+    let sidecars = vec![SingleFileArtifactSidecar {
+        path: PathBuf::from("demo-card.component.ts"),
+        artifact: selected,
+    }];
+    let javascript = single_file_angular_metadata(true, None, &sidecars, "compiled.js")
+        .expect("Angular metadata should be present");
+    assert_eq!(javascript.kind, JsonModuleKind::JavaScript);
+    assert_eq!(
+        javascript.status,
+        JsonModuleStatus::AngularComponentSourceJs
+    );
+    assert_eq!(javascript.source_filename.as_deref(), Some("compiled.js"));
 }
 
 #[test]
@@ -806,6 +1061,7 @@ fn json_decompile_omits_vue_fields_for_plain_js() {
         status: None,
         source_filename: None,
         vue_sidecar_filename: None,
+        artifacts: Vec::new(),
         warnings: Vec::new(),
         elapsed_ms: 3,
     };
@@ -864,6 +1120,37 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
     assert_eq!(
         final_names.get("src/after.js").map(String::as_str),
         Some("src/after.js")
+    );
+}
+
+#[test]
+fn angular_artifact_summary_counts_complete_and_partial_components() {
+    let artifact = |status| CliOutputArtifact {
+        filename: "artifact.js".to_string(),
+        code: String::new(),
+        kind: JsonModuleKind::JavaScript,
+        status,
+        source_filename: None,
+        source_map_filename: None,
+    };
+    let artifacts = vec![
+        artifact(JsonModuleStatus::AngularComponentSourceJs),
+        artifact(JsonModuleStatus::RecoveredAngularComponent),
+        artifact(JsonModuleStatus::PartialAngularComponent),
+        artifact(JsonModuleStatus::Decompiled),
+    ];
+
+    let summary = angular_artifact_summary(&artifacts);
+    assert_eq!(
+        summary,
+        Some(AngularArtifactSummary {
+            complete: 1,
+            partial: 1,
+        })
+    );
+    assert_eq!(
+        format_angular_artifact_summary(summary.expect("summary")),
+        "angular: 1 complete, 1 partial"
     );
 }
 
@@ -1028,6 +1315,7 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
         RewriteLevel::Standard,
         false,
         false,
+        false,
     )
     .expect("read and unpack directory inputs");
     assert_eq!(
@@ -1035,6 +1323,7 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
         Some(DirectoryScanStats {
             scanned: 4,
             detected: 2,
+            processed: 0,
             skipped: 2,
         })
     );
@@ -1063,6 +1352,39 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
 }
 
 #[test]
+fn angular_unpack_directory_processes_plain_production_modules() {
+    let dir = temp_test_dir("angular-plain-directory");
+    let dist_dir = dir.join("dist");
+    let nested_dir = dist_dir.join("chunks");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&nested_dir).expect("create Angular dist dir");
+    fs::write(
+        nested_dir.join("compiled.js"),
+        angular_component_module_source(),
+    )
+    .expect("write plain Angular production module");
+    fs::write(dist_dir.join("plain.js"), "export const value = 1;")
+        .expect("write plain companion module");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        dist_dir.to_str().expect("input path should be utf8"),
+        "--unpack",
+        "--angular",
+        "-o",
+        out_dir.to_str().expect("output path should be utf8"),
+    ])
+    .expect("Angular directory CLI should parse");
+    run_default(cli).expect("plain Angular directory should be processed");
+
+    assert!(out_dir.join("compiled.js").exists());
+    assert!(out_dir.join("plain.js").exists());
+    assert!(out_dir.join("demo-card.component.ts").exists());
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
     let dir = temp_test_dir("unpack-mixed-input-policy");
     let chunks = dir.join("chunks");
@@ -1079,6 +1401,7 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
         RewriteLevel::Standard,
         false,
         false,
+        false,
     )
     .expect("mixed explicit and directory inputs should unpack");
 
@@ -1087,6 +1410,7 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
         Some(DirectoryScanStats {
             scanned: 1,
             detected: 1,
+            processed: 0,
             skipped: 0,
         })
     );
@@ -1203,6 +1527,7 @@ fn unpack_directory_skips_malformed_javascript_candidate() {
         RewriteLevel::Standard,
         false,
         false,
+        false,
     )
     .expect("malformed directory candidate should not abort the scan");
 
@@ -1211,6 +1536,7 @@ fn unpack_directory_skips_malformed_javascript_candidate() {
         Some(DirectoryScanStats {
             scanned: 2,
             detected: 1,
+            processed: 0,
             skipped: 1,
         })
     );
@@ -1231,6 +1557,7 @@ fn unpack_directory_without_detected_files_errors() {
         UnpackMode::Strict,
         DceMode::Off,
         RewriteLevel::Standard,
+        false,
         false,
         false,
     )
@@ -1423,6 +1750,114 @@ export default defineComponent({
     );
   }
 });
+"#
+}
+
+fn angular_component_module_source() -> &'static str {
+    r#"
+import * as core from "@angular/core";
+
+export class DemoCardComponent {
+  title = "Example";
+
+  static ɵcmp = core.ɵɵdefineComponent({
+    type: DemoCardComponent,
+    selectors: [["demo-card"]],
+    template: function DemoCardComponent_Template(renderFlags, context) {
+      if (renderFlags & 1) {
+        core.ɵɵelementStart(0, "article");
+        core.ɵɵtext(1);
+        core.ɵɵelementEnd();
+      }
+      if (renderFlags & 2) {
+        core.ɵɵadvance();
+        core.ɵɵtextInterpolate(context.title);
+      }
+    }
+  });
+}
+"#
+}
+
+fn two_angular_components_module_source() -> &'static str {
+    r#"
+import * as core from "@angular/core";
+
+export class FirstCardComponent {
+  static ɵcmp = core.ɵɵdefineComponent({
+    type: FirstCardComponent,
+    selectors: [["first-card"]],
+    template: function(renderFlags) {
+      if (renderFlags & 1) {
+        core.ɵɵelement(0, "section");
+      }
+    }
+  });
+}
+
+export class SecondCardComponent {
+  static ɵcmp = core.ɵɵdefineComponent({
+    type: SecondCardComponent,
+    selectors: [["second-card"]],
+    template: function(renderFlags) {
+      if (renderFlags & 1) {
+        core.ɵɵelement(0, "aside");
+      }
+    }
+  });
+}
+"#
+}
+
+fn closure_angular_component_bundle_source() -> &'static str {
+    r#"
+"use strict";
+this.localSuite = this.localSuite || {};
+(function(shared) {
+  var window = this;
+
+  /*_M:runtime*/
+  try {
+    shared.before("runtime");
+    shared._ModuleManager_initialize(
+      "runtime/component:0",
+      ["runtime", "component"]
+    );
+    shared.define = function(value) {
+      return value;
+    };
+    shared.element = function() {
+      return shared.element;
+    };
+    shared.publicRuntime = {
+      "ɵɵdefineComponent": shared.define,
+      "ɵɵelement": shared.element
+    };
+    shared.after();
+  } catch (error) {
+    shared._DumpException(error);
+  }
+
+  /*_M:component*/
+  try {
+    shared.before("component");
+    shared.Card = class CardComponent {
+      title = "Local";
+    };
+    shared.Card.definition = shared.define({
+      type: shared.Card,
+      selectors: [["local-card"]],
+      template: function(renderFlags) {
+        if (renderFlags & 1) {
+          shared.element(0, "article");
+        }
+      }
+    });
+    shared.after();
+  } catch (error) {
+    shared._DumpException(error);
+  }
+}).call(this, this.localSuite);
 "#
 }
 

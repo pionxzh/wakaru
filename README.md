@@ -62,6 +62,7 @@ npx wakaru bundle.js --unpack -o out/          # unpack and decompile a bundle
 npx wakaru dist/ --unpack -o out/              # scan a bundle output directory
 npx wakaru ./compiled-app --unpack -o out/     # extract a Bun single-file executable
 npx wakaru bun extract ./compiled-app -o raw/  # dump every embedded Bun file byte-for-byte
+npx wakaru bundle.js --unpack --angular -o out/ # recover inline-template Angular artifacts
 ```
 
 Full flag reference: [docs/cli.md](./docs/cli.md).
@@ -80,6 +81,9 @@ Full flag reference: [docs/cli.md](./docs/cli.md).
   parameters, `for...of`, and more.
 - **Minifier recovery** — sequence expressions, flipped comparisons,
   `!0`/`void 0` literal tricks, IIFE flattening, alias inlining.
+- **Experimental component artifacts** — Angular Ivy definitions become
+  readable TypeScript components with inline templates and styles; compiled
+  Vue 3 render modules can become SFC-like `.vue` artifacts.
 - **Three rewrite levels** — `minimal` (highest-confidence,
   semantics-preserving transforms for auditing and diffing), `standard`
   (default), `aggressive` (maximum readability). The semantic contract per
