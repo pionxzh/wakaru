@@ -15,7 +15,8 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    Class, Decl, Expr, Function, Module, ModuleDecl, ModuleItem, Pat, Prop, PropOrSpread, Stmt,
+    Class, Decl, Expr, Function, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropOrSpread, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -24,7 +25,7 @@ use swc_core::ecma::visit::{VisitMutWith, VisitWith};
 use emitter::{emit_component_source, ComponentEmitInput};
 use roles::{IvyInstruction, IvyRoleTable};
 use syntax::{binding_key, prop_name, string_lit, BindingKey};
-use template::recover_template;
+use template::{ivy_template_score, recover_template};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -69,6 +70,7 @@ struct ComponentDescriptor {
     selector: String,
     styles: Vec<String>,
     template: Function,
+    constants: Option<Box<Expr>>,
 }
 
 pub fn recover_angular_components_from_js(
@@ -101,7 +103,8 @@ pub fn recover_angular_components_from_modules(
             let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
             prepared.module.visit_with(&mut calls);
 
-            for call in &calls.define_component_calls {
+            for candidate in &calls.define_component_calls {
+                let call = &candidate.call;
                 let Some(descriptor) =
                     parse_component_descriptor(call, &classes, &roles, prepared.unresolved_ctxt)
                 else {
@@ -109,7 +112,7 @@ pub fn recover_angular_components_from_modules(
                 };
                 let recovered_template = recover_template(
                     &descriptor.template,
-                    call,
+                    descriptor.constants.as_deref(),
                     &roles,
                     prepared.unresolved_ctxt,
                     prepared.cm.clone(),
@@ -124,6 +127,7 @@ pub fn recover_angular_components_from_modules(
                         roles: &roles,
                         unresolved_ctxt: prepared.unresolved_ctxt,
                         template: &recovered_template,
+                        definition_field: candidate.definition_field.as_ref(),
                     },
                     prepared.cm.clone(),
                 )?;
@@ -243,7 +247,26 @@ fn parse_component_descriptor(
         return None;
     };
 
-    let class = object.props.iter().find_map(|prop| {
+    let class = descriptor_class(object, classes)?;
+    let template = descriptor_template(object, roles, unresolved_ctxt)?;
+    let selector = descriptor_selector(object)?;
+    let styles = descriptor_styles(object);
+    let constants = descriptor_constants(object);
+
+    Some(ComponentDescriptor {
+        class,
+        selector,
+        styles,
+        template,
+        constants,
+    })
+}
+
+fn descriptor_class(
+    object: &ObjectLit,
+    classes: &HashMap<BindingKey, ComponentClass>,
+) -> Option<ComponentClass> {
+    let candidates = object.props.iter().filter_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
             return None;
         };
@@ -253,11 +276,82 @@ fn parse_component_descriptor(
         let Expr::Ident(ident) = key_value.value.as_ref() else {
             return None;
         };
-        let candidate = classes.get(&binding_key(ident))?;
-        (prop_name(&key_value.key).as_deref() == Some("type")).then(|| candidate.clone())
-    })?;
+        classes
+            .get(&binding_key(ident))
+            .map(|class| (prop_name(&key_value.key), class))
+    });
 
-    let selector = object.props.iter().find_map(|prop| {
+    if let Some(class) = candidates
+        .clone()
+        .find_map(|(name, class)| (name.as_deref() == Some("type")).then(|| class.clone()))
+    {
+        return Some(class);
+    }
+
+    let mut structural = candidates.map(|(_, class)| class.clone());
+    let first = structural.next()?;
+    structural
+        .all(|candidate| candidate.name == first.name)
+        .then_some(first)
+}
+
+fn descriptor_template(
+    object: &ObjectLit,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> Option<Function> {
+    let candidates = object
+        .props
+        .iter()
+        .filter_map(descriptor_function_property)
+        .collect::<Vec<_>>();
+    if let Some((_, function)) = candidates
+        .iter()
+        .find(|(name, _)| name.as_deref() == Some("template"))
+    {
+        return Some(function.clone());
+    }
+
+    let mut best: Option<(usize, &Function)> = None;
+    let mut tied = false;
+    for (_, function) in &candidates {
+        let score = ivy_template_score(function, roles, unresolved_ctxt);
+        if score == 0 {
+            continue;
+        }
+        match best {
+            Some((best_score, _)) if score < best_score => {}
+            Some((best_score, _)) if score == best_score => tied = true,
+            _ => {
+                best = Some((score, function));
+                tied = false;
+            }
+        }
+    }
+    (!tied).then(|| best.map(|(_, function)| function.clone()))?
+}
+
+fn descriptor_function_property(prop: &PropOrSpread) -> Option<(Option<String>, Function)> {
+    let PropOrSpread::Prop(prop) = prop else {
+        return None;
+    };
+    match prop.as_ref() {
+        Prop::KeyValue(key_value) => {
+            let Expr::Fn(function) = key_value.value.as_ref() else {
+                return None;
+            };
+            Some((
+                prop_name(&key_value.key),
+                function.function.as_ref().clone(),
+            ))
+        }
+        Prop::Method(method) => Some((prop_name(&method.key), method.function.as_ref().clone())),
+        _ => None,
+    }
+}
+
+fn descriptor_selector(object: &ObjectLit) -> Option<String> {
+    if let Some(selector) = object.props.iter().find_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
             return None;
         };
@@ -267,50 +361,151 @@ fn parse_component_descriptor(
         (prop_name(&key_value.key).as_deref() == Some("selectors"))
             .then(|| first_selector(key_value.value.as_ref()))
             .flatten()
-    })?;
+    }) {
+        return Some(selector);
+    }
 
-    let styles = object
-        .props
-        .iter()
-        .find_map(|prop| {
-            let PropOrSpread::Prop(prop) = prop else {
-                return None;
-            };
-            let Prop::KeyValue(key_value) = prop.as_ref() else {
-                return None;
-            };
-            (prop_name(&key_value.key).as_deref() == Some("styles"))
-                .then(|| string_array(key_value.value.as_ref()))
-        })
-        .flatten()
-        .unwrap_or_default();
+    let mut best: Option<(usize, String)> = None;
+    let mut tied = false;
+    for expression in descriptor_expression_values(object) {
+        let Some((selector, score)) = selector_shape(expression) else {
+            continue;
+        };
+        match &best {
+            Some((best_score, _)) if score < *best_score => {}
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {
+                best = Some((score, selector));
+                tied = false;
+            }
+        }
+    }
+    (!tied).then(|| best.map(|(_, selector)| selector))?
+}
 
-    let template = object.props.iter().find_map(|prop| {
+fn descriptor_styles(object: &ObjectLit) -> Vec<String> {
+    if let Some(styles) = object.props.iter().find_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
             return None;
         };
-        match prop.as_ref() {
-            Prop::KeyValue(key_value)
-                if prop_name(&key_value.key).as_deref() == Some("template") =>
-            {
-                match key_value.value.as_ref() {
-                    Expr::Fn(function) => Some(function.function.as_ref().clone()),
-                    _ => None,
-                }
-            }
-            Prop::Method(method) if prop_name(&method.key).as_deref() == Some("template") => {
-                Some(method.function.as_ref().clone())
-            }
-            _ => None,
-        }
-    })?;
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        (prop_name(&key_value.key).as_deref() == Some("styles"))
+            .then(|| string_array(key_value.value.as_ref()))
+            .flatten()
+    }) {
+        return styles;
+    }
 
-    Some(ComponentDescriptor {
-        class,
-        selector,
-        styles,
-        template,
+    let mut candidates = descriptor_expression_values(object).filter_map(|expression| {
+        let styles = string_array(expression)?;
+        (!styles.is_empty()
+            && styles
+                .iter()
+                .all(|style| style.contains('{') && style.contains('}')))
+        .then_some(styles)
+    });
+    let first = candidates.next().unwrap_or_default();
+    if candidates.next().is_some() {
+        Vec::new()
+    } else {
+        first
+    }
+}
+
+fn descriptor_constants(object: &ObjectLit) -> Option<Box<Expr>> {
+    if let Some(constants) = object.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        (prop_name(&key_value.key).as_deref() == Some("consts")).then(|| key_value.value.clone())
+    }) {
+        return Some(constants);
+    }
+
+    descriptor_expression_values(object)
+        .filter_map(|expression| attribute_table_score(expression).map(|score| (score, expression)))
+        .max_by_key(|(score, _)| *score)
+        .map(|(_, expression)| Box::new(expression.clone()))
+}
+
+fn descriptor_expression_values(object: &ObjectLit) -> impl Iterator<Item = &Expr> {
+    object.props.iter().filter_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        Some(key_value.value.as_ref())
     })
+}
+
+fn selector_shape(expr: &Expr) -> Option<(String, usize)> {
+    let Expr::Array(outer) = expr else {
+        return None;
+    };
+    if outer.elems.is_empty() {
+        return None;
+    }
+    let selectors = outer
+        .elems
+        .iter()
+        .map(|element| {
+            let Expr::Array(selector) = element.as_ref()?.expr.as_ref() else {
+                return None;
+            };
+            let first = string_lit(selector.elems.first()?.as_ref()?.expr.as_ref())?;
+            Some((first, selector.elems.len()))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (selector, width) = selectors.first()?.clone();
+    let mut score = 1;
+    if selectors.len() == 1 {
+        score += 2;
+    }
+    if width == 1 {
+        score += 5;
+    }
+    if selector.contains('-') || selector.is_empty() {
+        score += 3;
+    }
+    (score >= 4).then_some((selector, score))
+}
+
+fn attribute_table_score(expr: &Expr) -> Option<usize> {
+    let Expr::Array(table) = expr else {
+        return None;
+    };
+    if table.elems.is_empty() {
+        return None;
+    }
+    let mut score = 0;
+    for entry in &table.elems {
+        let Expr::Array(attributes) = entry.as_ref()?.expr.as_ref() else {
+            return None;
+        };
+        if attributes.elems.len() < 2 {
+            return None;
+        }
+        score += attributes.elems.len();
+        score += attributes
+            .elems
+            .iter()
+            .filter(|element| {
+                matches!(
+                    element.as_ref().map(|element| element.expr.as_ref()),
+                    Some(Expr::Lit(swc_core::ecma::ast::Lit::Num(_)))
+                )
+            })
+            .count()
+            * 3;
+    }
+    Some(score)
 }
 
 fn first_selector(expr: &Expr) -> Option<String> {
