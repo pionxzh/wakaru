@@ -108,6 +108,186 @@ pub(crate) fn is_bind_call(call: &CallExpr) -> bool {
     static_member_name(&member.prop).is_some_and(|name| name == "bind")
 }
 
+pub(crate) fn is_value_preserving_assign_op(op: AssignOp) -> bool {
+    matches!(
+        op,
+        AssignOp::Assign | AssignOp::OrAssign | AssignOp::AndAssign | AssignOp::NullishAssign
+    )
+}
+
+fn key_or_descendant_is_sensitive(
+    key: &ValueKey,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+) -> bool {
+    constructor_sensitive_values.iter().any(|sensitive| {
+        sensitive.root == key.root && sensitive.properties.starts_with(&key.properties)
+    })
+}
+
+pub(crate) fn pat_has_constructor_sensitive_value(
+    pat: &Pat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+) -> bool {
+    match pat {
+        Pat::Ident(binding) => key_or_descendant_is_sensitive(
+            &ValueKey::binding(&binding.id),
+            constructor_sensitive_values,
+        ),
+        Pat::Expr(expr) => expr_value_key(expr)
+            .as_ref()
+            .is_some_and(|key| key_or_descendant_is_sensitive(key, constructor_sensitive_values)),
+        Pat::Assign(assign) => {
+            pat_has_constructor_sensitive_value(&assign.left, constructor_sensitive_values)
+        }
+        Pat::Array(array) => array.elems.iter().flatten().any(|element| {
+            pat_has_constructor_sensitive_value(element, constructor_sensitive_values)
+        }),
+        Pat::Object(object) => {
+            object_pat_has_constructor_sensitive_value(object, constructor_sensitive_values)
+        }
+        Pat::Rest(rest) => {
+            pat_has_constructor_sensitive_value(&rest.arg, constructor_sensitive_values)
+        }
+        Pat::Invalid(_) => false,
+    }
+}
+
+pub(crate) fn object_pat_has_constructor_sensitive_value(
+    object: &ObjectPat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+) -> bool {
+    object.props.iter().any(|prop| match prop {
+        ObjectPatProp::Assign(assign) => key_or_descendant_is_sensitive(
+            &ValueKey::binding(&assign.key.id),
+            constructor_sensitive_values,
+        ),
+        ObjectPatProp::KeyValue(key_value) => {
+            pat_has_constructor_sensitive_value(&key_value.value, constructor_sensitive_values)
+        }
+        ObjectPatProp::Rest(rest) => {
+            pat_has_constructor_sensitive_value(&rest.arg, constructor_sensitive_values)
+        }
+    })
+}
+
+pub(crate) fn assign_target_pat_has_constructor_sensitive_value(
+    pat: &AssignTargetPat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+) -> bool {
+    match pat {
+        AssignTargetPat::Array(array) => array.elems.iter().flatten().any(|element| {
+            pat_has_constructor_sensitive_value(element, constructor_sensitive_values)
+        }),
+        AssignTargetPat::Object(object) => {
+            object_pat_has_constructor_sensitive_value(object, constructor_sensitive_values)
+        }
+        AssignTargetPat::Invalid(_) => false,
+    }
+}
+
+pub(crate) fn visit_mut_pat_constructor_sensitive_defaults(
+    pat: &mut Pat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+    visit_expr: &mut impl FnMut(&mut Expr, bool),
+) {
+    match pat {
+        Pat::Assign(assign) => {
+            visit_mut_pat_constructor_sensitive_defaults(
+                &mut assign.left,
+                constructor_sensitive_values,
+                visit_expr,
+            );
+            let is_constructor_sensitive =
+                pat_has_constructor_sensitive_value(&assign.left, constructor_sensitive_values);
+            visit_expr(&mut assign.right, is_constructor_sensitive);
+        }
+        Pat::Array(array) => {
+            for element in array.elems.iter_mut().flatten() {
+                visit_mut_pat_constructor_sensitive_defaults(
+                    element,
+                    constructor_sensitive_values,
+                    visit_expr,
+                );
+            }
+        }
+        Pat::Object(object) => visit_mut_object_pat_constructor_sensitive_defaults(
+            object,
+            constructor_sensitive_values,
+            visit_expr,
+        ),
+        Pat::Rest(rest) => visit_mut_pat_constructor_sensitive_defaults(
+            &mut rest.arg,
+            constructor_sensitive_values,
+            visit_expr,
+        ),
+        Pat::Expr(expr) => visit_expr(expr, false),
+        Pat::Ident(_) | Pat::Invalid(_) => {}
+    }
+}
+
+pub(crate) fn visit_mut_assign_target_pat_constructor_sensitive_defaults(
+    pat: &mut AssignTargetPat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+    visit_expr: &mut impl FnMut(&mut Expr, bool),
+) {
+    match pat {
+        AssignTargetPat::Array(array) => {
+            for element in array.elems.iter_mut().flatten() {
+                visit_mut_pat_constructor_sensitive_defaults(
+                    element,
+                    constructor_sensitive_values,
+                    visit_expr,
+                );
+            }
+        }
+        AssignTargetPat::Object(object) => {
+            visit_mut_object_pat_constructor_sensitive_defaults(
+                object,
+                constructor_sensitive_values,
+                visit_expr,
+            );
+        }
+        AssignTargetPat::Invalid(_) => {}
+    }
+}
+
+fn visit_mut_object_pat_constructor_sensitive_defaults(
+    object: &mut ObjectPat,
+    constructor_sensitive_values: &HashSet<ValueKey>,
+    visit_expr: &mut impl FnMut(&mut Expr, bool),
+) {
+    for prop in &mut object.props {
+        match prop {
+            ObjectPatProp::Assign(assign) => {
+                if let Some(default) = &mut assign.value {
+                    let binding = ValueKey::binding(&assign.key.id);
+                    visit_expr(
+                        default,
+                        key_or_descendant_is_sensitive(&binding, constructor_sensitive_values),
+                    );
+                }
+            }
+            ObjectPatProp::KeyValue(key_value) => {
+                if let PropName::Computed(computed) = &mut key_value.key {
+                    visit_expr(&mut computed.expr, false);
+                }
+                visit_mut_pat_constructor_sensitive_defaults(
+                    &mut key_value.value,
+                    constructor_sensitive_values,
+                    visit_expr,
+                );
+            }
+            ObjectPatProp::Rest(rest) => {
+                visit_mut_pat_constructor_sensitive_defaults(
+                    &mut rest.arg,
+                    constructor_sensitive_values,
+                    visit_expr,
+                );
+            }
+        }
+    }
+}
+
 /// Collect the value keys an expression can evaluate to (or, for `.bind`,
 /// derive its constructibility from), walking the same wrapper shapes the
 /// consumers protect syntactically: parentheses, sequence results,
@@ -133,15 +313,7 @@ fn collect_value_sources(expr: &Expr, sources: &mut Vec<ValueKey>) {
             collect_value_sources(&binary.left, sources);
             collect_value_sources(&binary.right, sources);
         }
-        Expr::Assign(assign)
-            if matches!(
-                assign.op,
-                AssignOp::Assign
-                    | AssignOp::OrAssign
-                    | AssignOp::AndAssign
-                    | AssignOp::NullishAssign
-            ) =>
-        {
+        Expr::Assign(assign) if is_value_preserving_assign_op(assign.op) => {
             if let Some(target) = assign_target_value_key(&assign.left) {
                 sources.push(target);
             }
@@ -275,7 +447,7 @@ impl Visit for ConstructorSensitiveUseCollector {
             }
             // A logical assignment may leave the right-hand value in the
             // target, so it aliases the same sources a plain `=` would.
-            AssignOp::OrAssign | AssignOp::AndAssign | AssignOp::NullishAssign => {
+            op if is_value_preserving_assign_op(op) => {
                 if let Some(target) = assign_target_value_key(&expr.left) {
                     self.record_aliases(target, &expr.right);
                 }

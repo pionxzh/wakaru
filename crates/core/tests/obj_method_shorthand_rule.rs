@@ -128,6 +128,91 @@ new Constructor(input);
 }
 
 #[test]
+fn constructible_inline_object_property_stays_function_when_destructured() {
+    let inputs = [
+        r#"
+const { Constructor } = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+};
+new Constructor(input);
+"#,
+        r#"
+let Constructor;
+({ Constructor } = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+});
+new Constructor(input);
+"#,
+    ];
+
+    for input in inputs {
+        let output = apply(input);
+        assert_eq_normalized(&output, input);
+    }
+}
+
+#[test]
+fn constructible_object_property_stays_function_in_destructured_default() {
+    let inputs = [
+        r#"
+const { namespace = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+} } = {};
+new namespace.Constructor(input);
+"#,
+        r#"
+let namespace;
+({ namespace = {
+    Constructor: function(value) {
+        this.value = value;
+    }
+} } = {});
+new namespace.Constructor(input);
+"#,
+    ];
+
+    for input in inputs {
+        let output = apply(input);
+        assert_eq_normalized(&output, input);
+    }
+}
+
+#[test]
+fn constructible_object_property_stays_function_in_logical_assignment_value() {
+    let inputs = [
+        r#"
+let namespace;
+namespace ||= {
+    Constructor: function(value) {
+        this.value = value;
+    }
+};
+new namespace.Constructor(input);
+"#,
+        r#"
+let namespace;
+namespace ??= {
+    Constructor: function(value) {
+        this.value = value;
+    }
+};
+new namespace.Constructor(input);
+"#,
+    ];
+
+    for input in inputs {
+        let output = apply(input);
+        assert_eq_normalized(&output, input);
+    }
+}
+
+#[test]
 fn duplicate_params_stay_key_value_function() {
     // Method parameter lists require unique names (UniqueFormalParameters);
     // a sloppy-mode function expression may carry duplicates.

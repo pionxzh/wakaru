@@ -451,6 +451,17 @@ Child.prototype.run = function() { return this.x; };
 }
 
 #[test]
+fn function_expression_class_preserves_prototype_replacement_inside_recovered_method() {
+    let input = r#"
+const Child = function() { this.x = 1; };
+Child.prototype.reset = function() {
+    Child.prototype = makeProto();
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn function_declaration_keeps_recovery_across_define_property_call() {
     let input = r#"
 function RecordType() {}

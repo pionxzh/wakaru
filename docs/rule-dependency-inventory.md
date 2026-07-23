@@ -287,7 +287,12 @@ rationale, or level gating appear.
   `new (cond ? f : g)()` and `bound = f.bind(x); new bound()` protect the
   underlying bindings. Aliases are also recorded for logical assignments
   (`cached ||= ctor`) and object-destructuring bindings (`const { C } = ns`,
-  including renames, nested patterns, defaults, and rest bindings).
+  including renames, nested patterns, defaults, and rest bindings). A shared
+  pattern-default walker keeps the analysis and both mutators aligned for
+  anonymous sources that have no `ValueKey`; constructor-sensitive inline
+  defaults and destructured object-literal values stay ordinary functions.
+  Logical-assignment object values receive the same contextual member keys as
+  plain assignments.
   ObjMethodShorthand is always enabled; its other eligibility checks remain
   unchanged.
 - **ArrowFunction → ArrowReturn** — hard chain. ArrowFunction is `standard+`
@@ -318,10 +323,12 @@ rationale, or level gating appear.
   the constructor may replace its prototype; this call gate is specific to the
   newly supported variable shape and does not change the existing
   function-declaration recovery policy. Independently of constructor kind, an
-  unconsumed whole-prototype write (`Foo.prototype = <expr>`) anywhere in the
-  scope — before the constructor, between methods, trailing, or inside a nested
-  function — blocks recovery: a class would bake the collected methods into its
-  own non-writable `prototype` instead of the replacement object.
+  retained whole-prototype write (`Foo.prototype = <expr>`) anywhere in the
+  scope — before the constructor, between methods, trailing, inside a nested
+  function, or inside a recovered constructor/method body — blocks recovery: a
+  class would bake the collected methods into its own non-writable `prototype`
+  instead of the replacement object. Exact `Object.create` inheritance writes
+  consumed by the recovery remain eligible.
   ObjMethodShorthand remains an upstream normalizer for method bodies.
 
 ### Cleanup and renaming

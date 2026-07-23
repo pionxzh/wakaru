@@ -507,6 +507,26 @@ new Constructor();
 }
 
 #[test]
+fn constructor_use_preserves_inline_destructured_defaults() {
+    let inputs = [
+        r#"
+const { Constructor = function() {} } = {};
+new Constructor();
+"#,
+        r#"
+let Constructor;
+({ Constructor = function() {} } = {});
+new Constructor();
+"#,
+    ];
+
+    for input in inputs {
+        let output = apply(input);
+        assert_eq_normalized(&output, input);
+    }
+}
+
+#[test]
 fn constructor_use_propagates_through_rest_destructured_alias() {
     let input = r#"
 const namespace = {};

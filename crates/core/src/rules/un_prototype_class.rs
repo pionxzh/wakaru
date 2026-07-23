@@ -420,19 +420,24 @@ fn find_candidates(stmts: &[Option<&Stmt>], allow_module_var: bool) -> Vec<Class
             continue;
         }
 
-        // An unconsumed `Foo.prototype = <expr>` anywhere in the scope
-        // (including inside a closure that may run at any time) replaces the
+        // A retained `Foo.prototype = <expr>` anywhere in the scope (including
+        // inside a recovered method or closure that may run at any time) replaces the
         // whole prototype object. Recovering a class would bake the collected
         // methods into the class prototype instead of the replacement object,
         // and the leftover assignment would target a class's non-writable
         // `prototype` (a strict-mode TypeError). This hazard is independent
         // of the constructor's declaration shape.
-        let has_unconsumed_prototype_replacement = (0..len).any(|i| {
-            i != *fn_idx
-                && !candidate.consumed_indices.contains(&i)
-                && get_stmt(i).is_some_and(|stmt| contains_prototype_replacement(stmt, binding))
+        let has_retained_prototype_replacement = (0..len).any(|i| {
+            get_stmt(i).is_some_and(|stmt| {
+                // These exact whole-prototype writes are consumed as recognized
+                // inheritance and do not remain in the recovered class.
+                let consumed_inheritance = candidate.consumed_indices.contains(&i)
+                    && (extract_chained_inheritance(stmt, binding).is_some()
+                        || extract_object_create_inheritance(stmt, binding).is_some());
+                !consumed_inheritance && contains_prototype_replacement(stmt, binding)
+            })
         });
-        if has_unconsumed_prototype_replacement {
+        if has_retained_prototype_replacement {
             continue;
         }
 

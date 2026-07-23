@@ -1,14 +1,17 @@
 use std::collections::HashSet;
 
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, BinaryOp, Expr, MethodProp, Module, ObjectLit, Prop, PropName,
+    AssignExpr, AssignTarget, BinaryOp, Expr, MethodProp, Module, ObjectLit, Prop, PropName,
     PropOrSpread, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::constructor_sensitivity::{
-    assign_target_value_key, collect_constructor_sensitive_values, pat_value_key, static_prop_name,
-    ValueKey,
+    assign_target_pat_has_constructor_sensitive_value, assign_target_value_key,
+    collect_constructor_sensitive_values, is_value_preserving_assign_op,
+    pat_has_constructor_sensitive_value, pat_value_key, static_prop_name,
+    visit_mut_assign_target_pat_constructor_sensitive_defaults,
+    visit_mut_pat_constructor_sensitive_defaults, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
 
@@ -29,22 +32,63 @@ struct ObjMethodShorthandConverter<'a> {
 
 impl VisitMut for ObjMethodShorthandConverter<'_> {
     fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
-        decl.name.visit_mut_with(self);
+        let constructor_sensitive_values = self.constructor_sensitive_values;
+        visit_mut_pat_constructor_sensitive_defaults(
+            &mut decl.name,
+            constructor_sensitive_values,
+            &mut |expr, is_constructor_sensitive| {
+                if is_constructor_sensitive {
+                    visit_mut_value_expr(expr, None, true, self);
+                } else {
+                    expr.visit_mut_with(self);
+                }
+            },
+        );
         let Some(init) = &mut decl.init else {
             return;
         };
         if let Some(key) = pat_value_key(&decl.name) {
-            visit_mut_value_expr(init, &key, self);
+            visit_mut_value_expr(init, Some(&key), false, self);
+        } else if pat_has_constructor_sensitive_value(&decl.name, self.constructor_sensitive_values)
+        {
+            visit_mut_value_expr(init, None, true, self);
         } else {
             init.visit_mut_with(self);
         }
     }
 
     fn visit_mut_assign_expr(&mut self, expr: &mut AssignExpr) {
-        expr.left.visit_mut_with(self);
-        if expr.op == AssignOp::Assign {
+        let pattern_is_constructor_sensitive = match &expr.left {
+            AssignTarget::Pat(pat) => assign_target_pat_has_constructor_sensitive_value(
+                pat,
+                self.constructor_sensitive_values,
+            ),
+            AssignTarget::Simple(_) => false,
+        };
+        match &mut expr.left {
+            AssignTarget::Simple(target) => target.visit_mut_with(self),
+            AssignTarget::Pat(pat) => {
+                let constructor_sensitive_values = self.constructor_sensitive_values;
+                visit_mut_assign_target_pat_constructor_sensitive_defaults(
+                    pat,
+                    constructor_sensitive_values,
+                    &mut |expr, is_constructor_sensitive| {
+                        if is_constructor_sensitive {
+                            visit_mut_value_expr(expr, None, true, self);
+                        } else {
+                            expr.visit_mut_with(self);
+                        }
+                    },
+                );
+            }
+        }
+        if is_value_preserving_assign_op(expr.op) {
             if let Some(key) = assign_target_value_key(&expr.left) {
-                visit_mut_value_expr(&mut expr.right, &key, self);
+                visit_mut_value_expr(&mut expr.right, Some(&key), false, self);
+                return;
+            }
+            if pattern_is_constructor_sensitive {
+                visit_mut_value_expr(&mut expr.right, None, true, self);
                 return;
             }
         }
@@ -59,23 +103,36 @@ impl VisitMut for ObjMethodShorthandConverter<'_> {
 
 fn visit_mut_value_expr(
     expr: &mut Expr,
-    key: &ValueKey,
+    key: Option<&ValueKey>,
+    force_constructor_sensitive: bool,
     converter: &mut ObjMethodShorthandConverter<'_>,
 ) {
     match expr {
-        Expr::Paren(paren) => visit_mut_value_expr(&mut paren.expr, key, converter),
+        Expr::Paren(paren) => {
+            visit_mut_value_expr(&mut paren.expr, key, force_constructor_sensitive, converter)
+        }
         Expr::Seq(sequence) => {
             if let Some((last, prefix)) = sequence.exprs.split_last_mut() {
                 for expr in prefix {
                     expr.visit_mut_with(converter);
                 }
-                visit_mut_value_expr(last, key, converter);
+                visit_mut_value_expr(last, key, force_constructor_sensitive, converter);
             }
         }
         Expr::Cond(conditional) => {
             conditional.test.visit_mut_with(converter);
-            visit_mut_value_expr(&mut conditional.cons, key, converter);
-            visit_mut_value_expr(&mut conditional.alt, key, converter);
+            visit_mut_value_expr(
+                &mut conditional.cons,
+                key,
+                force_constructor_sensitive,
+                converter,
+            );
+            visit_mut_value_expr(
+                &mut conditional.alt,
+                key,
+                force_constructor_sensitive,
+                converter,
+            );
         }
         Expr::Bin(binary)
             if matches!(
@@ -83,17 +140,30 @@ fn visit_mut_value_expr(
                 BinaryOp::LogicalOr | BinaryOp::LogicalAnd | BinaryOp::NullishCoalescing
             ) =>
         {
-            visit_mut_value_expr(&mut binary.left, key, converter);
-            visit_mut_value_expr(&mut binary.right, key, converter);
+            visit_mut_value_expr(
+                &mut binary.left,
+                key,
+                force_constructor_sensitive,
+                converter,
+            );
+            visit_mut_value_expr(
+                &mut binary.right,
+                key,
+                force_constructor_sensitive,
+                converter,
+            );
         }
-        Expr::Object(object) => visit_mut_object_value(object, key, converter),
+        Expr::Object(object) => {
+            visit_mut_object_value(object, key, force_constructor_sensitive, converter)
+        }
         _ => expr.visit_mut_with(converter),
     }
 }
 
 fn visit_mut_object_value(
     object: &mut ObjectLit,
-    key: &ValueKey,
+    key: Option<&ValueKey>,
+    force_constructor_sensitive: bool,
     converter: &mut ObjMethodShorthandConverter<'_>,
 ) {
     for prop in &mut object.props {
@@ -101,7 +171,12 @@ fn visit_mut_object_value(
             let PropOrSpread::Spread(spread) = prop else {
                 unreachable!();
             };
-            visit_mut_value_expr(&mut spread.expr, key, converter);
+            visit_mut_value_expr(
+                &mut spread.expr,
+                key,
+                force_constructor_sensitive,
+                converter,
+            );
             continue;
         };
 
@@ -115,9 +190,17 @@ fn visit_mut_object_value(
             try_convert_prop(prop, false);
             continue;
         };
-        let value_key = key.with_property(property);
-        visit_mut_value_expr(&mut key_value.value, &value_key, converter);
-        let constructor_sensitive = converter.constructor_sensitive_values.contains(&value_key);
+        let value_key = key.map(|key| key.with_property(property));
+        visit_mut_value_expr(
+            &mut key_value.value,
+            value_key.as_ref(),
+            force_constructor_sensitive,
+            converter,
+        );
+        let constructor_sensitive = force_constructor_sensitive
+            || value_key
+                .as_ref()
+                .is_some_and(|key| converter.constructor_sensitive_values.contains(key));
         try_convert_prop(prop, constructor_sensitive);
     }
 }

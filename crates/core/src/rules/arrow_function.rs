@@ -3,15 +3,16 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Class,
-    Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp, MetaPropExpr,
-    MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
+    Callee, Class, Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp,
+    MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::constructor_sensitivity::{
     assign_target_value_key, collect_constructor_sensitive_values, is_bind_call, is_construct_call,
-    pat_value_key, static_member_name, ValueKey,
+    pat_value_key, static_member_name, visit_mut_assign_target_pat_constructor_sensitive_defaults,
+    visit_mut_pat_constructor_sensitive_defaults, ValueKey,
 };
 use super::decl_utils::has_duplicate_param_names;
 use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
@@ -51,7 +52,18 @@ impl VisitMut for ArrowFunctionConverter<'_> {
     }
 
     fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
-        decl.name.visit_mut_with(self);
+        let constructor_sensitive_values = self.constructor_sensitive_values;
+        visit_mut_pat_constructor_sensitive_defaults(
+            &mut decl.name,
+            constructor_sensitive_values,
+            &mut |expr, is_constructor_sensitive| {
+                if is_constructor_sensitive {
+                    visit_constructor_value_without_converting(expr, self);
+                } else {
+                    expr.visit_mut_with(self);
+                }
+            },
+        );
         let Some(init) = &mut decl.init else {
             return;
         };
@@ -67,7 +79,23 @@ impl VisitMut for ArrowFunctionConverter<'_> {
     }
 
     fn visit_mut_assign_expr(&mut self, expr: &mut AssignExpr) {
-        expr.left.visit_mut_with(self);
+        match &mut expr.left {
+            AssignTarget::Simple(target) => target.visit_mut_with(self),
+            AssignTarget::Pat(pat) => {
+                let constructor_sensitive_values = self.constructor_sensitive_values;
+                visit_mut_assign_target_pat_constructor_sensitive_defaults(
+                    pat,
+                    constructor_sensitive_values,
+                    &mut |expr, is_constructor_sensitive| {
+                        if is_constructor_sensitive {
+                            visit_constructor_value_without_converting(expr, self);
+                        } else {
+                            expr.visit_mut_with(self);
+                        }
+                    },
+                );
+            }
+        }
         if assign_target_value_key(&expr.left)
             .is_some_and(|key| self.constructor_sensitive_values.contains(&key))
         {
