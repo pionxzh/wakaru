@@ -5,10 +5,11 @@ use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_core::ecma::ast::{
     BinaryOp, CallExpr, Callee, Expr, ExprOrSpread, Function, Lit, Pat, Stmt,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::emitter::{handler_expression, print_template_expression};
 use super::roles::{IvyInstruction, IvyRoleTable};
-use super::syntax::{binding_key, prop_name, string_lit, BindingKey};
+use super::syntax::{binding_key, string_lit, BindingKey};
 
 pub(super) struct RecoveredTemplate {
     pub(super) source: String,
@@ -60,7 +61,7 @@ struct TemplateTree {
 
 pub(super) fn recover_template(
     template: &Function,
-    component_call: &CallExpr,
+    constant_table: Option<&Expr>,
     roles: &IvyRoleTable,
     unresolved_ctxt: SyntaxContext,
     cm: Lrc<SourceMap>,
@@ -72,7 +73,9 @@ pub(super) fn recover_template(
         });
     };
     let context = function_param_binding(template, 1);
-    let constants = component_constant_table(component_call);
+    let constants = constant_table
+        .map(decode_component_constant_table)
+        .unwrap_or_default();
     let mut program = TemplateProgram::default();
     if let Some(body) = &template.body {
         collect_statements(
@@ -116,6 +119,58 @@ pub(super) fn recover_template(
         },
         unsupported_instructions: program.unsupported_instructions,
     })
+}
+
+pub(super) fn ivy_template_score(
+    template: &Function,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> usize {
+    struct Counter<'a> {
+        roles: &'a IvyRoleTable,
+        unresolved_ctxt: SyntaxContext,
+        score: usize,
+    }
+
+    impl Visit for Counter<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            let score = call_chain(call)
+                .and_then(|(root, _)| self.roles.instruction_for_expr(root, self.unresolved_ctxt))
+                .map(|instruction| match instruction {
+                    IvyInstruction::ElementStart
+                    | IvyInstruction::Element
+                    | IvyInstruction::Text => 3,
+                    IvyInstruction::ElementEnd
+                    | IvyInstruction::Listener
+                    | IvyInstruction::Advance
+                    | IvyInstruction::TextInterpolate
+                    | IvyInstruction::TextInterpolate1
+                    | IvyInstruction::TextInterpolate2
+                    | IvyInstruction::TextInterpolate3
+                    | IvyInstruction::TextInterpolate4
+                    | IvyInstruction::TextInterpolate5
+                    | IvyInstruction::TextInterpolate6
+                    | IvyInstruction::TextInterpolate7
+                    | IvyInstruction::TextInterpolate8
+                    | IvyInstruction::Property
+                    | IvyInstruction::Attribute
+                    | IvyInstruction::ClassProp
+                    | IvyInstruction::StyleProp => 1,
+                    IvyInstruction::DefineComponent => 0,
+                })
+                .unwrap_or(0);
+            self.score += score;
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut counter = Counter {
+        roles,
+        unresolved_ctxt,
+        score: 0,
+    };
+    template.visit_with(&mut counter);
+    counter.score
 }
 
 fn function_param_binding(function: &Function, index: usize) -> Option<BindingKey> {
@@ -465,21 +520,7 @@ fn numeric_arg(args: &[Box<Expr>], index: usize) -> Option<usize> {
     (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as usize)
 }
 
-fn component_constant_table(call: &CallExpr) -> Vec<Vec<TemplateAttribute>> {
-    let Some(Expr::Object(object)) = call.args.first().map(|arg| arg.expr.as_ref()) else {
-        return Vec::new();
-    };
-    let Some(constants) = object.props.iter().find_map(|prop| {
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-            return None;
-        };
-        let swc_core::ecma::ast::Prop::KeyValue(key_value) = prop.as_ref() else {
-            return None;
-        };
-        (prop_name(&key_value.key).as_deref() == Some("consts")).then_some(key_value.value.as_ref())
-    }) else {
-        return Vec::new();
-    };
+fn decode_component_constant_table(constants: &Expr) -> Vec<Vec<TemplateAttribute>> {
     let Expr::Array(table) = constants else {
         return Vec::new();
     };
