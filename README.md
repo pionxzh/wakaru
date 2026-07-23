@@ -24,6 +24,7 @@ npx wakaru input.js -o output.js       # decompile a file
 npx wakaru bundle.js --unpack -o out/  # unpack and decompile a bundle
 npx wakaru bundle.js --unpack --angular -o out/ # recover Angular Ivy artifacts
 npx wakaru dist/ --unpack -o out/      # scan a bundle output directory
+npx wakaru dist/ --unpack --angular -o out/ # inspect a production Angular chunk set
 ```
 
 See the [CLI reference](https://wakarujs.com/docs/reference/cli) for rewrite levels, source maps, and more options.

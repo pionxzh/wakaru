@@ -47,6 +47,12 @@ only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
 
+When `--angular` is used with a directory and the requested unpack mode is
+`auto`, structural bundle detection remains enabled but the heuristic
+scope-hoist fallback is disabled for those files. Unmatched JavaScript is
+processed intact, preserving relative ESM edges between production chunks for
+the Ivy analyzer. An explicit `--unpack=inspect` request is still honored.
+
 ## Extract every file from a Bun single-file executable
 
 ```bash
@@ -232,8 +238,11 @@ In unpack mode, recovery is additive. Every module still gets JavaScript
 output, and all recovered components are written as uniquely named
 `*.component.ts` artifacts. Directory input also processes ordinary
 JavaScript modules under `--angular`, which supports inspecting an unbundled
-production build. The Ivy analyzer consumes the same generic module workspace
-whether the modules came from a regular build or any supported unpacker.
+production build. Default directory mode preserves ordinary production chunks
+as intact modules rather than heuristically splitting their internal
+scope-hoisted code. The Ivy analyzer consumes the same generic module
+workspace whether the modules came from a regular build or any supported
+unpacker.
 
 Complete artifacts contain only supported template regions. Partial artifacts
 preserve unsupported Ivy instructions explicitly instead of guessing.
