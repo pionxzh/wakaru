@@ -15,16 +15,17 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    Class, Decl, Expr, Function, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
-    PropOrSpread, Stmt,
+    AssignExpr, AssignTarget, Class, ClassDecl, Expr, Function, Module, ObjectLit, Pat, Prop,
+    PropOrSpread, SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
-use swc_core::ecma::visit::{VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use crate::js_names::to_valid_identifier_name;
 use emitter::{emit_component_source, ComponentEmitInput};
-use roles::{IvyInstruction, IvyRoleTable};
-use syntax::{binding_key, prop_name, string_lit, BindingKey};
+use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
+use syntax::{prop_name, string_lit};
 use template::{ivy_template_score, recover_template};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +100,7 @@ pub fn recover_angular_components_from_modules(
 
         let mut recovered = Vec::new();
         for prepared in &modules {
-            let classes = collect_component_classes(&prepared.module);
+            let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
             let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
             prepared.module.visit_with(&mut calls);
 
@@ -188,53 +189,96 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
     })
 }
 
-fn collect_component_classes(module: &Module) -> HashMap<BindingKey, ComponentClass> {
-    let mut classes = HashMap::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl)))
-            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(swc_core::ecma::ast::ExportDecl {
-                decl: Decl::Class(class_decl),
-                ..
-            })) => {
-                classes.insert(
-                    binding_key(&class_decl.ident),
-                    ComponentClass {
-                        name: class_decl.ident.sym.clone(),
-                        class: class_decl.class.clone(),
-                    },
-                );
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl)))
-            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(swc_core::ecma::ast::ExportDecl {
-                decl: Decl::Var(var_decl),
-                ..
-            })) => {
-                for declarator in &var_decl.decls {
-                    let Pat::Ident(binding) = &declarator.name else {
-                        continue;
-                    };
-                    let Some(Expr::Class(class_expr)) = declarator.init.as_deref() else {
-                        continue;
-                    };
-                    classes.insert(
-                        binding_key(&binding.id),
-                        ComponentClass {
-                            name: binding.id.sym.clone(),
-                            class: class_expr.class.clone(),
-                        },
-                    );
-                }
-            }
-            _ => {}
-        }
+fn collect_component_classes(
+    module: &Module,
+    unresolved_ctxt: SyntaxContext,
+) -> HashMap<SymbolIdentity, ComponentClass> {
+    let mut collector = ComponentClassCollector {
+        unresolved_ctxt,
+        classes: HashMap::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.classes
+}
+
+struct ComponentClassCollector {
+    unresolved_ctxt: SyntaxContext,
+    classes: HashMap<SymbolIdentity, ComponentClass>,
+}
+
+impl ComponentClassCollector {
+    fn record(&mut self, expression: &Expr, fallback_name: &str, class: &Class) {
+        let Some(identity) = symbol_identity(expression, self.unresolved_ctxt) else {
+            return;
+        };
+        let name = Atom::from(to_valid_identifier_name(fallback_name));
+        self.classes.insert(
+            identity,
+            ComponentClass {
+                name,
+                class: Box::new(class.clone()),
+            },
+        );
     }
-    classes
+}
+
+impl Visit for ComponentClassCollector {
+    fn visit_class_decl(&mut self, declaration: &ClassDecl) {
+        self.record(
+            &Expr::Ident(declaration.ident.clone()),
+            declaration.ident.sym.as_ref(),
+            declaration.class.as_ref(),
+        );
+        declaration.class.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(binding), Some(Expr::Class(class))) =
+            (&declarator.name, declarator.init.as_deref())
+        {
+            self.record(
+                &Expr::Ident(binding.id.clone()),
+                binding.id.sym.as_ref(),
+                class.class.as_ref(),
+            );
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if let Expr::Class(class) = assignment.right.as_ref() {
+            if let Some((target, name)) = class_assignment_target(&assignment.left) {
+                self.record(&target, name.as_ref(), class.class.as_ref());
+            }
+        }
+        assignment.visit_children_with(self);
+    }
+}
+
+fn class_assignment_target(target: &AssignTarget) -> Option<(Expr, Atom)> {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+            Some((Expr::Ident(binding.id.clone()), binding.id.sym.clone()))
+        }
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+            let name = syntax::member_prop_name(&member.prop)?;
+            Some((Expr::Member(member.clone()), name))
+        }
+        AssignTarget::Simple(SimpleAssignTarget::Paren(paren)) => {
+            let identity_name = match paren.expr.as_ref() {
+                Expr::Ident(ident) => ident.sym.clone(),
+                Expr::Member(member) => syntax::member_prop_name(&member.prop)?,
+                _ => return None,
+            };
+            Some((paren.expr.as_ref().clone(), identity_name))
+        }
+        _ => None,
+    }
 }
 
 fn parse_component_descriptor(
     call: &swc_core::ecma::ast::CallExpr,
-    classes: &HashMap<BindingKey, ComponentClass>,
+    classes: &HashMap<SymbolIdentity, ComponentClass>,
     roles: &IvyRoleTable,
     unresolved_ctxt: SyntaxContext,
 ) -> Option<ComponentDescriptor> {
@@ -247,7 +291,7 @@ fn parse_component_descriptor(
         return None;
     };
 
-    let class = descriptor_class(object, classes)?;
+    let class = descriptor_class(object, classes, unresolved_ctxt)?;
     let template = descriptor_template(object, roles, unresolved_ctxt)?;
     let selector = descriptor_selector(object)?;
     let styles = descriptor_styles(object);
@@ -264,7 +308,8 @@ fn parse_component_descriptor(
 
 fn descriptor_class(
     object: &ObjectLit,
-    classes: &HashMap<BindingKey, ComponentClass>,
+    classes: &HashMap<SymbolIdentity, ComponentClass>,
+    unresolved_ctxt: SyntaxContext,
 ) -> Option<ComponentClass> {
     let candidates = object.props.iter().filter_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
@@ -273,25 +318,23 @@ fn descriptor_class(
         let Prop::KeyValue(key_value) = prop.as_ref() else {
             return None;
         };
-        let Expr::Ident(ident) = key_value.value.as_ref() else {
-            return None;
-        };
+        let identity = symbol_identity(key_value.value.as_ref(), unresolved_ctxt)?;
         classes
-            .get(&binding_key(ident))
-            .map(|class| (prop_name(&key_value.key), class))
+            .get(&identity)
+            .map(|class| (prop_name(&key_value.key), identity, class))
     });
 
     if let Some(class) = candidates
         .clone()
-        .find_map(|(name, class)| (name.as_deref() == Some("type")).then(|| class.clone()))
+        .find_map(|(name, _, class)| (name.as_deref() == Some("type")).then(|| class.clone()))
     {
         return Some(class);
     }
 
-    let mut structural = candidates.map(|(_, class)| class.clone());
-    let first = structural.next()?;
+    let mut structural = candidates.map(|(_, identity, class)| (identity, class.clone()));
+    let (first_identity, first) = structural.next()?;
     structural
-        .all(|candidate| candidate.name == first.name)
+        .all(|(identity, _)| identity == first_identity)
         .then_some(first)
 }
 
