@@ -451,3 +451,75 @@ fn marks_unclassified_calls_on_a_proven_runtime_namespace_as_partial() {
         .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
     assert!(!recovered[0].source.contains("runtime.q"));
 }
+
+#[test]
+fn infers_text_listener_and_advance_from_runtime_and_template_shapes() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.listen = function(eventName, callback, target) {
+            addListener(eventName, callback, target);
+            return runtime.listen;
+        };
+        runtime.next = function(delta = 1) {
+            selectIndex(currentIndex() + delta);
+        };
+
+        class InteractiveCard {
+            select() {}
+        }
+        InteractiveCard.compiled = runtime.component({
+            type: InteractiveCard,
+            x: [["interactive-card"]],
+            template: function(renderFlags, context) {
+                if (renderFlags & 1) {
+                    runtime.start(0, "button");
+                    runtime.listen("click", function() {
+                        return context.select();
+                    });
+                    runtime.text(1, "Choose");
+                    runtime.end();
+                }
+                if (renderFlags & 2) {
+                    runtime.next();
+                }
+            },
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("template-informed structural roles should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(recovered[0]
+        .source
+        .contains("<button (click)=\"select()\">Choose</button>"));
+    assert!(!recovered[0].source.contains("unknown-runtime-instruction"));
+}

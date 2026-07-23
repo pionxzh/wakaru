@@ -3,18 +3,31 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Expr,
-    FnDecl, Function, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
+    Expr, ExprOrSpread, FnDecl, Function, Lit, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use super::{symbol_identity, SymbolIdentity};
+use super::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use crate::angular_recovery::syntax::{binding_key, member_prop_name, BindingKey};
 use crate::angular_recovery::PreparedAngularModule;
 
 pub(super) fn infer_ivy_roles(
     modules: &[PreparedAngularModule],
 ) -> Vec<(SymbolIdentity, &'static str)> {
+    let functions = collect_runtime_functions(modules);
+
+    let mut inferred = functions
+        .iter()
+        .filter(|function| is_define_component_shape(function))
+        .map(|function| (function.identity.clone(), "ɵɵdefineComponent"))
+        .collect::<Vec<_>>();
+    inferred.extend(infer_element_family(&functions));
+    inferred
+}
+
+fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> Vec<RuntimeFunction> {
     let mut functions = Vec::new();
     for prepared in modules {
         let mut collector = RuntimeFunctionCollector {
@@ -24,13 +37,59 @@ pub(super) fn infer_ivy_roles(
         prepared.module.visit_with(&mut collector);
         functions.extend(collector.functions);
     }
+    functions
+}
 
-    let mut inferred = functions
-        .iter()
-        .filter(|function| is_define_component_shape(function))
-        .map(|function| (function.identity.clone(), "ɵɵdefineComponent"))
-        .collect::<Vec<_>>();
-    inferred.extend(infer_element_family(&functions));
+pub(super) fn infer_template_roles(
+    modules: &[PreparedAngularModule],
+    roles: &IvyRoleTable,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let functions = collect_runtime_functions(modules);
+    let mut observations = Vec::new();
+    for prepared in modules {
+        let mut collector = TemplateFunctionCollector {
+            roles,
+            unresolved_ctxt: prepared.unresolved_ctxt,
+            observations: Vec::new(),
+        };
+        prepared.module.visit_with(&mut collector);
+        observations.extend(collector.observations);
+    }
+
+    let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
+    for observation in observations {
+        by_identity
+            .entry(observation.identity.clone())
+            .or_default()
+            .push(observation);
+    }
+
+    let mut inferred = Vec::new();
+    for (identity, observations) in by_identity {
+        let mut definitions = functions
+            .iter()
+            .filter(|function| function.identity == identity);
+        let Some(definition) = definitions.next() else {
+            continue;
+        };
+        if definitions.next().is_some() {
+            continue;
+        }
+
+        let mut matches = Vec::new();
+        if is_text_shape(definition, &observations) {
+            matches.push("ɵɵtext");
+        }
+        if is_listener_shape(definition, &observations) {
+            matches.push("ɵɵlistener");
+        }
+        if is_advance_shape(definition, &observations) {
+            matches.push("ɵɵadvance");
+        }
+        if let [name] = matches.as_slice() {
+            inferred.push((identity, *name));
+        }
+    }
     inferred
 }
 
@@ -45,6 +104,275 @@ struct RuntimeFunction {
 struct RuntimeFunctionCollector {
     unresolved_ctxt: SyntaxContext,
     functions: Vec<RuntimeFunction>,
+}
+
+struct TemplateCallObservation {
+    identity: SymbolIdentity,
+    phase: u8,
+    arguments: Vec<Box<Expr>>,
+}
+
+struct TemplateFunctionCollector<'a> {
+    roles: &'a IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    observations: Vec<TemplateCallObservation>,
+}
+
+impl Visit for TemplateFunctionCollector<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        let Some(render_flags) = function_param_binding(function, 0) else {
+            function.visit_children_with(self);
+            return;
+        };
+        let mut observer = TemplateCallObserver {
+            roles: self.roles,
+            unresolved_ctxt: self.unresolved_ctxt,
+            render_flags,
+            saw_creation_anchor: false,
+            observations: Vec::new(),
+        };
+        if let Some(body) = &function.body {
+            observer.collect_statements(&body.stmts, None);
+        }
+        if observer.saw_creation_anchor {
+            self.observations.extend(observer.observations);
+        }
+        function.visit_children_with(self);
+    }
+}
+
+struct TemplateCallObserver<'a> {
+    roles: &'a IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    render_flags: BindingKey,
+    saw_creation_anchor: bool,
+    observations: Vec<TemplateCallObservation>,
+}
+
+impl TemplateCallObserver<'_> {
+    fn collect_statements(&mut self, statements: &[Stmt], phase: Option<u8>) {
+        for statement in statements {
+            self.collect_statement(statement, phase);
+        }
+    }
+
+    fn collect_statement(&mut self, statement: &Stmt, phase: Option<u8>) {
+        match statement {
+            Stmt::Block(block) => self.collect_statements(&block.stmts, phase),
+            Stmt::If(if_statement) => {
+                let branch_phase =
+                    render_flag_mask(if_statement.test.as_ref(), &self.render_flags).or(phase);
+                self.collect_statement(if_statement.cons.as_ref(), branch_phase);
+                if let Some(alternate) = &if_statement.alt {
+                    self.collect_statement(alternate.as_ref(), phase);
+                }
+            }
+            Stmt::Expr(expression) => self.collect_expression(expression.expr.as_ref(), phase),
+            _ => {}
+        }
+    }
+
+    fn collect_expression(&mut self, expression: &Expr, phase: Option<u8>) {
+        match expression {
+            Expr::Paren(paren) => self.collect_expression(paren.expr.as_ref(), phase),
+            Expr::Seq(sequence) => {
+                for expression in &sequence.exprs {
+                    self.collect_expression(expression.as_ref(), phase);
+                }
+            }
+            Expr::Bin(binary) if binary.op == BinaryOp::LogicalAnd => {
+                let branch_phase =
+                    render_flag_mask(binary.left.as_ref(), &self.render_flags).or(phase);
+                self.collect_expression(binary.right.as_ref(), branch_phase);
+            }
+            Expr::Call(call) => self.collect_call(call, phase),
+            _ => {}
+        }
+    }
+
+    fn collect_call(&mut self, call: &CallExpr, phase: Option<u8>) {
+        let Some(phase @ (1 | 2)) = phase else {
+            return;
+        };
+        let Some((root, argument_lists)) = call_chain(call) else {
+            return;
+        };
+        if self
+            .roles
+            .instruction_for_expr(root, self.unresolved_ctxt)
+            .is_some_and(|instruction| {
+                phase == 1
+                    && matches!(
+                        instruction,
+                        IvyInstruction::ElementStart
+                            | IvyInstruction::ElementEnd
+                            | IvyInstruction::Element
+                    )
+            })
+        {
+            self.saw_creation_anchor = true;
+            return;
+        }
+        if self
+            .roles
+            .instruction_for_expr(root, self.unresolved_ctxt)
+            .is_some()
+            || !self
+                .roles
+                .is_known_runtime_member(root, self.unresolved_ctxt)
+        {
+            return;
+        }
+        let Some(identity) = symbol_identity(root, self.unresolved_ctxt) else {
+            return;
+        };
+        self.observations
+            .extend(argument_lists.into_iter().map(|arguments| {
+                TemplateCallObservation {
+                    identity: identity.clone(),
+                    phase,
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| argument.expr.clone())
+                        .collect(),
+                }
+            }));
+    }
+}
+
+fn function_param_binding(function: &Function, index: usize) -> Option<BindingKey> {
+    let Pat::Ident(binding) = &function.params.get(index)?.pat else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+fn render_flag_mask(expression: &Expr, render_flags: &BindingKey) -> Option<u8> {
+    let Expr::Bin(binary) = expression else {
+        return None;
+    };
+    if binary.op != BinaryOp::BitAnd {
+        return None;
+    }
+    let (Expr::Ident(identifier), Expr::Lit(Lit::Num(mask))) =
+        (binary.left.as_ref(), binary.right.as_ref())
+    else {
+        return None;
+    };
+    (binding_key(identifier) == *render_flags && (mask.value == 1.0 || mask.value == 2.0))
+        .then_some(mask.value as u8)
+}
+
+fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
+    let mut argument_lists = vec![call.args.as_slice()];
+    let mut callee = &call.callee;
+    loop {
+        let Callee::Expr(expression) = callee else {
+            return None;
+        };
+        match expression.as_ref() {
+            Expr::Call(inner) => {
+                argument_lists.push(inner.args.as_slice());
+                callee = &inner.callee;
+            }
+            root => {
+                argument_lists.reverse();
+                return Some((root, argument_lists));
+            }
+        }
+    }
+}
+
+fn is_text_shape(definition: &RuntimeFunction, observations: &[TemplateCallObservation]) -> bool {
+    definition.params.len() == 2
+        && is_empty_string_default(&definition.params[1])
+        && observations.iter().all(|observation| {
+            observation.phase == 1
+                && matches!(observation.arguments.len(), 1 | 2)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_none_or(|argument| is_string_literal(argument.as_ref()))
+        })
+}
+
+fn is_listener_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    definition.params.len() == 3
+        && definition
+            .params
+            .iter()
+            .all(|parameter| matches!(parameter, Pat::Ident(_)))
+        && returns_identity(definition, &definition.identity)
+        && observations.iter().all(|observation| {
+            observation.phase == 1
+                && matches!(observation.arguments.len(), 2 | 3)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+                && observation.arguments.get(1).is_some_and(|argument| {
+                    matches!(argument.as_ref(), Expr::Fn(_) | Expr::Arrow(_))
+                })
+        })
+}
+
+fn is_advance_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    definition.params.len() == 1
+        && is_numeric_default(&definition.params[0], 1.0)
+        && observations.iter().all(|observation| {
+            observation.phase == 2
+                && matches!(observation.arguments.len(), 0 | 1)
+                && observation
+                    .arguments
+                    .first()
+                    .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn is_empty_string_default(pattern: &Pat) -> bool {
+    let Pat::Assign(assignment) = pattern else {
+        return false;
+    };
+    matches!(
+        assignment.right.as_ref(),
+        Expr::Lit(Lit::Str(string)) if string.value.is_empty()
+    )
+}
+
+fn is_numeric_default(pattern: &Pat, expected: f64) -> bool {
+    let Pat::Assign(assignment) = pattern else {
+        return false;
+    };
+    matches!(
+        assignment.right.as_ref(),
+        Expr::Lit(Lit::Num(number)) if number.value == expected
+    )
+}
+
+fn is_nonnegative_integer(expression: &Expr) -> bool {
+    matches!(
+        expression,
+        Expr::Lit(Lit::Num(number))
+            if number.value >= 0.0 && number.value.fract() == 0.0
+    )
+}
+
+fn is_string_literal(expression: &Expr) -> bool {
+    matches!(expression, Expr::Lit(Lit::Str(_)))
+        || matches!(
+            expression,
+            Expr::Tpl(template) if template.exprs.is_empty() && template.quasis.len() == 1
+        )
 }
 
 impl RuntimeFunctionCollector {
