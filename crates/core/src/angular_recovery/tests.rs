@@ -126,6 +126,137 @@ fn accepts_named_ivy_instruction_imports() {
 }
 
 #[test]
+fn accepts_modern_dom_instruction_imports() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵdomElementStart as start,
+            ɵɵdomElementEnd as end,
+            ɵɵdomListener as listen,
+            ɵɵdomProperty as property,
+            ɵɵtext as text,
+        } from "@angular/core";
+
+        class ModernCardComponent {
+            active = false;
+            toggle() {
+                this.active = !this.active;
+            }
+
+            static ɵcmp = define({
+                type: ModernCardComponent,
+                selectors: [["modern-card"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        start(0, "button");
+                        listen("click", function() {
+                            return context.toggle();
+                        });
+                        text(1, "Toggle");
+                        end();
+                    }
+                    if (renderFlags & 2) {
+                        property("disabled", context.active);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("modern DOM instruction aliases should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert!(recovered[0]
+        .source
+        .contains("<button (click)=\"toggle()\" [disabled]=\"active\">Toggle</button>"));
+}
+
+#[test]
+fn merges_equivalent_instruction_alias_evidence() {
+    let source = r#"
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵdomElementStart": runtime.start,
+            "ɵɵdomElementEnd": runtime.end,
+            "ɵɵdomElement": runtime.element,
+        };
+
+        class AliasEvidenceComponent {}
+        AliasEvidenceComponent.compiled = runtime.define({
+            type: AliasEvidenceComponent,
+            selectors: [["alias-evidence"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    runtime.start(0, "article");
+                    runtime.end();
+                }
+            },
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("equivalent canonical aliases should not conflict");
+
+    assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].source.contains("<article></article>"));
+}
+
+#[test]
+fn recovers_creation_effects_from_a_minified_if_test() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class CombinedPhaseComponent {
+            label = "Combined";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: CombinedPhaseComponent,
+                selectors: [["combined-phase"]],
+                template: function(renderFlags, context) {
+                    if (
+                        (
+                            renderFlags & 1 &&
+                                (
+                                    core.ɵɵelementStart(0, "h2"),
+                                    core.ɵɵtext(1),
+                                    core.ɵɵelementEnd()
+                                ),
+                            renderFlags & 2
+                        )
+                    ) {
+                        core.ɵɵadvance();
+                        core.ɵɵtextInterpolate(context.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("comma-folded render phases should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert!(recovered[0].source.contains("<h2>{{ label }}</h2>"));
+}
+
+#[test]
 fn rejects_a_shadowed_lookalike_api() {
     let source = r#"
         const core = {
@@ -278,6 +409,102 @@ fn shares_unresolved_namespace_roles_across_module_sources() {
 }
 
 #[test]
+fn matches_a_named_class_expression_by_its_inner_binding() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        const ReadableCardComponent = class a {
+            static compiled = define({
+                type: a,
+                selectors: [["readable-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "hr");
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("named class expressions should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].name, "ReadableCardComponent");
+    assert!(recovered[0]
+        .source
+        .contains("export class ReadableCardComponent"));
+    assert!(recovered[0].source.contains("<hr />"));
+}
+
+#[test]
+fn follows_named_esm_symbol_edges_across_production_chunks() {
+    let runtime = r#"
+        function define(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        }
+        function element(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return element;
+        }
+        function text(index, value = "") {
+            createText(index, value);
+        }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+            "ɵɵelement": element,
+        };
+        export { define as a, element as b, text as c };
+        void publicRuntime;
+    "#;
+    let component = r#"
+        import { a as component, b as node, c as content } from "./runtime.js";
+
+        const ChunkCardComponent = class c {
+            static compiled = component({
+                type: c,
+                selectors: [["chunk-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        node(0, "hr");
+                        content(1, "Chunk");
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_modules(
+        &[
+            AngularModuleSource {
+                filename: "chunks/runtime.js",
+                source: runtime,
+            },
+            AngularModuleSource {
+                filename: "chunks/component.js",
+                source: component,
+            },
+        ],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("named ESM edges should resolve across the module workspace");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].name, "ChunkCardComponent");
+    assert_eq!(recovered[0].selector, "chunk-card");
+    assert!(recovered[0].source.contains("<hr />\n    Chunk"));
+}
+
+#[test]
 fn rejects_conflicting_export_role_evidence() {
     let source = r#"
         function ambiguous() {}
@@ -391,6 +618,96 @@ fn infers_renamed_component_and_element_helpers_from_runtime_shapes() {
     assert!(recovered[0].source.contains("<article></article>"));
     assert!(recovered[0].source.contains("article { display: block; }"));
     assert!(!recovered[0].source.contains("static compiled"));
+}
+
+#[test]
+fn infers_a_component_helper_after_object_merge_lowering() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => {
+                const base = directiveDefinition(definition);
+                const result = merge(copy({}, base), {
+                    decls: definition.decls,
+                    vars: definition.vars,
+                    template: definition.template,
+                    consts: definition.consts,
+                    dependencies: definition.dependencies,
+                    styles: definition.styles,
+                });
+                finalizeDefinition(result);
+                return result;
+            });
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.element;
+        };
+        runtime.public = {
+            "ɵɵelement": runtime.element,
+        };
+
+        const LoweredCardComponent = class c {
+            static compiled = runtime.component({
+                type: c,
+                selectors: [["lowered-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "hr");
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("lowered descriptor construction should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "lowered-card");
+    assert!(recovered[0].source.contains("<hr />"));
+}
+
+#[test]
+fn infers_a_specialized_element_pair_from_proven_template_use() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createSpecializedNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveSpecializedNode();
+            return runtime.end;
+        };
+
+        const SpecializedCardComponent = class c {
+            static compiled = runtime.component({
+                type: c,
+                selectors: [["specialized-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "article");
+                        runtime.end();
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("template use should prove a specialized element pair");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "specialized-card");
+    assert!(recovered[0].source.contains("<article></article>"));
 }
 
 #[test]

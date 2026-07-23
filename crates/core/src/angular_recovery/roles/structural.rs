@@ -49,6 +49,7 @@ pub(super) fn infer_template_roles(
     for prepared in modules {
         let mut collector = TemplateFunctionCollector {
             roles,
+            functions: &functions,
             unresolved_ctxt: prepared.unresolved_ctxt,
             observations: Vec::new(),
         };
@@ -64,11 +65,16 @@ pub(super) fn infer_template_roles(
             .push(observation);
     }
 
-    let mut inferred = infer_text_interpolation_family(&functions, &by_identity);
+    let mut inferred = infer_specialized_element_pair(&functions, &by_identity, roles);
+    inferred.extend(infer_text_interpolation_family(
+        &functions,
+        &by_identity,
+        roles,
+    ));
     for (identity, observations) in &by_identity {
         let mut definitions = functions
             .iter()
-            .filter(|function| function.identity == *identity);
+            .filter(|function| roles.symbols_equivalent(&function.identity, identity));
         let Some(definition) = definitions.next() else {
             continue;
         };
@@ -90,7 +96,7 @@ pub(super) fn infer_template_roles(
             matches.push("ɵɵproperty");
         }
         if let [name] = matches.as_slice() {
-            inferred.push((identity.clone(), *name));
+            inferred.push((definition.identity.clone(), *name));
         }
     }
     inferred
@@ -117,6 +123,7 @@ struct TemplateCallObservation {
 
 struct TemplateFunctionCollector<'a> {
     roles: &'a IvyRoleTable,
+    functions: &'a [RuntimeFunction],
     unresolved_ctxt: SyntaxContext,
     observations: Vec<TemplateCallObservation>,
 }
@@ -137,7 +144,9 @@ impl Visit for TemplateFunctionCollector<'_> {
         if let Some(body) = &function.body {
             observer.collect_statements(&body.stmts, None);
         }
-        if observer.saw_creation_anchor {
+        if observer.saw_creation_anchor
+            || has_unclassified_element_anchor(&observer.observations, self.functions, self.roles)
+        {
             self.observations.extend(observer.observations);
         }
         function.visit_children_with(self);
@@ -163,8 +172,7 @@ impl TemplateCallObserver<'_> {
         match statement {
             Stmt::Block(block) => self.collect_statements(&block.stmts, phase),
             Stmt::If(if_statement) => {
-                let branch_phase =
-                    render_flag_mask(if_statement.test.as_ref(), &self.render_flags).or(phase);
+                let branch_phase = self.collect_if_test(if_statement.test.as_ref(), phase);
                 self.collect_statement(if_statement.cons.as_ref(), branch_phase);
                 if let Some(alternate) = &if_statement.alt {
                     self.collect_statement(alternate.as_ref(), phase);
@@ -173,6 +181,20 @@ impl TemplateCallObserver<'_> {
             Stmt::Expr(expression) => self.collect_expression(expression.expr.as_ref(), phase),
             _ => {}
         }
+    }
+
+    fn collect_if_test(&mut self, test: &Expr, phase: Option<u8>) -> Option<u8> {
+        let test = strip_parentheses(test);
+        let Expr::Seq(sequence) = test else {
+            return render_flag_mask(test, &self.render_flags).or(phase);
+        };
+        let Some((condition, effects)) = sequence.exprs.split_last() else {
+            return phase;
+        };
+        for effect in effects {
+            self.collect_expression(effect.as_ref(), phase);
+        }
+        render_flag_mask(strip_parentheses(condition), &self.render_flags).or(phase)
     }
 
     fn collect_expression(&mut self, expression: &Expr, phase: Option<u8>) {
@@ -220,9 +242,6 @@ impl TemplateCallObserver<'_> {
             .roles
             .instruction_for_expr(root, self.unresolved_ctxt)
             .is_some()
-            || !self
-                .roles
-                .is_known_runtime_member(root, self.unresolved_ctxt)
         {
             return;
         }
@@ -248,6 +267,13 @@ fn function_param_binding(function: &Function, index: usize) -> Option<BindingKe
         return None;
     };
     Some(binding_key(&binding.id))
+}
+
+fn strip_parentheses(mut expression: &Expr) -> &Expr {
+    while let Expr::Paren(parenthesized) = expression {
+        expression = parenthesized.expr.as_ref();
+    }
+    expression
 }
 
 fn render_flag_mask(expression: &Expr, render_flags: &BindingKey) -> Option<u8> {
@@ -284,6 +310,95 @@ fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
             }
         }
     }
+}
+
+fn has_unclassified_element_anchor(
+    observations: &[TemplateCallObservation],
+    functions: &[RuntimeFunction],
+    roles: &IvyRoleTable,
+) -> bool {
+    let mut grouped: HashMap<&SymbolIdentity, Vec<&TemplateCallObservation>> = HashMap::new();
+    for observation in observations {
+        grouped
+            .entry(&observation.identity)
+            .or_default()
+            .push(observation);
+    }
+
+    let has_start = grouped.iter().any(|(identity, observations)| {
+        unique_runtime_function_equivalent(functions, identity, roles)
+            .is_some_and(|definition| is_specialized_element_start_shape(definition, observations))
+    });
+    let has_end = grouped.iter().any(|(identity, observations)| {
+        unique_runtime_function_equivalent(functions, identity, roles)
+            .is_some_and(|definition| is_specialized_element_end_shape(definition, observations))
+    });
+    has_start && has_end
+}
+
+fn infer_specialized_element_pair(
+    functions: &[RuntimeFunction],
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+    roles: &IvyRoleTable,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut starts = HashSet::new();
+    let mut ends = HashSet::new();
+    for (identity, calls) in observations {
+        let Some(definition) = unique_runtime_function_equivalent(functions, identity, roles)
+        else {
+            continue;
+        };
+        if is_specialized_element_start_shape(definition, calls) {
+            starts.insert(definition.identity.clone());
+        }
+        if is_specialized_element_end_shape(definition, calls) {
+            ends.insert(definition.identity.clone());
+        }
+    }
+
+    match (
+        starts.into_iter().collect::<Vec<_>>().as_slice(),
+        ends.into_iter().collect::<Vec<_>>().as_slice(),
+    ) {
+        ([start], [end]) if start != end => vec![
+            (start.clone(), "ɵɵelementStart"),
+            (end.clone(), "ɵɵelementEnd"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn is_specialized_element_start_shape(
+    definition: &RuntimeFunction,
+    observations: &[impl std::borrow::Borrow<TemplateCallObservation>],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 4)
+        && returns_identity(definition, &definition.identity)
+        && observations.iter().all(|observation| {
+            let observation = observation.borrow();
+            observation.phase == 1
+                && matches!(observation.arguments.len(), 2..=4)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+        })
+}
+
+fn is_specialized_element_end_shape(
+    definition: &RuntimeFunction,
+    observations: &[impl std::borrow::Borrow<TemplateCallObservation>],
+) -> bool {
+    definition.params.is_empty()
+        && returns_identity(definition, &definition.identity)
+        && observations.iter().all(|observation| {
+            let observation = observation.borrow();
+            observation.phase == 1 && observation.arguments.is_empty()
+        })
 }
 
 fn is_text_shape(definition: &RuntimeFunction, observations: &[TemplateCallObservation]) -> bool {
@@ -373,6 +488,7 @@ fn is_property_shape(
 fn infer_text_interpolation_family(
     functions: &[RuntimeFunction],
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+    roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut inferred = Vec::new();
     for (identity, calls_in_templates) in observations {
@@ -382,13 +498,13 @@ fn infer_text_interpolation_family(
         {
             continue;
         }
-        let Some(wrapper) = unique_runtime_function(functions, identity) else {
+        let Some(wrapper) = unique_runtime_function_equivalent(functions, identity, roles) else {
             continue;
         };
         let Some(parameters) = plain_parameter_bindings(wrapper) else {
             continue;
         };
-        if parameters.len() != 1 || !returns_identity(wrapper, identity) {
+        if parameters.len() != 1 || !returns_identity(wrapper, &wrapper.identity) {
             continue;
         }
         let wrapper_calls = direct_calls(wrapper);
@@ -410,7 +526,9 @@ fn infer_text_interpolation_family(
         {
             continue;
         }
-        let Some(target) = unique_runtime_function(functions, &target_call.callee) else {
+        let Some(target) =
+            unique_runtime_function_equivalent(functions, &target_call.callee, roles)
+        else {
             continue;
         };
         let Some(target_parameters) = plain_parameter_bindings(target) else {
@@ -428,13 +546,14 @@ fn infer_text_interpolation_family(
     inferred
 }
 
-fn unique_runtime_function<'a>(
+fn unique_runtime_function_equivalent<'a>(
     functions: &'a [RuntimeFunction],
     identity: &SymbolIdentity,
+    roles: &IvyRoleTable,
 ) -> Option<&'a RuntimeFunction> {
     let mut candidates = functions
         .iter()
-        .filter(|function| function.identity == *identity);
+        .filter(|function| roles.symbols_equivalent(&function.identity, identity));
     let candidate = candidates.next()?;
     candidates.next().is_none().then_some(candidate)
 }
@@ -634,13 +753,23 @@ impl Visit for ReturnedDescriptorBuilder<'_> {
                 has_object_assign: false,
             };
             arrow.visit_with(&mut evidence);
-            if evidence.has_object_assign
-                && ["template", "dependencies", "styles"].iter().all(|name| {
+            let has_fields = |names: &[&str]| {
+                names.iter().all(|name| {
                     evidence
                         .parameter_fields
                         .iter()
                         .any(|field| field.as_ref() == *name)
                 })
+            };
+            if (evidence.has_object_assign && has_fields(&["template", "dependencies", "styles"]))
+                || has_fields(&[
+                    "decls",
+                    "vars",
+                    "template",
+                    "consts",
+                    "dependencies",
+                    "styles",
+                ])
             {
                 self.matched = true;
                 return;
