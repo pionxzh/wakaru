@@ -97,6 +97,9 @@ npx --yes webpack-cli@5 --config webpack5-var-inject.config.cjs 2>/dev/null
 echo "  wp5-require-o:     Split initial chunk startup via __webpack_require__.O"
 npx --yes webpack-cli@5 --config webpack5-require-o.config.cjs 2>/dev/null
 
+echo "  wp5-array:         Dense natural ids (holey array table + Array(n).concat chunk)"
+npx --yes webpack-cli@5 --config webpack5-array.config.cjs 2>/dev/null
+
 echo ""
 echo "=== Vercel ncc (0.44.1) ==="
 

@@ -564,3 +564,63 @@ fn wp5_numeric_require_rewritten() {
         mod_20.1
     );
 }
+
+// ========================================================================
+// Webpack 5 — dense natural ids (issue #200 array-form containers)
+// ========================================================================
+
+#[test]
+fn wp5_array_main_bundle() {
+    // Dense numeric module ids render the table as a holey array
+    // (`var __webpack_modules__ = ([, fn, ...])`, entry inlined at id 0).
+    let pairs = unpack_fixture("wp5-array/bundle.js");
+    let names = filenames(&pairs);
+    for id in 1..=17 {
+        let expected = format!("module-{id}.js");
+        assert!(
+            names.contains(&expected.as_str()),
+            "wp5-array: missing {expected}, got {names:?}"
+        );
+    }
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .unwrap_or_else(|| {
+            panic!("wp5-array: inline startup should become entry.js, got {names:?}")
+        });
+    assert!(
+        entry.1.contains("./module-1.js") && entry.1.contains("./module-17.js"),
+        "wp5-array entry should import the static modules, got:\n{}",
+        entry.1
+    );
+    assert_no_traversal(&pairs, "wp5-array");
+}
+
+#[test]
+fn wp5_array_concat_chunk() {
+    // The lazy chunk's smallest id is high enough that webpack wraps its
+    // table in `Array(18).concat([...])`; ids must be offset accordingly.
+    let pairs = unpack_fixture("wp5-array/chunk-1.js");
+    let names = filenames(&pairs);
+    assert_eq!(
+        pairs.len(),
+        15,
+        "wp5-array chunk: expected 15 modules, got {names:?}"
+    );
+    for id in 18..=32 {
+        let expected = format!("module-{id}.js");
+        assert!(
+            names.contains(&expected.as_str()),
+            "wp5-array chunk: missing {expected} (concat offset), got {names:?}"
+        );
+    }
+    let mod_18 = pairs
+        .iter()
+        .find(|(name, _)| name == "module-18.js")
+        .expect("module-18.js should exist");
+    assert!(
+        mod_18.1.contains("./module-19.js") && !mod_18.1.contains("require(19)"),
+        "chunk require ids should be rewritten with the offset applied, got:\n{}",
+        mod_18.1
+    );
+}
