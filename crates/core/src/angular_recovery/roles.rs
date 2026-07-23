@@ -92,6 +92,9 @@ impl IvyRoleTable {
         for (identity, name) in structural::infer_ivy_roles(modules) {
             table.record_mapping(identity, name.to_string());
         }
+        for (identity, name) in structural::infer_template_roles(modules, &table) {
+            table.record_mapping(identity, name.to_string());
+        }
         table
     }
 
