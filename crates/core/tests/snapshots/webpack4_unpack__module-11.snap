@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { a as a_1 } from "./module-21.js";
+import { a } from "./module-21.js";
 export const __DO_NOT_USE__ActionTypes = {
     INIT: `@@redux/INIT${Math.random().toString(36).substring(7).split("").join(".")}`,
     REPLACE: `@@redux/REPLACE${Math.random().toString(36).substring(7).split("").join(".")}`
@@ -17,7 +17,6 @@ function u(e) {
     return Object.getPrototypeOf(e) === t;
 }
 export function createStore(e, t, n) {
-    let a;
     if (typeof t === "function" && n === undefined) {
         n = t;
         t = undefined;
@@ -93,7 +92,7 @@ export function createStore(e, t, n) {
     v({
         type: __DO_NOT_USE__ActionTypes.INIT
     });
-    a = {
+    return {
         dispatch: v,
         subscribe: y,
         getState: m,
@@ -105,33 +104,30 @@ export function createStore(e, t, n) {
             v({
                 type: __DO_NOT_USE__ActionTypes.REPLACE
             });
+        },
+        [a]: function() {
+            const t = y;
+            return {
+                subscribe (e) {
+                    if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
+                        throw new TypeError("Expected the observer to be an object.");
+                    }
+                    function n() {
+                        if (e.next) {
+                            e.next(m());
+                        }
+                    }
+                    n();
+                    return {
+                        unsubscribe: t(n)
+                    };
+                },
+                [a]: function() {
+                    return this;
+                }
+            };
         }
     };
-    a[a_1] = ()=>{
-        let e;
-        const t = y;
-        e = {
-            subscribe (e) {
-                if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
-                    throw new TypeError("Expected the observer to be an object.");
-                }
-                function n() {
-                    if (e.next) {
-                        e.next(m());
-                    }
-                }
-                n();
-                return {
-                    unsubscribe: t(n)
-                };
-            }
-        };
-        e[a_1] = function() {
-            return this;
-        };
-        return e;
-    };
-    return a;
 }
 function c(e, t) {
     const n = t && t.type;

@@ -22,7 +22,6 @@ const s = u.shape({
 });
 forwardRef;
 export function createProvider(e = "store") {
-    let t;
     const n = `${e}Subscription`;
     class r extends Component {
         constructor(n, r){
@@ -30,10 +29,10 @@ export function createProvider(e = "store") {
             this[e] = n.store;
         }
         getChildContext() {
-            let t = {};
-            t[e] = this[e];
-            t[n] = null;
-            return t;
+            return {
+                [e]: this[e],
+                [n]: null
+            };
         }
         render() {
             return Children.only(this.props.children);
@@ -43,7 +42,10 @@ export function createProvider(e = "store") {
         store: s.isRequired,
         children: u.element.isRequired
     };
-    r.childContextTypes = ((t = {})[e] = s.isRequired, t[n] = c, t);
+    r.childContextTypes = {
+        [e]: s.isRequired,
+        [n]: c
+    };
     return r;
 }
 export const Provider = createProvider();
@@ -122,17 +124,15 @@ let S = 0;
 const O = {};
 function C() {}
 export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = {}) {
-    let n;
-    let r;
     const M = `${storeKey}Subscription`;
     const A = S++;
-    n = {};
-    n[storeKey] = s;
-    n[M] = c;
-    const L = n;
-    r = {};
-    r[M] = c;
-    const I = r;
+    const L = {
+        [storeKey]: s,
+        [M]: c
+    };
+    const I = {
+        [M]: c
+    };
     return function(T1) {
         _b(isValidElementType(T1), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
@@ -163,11 +163,10 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                 this.initSubscription();
             }
             getChildContext() {
-                let e;
                 const t = this.propsMode ? null : this.subscription;
-                e = {};
-                e[M] = t || this.context[M];
-                return e;
+                return {
+                    [M]: t || this.context[M]
+                };
             }
             componentDidMount() {
                 if (shouldHandleStateChanges) {

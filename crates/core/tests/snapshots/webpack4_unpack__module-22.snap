@@ -376,12 +376,11 @@ ${e.stack}`;
                                 n.cancel();
                                 n(u, true);
                             } else if (!i.e(u) && u !== d && u !== p) {
-                                let s;
                                 n.cancel();
                                 r = true;
-                                s = {};
-                                s[t] = u;
-                                const f = s;
+                                const f = {
+                                    [t]: u
+                                };
                                 n(q.array(e) ? Array.prototype.slice.call({
                                     ...f,
                                     length: a.length

@@ -1081,3 +1081,82 @@ const b = createStore();
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
+
+// ── Computed property keys ─────────────────────────────────────────
+
+#[test]
+fn decomposes_a_member_access_in_a_computed_property_key() {
+    // `UnComputedProperties` folds Babel's loose lowering into an object
+    // literal, so an imported member access can end up in a computed key.
+    let target_facts = facts_for(r#"export const observable = Symbol.observable;"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+export const store = {
+    dispatch: d,
+    [r.observable]: function() {
+        return this;
+    }
+};
+"#;
+    let expected = r#"
+import { observable } from "./mod.js";
+export const store = {
+    dispatch: d,
+    [observable]: function() {
+        return this;
+    }
+};
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn bare_namespace_in_a_computed_property_key_prevents_decomposition() {
+    // A bare `r` in a computed key is a whole-object use. Missing it would
+    // decompose the import away and leave `[r]` dangling.
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo();
+export const table = {
+    [r]: 1
+};
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import * as r from"),
+        "should keep namespace import when a computed key uses it bare, got: {output}"
+    );
+}
+
+#[test]
+fn static_property_keys_are_not_namespace_uses() {
+    // A plain `{ r: 1 }` key is not a reference to the binding.
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo();
+export const table = {
+    r: 1,
+    "r": 2
+};
+"#;
+    let expected = r#"
+import { foo } from "./mod.js";
+foo();
+export const table = {
+    r: 1,
+    "r": 2
+};
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}

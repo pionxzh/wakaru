@@ -155,6 +155,9 @@ macro_rules! define_rule_registry {
     };
 }
 
+runner!(run_un_computed_properties, |ctx| {
+    UnComputedProperties::new(ctx.rewrite_level)
+});
 runner!(run_simplify_sequence, |ctx| {
     SimplifySequence::new_with_import_semantics(
         ctx.unresolved_mark,
@@ -512,6 +515,10 @@ fn run_dead_imports(module: &mut Module, ctx: RuleRunContext<'_>) {
 runner!(run_un_return, |ctx| UnReturn::new(ctx.unresolved_mark));
 
 define_rule_registry! {
+    // Must precede SimplifySequence: Babel's loose computed-properties output
+    // is a comma expression, and splitting it into statements destroys the
+    // object-building shape this rule folds back into a literal.
+    ("UnComputedProperties", Syntax, run_un_computed_properties, standard_or_above),
     ("SimplifySequence", Syntax, run_simplify_sequence, always_enabled),
     ("FlipComparisons", Syntax, run_flip_comparisons, always_enabled),
     ("UnTypeofStrict", Syntax, run_un_typeof_strict, always_enabled),

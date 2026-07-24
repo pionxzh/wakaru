@@ -97,8 +97,16 @@ rationale, or level gating appear.
 
 ### Syntax normalization
 
-- **SimplifySequence** — runs first; nearly everything downstream assumes
-  flat statement lists. Drops provably side-effect-free bare expressions
+- **UnComputedProperties** — runs before SimplifySequence, the only rule that
+  does. Babel's loose computed-properties lowering is a single comma
+  expression (`_n = {}, _n[k] = 1, _n`); once SimplifySequence splits it into
+  statements the object-building shape is gone, so this rule has to see the
+  sequence intact. It emits `PropName::Str` for string keys and leaves the
+  identifier/numeric normalization to UnBracketNotation downstream rather
+  than duplicating that logic. Level-gated to `standard` (assumption
+  `set_computed_properties`).
+- **SimplifySequence** — runs first among the rules that assume flat input;
+  nearly everything downstream assumes flat statement lists. Drops provably side-effect-free bare expressions
   (guarded by `unresolved_mark` for call purity). Test pitfall: a bare
   literal statement (`65536;`) is dropped as dead — use `const x = 65536;`.
 - **FlipComparisons** — normalizes literals to the right-hand side.

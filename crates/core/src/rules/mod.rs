@@ -39,6 +39,7 @@ mod un_builtin_aliases;
 mod un_builtin_prototype;
 mod un_class_call_check;
 mod un_class_fields;
+mod un_computed_properties;
 mod un_conditionals;
 mod un_curly_braces;
 mod un_define_property;
@@ -192,6 +193,7 @@ pub use un_builtin_aliases::UnBuiltinAliases;
 pub use un_builtin_prototype::UnBuiltinPrototype;
 pub use un_class_call_check::UnClassCallCheck;
 pub use un_class_fields::UnClassFields;
+pub use un_computed_properties::UnComputedProperties;
 pub use un_conditionals::{
     UnConditionals, UnConditionalsAssignmentOnly, UnConditionalsExprStmtOnly,
 };

@@ -187,6 +187,48 @@ depend on this assumption.
 
 Level: `standard` and above. `minimal` preserves the helper call.
 
+### `set_computed_properties`
+
+Folding a sequence of member assignments back into an object literal assumes
+that *assigning* each property is equivalent to *defining* it.
+
+```js
+var _n;
+var n = (_n = {}, _n[k] = 1, _n.b = 2, _n); // assignment: hits inherited setters
+var n = { [k]: 1, b: 2 };                   // definition: always own properties
+```
+
+This is the same assumption Babel exposes as
+`@babel/plugin-transform-computed-properties` `loose: true` / the Babel 7
+`setComputedProperties: true` assumption, which is what produces the shape in
+the first place. Key evaluation order is *not* at risk — both forms evaluate
+each key before its own value, in source order.
+
+Several cases can still observe the difference:
+
+- An inherited setter handles the assignment instead of creating an own
+  property. An inherited getter-only or non-writable data property can likewise
+  make the assignment fail or do nothing. These prototype descriptors are
+  environment-driven and cannot generally be decided from the AST.
+- The key is `__proto__`: `obj.__proto__ = x` invokes the inherited setter and
+  changes the prototype, while `__proto__` in a computed key position defines
+  an own property. Statically-known `__proto__` keys, including
+  no-substitution template literals, are rejected outright; a dynamic key that
+  evaluates to `"__proto__"` at runtime is covered by this assumption.
+- Object-literal evaluation infers a `.name` for an anonymous function or class
+  value from its property key, while the preceding member-assignment form does
+  not. This is visible in the AST, but preserving every such assignment would
+  defeat recovery for otherwise ordinary loose-transform output, so
+  `standard` deliberately covers that difference.
+
+The rule also rejects, at every level, a seed literal containing an accessor
+or a `__proto__` key, and any temporary that is observable outside the matched
+pattern (see "Generated Temporaries" below).
+
+Affects: `UnComputedProperties`.
+
+Level: `standard` and above. `minimal` preserves the sequence.
+
 ## Generated Temporaries
 
 Temporaries introduced by compilers are handled by binding analysis, not by

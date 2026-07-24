@@ -499,8 +499,15 @@ impl Visit for UsageAnalyzer<'_> {
         }
     }
 
-    // Don't visit into property name position (object literal keys, etc.)
-    fn visit_prop_name(&mut self, _: &swc_core::ecma::ast::PropName) {}
+    // A static property name (`{ r: 1 }`) is not a reference to the binding,
+    // but a computed one (`{ [r.foo]: 1 }`) holds a real expression — the same
+    // split the `MemberProp` handling below makes. Skipping computed keys would
+    // hide a bare `r` use and decompose the import out from under it.
+    fn visit_prop_name(&mut self, name: &swc_core::ecma::ast::PropName) {
+        if let swc_core::ecma::ast::PropName::Computed(computed) = name {
+            computed.visit_with(self);
+        }
+    }
 
     fn visit_member_prop(&mut self, prop: &MemberProp) {
         if let MemberProp::Computed(prop) = prop {
@@ -703,7 +710,12 @@ impl VisitMut for UsageRewriter<'_> {
         }
     }
 
-    fn visit_mut_prop_name(&mut self, _: &mut swc_core::ecma::ast::PropName) {}
+    // Mirrors the collector: rewrite inside computed keys, leave static ones.
+    fn visit_mut_prop_name(&mut self, name: &mut swc_core::ecma::ast::PropName) {
+        if let swc_core::ecma::ast::PropName::Computed(computed) = name {
+            computed.visit_mut_with(self);
+        }
+    }
 
     fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
         if let MemberProp::Computed(prop) = prop {

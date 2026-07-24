@@ -240,7 +240,7 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 ```
 Stage 1: Syntax normalization
-  SimplifySequence, FlipComparisons, UnTypeofStrict, RemoveVoid,
+  UnComputedProperties, SimplifySequence, FlipComparisons, UnTypeofStrict, RemoveVoid,
   UnminifyBooleans, UnDoubleNegation, UnInfinity, UnIndirectCall,
   UnTypeof, UnNumericLiteral, UnBracketNotation
 

@@ -130,19 +130,30 @@ export function m(e, t = true) {
     return r;
 }
 export function j() {
-    let e;
     let t = true;
     let n;
     let r;
-    e = {};
-    e[a] = true;
-    e.isRunning = ()=>t;
-    e.result = ()=>n;
-    e.error = ()=>r;
-    e.setRunning = (e)=>t = e;
-    e.setResult = (e)=>n = e;
-    e.setError = (e)=>r = e;
-    return e;
+    return {
+        [a]: true,
+        isRunning () {
+            return t;
+        },
+        result () {
+            return n;
+        },
+        error () {
+            return r;
+        },
+        setRunning (e) {
+            return t = e;
+        },
+        setResult (e) {
+            return n = e;
+        },
+        setError (e) {
+            return r = e;
+        }
+    };
 }
 const C = ((e = 0)=>()=>++e)();
 const P = (e)=>{
