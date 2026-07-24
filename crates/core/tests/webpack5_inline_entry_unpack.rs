@@ -663,6 +663,203 @@ fn entry_scope_shadow_does_not_move_runtime_boundary() {
 }
 
 #[test]
+fn entry_closure_capturing_require_does_not_move_runtime_boundary() {
+    // The raw require binding is available to webpack entry source. A dormant
+    // entry closure can therefore capture and mutate the real binding before
+    // the first module load. Its body is not executed while the bootstrap
+    // boundary is established and must not be classified as runtime setup.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    function decorate() { r.instrumented = true; }
+    var dep = r(1);
+    decorate();
+    console.log(dep.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js")
+            && entry.contains("decorate")
+            && entry.contains("require.instrumented = true"),
+        "the capturing closure and module load must both stay in startup, got:\n{entry}"
+    );
+}
+
+#[test]
+fn entry_require_mutation_before_load_stays_in_startup() {
+    // `__webpack_require__` is available to entry source. A source-authored
+    // property write can therefore precede the first module load and must not
+    // be grouped with webpack's known runtime definitions.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    r.instrumented = true;
+    var dep = r(1);
+    console.log(dep.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("require.instrumented = true") && entry.contains("./module-1.js"),
+        "pre-load require mutation and module load must both stay in startup, got:\n{entry}"
+    );
+}
+
+#[test]
+fn named_exports_anchor_precedes_known_require_property_override() {
+    // In readable webpack output the named exports object is an explicit
+    // producer boundary. Entry source after it may even override a property
+    // name that webpack itself uses; the anchor must win over shape guessing.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    var __webpack_exports__ = {};
+    r.p = "/entry-owned/";
+    var dep = r(1);
+    console.log(dep.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("require.p = \"/entry-owned/\"") && entry.contains("./module-1.js"),
+        "the named anchor must keep a known-property override in startup, got:\n{entry}"
+    );
+}
+
+#[test]
+fn repeated_runtime_property_assignment_starts_entry_override() {
+    // `__webpack_public_path__ = ...` makes webpack emit its own `require.p`
+    // initialization followed by the source-authored override. The repeated
+    // static path is the producer-visible transition into entry code.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    r.p = "";
+    r.p = "/entry-owned/";
+    var dep = r(1);
+    console.log(dep.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("require.p = \"/entry-owned/\"")
+            && !entry.contains("require.p = \"\"")
+            && entry.contains("./module-1.js"),
+        "the source override, but not runtime initialization, must stay in startup, got:\n{entry}"
+    );
+}
+
+#[test]
+fn dormant_getter_require_mutation_does_not_move_runtime_boundary() {
+    // Getter/setter bodies do not execute when their object literal is
+    // created. A captured require mutation inside an accessor must not make
+    // the containing declaration look like runtime setup.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    var hooks = {
+        get value() {
+            r.instrumented = true;
+            return "hook";
+        }
+    };
+    var dep = r(1);
+    console.log(dep.value, hooks.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("hooks =") && entry.contains("require.instrumented = true"),
+        "the accessor-bearing declaration must remain in startup, got:\n{entry}"
+    );
+    assert!(
+        entry.contains("./module-1.js") && entry.contains("hooks.value"),
+        "the recovered entry must retain both the load and defined getter binding, got:\n{entry}"
+    );
+}
+
+#[test]
+fn immediately_invoked_runtime_assignment_stays_before_startup() {
+    // Webpack wraps some runtime setup in IIFEs. Skipping dormant closures
+    // must not hide assignments that are actually executed by such a wrapper.
+    let source = r#"
+(() => {
+    var e = [, (e) => { e.exports = { value: 7 }; }];
+    var n = {};
+    function r(o) {
+        var t = n[o];
+        if (t !== undefined) return t.exports;
+        var c = n[o] = { exports: {} };
+        e[o](c, c.exports, r);
+        return c.exports;
+    }
+    (() => {
+        r.o = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    })();
+    var dep = r(1);
+    console.log(dep.value);
+})();
+"#;
+    let pairs = expect_unpack(source, "bundle.js");
+    let entry = entry_of(&pairs);
+    assert!(
+        entry.contains("./module-1.js") && !entry.contains("hasOwnProperty"),
+        "executed runtime wrapper must stay outside the recovered entry, got:\n{entry}"
+    );
+}
+
+#[test]
 fn startup_merged_into_runtime_sequence_is_recovered() {
     // Terser merges consecutive expression statements, so the last runtime
     // definitions and the startup can share one comma sequence:

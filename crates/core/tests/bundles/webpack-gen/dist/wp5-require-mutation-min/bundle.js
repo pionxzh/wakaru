@@ -1,0 +1,1 @@
+(()=>{var e=[,e=>{e.exports=function(e){return`hello ${e}`}}];const t={};function r(n){const o=t[n];if(void 0!==o)return o.exports;const s=t[n]={exports:{}};return e[n](s,s.exports,r),s.exports}r.p="",r.p="/entry-owned/",r.instrumentedBefore=!0;const n={get value(){return r.instrumentedFromGetter=!0,"hook"}};console.log(r(1)("review"),n.value),r.instrumentedAfter=!0})();

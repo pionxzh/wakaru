@@ -1633,18 +1633,26 @@ fn extract_webpack5_inline_startup(
         None => find_webpack5_require_fn(&bootstrap_body.stmts, modules_sym)?,
     };
 
-    // Runtime sections define helpers as assignments to require properties
-    // (`require.d = ...`, `require.f.j = ...`). The startup section is the
-    // only thing emitted after the last of them. The scan must descend into
-    // nested functions — webpack wraps each runtime helper in its own IIFE —
-    // so the require binding is compared by resolved identity: a nested
-    // shadow (`function decorate(r) { r.flag = true; }` in the entry) is a
-    // different binding and must not move the boundary past real startup.
+    // Runtime sections define helpers on webpack-owned require properties
+    // (`require.d = ...`, `require.f.j = ...`), but entry source can mutate
+    // arbitrary properties on that same documented raw-require object. A
+    // named exports anchor is an explicit producer boundary; otherwise find
+    // the first require use that executes during startup and only classify
+    // known webpack runtime properties before it as runtime. This ordering
+    // matters when Terser merges both into one sequence:
+    // `require.instrumented = true, loadEntry()`.
+    //
+    // Both scans use resolved identity. They also skip dormant nested
+    // functions while descending into immediately-invoked runtime wrappers,
+    // so `function decorate() { require.flag = true; }` is entry code rather
+    // than a late runtime definition.
     let (probe_stmts, _) = resolve_probe(&bootstrap_body.stmts)?;
     let require_id = declared_binding_id(probe_stmts.get(require_idx)?, &require_sym)?;
-    let last_runtime_idx = probe_stmts
-        .iter()
-        .rposition(|stmt| contains_require_member_assignment(stmt, &require_id));
+    let named_anchor_idx =
+        find_named_exports_anchor(&bootstrap_body.stmts, require_idx.saturating_add(1));
+    let runtime_boundary =
+        find_inline_runtime_boundary(&probe_stmts, require_idx, &require_id, named_anchor_idx);
+    let last_runtime_idx = runtime_boundary.as_ref().map(|boundary| boundary.stmt_idx);
 
     let startup_scan_from = last_runtime_idx
         .map(|idx| idx + 1)
@@ -1656,25 +1664,18 @@ fn extract_webpack5_inline_startup(
     // boundary statement is such a sequence, its tail after the final runtime
     // assignment is startup code and belongs to the entry region.
     let mut entry_region: Vec<Stmt> = Vec::new();
-    if let Some(idx) = last_runtime_idx {
-        if idx + 1 == startup_scan_from {
-            if let (Some(Stmt::Expr(probe_stmt)), Some(Stmt::Expr(orig_stmt))) =
-                (probe_stmts.get(idx), bootstrap_body.stmts.get(idx))
-            {
-                if let (Expr::Seq(probe_seq), Expr::Seq(orig_seq)) = (
-                    strip_parens(&probe_stmt.expr),
-                    strip_parens(&orig_stmt.expr),
-                ) {
-                    if probe_seq.exprs.len() == orig_seq.exprs.len() {
-                        if let Some(split) = last_require_assign_in_seq(probe_seq, &require_id) {
-                            for tail in &orig_seq.exprs[split + 1..] {
-                                entry_region.push(Stmt::Expr(ExprStmt {
-                                    span: tail.span(),
-                                    expr: tail.clone(),
-                                }));
-                            }
-                        }
-                    }
+    if let Some(RuntimeBoundary {
+        stmt_idx: idx,
+        seq_expr_idx: Some(split),
+    }) = runtime_boundary
+    {
+        if let Some(Stmt::Expr(orig_stmt)) = bootstrap_body.stmts.get(idx) {
+            if let Expr::Seq(orig_seq) = strip_parens(&orig_stmt.expr) {
+                for tail in &orig_seq.exprs[split + 1..] {
+                    entry_region.push(Stmt::Expr(ExprStmt {
+                        span: tail.span(),
+                        expr: tail.clone(),
+                    }));
                 }
             }
         }
@@ -2001,18 +2002,130 @@ impl Visit for SymUsageFinder<'_> {
     }
 }
 
-/// Index of the last expression in `seq` containing an assignment to a member
-/// of the require binding — the split point between minifier-merged runtime
-/// definitions and the startup tail that follows them.
-fn last_require_assign_in_seq(seq: &SeqExpr, require_id: &Id) -> Option<usize> {
-    seq.exprs.iter().rposition(|expr| {
-        let mut finder = RequireMemberAssignFinder {
-            require_id,
-            found: false,
-        };
-        expr.visit_with(&mut finder);
-        finder.found
+struct RuntimeBoundary {
+    stmt_idx: usize,
+    /// For a minifier-merged boundary statement, the last runtime expression.
+    /// Expressions after it execute as entry startup and must be retained.
+    seq_expr_idx: Option<usize>,
+}
+
+/// Locate the end of webpack's runtime section without allowing later entry
+/// mutations of the raw require object to move the boundary.
+fn find_inline_runtime_boundary(
+    stmts: &[Stmt],
+    require_idx: usize,
+    require_id: &Id,
+    explicit_startup_idx: Option<usize>,
+) -> Option<RuntimeBoundary> {
+    let scan_from = require_idx + 1;
+    let first_startup = explicit_startup_idx
+        .filter(|idx| *idx >= scan_from)
+        .map(|idx| (idx, None))
+        .or_else(|| find_first_executed_startup(stmts, scan_from, require_id));
+
+    if let Some((startup_stmt_idx, startup_seq_idx)) = first_startup {
+        if let Some(startup_expr_idx) = startup_seq_idx {
+            let Stmt::Expr(stmt) = &stmts[startup_stmt_idx] else {
+                unreachable!("sequence startup point must belong to an expression statement");
+            };
+            let Expr::Seq(seq) = strip_parens(&stmt.expr) else {
+                unreachable!("sequence startup point must retain its sequence");
+            };
+            if let Some(seq_expr_idx) =
+                last_runtime_require_assign_in_exprs(&seq.exprs[..startup_expr_idx], require_id)
+            {
+                return Some(RuntimeBoundary {
+                    stmt_idx: startup_stmt_idx,
+                    seq_expr_idx: Some(seq_expr_idx),
+                });
+            }
+        }
+
+        return stmts[scan_from..startup_stmt_idx]
+            .iter()
+            .rposition(|stmt| contains_runtime_require_assignment(stmt, require_id))
+            .map(|offset| RuntimeBoundary {
+                stmt_idx: scan_from + offset,
+                seq_expr_idx: None,
+            });
+    }
+
+    // No eagerly evaluated loader use was found. Retain the previous fallback
+    // for deferred startup shapes whose require call lives in a callback.
+    let stmt_idx = stmts[scan_from..]
+        .iter()
+        .rposition(|stmt| contains_runtime_require_assignment(stmt, require_id))
+        .map(|offset| scan_from + offset)?;
+    let seq_expr_idx = match &stmts[stmt_idx] {
+        Stmt::Expr(stmt) => match strip_parens(&stmt.expr) {
+            Expr::Seq(seq) => last_runtime_require_assign_in_exprs(&seq.exprs, require_id),
+            _ => None,
+        },
+        _ => None,
+    };
+    Some(RuntimeBoundary {
+        stmt_idx,
+        seq_expr_idx,
     })
+}
+
+fn find_first_executed_startup(
+    stmts: &[Stmt],
+    scan_from: usize,
+    require_id: &Id,
+) -> Option<(usize, Option<usize>)> {
+    let mut seen_runtime_paths = HashSet::new();
+    for (stmt_idx, stmt) in stmts.iter().enumerate().skip(scan_from) {
+        if let Stmt::Expr(expr_stmt) = stmt {
+            if let Expr::Seq(seq) = strip_parens(&expr_stmt.expr) {
+                for (seq_expr_idx, expr) in seq.exprs.iter().enumerate() {
+                    let effects = executed_require_effects(expr, require_id);
+                    if effects.require_call
+                        || effects.repeated_runtime_assignment
+                        || effects
+                            .runtime_assignments
+                            .iter()
+                            .any(|path| seen_runtime_paths.contains(path))
+                    {
+                        return Some((stmt_idx, Some(seq_expr_idx)));
+                    }
+                    seen_runtime_paths.extend(effects.runtime_assignments);
+                }
+                continue;
+            }
+        }
+
+        let effects = executed_require_effects(stmt, require_id);
+        if effects.require_call
+            || effects.repeated_runtime_assignment
+            || effects
+                .runtime_assignments
+                .iter()
+                .any(|path| seen_runtime_paths.contains(path))
+        {
+            return Some((stmt_idx, None));
+        }
+        seen_runtime_paths.extend(effects.runtime_assignments);
+    }
+    None
+}
+
+fn find_named_exports_anchor(stmts: &[Stmt], scan_from: usize) -> Option<usize> {
+    stmts
+        .iter()
+        .enumerate()
+        .skip(scan_from)
+        .find_map(|(idx, stmt)| {
+            empty_object_anchor(stmt)
+                .filter(|(binding, _)| binding.as_ref() == "__webpack_exports__")
+                .map(|_| idx)
+        })
+}
+
+fn last_runtime_require_assign_in_exprs(exprs: &[Box<Expr>], require_id: &Id) -> Option<usize> {
+    exprs
+        .iter()
+        .rposition(|expr| contains_runtime_require_assignment(expr, require_id))
 }
 
 /// The [`Id`] `stmt` declares under `sym` — a function declaration's name or
@@ -2034,42 +2147,236 @@ fn declared_binding_id(stmt: &Stmt, sym: &Atom) -> Option<Id> {
     }
 }
 
-/// Whether the statement assigns to a (possibly nested) member of the require
-/// binding, e.g. `require.d = ...` or `require.f.j = ...` — the shape of
-/// webpack runtime-section definitions. `stmt` must come from a probe-resolved
-/// region (see [`resolve_probe`]): the scan descends into nested functions
-/// (webpack wraps runtime helpers in IIFEs that capture the real binding), so
-/// only resolved identity separates those from same-named shadows.
-fn contains_require_member_assignment(stmt: &Stmt, require_id: &Id) -> bool {
-    let mut finder = RequireMemberAssignFinder {
+/// Whether the node executes an assignment to a webpack-owned member of the
+/// require binding, e.g. `require.d = ...` or `require.f.j = ...`. Arbitrary
+/// properties are available to entry source and cannot establish a runtime
+/// boundary. The node must come from a probe-resolved region.
+fn contains_runtime_require_assignment<'a, N>(node: &N, require_id: &'a Id) -> bool
+where
+    N: VisitWith<ExecutedRequireEffectsFinder<'a>>,
+{
+    !executed_require_effects(node, require_id)
+        .runtime_assignments
+        .is_empty()
+}
+
+#[derive(Default)]
+struct ExecutedRequireEffects {
+    require_call: bool,
+    runtime_assignments: HashSet<String>,
+    repeated_runtime_assignment: bool,
+}
+
+fn executed_require_effects<'a, N>(node: &N, require_id: &'a Id) -> ExecutedRequireEffects
+where
+    N: VisitWith<ExecutedRequireEffectsFinder<'a>>,
+{
+    let mut finder = ExecutedRequireEffectsFinder {
         require_id,
-        found: false,
+        effects: ExecutedRequireEffects::default(),
     };
-    stmt.visit_with(&mut finder);
-    finder.found
+    node.visit_with(&mut finder);
+    finder.effects
 }
 
-struct RequireMemberAssignFinder<'a> {
+/// Scan only code that executes while evaluating the node. Function, arrow,
+/// getter, and setter bodies are dormant; immediately-invoked function bodies
+/// execute and are visited explicitly. Keeping call and assignment detection
+/// in one walker prevents their execution-context rules from drifting apart.
+struct ExecutedRequireEffectsFinder<'a> {
     require_id: &'a Id,
-    found: bool,
+    effects: ExecutedRequireEffects,
 }
 
-impl Visit for RequireMemberAssignFinder<'_> {
+impl Visit for ExecutedRequireEffectsFinder<'_> {
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_getter_prop(&mut self, getter: &swc_core::ecma::ast::GetterProp) {
+        getter.key.visit_with(self);
+    }
+
+    fn visit_setter_prop(&mut self, setter: &swc_core::ecma::ast::SetterProp) {
+        setter.key.visit_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            match strip_parens(callee) {
+                Expr::Ident(ident) if ident.to_id() == *self.require_id => {
+                    self.effects.require_call = true;
+                }
+                Expr::Member(member) if member_root_matches(member, self.require_id) => {
+                    self.effects.require_call = true;
+                }
+                _ => {}
+            }
+
+            call.visit_children_with(self);
+            match strip_parens(callee) {
+                Expr::Fn(function) => {
+                    if let Some(body) = &function.function.body {
+                        body.visit_with(self);
+                    }
+                }
+                Expr::Arrow(arrow) => match &*arrow.body {
+                    BlockStmtOrExpr::BlockStmt(body) => body.visit_with(self),
+                    BlockStmtOrExpr::Expr(expr) => expr.visit_with(self),
+                },
+                _ => {}
+            }
+        } else {
+            call.visit_children_with(self);
+        }
+    }
+
     fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
         assign.visit_children_with(self);
         let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
             return;
         };
-        let mut obj = &*member.obj;
-        while let Expr::Member(inner) = strip_parens(obj) {
-            obj = &inner.obj;
-        }
-        if let Expr::Ident(root) = strip_parens(obj) {
-            if root.to_id() == *self.require_id {
-                self.found = true;
+        let Some(property) = require_root_property(member, self.require_id) else {
+            return;
+        };
+        if is_webpack_runtime_property(property) {
+            let Some(path) = require_member_static_path(member, self.require_id) else {
+                return;
+            };
+            if !self.effects.runtime_assignments.insert(path) {
+                self.effects.repeated_runtime_assignment = true;
             }
         }
     }
+}
+
+fn member_root_matches(member: &MemberExpr, require_id: &Id) -> bool {
+    let mut obj = &*member.obj;
+    while let Expr::Member(inner) = strip_parens(obj) {
+        obj = &inner.obj;
+    }
+    matches!(strip_parens(obj), Expr::Ident(root) if root.to_id() == *require_id)
+}
+
+fn require_root_property<'a>(member: &'a MemberExpr, require_id: &Id) -> Option<&'a str> {
+    let mut current = member;
+    loop {
+        match strip_parens(&current.obj) {
+            Expr::Ident(root) if root.to_id() == *require_id => {
+                return static_member_property_name(&current.prop);
+            }
+            Expr::Member(inner) => current = inner,
+            _ => return None,
+        }
+    }
+}
+
+fn require_member_static_path(member: &MemberExpr, require_id: &Id) -> Option<String> {
+    let mut current = member;
+    let mut segments = Vec::new();
+    loop {
+        segments.push(static_member_property_name(&current.prop)?);
+        match strip_parens(&current.obj) {
+            Expr::Ident(root) if root.to_id() == *require_id => {
+                segments.reverse();
+                return Some(segments.join("."));
+            }
+            Expr::Member(inner) => current = inner,
+            _ => return None,
+        }
+    }
+}
+
+fn static_member_property_name(prop: &MemberProp) -> Option<&str> {
+    match prop {
+        MemberProp::Ident(ident) => Some(ident.sym.as_ref()),
+        MemberProp::Computed(computed) => match strip_parens(&computed.expr) {
+            Expr::Lit(Lit::Str(value)) => value.value.as_str(),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
+/// Stable property names assigned by webpack's built-in runtime modules.
+/// This is intentionally positive: an unknown property may be authored by the
+/// entry through webpack's public raw-require variable and must be preserved.
+fn is_webpack_runtime_property(property: &str) -> bool {
+    matches!(
+        property,
+        "amdD"
+            | "amdO"
+            | "ei"
+            | "a"
+            | "aD"
+            | "aE"
+            | "aG"
+            | "b"
+            | "cn"
+            | "cjs"
+            | "n"
+            | "vs"
+            | "t"
+            | "ts"
+            | "tu"
+            | "is"
+            | "R"
+            | "zT"
+            | "zS"
+            | "d"
+            | "e"
+            | "f"
+            | "s"
+            | "C"
+            | "k"
+            | "u"
+            | "hk"
+            | "hu"
+            | "h"
+            | "tt"
+            | "hmrF"
+            | "wb"
+            | "g"
+            | "hmd"
+            | "o"
+            | "hmrM"
+            | "hmrC"
+            | "hmrI"
+            | "hmrD"
+            | "hmrS"
+            | "I"
+            | "v"
+            | "i"
+            | "l"
+            | "z"
+            | "r"
+            | "zO"
+            | "c"
+            | "m"
+            | "nmd"
+            | "O"
+            | "PA"
+            | "E"
+            | "F"
+            | "LA"
+            | "G"
+            | "H"
+            | "p"
+            | "U"
+            | "j"
+            | "nc"
+            | "dn"
+            | "S"
+            | "x"
+            | "SAH"
+            | "X"
+            | "System"
+            | "y"
+            | "tb"
+            | "oe"
+            | "w"
+            | "wc"
+    )
 }
 
 fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<Atom> {

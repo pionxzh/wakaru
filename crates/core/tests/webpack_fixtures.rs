@@ -626,6 +626,31 @@ fn wp5_array_concat_chunk() {
 }
 
 #[test]
+fn wp5_minified_entry_require_mutation_stays_in_entry() {
+    // Webpack exposes its raw require binding to source modules. In production,
+    // Terser may place source-authored property writes before and after the
+    // entry load, while a dormant getter can capture that same binding. None
+    // of those entry effects are webpack runtime definitions.
+    let pairs = unpack_fixture("wp5-require-mutation-min/bundle.js");
+    let names = filenames(&pairs);
+    let entry = pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .unwrap_or_else(|| panic!("require mutation: missing entry.js, got {names:?}"));
+    assert!(
+        entry.1.contains("./module-1.js")
+            && entry.1.contains("review")
+            && entry.1.contains("require.p = \"/entry-owned/\"")
+            && entry.1.contains("require.instrumentedBefore = true")
+            && entry.1.contains("require.instrumentedFromGetter = true")
+            && entry.1.contains("require.instrumentedAfter = true")
+            && entry.1.contains("get value"),
+        "require mutation startup must be recovered intact, got:\n{}",
+        entry.1
+    );
+}
+
+#[test]
 fn wp5_umd_min_entry_is_a_valid_module() {
     // The minified UMD factory ends with `return console.log(...), ..., {}` —
     // the startup slice reaches that wrapper return, and a recovered entry
