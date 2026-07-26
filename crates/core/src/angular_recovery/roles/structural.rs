@@ -4,7 +4,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Expr, ExprOrSpread, FnDecl, Function, Lit, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    Expr, ExprOrSpread, FnDecl, Function, Lit, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
     VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -95,6 +95,15 @@ pub(super) fn infer_template_roles(
         if is_property_shape(definition, observations) {
             matches.push("ɵɵproperty");
         }
+        if is_embedded_template_shape(definition, observations) {
+            matches.push("ɵɵtemplate");
+        }
+        if is_conditional_shape(definition, observations) {
+            matches.push("ɵɵconditional");
+        }
+        if is_next_context_shape(definition, observations) {
+            matches.push("ɵɵnextContext");
+        }
         if let [name] = matches.as_slice() {
             inferred.push((definition.identity.clone(), *name));
         }
@@ -119,6 +128,13 @@ struct TemplateCallObservation {
     identity: SymbolIdentity,
     phase: u8,
     arguments: Vec<Box<Expr>>,
+    usage: TemplateCallUsage,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TemplateCallUsage {
+    Effect,
+    Initializer,
 }
 
 struct TemplateFunctionCollector<'a> {
@@ -179,6 +195,13 @@ impl TemplateCallObserver<'_> {
                 }
             }
             Stmt::Expr(expression) => self.collect_expression(expression.expr.as_ref(), phase),
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(declaration)) => {
+                for declarator in &declaration.decls {
+                    if let Some(initializer) = &declarator.init {
+                        self.collect_initializer(initializer.as_ref(), phase);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -210,12 +233,25 @@ impl TemplateCallObserver<'_> {
                     render_flag_mask(binary.left.as_ref(), &self.render_flags).or(phase);
                 self.collect_expression(binary.right.as_ref(), branch_phase);
             }
-            Expr::Call(call) => self.collect_call(call, phase),
+            Expr::Assign(assignment) => {
+                self.collect_initializer(assignment.right.as_ref(), phase);
+            }
+            Expr::Call(call) => self.collect_call(call, phase, TemplateCallUsage::Effect),
             _ => {}
         }
     }
 
-    fn collect_call(&mut self, call: &CallExpr, phase: Option<u8>) {
+    fn collect_initializer(&mut self, expression: &Expr, phase: Option<u8>) {
+        match expression {
+            Expr::Paren(parenthesized) => {
+                self.collect_initializer(parenthesized.expr.as_ref(), phase)
+            }
+            Expr::Call(call) => self.collect_call(call, phase, TemplateCallUsage::Initializer),
+            _ => self.collect_expression(expression, phase),
+        }
+    }
+
+    fn collect_call(&mut self, call: &CallExpr, phase: Option<u8>, usage: TemplateCallUsage) {
         let Some(phase @ (1 | 2)) = phase else {
             return;
         };
@@ -257,6 +293,7 @@ impl TemplateCallObserver<'_> {
                         .iter()
                         .map(|argument| argument.expr.clone())
                         .collect(),
+                    usage,
                 }
             }));
     }
@@ -376,7 +413,8 @@ fn is_specialized_element_start_shape(
         && returns_identity(definition, &definition.identity)
         && observations.iter().all(|observation| {
             let observation = observation.borrow();
-            observation.phase == 1
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
                 && matches!(observation.arguments.len(), 2..=4)
                 && observation
                     .arguments
@@ -397,7 +435,9 @@ fn is_specialized_element_end_shape(
         && returns_identity(definition, &definition.identity)
         && observations.iter().all(|observation| {
             let observation = observation.borrow();
-            observation.phase == 1 && observation.arguments.is_empty()
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && observation.arguments.is_empty()
         })
 }
 
@@ -405,7 +445,8 @@ fn is_text_shape(definition: &RuntimeFunction, observations: &[TemplateCallObser
     definition.params.len() == 2
         && is_empty_string_default(&definition.params[1])
         && observations.iter().all(|observation| {
-            observation.phase == 1
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
                 && matches!(observation.arguments.len(), 1 | 2)
                 && observation
                     .arguments
@@ -429,7 +470,8 @@ fn is_listener_shape(
             .all(|parameter| matches!(parameter, Pat::Ident(_)))
         && returns_identity(definition, &definition.identity)
         && observations.iter().all(|observation| {
-            observation.phase == 1
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
                 && matches!(observation.arguments.len(), 2 | 3)
                 && observation
                     .arguments
@@ -448,7 +490,8 @@ fn is_advance_shape(
     definition.params.len() == 1
         && is_numeric_default(&definition.params[0], 1.0)
         && observations.iter().all(|observation| {
-            observation.phase == 2
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
                 && matches!(observation.arguments.len(), 0 | 1)
                 && observation
                     .arguments
@@ -467,7 +510,8 @@ fn is_property_shape(
     if parameters.len() != 3
         || !returns_identity(definition, &definition.identity)
         || !observations.iter().all(|observation| {
-            observation.phase == 2
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
                 && matches!(observation.arguments.len(), 2 | 3)
                 && observation
                     .arguments
@@ -485,6 +529,151 @@ fn is_property_shape(
         })
 }
 
+fn is_embedded_template_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    definition.params.len() == 8
+        && direct_calls(definition).len() >= 3
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && matches!(observation.arguments.len(), 4..=8)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation.arguments.get(1).is_some_and(|argument| {
+                    matches!(
+                        argument.as_ref(),
+                        Expr::Ident(_) | Expr::Fn(_) | Expr::Arrow(_)
+                    )
+                })
+                && observation
+                    .arguments
+                    .get(2)
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(3)
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation.arguments.get(4).is_none_or(|argument| {
+                    is_string_literal(argument.as_ref())
+                        || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
+                })
+                && observation.arguments.get(5).is_none_or(|argument| {
+                    is_nonnegative_integer(argument.as_ref())
+                        || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
+                })
+        })
+}
+
+fn is_conditional_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 2)
+        && direct_calls(definition).len() >= 6
+        && contains_negative_one(&definition.body)
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
+                && matches!(observation.arguments.len(), 1 | 2)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_template_selection(argument.as_ref()))
+        })
+}
+
+fn is_next_context_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let [parameter] = definition.params.as_slice() else {
+        return false;
+    };
+    if !is_numeric_default(parameter, 1.0)
+        || !observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Initializer
+                && observation.phase == 2
+                && matches!(observation.arguments.len(), 0 | 1)
+                && observation
+                    .arguments
+                    .first()
+                    .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+    {
+        return false;
+    }
+    let Pat::Assign(assignment) = parameter else {
+        return false;
+    };
+    let Pat::Ident(parameter) = assignment.left.as_ref() else {
+        return false;
+    };
+    let calls = direct_calls(definition);
+    let [call] = calls.as_slice() else {
+        return false;
+    };
+    call.arguments.as_slice().first().is_some_and(|argument| {
+        matches!(
+            argument.as_ref(),
+            Expr::Ident(identifier) if binding_key(identifier) == binding_key(&parameter.id)
+        )
+    })
+}
+
+fn is_template_selection(expression: &Expr) -> bool {
+    let expression = strip_parentheses(expression);
+    let Expr::Cond(conditional) = expression else {
+        return false;
+    };
+    is_template_index(conditional.cons.as_ref())
+        && match strip_parentheses(conditional.alt.as_ref()) {
+            Expr::Cond(_) => is_template_selection(conditional.alt.as_ref()),
+            alternate => is_template_index(alternate),
+        }
+}
+
+fn is_template_index(expression: &Expr) -> bool {
+    is_nonnegative_integer(strip_parentheses(expression))
+        || matches!(
+            strip_parentheses(expression),
+            Expr::Unary(unary)
+                if unary.op == UnaryOp::Minus
+                    && matches!(
+                        strip_parentheses(unary.arg.as_ref()),
+                        Expr::Lit(Lit::Num(number)) if number.value == 1.0
+                    )
+        )
+}
+
+fn contains_negative_one(block: &BlockStmt) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if is_template_index(expression)
+                && matches!(
+                    strip_parentheses(expression),
+                    Expr::Unary(unary) if unary.op == UnaryOp::Minus
+                )
+            {
+                self.found = true;
+                return;
+            }
+            expression.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
 fn infer_text_interpolation_family(
     functions: &[RuntimeFunction],
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
@@ -492,10 +681,11 @@ fn infer_text_interpolation_family(
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut inferred = Vec::new();
     for (identity, calls_in_templates) in observations {
-        if !calls_in_templates
-            .iter()
-            .all(|observation| observation.phase == 2 && observation.arguments.len() == 1)
-        {
+        if !calls_in_templates.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
+                && observation.arguments.len() == 1
+        }) {
             continue;
         }
         let Some(wrapper) = unique_runtime_function_equivalent(functions, identity, roles) else {

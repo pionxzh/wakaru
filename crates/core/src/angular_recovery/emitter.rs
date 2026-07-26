@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
@@ -108,7 +110,7 @@ fn print_component_class(name: &str, class: Box<Class>, cm: Lrc<SourceMap>) -> R
 
 pub(super) fn handler_expression(
     expression: &Expr,
-    context: Option<&BindingKey>,
+    component_contexts: &HashSet<BindingKey>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
@@ -117,22 +119,24 @@ pub(super) fn handler_expression(
         Expr::Fn(function) => {
             let body = function.function.body.as_ref();
             if let Some(expression) = body.and_then(single_return_expression) {
-                print_template_expression(expression, context, cm)
+                print_template_expression(expression, component_contexts, cm)
             } else {
                 print_expression(&expression, cm)
             }
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::Expr(expression) => print_template_expression(expression, context, cm),
+            BlockStmtOrExpr::Expr(expression) => {
+                print_template_expression(expression, component_contexts, cm)
+            }
             BlockStmtOrExpr::BlockStmt(block) => {
                 if let Some(expression) = single_return_expression(block) {
-                    print_template_expression(expression, context, cm)
+                    print_template_expression(expression, component_contexts, cm)
                 } else {
                     print_expression(&expression, cm)
                 }
             }
         },
-        _ => print_template_expression(&expression, context, cm),
+        _ => print_template_expression(&expression, component_contexts, cm),
     }
 }
 
@@ -171,12 +175,14 @@ fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&E
 
 pub(super) fn print_template_expression(
     expression: &Expr,
-    context: Option<&BindingKey>,
+    component_contexts: &HashSet<BindingKey>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
-    if let Some(context) = context {
-        expression.visit_mut_with(&mut ContextPrefixCleaner { context });
+    if !component_contexts.is_empty() {
+        expression.visit_mut_with(&mut ContextPrefixCleaner {
+            contexts: component_contexts,
+        });
     }
     print_expression(&expression, cm)
 }
@@ -230,7 +236,7 @@ fn print_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
 }
 
 struct ContextPrefixCleaner<'a> {
-    context: &'a BindingKey,
+    contexts: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for ContextPrefixCleaner<'_> {
@@ -242,7 +248,7 @@ impl VisitMut for ContextPrefixCleaner<'_> {
         let Expr::Ident(object) = member.obj.as_ref() else {
             return;
         };
-        if binding_key(object) != *self.context {
+        if !self.contexts.contains(&binding_key(object)) {
             return;
         }
         let swc_core::ecma::ast::MemberProp::Ident(property) = &member.prop else {
