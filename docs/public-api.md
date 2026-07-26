@@ -110,8 +110,17 @@ change the artifact contract or make a bundler own framework semantics.
 Caller-supplied import resolution remains useful only for standalone namespace
 operations such as `vue::recover`.
 
-Private option fields and non-exhaustive result types allow the integrated
-surface to grow without a breaking change. Future framework namespaces may
+The low-level Angular namespace provides `analyze_angular_components_*`
+operations alongside the convenience `recover_angular_components_*` wrappers.
+Analysis returns the same recovered components plus typed, fail-closed recovery
+issues and aggregate accounting for candidate descriptors and render-phase
+runtime calls. Unknown runtime calls are also grouped by phase and argument-list
+shape at component and workspace scope. The root façade keeps those framework
+details out of `ArtifactOutput`; optional diagnostics expose only the aggregate
+report.
+
+Private option fields and non-exhaustive result types allow that integrated
+surface to be added without a breaking change. Future framework namespaces may
 provide framework-specific standalone recovery and option types, but should
 not add `svelte::decompile`, `angular::decompile`, or equivalent composition
 entry points.

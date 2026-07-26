@@ -233,6 +233,7 @@ impl UnpackJob {
             &modules,
             &pre_rewrite_modules,
             self.options.recovery(),
+            self.options.diagnostics(),
         );
         diagnostics.extend(recovery_diagnostics);
 
