@@ -109,6 +109,44 @@ selected for processing participate in the same cross-module fact graph.
 The public API does not expose detector objects, prepared ASTs, SWC AST types,
 individual rewrite visitors, or cross-module fact structures.
 
+## Bun standalone extraction
+
+The `wakaru::bun` namespace exposes the binary-container step separately from
+the owned JavaScript `Source` API:
+
+```rust
+pub fn extract_standalone(
+    executable: &[u8],
+) -> Result<Option<BunStandalone<'_>>, BunStandaloneError>;
+
+pub struct BunStandalone<'a> {
+    pub files: Vec<BunEmbeddedFile<'a>>,
+    pub entry_point_id: u32,
+    pub compile_exec_argv: &'a [u8],
+    pub flags: u32,
+    pub executable_range: Range<usize>,
+}
+
+pub struct BunEmbeddedFile<'a> {
+    pub index: u32,
+    pub name: String,
+    pub contents: &'a [u8],
+    pub source_map: &'a [u8],
+    pub loader: u8,
+    pub is_entry: bool,
+    pub executable_range: Range<usize>,
+    // Encoding, module format, side, and metadata sizes are also exposed.
+}
+```
+
+`Ok(None)` means the Bun trailer was absent. A present but invalid graph is an
+error rather than a partial extraction. All returned byte slices borrow the
+caller-owned executable, and every pointer is range-checked before a result is
+returned. `BunEmbeddedFile::is_javascript_like()` recognizes Bun's JSX, JS, TS,
+and TSX loaders. Callers choose whether to decode those bytes as UTF-8 and pass
+them to `Source`; the CLI does exactly that. The `source_map` field is Bun's
+internal serialized representation, not a v3 JSON source map.
+
 ## Input
 
 ```rust

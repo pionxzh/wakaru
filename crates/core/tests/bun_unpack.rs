@@ -136,6 +136,38 @@ fn bun_cjs_interop_min_unpack_splits_modules() {
 }
 
 #[test]
+fn bun_standalone_cjs_container_exposes_inner_factories() {
+    let input = r#"
+(function(exports, require, module, __filename, __dirname) {
+  var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+  var require_first = __commonJS((exports, module) => {
+    module.exports = "first";
+  });
+  var require_second = __commonJS((exports, module) => {
+    module.exports = "second";
+  });
+  module.exports = [require_first(), require_second()];
+})
+"#;
+
+    let modules = expect_unpack_raw(input);
+
+    assert_eq!(modules.len(), 3, "inner factories and entry should split");
+    assert!(
+        modules.iter().any(|(name, _)| name == "require_first.js"),
+        "missing first factory: {modules:?}"
+    );
+    assert!(
+        modules.iter().any(|(name, _)| name == "require_second.js"),
+        "missing second factory: {modules:?}"
+    );
+    assert!(
+        module(&modules, "entry.js").contains("require_first"),
+        "standalone entry should retain its startup calls"
+    );
+}
+
+#[test]
 fn bun_path_comment_names_detected_commonjs_factory() {
     let input = r#"
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);

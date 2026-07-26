@@ -1412,6 +1412,59 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
 }
 
 #[test]
+fn explicit_bun_standalone_extracts_javascript_entries() {
+    let dir = temp_test_dir("bun-standalone");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let executable = dir.join("app");
+    fs::write(&executable, synthetic_bun_standalone()).expect("write Bun executable");
+
+    let sources = read_explicit_unpack_sources(&executable).expect("extract Bun sources");
+
+    assert_eq!(sources.len(), 1, "non-JavaScript assets must be ignored");
+    assert_eq!(sources[0].code(), "console.log('entry');");
+    assert!(
+        sources[0].filename().ends_with("app#bun/src/entry.ts"),
+        "unexpected virtual filename: {}",
+        sources[0].filename()
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn executable_without_bun_graph_is_rejected_clearly() {
+    let dir = temp_test_dir("non-bun-executable");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let executable = dir.join("app");
+    fs::write(&executable, b"\x7fELFnot bun").expect("write executable");
+
+    let error = read_explicit_unpack_sources(&executable)
+        .expect_err("ordinary executable should not be treated as JavaScript");
+    assert!(
+        error
+            .to_string()
+            .contains("does not contain a supported Bun standalone graph"),
+        "unexpected error: {error}"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn bun_embedded_paths_are_safe_and_stable() {
+    assert_eq!(
+        sanitize_bun_embedded_path("/$bunfs/root/src/entry.ts", 0),
+        "src/entry.ts"
+    );
+    assert_eq!(
+        sanitize_bun_embedded_path("B:\\~BUN\\root\\..\\index", 2),
+        "index.js"
+    );
+    assert_eq!(sanitize_bun_embedded_path("../../", 7), "embedded-7.js");
+    assert!(is_executable_container(b"\xbf\xba\xfe\xcarest"));
+}
+
+#[test]
 fn unpack_directory_skips_malformed_javascript_candidate() {
     let dir = temp_test_dir("unpack-dir-malformed");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -1562,6 +1615,58 @@ fn temp_test_dir(name: &str) -> PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
+}
+
+fn synthetic_bun_standalone() -> Vec<u8> {
+    const RECORD_SIZE: usize = 52;
+    const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+
+    fn append(data: &mut Vec<u8>, bytes: &[u8], nul: bool) -> (u32, u32) {
+        let pointer = (data.len() as u32, bytes.len() as u32);
+        data.extend_from_slice(bytes);
+        if nul {
+            data.push(0);
+        }
+        pointer
+    }
+
+    fn put_pointer(record: &mut [u8], offset: usize, pointer: (u32, u32)) {
+        record[offset..offset + 4].copy_from_slice(&pointer.0.to_le_bytes());
+        record[offset + 4..offset + 8].copy_from_slice(&pointer.1.to_le_bytes());
+    }
+
+    let mut data = Vec::new();
+    let entry_name = append(&mut data, b"/$bunfs/root/src/entry.ts", true);
+    let entry_contents = append(&mut data, b"console.log('entry');", true);
+    let asset_name = append(&mut data, b"/$bunfs/root/logo.png", true);
+    let asset_contents = append(&mut data, b"PNG", true);
+    let modules_offset = data.len() as u32;
+
+    let mut entry = [0u8; RECORD_SIZE];
+    put_pointer(&mut entry, 0, entry_name);
+    put_pointer(&mut entry, 8, entry_contents);
+    entry[48] = 2; // UTF-8
+    entry[49] = 2; // TypeScript
+    entry[50] = 1; // ESM
+    data.extend_from_slice(&entry);
+
+    let mut asset = [0u8; RECORD_SIZE];
+    put_pointer(&mut asset, 0, asset_name);
+    put_pointer(&mut asset, 8, asset_contents);
+    asset[49] = 5; // file
+    data.extend_from_slice(&asset);
+
+    let mut executable = b"\x7fELFsynthetic-prefix".to_vec();
+    executable.extend_from_slice(&data);
+    executable.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    executable.extend_from_slice(&modules_offset.to_le_bytes());
+    executable.extend_from_slice(&((RECORD_SIZE * 2) as u32).to_le_bytes());
+    executable.extend_from_slice(&0u32.to_le_bytes()); // entry point
+    executable.extend_from_slice(&0u32.to_le_bytes()); // argv offset
+    executable.extend_from_slice(&0u32.to_le_bytes()); // argv length
+    executable.extend_from_slice(&0u32.to_le_bytes()); // flags
+    executable.extend_from_slice(TRAILER);
+    executable
 }
 
 fn test_cli_artifact(status: JsonModuleStatus) -> CliOutputArtifact {

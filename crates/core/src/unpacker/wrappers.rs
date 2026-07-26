@@ -15,11 +15,44 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
+        collect_bun_compile_candidate(expr, &mut candidates);
         collect_umd_factory_candidates(expr, &mut candidates);
         collect_amd_define_candidates(expr, &mut candidates);
     }
 
     candidates
+}
+
+fn collect_bun_compile_candidate(expr: &Expr, candidates: &mut Vec<Module>) {
+    let Expr::Fn(FnExpr { function, .. }) = strip_parens(expr) else {
+        return;
+    };
+    if function.is_async || function.is_generator {
+        return;
+    }
+    let Some(params) = function
+        .params
+        .iter()
+        .map(|param| pat_ident_sym(&param.pat))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let expected = ["exports", "require", "module", "__filename", "__dirname"];
+    if params.len() != expected.len()
+        || params
+            .iter()
+            .zip(expected)
+            .any(|(actual, expected)| actual.as_ref() != expected)
+    {
+        return;
+    }
+    let Some(body) = &function.body else {
+        return;
+    };
+    let mut candidate = module_from_stmts(body.stmts.clone());
+    candidate.span = body.span;
+    candidates.push(candidate);
 }
 
 fn collect_umd_factory_candidates(expr: &Expr, candidates: &mut Vec<Module>) {

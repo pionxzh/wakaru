@@ -17,6 +17,7 @@ the registry defines *what*.
 | New rule, or moving a rule | [rule-dependency-inventory.md](rule-dependency-inventory.md) — ordering rationale, fragile edges, experiment log; [rewrite-assumptions.md](rewrite-assumptions.md) — level gating and named assumptions |
 | Transpiler helper work | [helper-detection.md](helper-detection.md) — detection design and rejected alternatives |
 | Cross-module / unpack behavior | [fact-system.md](fact-system.md) — the two-phase barrier and module facts |
+| Bun standalone executables | [bun-standalone.md](bun-standalone.md) — binary container extraction, CLI behavior, safety, and current limits |
 | Public Rust API | [public-api.md](public-api.md) — stable façade, owned inputs, artifacts, diagnostics, and incremental unpack contract |
 | Vue SFC recovery (`--vue-sfc`) | [vue-decompile.md](vue-decompile.md) — the recovery path and CLI behavior; [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) — experimental status and known gaps |
 | Correctness / semantics questions | [rewrite-assumptions.md](rewrite-assumptions.md); [test262-roundtrip.md](test262-roundtrip.md) — the semantic round-trip harness |

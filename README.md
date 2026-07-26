@@ -60,13 +60,15 @@ unless the source map includes original names.)
 npx @wakaru/cli input.js -o output.js               # decompile a file
 npx @wakaru/cli bundle.js --unpack -o out/          # unpack and decompile a bundle
 npx @wakaru/cli dist/ --unpack -o out/              # scan a bundle output directory
+npx @wakaru/cli ./compiled-app --unpack -o out/     # extract a Bun standalone executable
 ```
 
 Full flag reference: [docs/cli.md](./docs/cli.md).
 
 ## What it handles
 
-- **Bundle splitting** — webpack 4/5 (including Vercel ncc CommonJS output
+- **Bundle and container splitting** — Bun standalone PE/Mach-O/ELF executables;
+  webpack 4/5 (including Vercel ncc CommonJS output
   with an IIFE webpack bootstrap), esbuild, Bun, Browserify (including Cocos
   Creator 2.x project-script bundles), Metro, Closure ModuleManager, SystemJS,
   AMD/UMD, plus heuristic splitting of scope-hoisted ESM output (Rollup, Vite).

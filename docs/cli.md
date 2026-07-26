@@ -24,6 +24,7 @@ wakaru bundle.js --unpack=strict -o out/      # structural detection only, no he
 wakaru bundle.js --unpack=inspect -o out/     # finer boundaries for static inspection
 wakaru entry.js chunk.js --unpack -o out/     # unpack multiple explicit files
 wakaru dist/ --unpack -o out/                 # recursively scan a directory
+wakaru ./compiled-app --unpack -o out/        # extract a Bun standalone executable
 ```
 
 Directory inputs are supported only with `--unpack`. Wakaru recursively scans
@@ -31,6 +32,17 @@ Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 `node_modules`, and includes only files detected as bundles or chunks. Skipped
 files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
+
+An explicit PE, Mach-O, or ELF file can be a Bun standalone executable. Wakaru
+validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
+then sends those entries through the same unpack pipeline as ordinary bundle
+files. It never runs the executable. Binary assets are not written, and Bun's
+internal source-map blobs are not accepted as v3 input maps. Executable
+discovery is limited to explicit file paths: directory scans still consider
+only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
+`--raw` to preserve the exact embedded JavaScript before readability rewrites.
+See [bun-standalone.md](bun-standalone.md) for the container format, safety
+properties, and current limits.
 
 Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
 with an IIFE webpack bootstrap), Browserify, Metro, Closure ModuleManager,

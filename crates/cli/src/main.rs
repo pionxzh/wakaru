@@ -72,8 +72,9 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Input JavaScript/TypeScript file(s). With --unpack, directories are
-    /// scanned recursively for bundle/chunk files.
+    /// Input JavaScript/TypeScript file(s), or Bun standalone executables with
+    /// --unpack. With --unpack, directories are scanned recursively for
+    /// bundle/chunk files.
     ///
     /// Use `-` to read from stdin. If omitted and stdin is piped, stdin is read
     /// automatically.
@@ -1299,9 +1300,16 @@ fn run_public_unpack(
         } else {
             for path in paths {
                 if path == &PathBuf::from("-") || !path.is_dir() {
-                    let (code, filename) = read_input(Some(path))?;
-                    job.push(wakaru::Source::new(filename, code))?;
-                    pushed_inputs += 1;
+                    if path == &PathBuf::from("-") {
+                        let (code, filename) = read_input(Some(path))?;
+                        job.push(wakaru::Source::new(filename, code))?;
+                        pushed_inputs += 1;
+                        continue;
+                    }
+                    for source in read_explicit_unpack_sources(path)? {
+                        job.push(source)?;
+                        pushed_inputs += 1;
+                    }
                     continue;
                 }
 
@@ -1348,6 +1356,92 @@ fn run_public_unpack(
         scan_stats: (stats.scanned > 0).then_some(stats),
         single_input_name,
     })
+}
+
+fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if !is_executable_container(&bytes) {
+        let code = String::from_utf8(bytes)
+            .with_context(|| format!("failed to read {} as UTF-8", path.display()))?;
+        return Ok(vec![wakaru::Source::new(
+            path.to_string_lossy().to_string(),
+            code,
+        )]);
+    }
+
+    let standalone = wakaru::bun::extract_standalone(&bytes)
+        .with_context(|| format!("failed to extract Bun standalone {}", path.display()))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} is an executable but does not contain a supported Bun standalone graph",
+                path.display()
+            )
+        })?;
+    let mut javascript = standalone
+        .files
+        .iter()
+        .filter(|file| file.is_javascript_like())
+        .collect::<Vec<_>>();
+    javascript.sort_by_key(|file| (!file.is_entry, file.index));
+    if javascript.is_empty() {
+        bail!(
+            "Bun standalone {} contains no JavaScript-like embedded files",
+            path.display()
+        );
+    }
+
+    javascript
+        .into_iter()
+        .map(|file| {
+            let code = std::str::from_utf8(file.contents).with_context(|| {
+                format!(
+                    "Bun embedded JavaScript {:?} in {} is not UTF-8",
+                    file.name,
+                    path.display()
+                )
+            })?;
+            let embedded = sanitize_bun_embedded_path(&file.name, file.index);
+            Ok(wakaru::Source::new(
+                format!("{}#bun/{embedded}", path.to_string_lossy()),
+                code,
+            ))
+        })
+        .collect()
+}
+
+fn is_executable_container(bytes: &[u8]) -> bool {
+    const MAGICS: [&[u8]; 10] = [
+        b"MZ",
+        b"\x7fELF",
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xca\xfe\xba\xbf",
+        b"\xbe\xba\xfe\xca",
+        b"\xbf\xba\xfe\xca",
+    ];
+    MAGICS.iter().any(|magic| bytes.starts_with(magic))
+}
+
+fn sanitize_bun_embedded_path(name: &str, index: u32) -> String {
+    let normalized = name.replace('\\', "/");
+    let without_prefix = ["/$bunfs/root/", "/$bunfs/", "B:/~BUN/root/", "B:/~BUN/"]
+        .into_iter()
+        .find_map(|prefix| normalized.strip_prefix(prefix))
+        .unwrap_or(&normalized);
+    let mut sanitized = without_prefix
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>()
+        .join("/");
+    if sanitized.is_empty() {
+        sanitized = format!("embedded-{index}.js");
+    } else if Path::new(&sanitized).extension().is_none() {
+        sanitized.push_str(".js");
+    }
+    sanitized
 }
 
 fn public_rewrite_level(level: RewriteLevel) -> wakaru::RewriteLevel {

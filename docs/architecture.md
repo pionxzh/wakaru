@@ -40,6 +40,25 @@ Two main operations:
 
 ## Components
 
+### Bun standalone containers (`crates/wakaru/src/bun.rs`)
+
+A Bun standalone executable is a native PE, Mach-O, or ELF host followed by a
+serialized module graph. It is a container around JavaScript, not itself a
+JavaScript bundle format. For explicit executable inputs, the CLI first finds
+Bun's `\n---- Bun! ----\n` trailer, reads the preceding offsets record, validates
+the 52-byte module table and every data pointer, and hands JS/JSX/TS/TSX entries
+to one normal `UnpackJob`. The entry point is pushed first. Compiled Bun entries
+use a parenthesized CommonJS container with the exact parameters `exports`,
+`require`, `module`, `__filename`, and `__dirname`; the wrapper intake exposes
+that body to the existing esbuild/Bun factory detector. This second stage can
+recover thousands of inner factory and scope-hoisted modules.
+
+This trailer-first parser is independent of the native executable format and
+does not execute the input. The public `wakaru::bun` API borrows exact content
+slices and reports their absolute executable byte ranges. The CLI ignores
+non-JavaScript assets and Bun's internal serialized source maps; those maps are
+not v3 JSON source maps. See [bun-standalone.md](bun-standalone.md).
+
 ### Unpackers (`crates/core/src/unpacker/`)
 
 Each unpacker detects a specific bundle format and extracts individual modules as raw JS strings. Detection is attempted in order — first match wins:

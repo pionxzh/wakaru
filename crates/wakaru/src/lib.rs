@@ -1,3 +1,4 @@
+pub mod bun;
 pub mod debug;
 mod decompile;
 mod error;

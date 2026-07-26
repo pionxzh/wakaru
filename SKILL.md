@@ -26,6 +26,8 @@ mangled locals stay short unless a source map is provided.
   webpack bootstrap, or an esbuild/Bun/Metro/Browserify/Cocos Creator 2.x/
   Closure ModuleManager/SystemJS/AMD/Rollup/Vite bundle and need the individual
   modules.
+- You have a Bun standalone PE, Mach-O, or ELF executable and need its embedded
+  JavaScript without running it.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`
   artifact for inspection.
 - A stack trace points into vendored/minified code you can't read.
@@ -82,7 +84,13 @@ Variants:
 ```bash
 wakaru dist/ --unpack --json -o out/          # scan a build-output directory
 wakaru entry.js chunk.js --unpack -o out/     # explicit entry + chunk files
+wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun standalone safely
 ```
+
+Bun standalone extraction accepts an explicit executable path. It validates
+the embedded module graph and ignores binary assets; directory scans and stdin
+remain JavaScript-only inputs. Prefer `--raw` when comparing releases so the
+normal rewrite pipeline does not obscure the shipped representation.
 
 Ordinary Browserify bundles use unambiguous dependency-map request paths for
 readable module filenames. Conflicting or missing hints retain
