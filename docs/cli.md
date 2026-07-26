@@ -684,6 +684,10 @@ only one copy of it, links the call. A loader behind a chunk load
 (`require.e(chunk).then(() => require(id))`) is covered by the `require.e`
 report instead.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
