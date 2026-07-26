@@ -13,18 +13,110 @@ use super::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use crate::angular_recovery::syntax::{binding_key, member_prop_name, BindingKey};
 use crate::angular_recovery::PreparedAngularModule;
 
-pub(super) fn infer_ivy_roles(
-    modules: &[PreparedAngularModule],
-) -> Vec<(SymbolIdentity, &'static str)> {
-    let functions = collect_runtime_functions(modules);
+pub(super) struct StructuralRoleEvidence {
+    functions: Vec<RuntimeFunction>,
+}
 
-    let mut inferred = functions
-        .iter()
-        .filter(|function| is_define_component_shape(function))
-        .map(|function| (function.identity.clone(), "ɵɵdefineComponent"))
-        .collect::<Vec<_>>();
-    inferred.extend(infer_element_family(&functions));
-    inferred
+impl StructuralRoleEvidence {
+    pub(super) fn collect(modules: &[PreparedAngularModule]) -> Self {
+        Self {
+            functions: collect_runtime_functions(modules),
+        }
+    }
+
+    pub(super) fn infer_ivy_roles(&self) -> Vec<(SymbolIdentity, &'static str)> {
+        let mut inferred = self
+            .functions
+            .iter()
+            .filter(|function| is_define_component_shape(function))
+            .map(|function| (function.identity.clone(), "ɵɵdefineComponent"))
+            .collect::<Vec<_>>();
+        inferred.extend(infer_element_family(&self.functions));
+        inferred
+    }
+
+    pub(super) fn infer_template_roles(
+        &self,
+        modules: &[PreparedAngularModule],
+        roles: &IvyRoleTable,
+    ) -> Vec<(SymbolIdentity, &'static str)> {
+        let function_index = RuntimeFunctionIndex::new(&self.functions, roles);
+        let mut observations = Vec::new();
+        let mut next_view_id = 0;
+        for prepared in modules {
+            let mut collector = TemplateFunctionCollector {
+                roles,
+                function_index: &function_index,
+                unresolved_ctxt: prepared.unresolved_ctxt,
+                observations: Vec::new(),
+                next_view_id,
+            };
+            prepared.module.visit_with(&mut collector);
+            next_view_id = collector.next_view_id;
+            observations.extend(collector.observations);
+        }
+
+        let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
+        for observation in observations {
+            by_identity
+                .entry(observation.identity.clone())
+                .or_default()
+                .push(observation);
+        }
+
+        let mut inferred = infer_specialized_element_pair(&function_index, &by_identity);
+        inferred.extend(infer_text_interpolation_family(
+            &function_index,
+            &by_identity,
+        ));
+        for (identity, observations) in &by_identity {
+            let Some(definition) = function_index.unique(identity) else {
+                continue;
+            };
+
+            let mut matches = Vec::new();
+            if is_text_shape(definition, observations) {
+                matches.push("ɵɵtext");
+            }
+            if is_listener_shape(definition, observations) {
+                matches.push("ɵɵlistener");
+            }
+            if is_advance_shape(definition, observations) {
+                matches.push("ɵɵadvance");
+            }
+            if is_property_shape(definition, observations) {
+                matches.push("ɵɵproperty");
+            }
+            if is_embedded_template_shape(definition, observations) {
+                matches.push("ɵɵtemplate");
+            }
+            if is_conditional_shape(definition, observations) {
+                matches.push("ɵɵconditional");
+            }
+            if is_next_context_shape(definition, observations) {
+                matches.push("ɵɵnextContext");
+            }
+            if is_projection_def_shape(definition, observations) {
+                matches.push("ɵɵprojectionDef");
+            }
+            if is_projection_shape(definition, observations) {
+                matches.push("ɵɵprojection");
+            }
+            if is_reference_shape(definition, observations) {
+                matches.push("ɵɵreference");
+            }
+            if is_pipe_shape(definition, observations) {
+                matches.push("ɵɵpipe");
+            }
+            if let Some(name) = pipe_binding_shape(definition, observations) {
+                matches.push(name);
+            }
+            if let [name] = matches.as_slice() {
+                inferred.push((definition.identity.clone(), *name));
+            }
+        }
+        inferred
+    }
 }
 
 fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> Vec<RuntimeFunction> {
@@ -40,101 +132,52 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> Vec<RuntimeFu
     functions
 }
 
-pub(super) fn infer_template_roles(
-    modules: &[PreparedAngularModule],
-    roles: &IvyRoleTable,
-) -> Vec<(SymbolIdentity, &'static str)> {
-    let functions = collect_runtime_functions(modules);
-    let mut observations = Vec::new();
-    let mut next_view_id = 0;
-    for prepared in modules {
-        let mut collector = TemplateFunctionCollector {
-            roles,
-            functions: &functions,
-            unresolved_ctxt: prepared.unresolved_ctxt,
-            observations: Vec::new(),
-            next_view_id,
-        };
-        prepared.module.visit_with(&mut collector);
-        next_view_id = collector.next_view_id;
-        observations.extend(collector.observations);
-    }
-
-    let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
-    for observation in observations {
-        by_identity
-            .entry(observation.identity.clone())
-            .or_default()
-            .push(observation);
-    }
-
-    let mut inferred = infer_specialized_element_pair(&functions, &by_identity, roles);
-    inferred.extend(infer_text_interpolation_family(
-        &functions,
-        &by_identity,
-        roles,
-    ));
-    for (identity, observations) in &by_identity {
-        let mut definitions = functions
-            .iter()
-            .filter(|function| roles.symbols_equivalent(&function.identity, identity));
-        let Some(definition) = definitions.next() else {
-            continue;
-        };
-        if definitions.next().is_some() {
-            continue;
-        }
-
-        let mut matches = Vec::new();
-        if is_text_shape(definition, observations) {
-            matches.push("ɵɵtext");
-        }
-        if is_listener_shape(definition, observations) {
-            matches.push("ɵɵlistener");
-        }
-        if is_advance_shape(definition, observations) {
-            matches.push("ɵɵadvance");
-        }
-        if is_property_shape(definition, observations) {
-            matches.push("ɵɵproperty");
-        }
-        if is_embedded_template_shape(definition, observations) {
-            matches.push("ɵɵtemplate");
-        }
-        if is_conditional_shape(definition, observations) {
-            matches.push("ɵɵconditional");
-        }
-        if is_next_context_shape(definition, observations) {
-            matches.push("ɵɵnextContext");
-        }
-        if is_projection_def_shape(definition, observations) {
-            matches.push("ɵɵprojectionDef");
-        }
-        if is_projection_shape(definition, observations) {
-            matches.push("ɵɵprojection");
-        }
-        if is_reference_shape(definition, observations) {
-            matches.push("ɵɵreference");
-        }
-        if is_pipe_shape(definition, observations) {
-            matches.push("ɵɵpipe");
-        }
-        if let Some(name) = pipe_binding_shape(definition, observations) {
-            matches.push(name);
-        }
-        if let [name] = matches.as_slice() {
-            inferred.push((definition.identity.clone(), *name));
-        }
-    }
-    inferred
-}
-
 #[derive(Clone)]
 struct RuntimeFunction {
     identity: SymbolIdentity,
     params: Vec<Pat>,
     body: BlockStmt,
     unresolved_ctxt: SyntaxContext,
+}
+
+struct RuntimeFunctionIndex<'a> {
+    exact: HashMap<&'a SymbolIdentity, Vec<&'a RuntimeFunction>>,
+    aliases: HashMap<usize, Vec<&'a RuntimeFunction>>,
+    roles: &'a IvyRoleTable,
+}
+
+impl<'a> RuntimeFunctionIndex<'a> {
+    fn new(functions: &'a [RuntimeFunction], roles: &'a IvyRoleTable) -> Self {
+        let mut exact = HashMap::new();
+        let mut aliases = HashMap::new();
+        for function in functions {
+            if let Some(group) = roles.alias_group_index(&function.identity) {
+                aliases.entry(group).or_insert_with(Vec::new).push(function);
+            } else {
+                exact
+                    .entry(&function.identity)
+                    .or_insert_with(Vec::new)
+                    .push(function);
+            }
+        }
+        Self {
+            exact,
+            aliases,
+            roles,
+        }
+    }
+
+    fn unique(&self, identity: &SymbolIdentity) -> Option<&'a RuntimeFunction> {
+        let candidates = if let Some(group) = self.roles.alias_group_index(identity) {
+            self.aliases.get(&group)?
+        } else {
+            self.exact.get(identity)?
+        };
+        let [candidate] = candidates.as_slice() else {
+            return None;
+        };
+        Some(*candidate)
+    }
 }
 
 struct RuntimeFunctionCollector {
@@ -158,7 +201,7 @@ enum TemplateCallUsage {
 
 struct TemplateFunctionCollector<'a> {
     roles: &'a IvyRoleTable,
-    functions: &'a [RuntimeFunction],
+    function_index: &'a RuntimeFunctionIndex<'a>,
     unresolved_ctxt: SyntaxContext,
     observations: Vec<TemplateCallObservation>,
     next_view_id: usize,
@@ -184,7 +227,7 @@ impl Visit for TemplateFunctionCollector<'_> {
             observer.collect_statements(&body.stmts, None);
         }
         if observer.saw_creation_anchor
-            || has_unclassified_element_anchor(&observer.observations, self.functions, self.roles)
+            || has_unclassified_element_anchor(&observer.observations, self.function_index)
         {
             self.observations.extend(observer.observations);
         }
@@ -379,8 +422,7 @@ fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
 
 fn has_unclassified_element_anchor(
     observations: &[TemplateCallObservation],
-    functions: &[RuntimeFunction],
-    roles: &IvyRoleTable,
+    function_index: &RuntimeFunctionIndex<'_>,
 ) -> bool {
     let mut grouped: HashMap<&SymbolIdentity, Vec<&TemplateCallObservation>> = HashMap::new();
     for observation in observations {
@@ -391,26 +433,26 @@ fn has_unclassified_element_anchor(
     }
 
     let has_start = grouped.iter().any(|(identity, observations)| {
-        unique_runtime_function_equivalent(functions, identity, roles)
+        function_index
+            .unique(identity)
             .is_some_and(|definition| is_specialized_element_start_shape(definition, observations))
     });
     let has_end = grouped.iter().any(|(identity, observations)| {
-        unique_runtime_function_equivalent(functions, identity, roles)
+        function_index
+            .unique(identity)
             .is_some_and(|definition| is_specialized_element_end_shape(definition, observations))
     });
     has_start && has_end
 }
 
 fn infer_specialized_element_pair(
-    functions: &[RuntimeFunction],
+    function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
-    roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut starts_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
     let mut ends_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
     for (identity, calls) in observations {
-        let Some(definition) = unique_runtime_function_equivalent(functions, identity, roles)
-        else {
+        let Some(definition) = function_index.unique(identity) else {
             continue;
         };
         if is_specialized_element_start_shape(definition, calls) {
@@ -846,9 +888,8 @@ fn contains_negative_one(block: &BlockStmt) -> bool {
 }
 
 fn infer_text_interpolation_family(
-    functions: &[RuntimeFunction],
+    function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
-    roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut inferred = Vec::new();
     for (identity, calls_in_templates) in observations {
@@ -859,7 +900,7 @@ fn infer_text_interpolation_family(
         }) {
             continue;
         }
-        let Some(wrapper) = unique_runtime_function_equivalent(functions, identity, roles) else {
+        let Some(wrapper) = function_index.unique(identity) else {
             continue;
         };
         let Some(parameters) = plain_parameter_bindings(wrapper) else {
@@ -887,9 +928,7 @@ fn infer_text_interpolation_family(
         {
             continue;
         }
-        let Some(target) =
-            unique_runtime_function_equivalent(functions, &target_call.callee, roles)
-        else {
+        let Some(target) = function_index.unique(&target_call.callee) else {
             continue;
         };
         let Some(target_parameters) = plain_parameter_bindings(target) else {
@@ -905,18 +944,6 @@ fn infer_text_interpolation_family(
         inferred.push((target.identity.clone(), "ɵɵtextInterpolate1"));
     }
     inferred
-}
-
-fn unique_runtime_function_equivalent<'a>(
-    functions: &'a [RuntimeFunction],
-    identity: &SymbolIdentity,
-    roles: &IvyRoleTable,
-) -> Option<&'a RuntimeFunction> {
-    let mut candidates = functions
-        .iter()
-        .filter(|function| roles.symbols_equivalent(&function.identity, identity));
-    let candidate = candidates.next()?;
-    candidates.next().is_none().then_some(candidate)
 }
 
 fn is_empty_string_default(pattern: &Pat) -> bool {

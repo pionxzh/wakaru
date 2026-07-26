@@ -397,6 +397,10 @@ loading (`__turbopack_context__.L(...)`), path resolution
 (`__turbopack_context__.t`). The message names the first such member. The
 rest of the module is recovered; that call would throw if executed.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
