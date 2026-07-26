@@ -46,14 +46,17 @@ pub(super) fn infer_template_roles(
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let functions = collect_runtime_functions(modules);
     let mut observations = Vec::new();
+    let mut next_view_id = 0;
     for prepared in modules {
         let mut collector = TemplateFunctionCollector {
             roles,
             functions: &functions,
             unresolved_ctxt: prepared.unresolved_ctxt,
             observations: Vec::new(),
+            next_view_id,
         };
         prepared.module.visit_with(&mut collector);
+        next_view_id = collector.next_view_id;
         observations.extend(collector.observations);
     }
 
@@ -104,6 +107,21 @@ pub(super) fn infer_template_roles(
         if is_next_context_shape(definition, observations) {
             matches.push("ɵɵnextContext");
         }
+        if is_projection_def_shape(definition, observations) {
+            matches.push("ɵɵprojectionDef");
+        }
+        if is_projection_shape(definition, observations) {
+            matches.push("ɵɵprojection");
+        }
+        if is_reference_shape(definition, observations) {
+            matches.push("ɵɵreference");
+        }
+        if is_pipe_shape(definition, observations) {
+            matches.push("ɵɵpipe");
+        }
+        if let Some(name) = pipe_binding_shape(definition, observations) {
+            matches.push(name);
+        }
         if let [name] = matches.as_slice() {
             inferred.push((definition.identity.clone(), *name));
         }
@@ -129,6 +147,7 @@ struct TemplateCallObservation {
     phase: u8,
     arguments: Vec<Box<Expr>>,
     usage: TemplateCallUsage,
+    view_id: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -142,10 +161,13 @@ struct TemplateFunctionCollector<'a> {
     functions: &'a [RuntimeFunction],
     unresolved_ctxt: SyntaxContext,
     observations: Vec<TemplateCallObservation>,
+    next_view_id: usize,
 }
 
 impl Visit for TemplateFunctionCollector<'_> {
     fn visit_function(&mut self, function: &Function) {
+        let view_id = self.next_view_id;
+        self.next_view_id += 1;
         let Some(render_flags) = function_param_binding(function, 0) else {
             function.visit_children_with(self);
             return;
@@ -156,6 +178,7 @@ impl Visit for TemplateFunctionCollector<'_> {
             render_flags,
             saw_creation_anchor: false,
             observations: Vec::new(),
+            view_id,
         };
         if let Some(body) = &function.body {
             observer.collect_statements(&body.stmts, None);
@@ -175,6 +198,7 @@ struct TemplateCallObserver<'a> {
     render_flags: BindingKey,
     saw_creation_anchor: bool,
     observations: Vec<TemplateCallObservation>,
+    view_id: usize,
 }
 
 impl TemplateCallObserver<'_> {
@@ -255,6 +279,9 @@ impl TemplateCallObserver<'_> {
         let Some(phase @ (1 | 2)) = phase else {
             return;
         };
+        for argument in &call.args {
+            self.collect_expression(argument.expr.as_ref(), Some(phase));
+        }
         let Some((root, argument_lists)) = call_chain(call) else {
             return;
         };
@@ -294,6 +321,7 @@ impl TemplateCallObserver<'_> {
                         .map(|argument| argument.expr.clone())
                         .collect(),
                     usage,
+                    view_id: self.view_id,
                 }
             }));
     }
@@ -378,31 +406,63 @@ fn infer_specialized_element_pair(
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
     roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut starts = HashSet::new();
-    let mut ends = HashSet::new();
+    let mut starts_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
+    let mut ends_by_view: HashMap<usize, HashSet<SymbolIdentity>> = HashMap::new();
     for (identity, calls) in observations {
         let Some(definition) = unique_runtime_function_equivalent(functions, identity, roles)
         else {
             continue;
         };
         if is_specialized_element_start_shape(definition, calls) {
-            starts.insert(definition.identity.clone());
+            for call in calls {
+                starts_by_view
+                    .entry(call.view_id)
+                    .or_default()
+                    .insert(definition.identity.clone());
+            }
         }
         if is_specialized_element_end_shape(definition, calls) {
-            ends.insert(definition.identity.clone());
+            for call in calls {
+                ends_by_view
+                    .entry(call.view_id)
+                    .or_default()
+                    .insert(definition.identity.clone());
+            }
         }
     }
 
-    match (
-        starts.into_iter().collect::<Vec<_>>().as_slice(),
-        ends.into_iter().collect::<Vec<_>>().as_slice(),
-    ) {
-        ([start], [end]) if start != end => vec![
-            (start.clone(), "ɵɵelementStart"),
-            (end.clone(), "ɵɵelementEnd"),
-        ],
-        _ => Vec::new(),
+    let mut proven_starts = HashSet::new();
+    let mut proven_ends = HashSet::new();
+    for (view_id, starts) in starts_by_view {
+        let Some(ends) = ends_by_view.get(&view_id) else {
+            continue;
+        };
+        let (Some(start), Some(end)) =
+            (single_identity(starts.iter()), single_identity(ends.iter()))
+        else {
+            continue;
+        };
+        if start != end {
+            proven_starts.insert(start.clone());
+            proven_ends.insert(end.clone());
+        }
     }
+    proven_starts
+        .into_iter()
+        .map(|identity| (identity, "ɵɵelementStart"))
+        .chain(
+            proven_ends
+                .into_iter()
+                .map(|identity| (identity, "ɵɵelementEnd")),
+        )
+        .collect()
+}
+
+fn single_identity<'a>(
+    mut identities: impl Iterator<Item = &'a SymbolIdentity>,
+) -> Option<&'a SymbolIdentity> {
+    let identity = identities.next()?;
+    identities.next().is_none().then_some(identity)
 }
 
 fn is_specialized_element_start_shape(
@@ -621,6 +681,117 @@ fn is_next_context_shape(
             argument.as_ref(),
             Expr::Ident(identifier) if binding_key(identifier) == binding_key(&parameter.id)
         )
+    })
+}
+
+fn is_projection_def_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
+        && direct_calls(definition).len() >= 4
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && matches!(observation.arguments.len(), 0 | 1)
+                && observation.arguments.first().is_none_or(|argument| {
+                    matches!(argument.as_ref(), Expr::Ident(_) | Expr::Array(_))
+                })
+        })
+}
+
+fn is_projection_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    definition.params.len() == 6
+        && is_numeric_default(&definition.params[1], 0.0)
+        && direct_calls(definition).len() >= 6
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && matches!(observation.arguments.len(), 1..=6)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn is_reference_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
+        && direct_calls(definition).len() >= 2
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Initializer
+                && observation.phase == 2
+                && observation.arguments.len() == 1
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn is_pipe_shape(definition: &RuntimeFunction, observations: &[TemplateCallObservation]) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 2)
+        && direct_calls(definition).len() >= 5
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && observation.arguments.len() == 2
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+        })
+}
+
+fn pipe_binding_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> Option<&'static str> {
+    let parameters = plain_parameter_bindings(definition)?;
+    if !(3..=6).contains(&parameters.len())
+        || direct_calls(definition).len() < 4
+        || !observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
+                && observation.arguments.len() == parameters.len()
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+    {
+        return None;
+    }
+    Some(match parameters.len() {
+        3 if observations
+            .iter()
+            .all(|observation| matches!(observation.arguments[2].as_ref(), Expr::Array(_))) =>
+        {
+            "ɵɵpipeBindV"
+        }
+        3 => "ɵɵpipeBind1",
+        4 => "ɵɵpipeBind2",
+        5 => "ɵɵpipeBind3",
+        6 => "ɵɵpipeBind4",
+        _ => return None,
     })
 }
 
