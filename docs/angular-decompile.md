@@ -233,28 +233,40 @@ The committed primary corpus is a pinned Angular 22.0.8 CLI production
 application under `crates/core/tests/bundles/angular-ivy-gen/`. It builds three
 application components across a minified main chunk, shared Angular runtime
 chunk, and lazy ESM chunk. The generator also passes those outputs through
-Closure Compiler `SIMPLE`.
+Closure Compiler `SIMPLE`, and passes a separate retained-root producer entry
+through Closure Compiler `ADVANCED`.
 
-Both producer forms recover all three component definitions with non-empty
+All three producer forms recover all three component definitions with non-empty
 inline templates. Covered regions include element structure, static text,
 interpolation, event listeners, property bindings, scoped styles, and
 cross-chunk runtime evidence. The fixture also recovers a nested modern
 `@if` / `@else` block, a selector-bearing projection slot, a local template
 reference, and a pipe binding from both the Angular chunks and their Closure
-`SIMPLE` aggregate. Repeater and deferred-view instructions remain explicit
-partial regions, matching the scope above.
+`SIMPLE` and rooted `ADVANCED` aggregates. Repeater and deferred-view
+instructions remain explicit partial regions, matching the scope above.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
 can replace those identifier characters and produce text that is not valid
-JavaScript. Generic `ADVANCED` is not a committed positive fixture:
-whole-program dead-code elimination can remove Angular component metadata
-unless the producer supplies Angular-aware externs and retained roots. A
-future positive advanced fixture must encode that producer contract.
+JavaScript.
 
-Local `WHITESPACE_ONLY` and `ADVANCED` experiments with retained roots, plus
-complete public application bundles, remain supplementary stress tests. They
-do not define the committed Angular vocabulary or success baseline.
+The committed `ADVANCED` producer explicitly exports the component classes,
+their compiled definition values, and a narrow canonical Ivy runtime map
+through externed global properties. Exporting classes alone is insufficient:
+Closure can still remove unobserved static definition assignments. Generic
+unrooted `ADVANCED` remains a negative experiment because the component
+metadata no longer exists for a decompiler to recover.
+
+`ADVANCED` may irreversibly rename ordinary component fields. Wakaru preserves
+the remaining binding consistently (for example, between a class field and an
+`@if` expression) but does not invent the original property name. Descriptor
+fields are different: when structural evidence remains unambiguous, such as a
+projection-selector string array used by a template with projection
+instructions, their semantic role can still be recovered.
+
+Local `WHITESPACE_ONLY` experiments and complete public application bundles
+remain supplementary stress tests. They do not define the committed Angular
+vocabulary or success baseline.
 
 ## Tests and local corpus policy
 
