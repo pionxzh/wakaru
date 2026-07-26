@@ -55,6 +55,7 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
                 std::slice::from_ref(&module),
                 &pre_rewrite_modules,
                 options.recovery(),
+                options.diagnostics(),
             );
             diagnostics.extend(recovery_diagnostics);
             Ok(DecompileOutput {
@@ -193,6 +194,47 @@ mod tests {
         assert!(artifact.code.contains("@Component({"));
         assert!(artifact.code.contains("<article>{{ title }}</article>"));
         assert!(!artifact.code.contains("ɵɵdefineComponent"));
+    }
+
+    #[test]
+    fn angular_diagnostics_report_candidate_and_instruction_accounting() {
+        let source = r#"
+            import * as core from "@angular/core";
+
+            class DiagnosticComponent {
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: DiagnosticComponent,
+                    selectors: [["diagnostic-card"]],
+                    template: function(rf) {
+                        if (rf & 1) {
+                            core.ɵɵelement(0, "article");
+                            core.unknownRuntimeCall(1)(2, 3);
+                        }
+                    },
+                });
+            }
+        "#;
+        let output = decompile(
+            Source::new("diagnostic.js", source),
+            DecompileOptions::default()
+                .with_diagnostics(true)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("Angular diagnostics should not prevent recovery");
+
+        let report = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == DiagnosticCode::ArtifactRecoveryReport)
+            .expect("the recovery accounting diagnostic should be present");
+        assert_eq!(report.severity, DiagnosticSeverity::Warning);
+        assert!(report
+            .message
+            .contains("emitted 1/1 component candidates (0 complete, 1 partial, 0 rejected)"));
+        assert!(report.message.contains("rendered 1/3 runtime calls"));
+        assert!(report
+            .message
+            .contains("unknown call shapes: creation [1, 2] (1 occurrence/2 calls)"));
     }
 
     #[test]

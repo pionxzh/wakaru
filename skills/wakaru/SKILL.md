@@ -209,7 +209,9 @@ In JSON, recovered artifacts use `kind: "angular_component"` and status
 JavaScript uses `angular_component_source_js`. Treat partial artifacts as
 inspection aids: unsupported Ivy regions remain explicit, and recovered code
 is not claimed to be original source. `--angular` is incompatible with
-`--raw` and `--vue-sfc`.
+`--raw` and `--vue-sfc`. Add `--diagnostics` to audit component candidates and
+the rendered, unsupported, and malformed Ivy runtime-call totals, including
+privacy-safe phase/arity summaries for unknown runtime calls.
 
 ## Heavily obfuscated input
 

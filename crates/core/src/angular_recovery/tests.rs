@@ -817,14 +817,15 @@ fn marks_unclassified_calls_on_a_proven_runtime_namespace_as_partial() {
             template: function(renderFlags) {
                 if (renderFlags & 1) {
                     runtime.element(0, "article");
-                    runtime.q(1);
+                    runtime.q(1)(2, 3);
                 }
             },
         });
     "#;
 
-    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
         .expect("unclassified runtime calls should not prevent partial recovery");
+    let recovered = &report.components;
 
     assert_eq!(recovered.len(), 1);
     assert_eq!(
@@ -834,7 +835,28 @@ fn marks_unclassified_calls_on_a_proven_runtime_namespace_as_partial() {
     assert!(recovered[0]
         .source
         .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+    assert_eq!(
+        recovered[0]
+            .source
+            .matches("Unsupported Ivy instruction: unknown-runtime-instruction")
+            .count(),
+        1,
+        "equivalent human-readable issue comments should be emitted once"
+    );
     assert!(!recovered[0].source.contains("runtime.q"));
+    assert_eq!(
+        recovered[0].unknown_runtime_call_shapes,
+        vec![AngularUnknownRuntimeCallShape {
+            phase: AngularTemplatePhase::Creation,
+            argument_counts: vec![1, 2],
+            occurrences: 1,
+            runtime_calls: 2,
+        }]
+    );
+    assert_eq!(
+        report.unknown_runtime_call_shapes,
+        recovered[0].unknown_runtime_call_shapes
+    );
 }
 
 #[test]
@@ -1094,4 +1116,152 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
     assert!(recovered[0].source.contains("<article"));
     assert!(recovered[0].source.contains("\"after rewrites\""));
     assert!(!recovered[0].source.contains("\"before rewrites\""));
+}
+
+#[test]
+fn reports_accounting_for_every_rendered_instruction_call() {
+    let report =
+        analyze_angular_components_from_js(PRODUCTION_COMPONENT, AngularRecoveryOptions::default())
+            .expect("production Ivy should be analyzed");
+
+    assert_eq!(report.components.len(), 1);
+    assert_eq!(report.stats.modules_analyzed, 1);
+    assert_eq!(report.stats.component_candidates, 1);
+    assert_eq!(report.stats.recovered_components, 1);
+    assert_eq!(report.stats.rejected_component_candidates, 0);
+    assert_eq!(report.stats.complete_components, 1);
+    assert_eq!(report.stats.partial_components, 0);
+    assert_eq!(report.stats.runtime_calls_observed, 13);
+    assert_eq!(report.stats.rendered_instruction_calls, 13);
+    assert_eq!(report.stats.unsupported_runtime_calls, 0);
+    assert_eq!(report.stats.malformed_instruction_calls, 0);
+    assert!(report.components[0].issues.is_empty());
+    assert_eq!(
+        report.components[0].stats,
+        AngularTemplateRecoveryStats {
+            runtime_calls_observed: 13,
+            rendered_instruction_calls: 13,
+            unsupported_runtime_calls: 0,
+            malformed_instruction_calls: 0,
+        }
+    );
+}
+
+#[test]
+fn unsupported_template_statements_make_recovery_partial() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class StatementComponent {
+            static ɵcmp = define({
+                type: StatementComponent,
+                selectors: [["statement-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        const ignored = sideEffect();
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the component should still be recovered");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Partial
+    );
+    assert!(recovered[0].issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnsupportedStatement
+            && issue.detail.as_deref() == Some("declaration")
+    }));
+    assert!(recovered[0]
+        .source
+        .contains("<!-- Unsupported Ivy statement: declaration -->"));
+    assert!(recovered[0].source.contains("<section></section>"));
+}
+
+#[test]
+fn malformed_instruction_arguments_make_recovery_partial() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class MalformedComponent {
+            static ɵcmp = define({
+                type: MalformedComponent,
+                selectors: [["malformed-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        element("zero", "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the component should still be recovered");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Partial
+    );
+    assert_eq!(recovered[0].stats.runtime_calls_observed, 1);
+    assert_eq!(recovered[0].stats.rendered_instruction_calls, 0);
+    assert_eq!(recovered[0].stats.malformed_instruction_calls, 1);
+    assert!(recovered[0].issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵelement")
+    }));
+}
+
+#[test]
+fn report_counts_rejected_component_descriptors() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class ValidComponent {
+            static ɵcmp = define({
+                type: ValidComponent,
+                selectors: [["valid-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        element(0, "div");
+                    }
+                },
+            });
+        }
+
+        class RejectedComponent {
+            static ɵcmp = define({
+                type: RejectedComponent,
+                template: function(rf) {
+                    if (rf & 1) {
+                        element(0, "div");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the workspace should be analyzed");
+
+    assert_eq!(report.stats.component_candidates, 2);
+    assert_eq!(report.stats.recovered_components, 1);
+    assert_eq!(report.stats.rejected_component_candidates, 1);
+    assert_eq!(report.components[0].selector, "valid-card");
 }
