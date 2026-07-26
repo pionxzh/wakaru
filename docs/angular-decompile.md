@@ -46,13 +46,16 @@ Initial recovery covers:
 - event listeners;
 - nested embedded views selected by modern `@if` / `@else if` / `@else`
   control flow, including component-context reads through `ɵɵnextContext`;
+- content projection, including selector-bearing `<ng-content>` slots;
+- local template references and their use in binding expressions;
+- declared pipes and fixed- or variadic-argument pipe bindings;
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Repeaters, deferred views, projection, pipes, local template references, and
-dependency/import reconstruction are incremental extensions. Unsupported
-instruction regions remain explicit in the recovery IR and must not be
-silently rendered as if recovery were complete.
+Repeaters, deferred views, and dependency/import reconstruction are
+incremental extensions. Unsupported instruction regions remain explicit in
+the recovery IR and must not be silently rendered as if recovery were
+complete.
 
 ## Architecture boundary
 
@@ -203,9 +206,10 @@ Both producer forms recover all three component definitions with non-empty
 inline templates. Covered regions include element structure, static text,
 interpolation, event listeners, property bindings, scoped styles, and
 cross-chunk runtime evidence. The fixture also recovers a nested modern
-`@if` / `@else` block from both the Angular chunks and their Closure `SIMPLE`
-aggregate. Repeater and deferred-view instructions remain explicit partial
-regions, matching the scope above.
+`@if` / `@else` block, a selector-bearing projection slot, a local template
+reference, and a pipe binding from both the Angular chunks and their Closure
+`SIMPLE` aggregate. Repeater and deferred-view instructions remain explicit
+partial regions, matching the scope above.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -246,6 +250,7 @@ Pause and re-check this boundary after each milestone:
 3. renamed-instruction and renamed-descriptor support;
 4. root operation and CLI artifact integration;
 5. embedded views and control flow.
+6. projection, local references, and pipes.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
