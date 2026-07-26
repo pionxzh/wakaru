@@ -156,13 +156,14 @@ impl IvyRoleTable {
         for prepared in modules {
             table.collect_export_maps(&prepared.module, prepared.unresolved_ctxt);
         }
-        for (identity, name) in structural::infer_ivy_roles(modules) {
+        let structural_evidence = structural::StructuralRoleEvidence::collect(modules);
+        for (identity, name) in structural_evidence.infer_ivy_roles() {
             table.record_mapping(identity, name.to_string());
         }
         let aliases = super::workspace::collect_esm_symbol_aliases(modules);
         table.install_aliases(&aliases);
         table.propagate_aliases();
-        for (identity, name) in structural::infer_template_roles(modules, &table) {
+        for (identity, name) in structural_evidence.infer_template_roles(modules, &table) {
             table.record_mapping(identity, name.to_string());
         }
         table.propagate_aliases();
@@ -291,13 +292,8 @@ impl IvyRoleTable {
         }
     }
 
-    pub(super) fn symbols_equivalent(&self, left: &SymbolIdentity, right: &SymbolIdentity) -> bool {
-        left == right
-            || self
-                .alias_group_by_symbol
-                .get(left)
-                .zip(self.alias_group_by_symbol.get(right))
-                .is_some_and(|(left, right)| left == right)
+    fn alias_group_index(&self, identity: &SymbolIdentity) -> Option<usize> {
+        self.alias_group_by_symbol.get(identity).copied()
     }
 
     pub(super) fn instruction_for_callee(

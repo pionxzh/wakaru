@@ -153,12 +153,44 @@ created by every later Wakaru rule.
 The evidence sidecar is generic source keyed by the final module filename. The
 driver does not import Angular types or assign roles, and every unpacker still
 uses the same path. The current implementation materializes and reparses the
-two views only when recovery is enabled. Retaining resolved ASTs and a stable
-cross-stage origin ID would remove that cost later without changing the
-artifact contract.
+two views only when recovery is enabled. The independent evidence and readable
+parses run in parallel while sharing one SWC `Globals` identity domain; this
+keeps `SyntaxContext` values distinct across the complete module workspace.
+Parser source maps are not retained after resolution because artifact printing
+uses the recovered AST rather than source-position lookups. Retaining resolved
+ASTs and a stable cross-stage origin ID would remove the remaining reparse cost
+later, but would require a larger cross-stage ownership contract.
 
 Standalone recovery receives one source view and therefore parses it once,
 matching the convenience API boundary documented in [public-api.md](public-api.md).
+
+Structural runtime functions are collected once for both initial Ivy-role
+inference and template-use inference. After cross-module aliases are installed,
+an equivalence index resolves a runtime binding to its unique function in
+constant expected time. This avoids rescanning every runtime function for each
+template call while preserving the existing fail-closed behavior for duplicate
+or ambiguous definitions.
+
+### Performance and profiling
+
+`--profile` exposes these top-level Angular spans:
+
+- `angular: prepare modules` or `angular: prepare module views`;
+- `angular: recover prepared modules`;
+- `angular: infer Ivy roles`;
+- `angular: index artifact symbols`;
+- `angular: recover components`.
+
+The nested spans distinguish unavoidable parsing from semantic analysis and
+artifact rendering. A local reference run on a 12.4 MB, 259-module production
+corpus used the `dev-release` CLI, one warmup, and five measured runs. Normal
+unpack averaged 5.33 seconds and Angular unpack averaged 6.72 seconds. The
+Angular trace itself spent about 281 ms preparing the two views and 635 ms in
+prepared-module recovery, including 189 ms for role inference, 32 ms for
+artifact-symbol indexing, and 384 ms for component recovery. Writing hundreds
+of additional sidecars accounts for part of the remaining CLI difference.
+These figures validate the current implementation; they are not a performance
+contract across machines or corpora.
 
 The workspace may canonicalize a stable namespace argument passed into an
 immediately invoked function when the corresponding parameter is never
@@ -297,6 +329,7 @@ Pause and re-check this boundary after each milestone:
 5. embedded views and control flow.
 6. projection, local references, and pipes.
 7. artifact-local helpers, imports, and materializable dependencies.
+8. rooted Closure `ADVANCED` validation and representative-corpus profiling.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

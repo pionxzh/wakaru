@@ -333,6 +333,10 @@ unrelated extensions remain excluded.
 The command exits nonzero when it finds anything. Validate normal output only:
 raw output has no usable module-graph contract.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
