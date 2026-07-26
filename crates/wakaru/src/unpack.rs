@@ -208,6 +208,7 @@ impl UnpackJob {
         }
 
         let mut modules = Vec::new();
+        let mut pre_rewrite_modules = Vec::new();
         let mut diagnostics = Vec::new();
         if !processed.is_empty() {
             let processed_meta = processed
@@ -222,12 +223,16 @@ impl UnpackJob {
                 matches!(self.options.modules(), ModuleMode::Raw),
             );
             modules = converted.modules;
+            pre_rewrite_modules = converted.pre_rewrite_modules;
             diagnostics = converted.diagnostics;
         }
 
         append_preserved_modules(&mut modules, &mut self.reports, preserved);
-        let (artifacts, recovery_diagnostics) =
-            crate::artifacts::recover_artifacts(&modules, self.options.recovery());
+        let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
+            &modules,
+            &pre_rewrite_modules,
+            self.options.recovery(),
+        );
         diagnostics.extend(recovery_diagnostics);
 
         Ok(UnpackOutput {
@@ -277,7 +282,7 @@ fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
 fn run_core_unpack(
     inputs: Vec<RetainedInput>,
     options: &UnpackOptions,
-) -> Result<wakaru_core::driver::PreparedUnpackOutput> {
+) -> Result<wakaru_core::driver::CapturedUnpackOutput> {
     let span = tracing::info_span!("public_unpack_core");
     let _enter = span.enter();
     let (level, dce_mode, raw) = match options.modules() {
@@ -295,11 +300,12 @@ fn run_core_unpack(
     };
     let core_inputs = inputs.into_iter().map(|input| input.prepared).collect();
 
-    let result = wakaru_core::driver::unpack_prepared_inputs_with_policy(
+    let result = wakaru_core::driver::unpack_prepared_inputs_with_policy_and_capture(
         core_inputs,
         core_options,
         raw,
         core_scope_hoist_policy(options),
+        !raw && options.recovery().angular_components(),
     );
     result.map_err(|error| Error::new(ErrorKind::Internal, None, error))
 }
@@ -321,17 +327,22 @@ fn core_scope_hoist_policy(options: &UnpackOptions) -> wakaru_core::driver::Scop
 
 struct ConvertedOutput {
     modules: Vec<ModuleOutput>,
+    pre_rewrite_modules: Vec<(String, String)>,
     diagnostics: Vec<Diagnostic>,
 }
 
 fn convert_core_output(
-    output: wakaru_core::driver::PreparedUnpackOutput,
+    captured: wakaru_core::driver::CapturedUnpackOutput,
     processed: &[ProcessedInput],
     reports: &mut [InputReport],
     raw: bool,
 ) -> ConvertedOutput {
     let span = tracing::info_span!("public_unpack_convert_output");
     let _enter = span.enter();
+    let wakaru_core::driver::CapturedUnpackOutput {
+        output,
+        pre_rewrite_modules,
+    } = captured;
     let only_input = (processed.len() == 1).then_some(processed[0].id);
     let failed: HashSet<&str> = output
         .warnings
@@ -429,6 +440,7 @@ fn convert_core_output(
 
     ConvertedOutput {
         modules,
+        pre_rewrite_modules,
         diagnostics,
     }
 }
@@ -536,6 +548,12 @@ mod tests {
 
     const CLOSURE_MODULE_MANAGER_FIXTURE: &str =
         include_str!("../../core/tests/bundles/closure-module-manager/synthetic.js");
+    const ANGULAR_PRODUCTION_RUNTIME: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/runtime.js");
+    const ANGULAR_PRODUCTION_MAIN: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/main.js");
+    const ANGULAR_PRODUCTION_LAZY: &str =
+        include_str!("../../core/tests/bundles/angular-ivy-gen/dist/lazy.js");
     const CLOSURE_ANGULAR_COMPONENT_FIXTURE: &str = r#"
         "use strict";
         this.localSuite = this.localSuite || {};
@@ -550,13 +568,18 @@ mod tests {
               ["runtime", "component"]
             );
             shared.define = function(value) {
-              return value;
+              return shared.noSideEffects(() => Object.assign({}, shared.baseDefinition, {
+                type: value.type,
+                selectors: value.selectors,
+                template: value.template,
+                dependencies: value.dependencies,
+                styles: value.styles
+              }));
             };
             shared.element = function() {
               return shared.element;
             };
             shared.publicRuntime = {
-              "ɵɵdefineComponent": shared.define,
               "ɵɵelement": shared.element
             };
             shared.after();
@@ -577,7 +600,9 @@ mod tests {
                 if (renderFlags & 1) {
                   shared.element(0, "article");
                 }
-              }
+              },
+              dependencies: [],
+              styles: []
             });
             shared.after();
           } catch (error) {
@@ -755,6 +780,35 @@ mod tests {
         assert_eq!(artifact.module_indices.len(), 1);
         assert!(artifact.code.contains("<article></article>"));
         assert!(!artifact.code.contains("shared."));
+    }
+
+    #[test]
+    fn angular_cli_production_chunks_recover_through_the_root_operation() {
+        let output = unpack(
+            vec![
+                Source::new("runtime.js", ANGULAR_PRODUCTION_RUNTIME),
+                Source::new("main.js", ANGULAR_PRODUCTION_MAIN),
+                Source::new("lazy.js", ANGULAR_PRODUCTION_LAZY),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("generated Angular chunks should decompile and recover artifacts");
+
+        assert_eq!(output.modules.len(), 3);
+        assert_eq!(output.artifacts.len(), 3);
+        assert!(output.artifacts.iter().any(|artifact| {
+            artifact.status == crate::ArtifactStatus::Complete
+                && artifact.code.contains("selector: \"fixture-card\"")
+                && artifact.code.contains("(click)=\"select()\"")
+                && artifact.code.contains("[disabled]=\"disabled\"")
+        }));
+        assert!(output
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.code.contains("selector: \"fixture-lazy-card\"")));
     }
 
     #[test]
@@ -1010,12 +1064,15 @@ mod tests {
                 module_indices: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let output = wakaru_core::driver::PreparedUnpackOutput {
-            modules: vec![wakaru_core::driver::PreparedModuleOutput {
-                filename: "synthesized.js".to_string(),
-                code: "export {};".to_string(),
+        let output = wakaru_core::driver::CapturedUnpackOutput {
+            output: wakaru_core::driver::PreparedUnpackOutput {
+                modules: vec![wakaru_core::driver::PreparedModuleOutput {
+                    filename: "synthesized.js".to_string(),
+                    code: "export {};".to_string(),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         };
 

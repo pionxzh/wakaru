@@ -99,12 +99,14 @@ The common artifact model supports multiple files rather than assuming every
 framework produces one source file. Artifacts associate themselves with module
 indices, following `InputReport`, and guarantee unique normalized filenames.
 
-The current experimental Angular path analyzes the finalized JavaScript
-modules together as one owned module workspace. That preserves cross-module
-role evidence and avoids any bundler-specific analyzer route, but it currently
-parses that finalized workspace once after materialization. Moving the analyzer
-onto retained prepared ASTs is a performance optimization and must not change
-the artifact contract or make a bundler own framework semantics.
+The current experimental Angular path analyzes two aligned, owned views of one
+generic module workspace. A pre-rewrite view preserves compiler evidence before
+readability transforms can erase it; the finalized view supplies readable class
+bodies. This preserves cross-module role evidence and avoids any
+bundler-specific analyzer route. The two views are currently materialized and
+parsed only when recovery is enabled. Moving them onto retained prepared ASTs
+with stable origin identities is a performance optimization and must not
+change the artifact contract or make a bundler own framework semantics.
 Caller-supplied import resolution remains useful only for standalone namespace
 operations such as `vue::recover`.
 
@@ -159,15 +161,15 @@ filename or sentinel string for a later adapter to decode.
    the next candidate. Peak intake memory is therefore bounded by retained
    detected/processed inputs rather than every file visited by a directory
    walk.
-6. Text is materialized only for final output, explicit raw output, or a
-   recovery fallback.
+6. Text is materialized only for final output, explicit raw output, or an
+   explicitly enabled framework-recovery view.
 7. Source-map modes may take an explicitly slower path when source-coordinate
    state cannot safely cross the parallel boundary.
 8. All output ordering is deterministic regardless of Rayon scheduling.
 
 These invariants prevent the normal rewrite pipeline from reintroducing the
 emit/parse round trips removed by the prepared-AST work. Experimental framework
-recovery may parse the finalized owned module workspace once until it can
+recovery may parse its aligned evidence and finalized module views until it can
 consume retained prepared ASTs directly. The normal-path invariants are
 enforced by span tests in `wakaru-core` (see `docs/fact-system.md` and the
 driver tests).

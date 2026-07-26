@@ -40,8 +40,10 @@ Two main operations:
                                       recovery
 ```
 
-Framework artifact recovery consumes the generic finalized module workspace;
-it is not part of bundle detection or the ordered JavaScript rewrite registry.
+Framework artifact recovery consumes generic module views owned by the root
+operation: compiler evidence captured before readability rewrites and the
+finalized readable modules. It is not part of bundle detection or the ordered
+JavaScript rewrite registry.
 See [angular-decompile.md](angular-decompile.md) for the Angular Ivy boundary
 and [vue-decompile.md](vue-decompile.md) for the existing Vue recovery path.
 
@@ -323,7 +325,9 @@ the full design):
 ```
 unpack_bundle(source)
   → detector payload: normalized source or prepared AST
-  → Phase 1: par_iter → obtain resolved AST → rules through UnEsm
+  → Phase 1: par_iter → obtain resolved AST
+                        → [optional: materialize generic pre-rewrite evidence]
+                        → rules through UnEsm
                         → ESM recovery on a facts clone → collect facts
   → Phase 2: par_iter → resume retained AST → cross-module late pass
                     → exact CommonJS default-object composition recovery
@@ -526,10 +530,12 @@ When unpacking bundles, the driver runs a two-phase pipeline:
 1. **Phase 1 (parallel):** Obtain a resolved module AST. Source-only detector
    output is parsed and resolved here; webpack5 can hand off its already
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
-   backed by detector-owned runtime facts, then run the rule registry through
-   `UnEsm`, clone that barrier AST for webpack factory-IIFE fact recovery, and
-   extract import/export facts. Retain the pre-recovery AST together with its
-   `Globals` and unresolved mark.
+   backed by detector-owned runtime facts. When root framework recovery is
+   enabled, materialize an optional generic evidence view after those exact
+   normalizations and before the readability registry. Then run the rule
+   registry through `UnEsm`, clone that barrier AST for webpack factory-IIFE
+   fact recovery, and extract import/export facts. Retain the pre-recovery AST
+   together with its `Globals` and unresolved mark.
 2. **Phase 2 (parallel):** Resume the retained Phase 1 AST → cross-module late
    pass (exact CommonJS default-object composition, re-export consolidation,
    namespace decomposition, fact-aware helper recovery) → run the registry
@@ -560,6 +566,11 @@ private prepared AST sidecar. Public/raw unpack APIs materialize every sidecar
 back into `UnpackedModule::code`; the normal driver consumes it once at the
 Phase 1 boundary. Aggressive nested scope splitting likewise materializes first
 because that pass operates on emitted module text.
+
+The optional pre-rewrite evidence view is also format-neutral. Enabling it does
+not make the driver assign Angular, Vue, or other framework meaning; it only
+preserves the compiler shapes that a root artifact analyzer requested. The
+normal JavaScript output continues through the same rule pipeline.
 
 ## File structure
 

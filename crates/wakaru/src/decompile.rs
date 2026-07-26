@@ -20,6 +20,11 @@ use crate::source::Source;
 ///   failures where Wakaru cannot return any coherent artifact.
 pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOutput> {
     let input = input.into_parts();
+    let pre_rewrite_modules = if options.recovery().angular_components() {
+        vec![(input.filename.clone(), input.code.clone())]
+    } else {
+        Vec::new()
+    };
     let core_options = wakaru_core::DecompileOptions {
         filename: input.filename.clone(),
         sourcemap: input.source_map,
@@ -48,6 +53,7 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
             };
             let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
                 std::slice::from_ref(&module),
+                &pre_rewrite_modules,
                 options.recovery(),
             );
             diagnostics.extend(recovery_diagnostics);

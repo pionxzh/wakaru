@@ -18,8 +18,8 @@ use super::super::io::{
 };
 use super::super::output_finalize::strip_redundant_module_use_strict;
 use super::super::types::{
-    DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
-    PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
+    CapturedUnpackOutput, DecompileOptions, PreparedInputId, PreparedModuleOutput,
+    PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::collect_import_cycle_warnings;
@@ -131,6 +131,7 @@ struct Phase1Module {
     filename: String,
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
+    pre_rewrite_source: Option<String>,
     warning: Option<UnpackWarning>,
     input_parse_warnings: Vec<UnpackWarning>,
     /// Original source filename recovered from provenance markers (Sentry
@@ -211,11 +212,22 @@ pub(super) fn unpack_multi_module(
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
 }
 
+#[cfg(test)]
 pub(super) fn unpack_multi_module_with_plan(
-    mut modules: Vec<PreparedUnpackModule>,
+    modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
 ) -> Result<PreparedUnpackOutput> {
+    unpack_multi_module_with_plan_and_capture(modules, numeric_rewrite_plan, options, false)
+        .map(|captured| captured.output)
+}
+
+pub(super) fn unpack_multi_module_with_plan_and_capture(
+    mut modules: Vec<PreparedUnpackModule>,
+    numeric_rewrite_plan: NumericRewritePlan,
+    options: DecompileOptions,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
     if options.sourcemap.is_some() {
         bail!(
             "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates; use --emit-source-map for output maps"
@@ -317,7 +329,8 @@ pub(super) fn unpack_multi_module_with_plan(
             }
             None => (Globals::new(), None, Vec::new()),
         };
-        let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
+        let (facts, prepared_parts, pre_rewrite_source, warning, suggested_filename) =
+            GLOBALS.set(&globals, || {
             let (mut module, unresolved_mark) = match prepared_input {
                 Some(prepared) => prepared,
                 None => {
@@ -334,6 +347,7 @@ pub(super) fn unpack_multi_module_with_plan(
                             Err(e) => {
                                 return (
                                     crate::facts::ModuleFacts::default(),
+                                    None,
                                     None,
                                     Some(UnpackWarning::new(
                                         unpacked.module.filename.clone(),
@@ -397,6 +411,13 @@ pub(super) fn unpack_multi_module_with_plan(
                 collect_commonjs_default_object(&module, unresolved_mark);
             let commonjs_default_attached_properties =
                 collect_commonjs_default_attached_properties(&module, unresolved_mark);
+            let pre_rewrite_source = capture_pre_rewrite.then(|| {
+                let mut evidence_module = module.clone();
+                let cm: Lrc<SourceMap> = Default::default();
+                apply_fixer(&mut evidence_module)
+                    .and_then(|_| print_js(&evidence_module, cm))
+                    .unwrap_or_else(|_| unpacked.module.code.clone())
+            });
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -448,7 +469,13 @@ pub(super) fn unpack_multi_module_with_plan(
             facts.commonjs_default_object = commonjs_default_object;
             facts.commonjs_default_attached_properties =
                 commonjs_default_attached_properties;
-            (facts, prepared, None, suggested_filename)
+            (
+                facts,
+                prepared,
+                pre_rewrite_source,
+                None,
+                suggested_filename,
+            )
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
             globals,
@@ -459,6 +486,7 @@ pub(super) fn unpack_multi_module_with_plan(
             filename: unpacked.module.filename.clone(),
             facts,
             prepared,
+            pre_rewrite_source,
             warning,
             input_parse_warnings,
             suggested_filename,
@@ -474,6 +502,7 @@ pub(super) fn unpack_multi_module_with_plan(
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
+    let mut pre_rewrite_by_provisional = std::collections::HashMap::new();
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
     for phase1_module in phase1 {
@@ -482,6 +511,9 @@ pub(super) fn unpack_multi_module_with_plan(
             phase1_module.suggested_filename,
         ));
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
+        if let Some(source) = phase1_module.pre_rewrite_source {
+            pre_rewrite_by_provisional.insert(phase1_module.filename.clone(), source);
+        }
         prepared_modules.push(phase1_module.prepared);
         prepared_parse_warnings.push(phase1_module.input_parse_warnings);
         if let Some(w) = phase1_module.warning {
@@ -850,6 +882,18 @@ pub(super) fn unpack_multi_module_with_plan(
         .iter()
         .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
         .collect();
+    let pre_rewrite_modules = modules
+        .iter()
+        .filter_map(|(final_filename, _)| {
+            let provisional = reverse_rename
+                .get(final_filename.as_str())
+                .copied()
+                .unwrap_or(final_filename.as_str());
+            pre_rewrite_by_provisional
+                .get(provisional)
+                .map(|source| (final_filename.clone(), source.clone()))
+        })
+        .collect();
     let modules = modules
         .into_iter()
         .map(|(final_filename, code)| {
@@ -875,10 +919,13 @@ pub(super) fn unpack_multi_module_with_plan(
         })
         .collect();
 
-    Ok(PreparedUnpackOutput {
-        modules,
-        warnings,
-        detected_formats: Vec::new(),
+    Ok(CapturedUnpackOutput {
+        pre_rewrite_modules,
+        output: PreparedUnpackOutput {
+            modules,
+            warnings,
+            detected_formats: Vec::new(),
+        },
     })
 }
 
