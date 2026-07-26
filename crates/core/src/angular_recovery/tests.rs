@@ -1006,3 +1006,92 @@ fn infers_text_interpolation_and_property_binding_relationships() {
         .contains("<button [disabled]=\"disabled\"></button>"));
     assert!(!recovered[0].source.contains("[style.disabled]"));
 }
+
+#[test]
+fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
+    let evidence = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.element;
+        };
+        runtime.public = {
+            "ɵɵelement": runtime.element,
+        };
+
+        class PipelineCardComponent {
+            label = "before rewrites";
+
+            static compiled = runtime.component({
+                type: PipelineCardComponent,
+                selectors: [["pipeline-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "article");
+                    }
+                },
+                dependencies: [],
+                styles: [],
+            });
+        }
+    "#;
+    let readable = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => ({
+                ...baseDefinition,
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.element;
+        };
+        runtime.public = {
+            "ɵɵelement": runtime.element,
+        };
+
+        class PipelineCardComponent {
+            label = "after rewrites";
+
+            static compiled = runtime.component({
+                type: PipelineCardComponent,
+                selectors: [["pipeline-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "article");
+                    }
+                },
+                dependencies: [],
+                styles: [],
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_module_views(
+        &[AngularModuleView {
+            filename: "pipeline-card.js",
+            evidence_source: evidence,
+            readable_source: readable,
+        }],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("the evidence and readable views should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "pipeline-card");
+    assert!(recovered[0].source.contains("<article"));
+    assert!(recovered[0].source.contains("\"after rewrites\""));
+    assert!(!recovered[0].source.contains("\"before rewrites\""));
+}
