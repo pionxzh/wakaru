@@ -14,8 +14,9 @@ mod workspace;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
+use rayon::prelude::*;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, Globals, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function, Module, ObjectLit, Pat,
     Prop, PropOrSpread, SimpleAssignTarget, VarDeclarator,
@@ -150,7 +151,6 @@ struct PreparedAngularModule {
     filename: String,
     module: Module,
     unresolved_ctxt: SyntaxContext,
-    cm: Lrc<SourceMap>,
 }
 
 #[derive(Clone)]
@@ -209,11 +209,16 @@ pub fn analyze_angular_components_from_modules(
     sources: &[AngularModuleSource<'_>],
     _options: AngularRecoveryOptions,
 ) -> Result<AngularRecoveryReport> {
-    GLOBALS.set(&Default::default(), || {
-        let modules = sources
-            .iter()
-            .map(prepare_module)
-            .collect::<Result<Vec<_>>>()?;
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let modules = {
+            let span = tracing::info_span!("angular: prepare modules", count = sources.len());
+            let _enter = span.enter();
+            sources
+                .par_iter()
+                .map(|source| GLOBALS.set(&globals, || prepare_module(source)))
+                .collect::<Result<Vec<_>>>()?
+        };
         recover_prepared_modules(&modules, None)
     })
 }
@@ -229,25 +234,42 @@ pub fn analyze_angular_components_from_module_views(
     views: &[AngularModuleView<'_>],
     _options: AngularRecoveryOptions,
 ) -> Result<AngularRecoveryReport> {
-    GLOBALS.set(&Default::default(), || {
-        let evidence_modules = views
-            .iter()
-            .map(|view| {
-                prepare_module(&AngularModuleSource {
-                    filename: view.filename,
-                    source: view.evidence_source,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let readable_modules = views
-            .iter()
-            .map(|view| {
-                prepare_module(&AngularModuleSource {
-                    filename: view.filename,
-                    source: view.readable_source,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let (evidence_modules, readable_modules) = {
+            let span = tracing::info_span!("angular: prepare module views", count = views.len());
+            let _enter = span.enter();
+            rayon::join(
+                || {
+                    views
+                        .par_iter()
+                        .map(|view| {
+                            GLOBALS.set(&globals, || {
+                                prepare_module(&AngularModuleSource {
+                                    filename: view.filename,
+                                    source: view.evidence_source,
+                                })
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()
+                },
+                || {
+                    views
+                        .par_iter()
+                        .map(|view| {
+                            GLOBALS.set(&globals, || {
+                                prepare_module(&AngularModuleSource {
+                                    filename: view.filename,
+                                    source: view.readable_source,
+                                })
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()
+                },
+            )
+        };
+        let evidence_modules = evidence_modules?;
+        let readable_modules = readable_modules?;
         recover_prepared_modules(&evidence_modules, Some(&readable_modules))
     })
 }
@@ -256,22 +278,40 @@ fn recover_prepared_modules(
     evidence_modules: &[PreparedAngularModule],
     readable_modules: Option<&[PreparedAngularModule]>,
 ) -> Result<AngularRecoveryReport> {
+    let recovery_span = tracing::info_span!(
+        "angular: recover prepared modules",
+        count = evidence_modules.len()
+    );
+    let _recovery_enter = recovery_span.enter();
     let readable_modules = readable_modules.unwrap_or(evidence_modules);
-    let roles = IvyRoleTable::collect(evidence_modules);
-    let evidence_artifact_symbols = evidence_modules
-        .iter()
-        .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
-        .collect::<Vec<_>>();
-    let readable_artifact_symbols = readable_modules
-        .iter()
-        .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
-        .collect::<Vec<_>>();
-    let readable_classes = readable_modules
-        .iter()
-        .map(|prepared| {
-            collect_portable_component_classes(&prepared.module, prepared.unresolved_ctxt)
-        })
-        .collect::<Vec<_>>();
+    let roles = {
+        let span = tracing::info_span!("angular: infer Ivy roles");
+        let _enter = span.enter();
+        IvyRoleTable::collect(evidence_modules)
+    };
+    let (evidence_artifact_symbols, readable_artifact_symbols, readable_classes) = {
+        let span = tracing::info_span!("angular: index artifact symbols");
+        let _enter = span.enter();
+        let evidence_artifact_symbols = evidence_modules
+            .iter()
+            .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
+            .collect::<Vec<_>>();
+        let readable_artifact_symbols = readable_modules
+            .iter()
+            .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
+            .collect::<Vec<_>>();
+        let readable_classes = readable_modules
+            .iter()
+            .map(|prepared| {
+                collect_portable_component_classes(&prepared.module, prepared.unresolved_ctxt)
+            })
+            .collect::<Vec<_>>();
+        (
+            evidence_artifact_symbols,
+            readable_artifact_symbols,
+            readable_classes,
+        )
+    };
 
     let mut recovered = Vec::new();
     let mut stats = AngularRecoveryStats {
@@ -280,7 +320,10 @@ fn recover_prepared_modules(
     };
     let mut unknown_runtime_call_shapes =
         HashMap::<(AngularTemplatePhase, Vec<usize>), (usize, usize)>::new();
+    let component_span = tracing::info_span!("angular: recover components");
+    let _component_enter = component_span.enter();
     for (module_index, prepared) in evidence_modules.iter().enumerate() {
+        let emit_cm: Lrc<SourceMap> = Default::default();
         let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
         let template_functions = TemplateFunctionTable::collect(&prepared.module);
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
@@ -306,7 +349,7 @@ fn recover_prepared_modules(
                 &roles,
                 &template_functions,
                 prepared.unresolved_ctxt,
-                prepared.cm.clone(),
+                emit_cm.clone(),
             )?;
             let readable_class = readable_classes[module_index]
                 .get(&descriptor.class.portable_identity)
@@ -366,7 +409,7 @@ fn recover_prepared_modules(
                     support: &support,
                     dependencies: &dependencies,
                 },
-                readable_modules[module_index].cm.clone(),
+                emit_cm.clone(),
             )?;
             for shape in &recovered_template.unknown_runtime_call_shapes {
                 let aggregate = unknown_runtime_call_shapes
@@ -465,7 +508,6 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
         filename: source.filename.to_string(),
         module,
         unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
-        cm,
     })
 }
 

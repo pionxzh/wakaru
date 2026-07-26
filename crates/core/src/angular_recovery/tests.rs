@@ -573,6 +573,109 @@ fn follows_named_esm_symbol_edges_across_production_chunks() {
 }
 
 #[test]
+fn parallel_preparation_keeps_same_named_module_bindings_distinct() {
+    let runtime = r#"
+        function define(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+            }));
+        }
+        function element(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return element;
+        }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+            "ɵɵelement": element,
+        };
+        export { define as a, element as b };
+        void publicRuntime;
+    "#;
+    let component = r#"
+        import { a as x, b as y } from "./runtime.js";
+
+        class c {
+            static compiled = x({
+                type: c,
+                selectors: [["parallel-card"]],
+                template: function(rf) {
+                    if (rf & 1) y(0, "main");
+                },
+            });
+        }
+    "#;
+    let same_named_decoy = r#"
+        function x(value) {
+            return value;
+        }
+        function y() {}
+        class c {
+            static compiled = x({
+                type: c,
+                selectors: [["not-angular"]],
+                template: function(rf) {
+                    if (rf & 1) y(0, "aside");
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_modules(
+        &[
+            AngularModuleSource {
+                filename: "runtime.js",
+                source: runtime,
+            },
+            AngularModuleSource {
+                filename: "component.js",
+                source: component,
+            },
+            AngularModuleSource {
+                filename: "decoy.js",
+                source: same_named_decoy,
+            },
+        ],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("parallel module preparation should preserve binding identity");
+
+    assert_eq!(report.components.len(), 1);
+    assert_eq!(report.components[0].selector, "parallel-card");
+    assert!(report.components[0].source.contains("<main></main>"));
+}
+
+#[test]
+fn profiling_spans_separate_angular_preparation_inference_and_recovery() {
+    let (report, spans) = crate::test_tracing::record_spans(|| {
+        analyze_angular_components_from_module_views(
+            &[AngularModuleView {
+                filename: "profiled.js",
+                evidence_source: PRODUCTION_COMPONENT,
+                readable_source: PRODUCTION_COMPONENT,
+            }],
+            AngularRecoveryOptions::default(),
+        )
+        .expect("the profiled component should recover")
+    });
+
+    assert_eq!(report.components.len(), 1);
+    for expected in [
+        "angular: prepare module views",
+        "angular: recover prepared modules",
+        "angular: infer Ivy roles",
+        "angular: index artifact symbols",
+        "angular: recover components",
+    ] {
+        assert!(
+            spans.iter().any(|span| span == expected),
+            "missing {expected:?} in {spans:#?}"
+        );
+    }
+}
+
+#[test]
 fn rejects_conflicting_export_role_evidence() {
     let source = r#"
         function ambiguous() {}

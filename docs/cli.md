@@ -342,6 +342,10 @@ nested blocks. These are error-class `duplicate_declaration` warnings and make
 the command exit nonzero. Repeated `var` declarations and legal inner-scope
 shadowing do not count as conflicts.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
