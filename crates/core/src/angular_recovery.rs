@@ -27,7 +27,7 @@ use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use emitter::{emit_component_source, ComponentEmitInput};
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use syntax::{prop_name, string_lit};
-use template::{ivy_template_score, recover_template};
+use template::{ivy_template_score, recover_template, TemplateFunctionTable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -270,6 +270,7 @@ fn recover_prepared_modules(
         HashMap::<(AngularTemplatePhase, Vec<usize>), (usize, usize)>::new();
     for (module_index, prepared) in evidence_modules.iter().enumerate() {
         let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
+        let template_functions = TemplateFunctionTable::collect(&prepared.module);
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
         prepared.module.visit_with(&mut calls);
 
@@ -286,6 +287,7 @@ fn recover_prepared_modules(
                 &descriptor.template,
                 descriptor.constants.as_deref(),
                 &roles,
+                &template_functions,
                 prepared.unresolved_ctxt,
                 prepared.cm.clone(),
             )?;
