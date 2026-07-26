@@ -49,13 +49,17 @@ Initial recovery covers:
 - content projection, including selector-bearing `<ng-content>` slots;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
+- exact ESM imports referenced by the recovered class or rendered template,
+  plus dependency-closed portable local helpers;
+- compiled component dependencies when their bindings can be materialized as
+  imports or portable local aliases;
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Repeaters, deferred views, and dependency/import reconstruction are
-incremental extensions. Unsupported instruction regions remain explicit in
-the recovery IR and must not be silently rendered as if recovery were
-complete.
+Repeaters, deferred views, cross-artifact dependency linking, and original
+package provenance after bundling are incremental extensions. Unsupported
+instruction regions remain explicit in the recovery IR and must not be
+silently rendered as if recovery were complete.
 
 ## Architecture boundary
 
@@ -194,6 +198,35 @@ on Closure-renamed identifiers.
 
 No artifact is emitted when component identity itself is ambiguous.
 
+## Artifact-local symbols and dependencies
+
+Artifact support recovery is a separate, binding-identity-based pass after the
+class and template have been selected. Its roots are:
+
+- external bindings referenced by the cleaned readable class;
+- external bindings used by expressions that were actually rendered into the
+  recovered template;
+- simple identifiers in a canonical compiled `dependencies` array.
+
+An exact ESM import specifier is retained when one of those roots resolves to
+it. A local helper is copied only when its complete top-level dependency
+closure is portable: function declarations, function or arrow initializers,
+literal constants, and direct aliases. If that closure reaches a class,
+eager call, or another unsupported initializer, the helper is omitted and the
+artifact contains an explicit unresolved-symbol comment. This prevents one
+component artifact from absorbing an arbitrary runtime graph.
+
+When a compiled dependency root can be materialized, the emitter adds it to a
+reconstructed `imports` list. This is an inspection-oriented equivalent of
+the compiler dependency set, not a claim that the original decorator used the
+same spelling or module organization.
+
+Bundling can erase the package path that originally supplied a local
+component, directive, or pipe. Wakaru does not guess that provenance. Linking
+one recovered component artifact to another requires an artifact-graph phase
+after filenames have been assigned; it does not belong in an unpacker or the
+Ivy instruction classifier.
+
 ## Production feasibility validation
 
 The committed primary corpus is a pinned Angular 22.0.8 CLI production
@@ -251,6 +284,7 @@ Pause and re-check this boundary after each milestone:
 4. root operation and CLI artifact integration;
 5. embedded views and control flow.
 6. projection, local references, and pipes.
+7. artifact-local helpers, imports, and materializable dependencies.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
