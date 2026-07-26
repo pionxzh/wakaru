@@ -352,13 +352,13 @@ fn rejects_a_shadowed_lookalike_api() {
 fn marks_unsupported_ivy_regions_as_partial() {
     let source = r#"
         import * as core from "@angular/core";
-        class ProjectedComponent {
+        class LocalizedComponent {
             static ɵcmp = core.ɵɵdefineComponent({
-                type: ProjectedComponent,
-                selectors: [["projected-content"]],
+                type: LocalizedComponent,
+                selectors: [["localized-content"]],
                 template: function(rf) {
                     if (rf & 1) {
-                        core.ɵɵprojection(0);
+                        core.ɵɵi18nStart(0, 1);
                     }
                 },
             });
@@ -374,7 +374,7 @@ fn marks_unsupported_ivy_regions_as_partial() {
     );
     assert!(recovered[0]
         .source
-        .contains("<!-- Unsupported Ivy instruction: ɵɵprojection -->"));
+        .contains("<!-- Unsupported Ivy instruction: ɵɵi18nStart -->"));
 }
 
 #[test]
@@ -1343,4 +1343,81 @@ fn recovers_nested_if_else_views_as_angular_control_flow() {
     assert_eq!(report.stats.rendered_instruction_calls, 15);
     assert_eq!(report.stats.unsupported_runtime_calls, 0);
     assert_eq!(report.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_projection_local_references_and_pipe_bindings() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class BindingComponent {
+            title = "Bindings";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: BindingComponent,
+                selectors: [["binding-card"]],
+                ngContentSelectors: ["[extra]"],
+                consts: [["selectButton", ""]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵprojectionDef([[["", "extra", ""]]]);
+                        core.ɵɵelementStart(0, "article");
+                        core.ɵɵelementStart(1, "h2");
+                        core.ɵɵtext(2);
+                        core.ɵɵpipe(3, "uppercase");
+                        core.ɵɵelementEnd();
+                        core.ɵɵelementStart(4, "button", null, 0);
+                        core.ɵɵtext(6, "Select");
+                        core.ɵɵelementEnd();
+                        core.ɵɵelementStart(7, "small");
+                        core.ɵɵtext(8);
+                        core.ɵɵelementEnd();
+                        core.ɵɵprojection(9);
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        const selectButton = core.ɵɵreference(5);
+                        core.ɵɵadvance(2);
+                        core.ɵɵtextInterpolate(
+                            core.ɵɵpipeBind1(3, 0, context.title)
+                        );
+                        core.ɵɵadvance(6);
+                        core.ɵɵtextInterpolate1(
+                            "Disabled: ",
+                            selectButton.disabled
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("projection, references, and pipes should be analyzed");
+
+    assert_eq!(report.components.len(), 1);
+    let component = &report.components[0];
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("<h2>{{ title | uppercase }}</h2>"));
+    assert!(component
+        .source
+        .contains("<button #selectButton>Select</button>"));
+    assert!(component
+        .source
+        .contains("<small>Disabled: {{ selectButton.disabled }}</small>"));
+    assert!(component
+        .source
+        .contains(r#"<ng-content select="[extra]" />"#));
+    assert_eq!(component.stats.runtime_calls_observed, 20);
+    assert_eq!(component.stats.rendered_instruction_calls, 20);
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
 }
