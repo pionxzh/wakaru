@@ -10,7 +10,9 @@ The pinned Angular CLI application produces:
 - `dist/main.js` — two eagerly loaded application components;
 - `dist/lazy.js` — one component in a lazy ESM chunk;
 - `dist/closure-simple.js` — the same three chunks passed through Closure
-  Compiler `SIMPLE`.
+  Compiler `SIMPLE`;
+- `dist/closure-advanced.js` — a separate producer entry passed through
+  Closure Compiler `ADVANCED` with explicit retained roots and externs.
 
 The source deliberately exercises element structure, static attributes, text
 interpolation, a listener, a property binding, nested `@if` / `@else` embedded
@@ -27,12 +29,18 @@ npm ci
 npm run generate
 ```
 
-The generator canonicalizes only output filenames and their relative import
-specifiers. It does not rewrite component or runtime code.
+For the ordinary Angular and Closure `SIMPLE` artifacts, the generator
+canonicalizes only output filenames and their relative import specifiers. It
+does not rewrite component or runtime code.
 
-Closure `ADVANCED` is not committed as a positive fixture. Running generic
-`ADVANCED` over an Angular application without Angular-aware externs and
-retained roots lets whole-program dead-code elimination remove component
-metadata. A future advanced fixture must encode that producer contract
-explicitly rather than making the decompiler recover code that no longer
-exists.
+The `ADVANCED` fixture is built from `src/advanced-main.ts`. Its producer
+contract exposes three things through properties declared in
+`closure-advanced.externs.js`: the component classes, their compiled `ɵcmp`
+definition values, and a narrow map from public Ivy instruction names to the
+runtime functions used by the templates. The compiler input is not rewritten.
+
+All three roots are necessary. Exporting a class alone does not make an unused
+static `ɵcmp` assignment observable to Closure, and retaining component
+definitions alone does not preserve canonical instruction-role evidence.
+Running generic `ADVANCED` without this contract still removes the metadata;
+that output is intentionally not a positive decompiler fixture.
