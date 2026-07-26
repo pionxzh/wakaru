@@ -246,6 +246,11 @@ unpacker.
 
 Complete artifacts contain only supported template regions. Partial artifacts
 preserve unsupported Ivy instructions explicitly instead of guessing.
+With `--diagnostics`, Wakaru also reports component-candidate accounting and
+rendered, unsupported, and malformed Ivy runtime-call totals. The most frequent
+unknown calls are summarized by render phase and invocation arity. This makes
+a `Complete` result auditable instead of treating unrecognized render
+operations as absent.
 `--angular` cannot be combined with `--raw` or `--vue-sfc`. See
 [angular-decompile.md](angular-decompile.md) for the recovery boundary and
 current scope.
