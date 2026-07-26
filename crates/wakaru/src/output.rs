@@ -250,6 +250,7 @@ pub enum DiagnosticCode {
     ImportCycle,
     OutputParseRecovered,
     OutputParseFailed,
+    ArtifactRecoveryReport,
     ArtifactRecoveryFailed,
 }
 
@@ -266,6 +267,7 @@ impl DiagnosticCode {
             Self::ImportCycle => "import_cycle",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
+            Self::ArtifactRecoveryReport => "artifact_recovery_report",
             Self::ArtifactRecoveryFailed => "artifact_recovery_failed",
         }
     }

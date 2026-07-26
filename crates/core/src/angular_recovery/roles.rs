@@ -65,7 +65,7 @@ impl IvyInstruction {
         })
     }
 
-    fn canonical_export_name(self) -> &'static str {
+    pub(super) fn canonical_export_name(self) -> &'static str {
         match self {
             Self::DefineComponent => "ɵɵdefineComponent",
             Self::ElementStart => "ɵɵelementStart",
