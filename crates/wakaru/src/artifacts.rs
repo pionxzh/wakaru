@@ -10,13 +10,49 @@ pub(crate) fn recover_artifacts(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
     recovery: crate::RecoveryOptions,
+    diagnostics: bool,
 ) -> (Vec<ArtifactOutput>, Vec<Diagnostic>) {
     if !recovery.angular_components() {
         return (Vec::new(), Vec::new());
     }
 
     match recover_angular_components(modules, pre_rewrite_modules) {
-        Ok(artifacts) => (artifacts, Vec::new()),
+        Ok((artifacts, stats, unknown_runtime_call_shapes)) => {
+            let unknown_shape_summary =
+                format_unknown_runtime_call_shapes(&unknown_runtime_call_shapes);
+            let recovery_diagnostics = diagnostics
+                .then(|| Diagnostic {
+                    severity: if stats.partial_components > 0
+                        || stats.rejected_component_candidates > 0
+                    {
+                        DiagnosticSeverity::Warning
+                    } else {
+                        DiagnosticSeverity::Info
+                    },
+                    code: DiagnosticCode::ArtifactRecoveryReport,
+                    message: format!(
+                        "Angular recovery emitted {}/{} component candidates \
+                         ({} complete, {} partial, {} rejected); rendered {}/{} runtime calls \
+                         ({} unsupported, {} malformed){}",
+                        stats.recovered_components,
+                        stats.component_candidates,
+                        stats.complete_components,
+                        stats.partial_components,
+                        stats.rejected_component_candidates,
+                        stats.rendered_instruction_calls,
+                        stats.runtime_calls_observed,
+                        stats.unsupported_runtime_calls,
+                        stats.malformed_instruction_calls,
+                        unknown_shape_summary,
+                    ),
+                    input: None,
+                    module: None,
+                    span: None,
+                })
+                .into_iter()
+                .collect();
+            (artifacts, recovery_diagnostics)
+        }
         Err(error) => (
             Vec::new(),
             vec![Diagnostic {
@@ -34,14 +70,22 @@ pub(crate) fn recover_artifacts(
 fn recover_angular_components(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
-) -> anyhow::Result<Vec<ArtifactOutput>> {
+) -> anyhow::Result<(
+    Vec<ArtifactOutput>,
+    wakaru_core::AngularRecoveryStats,
+    Vec<wakaru_core::AngularUnknownRuntimeCallShape>,
+)> {
     let eligible = modules
         .iter()
         .enumerate()
         .filter(|(_, module)| module.status == ModuleStatus::Decompiled)
         .collect::<Vec<_>>();
     if eligible.is_empty() {
-        return Ok(Vec::new());
+        return Ok((
+            Vec::new(),
+            wakaru_core::AngularRecoveryStats::default(),
+            Vec::new(),
+        ));
     }
 
     let evidence_by_filename = pre_rewrite_modules
@@ -59,7 +103,7 @@ fn recover_angular_components(
             readable_source: module.code.as_str(),
         })
         .collect::<Vec<_>>();
-    let recovered = wakaru_core::recover_angular_components_from_module_views(
+    let report = wakaru_core::analyze_angular_components_from_module_views(
         &views,
         wakaru_core::AngularRecoveryOptions::default(),
     )?;
@@ -69,7 +113,13 @@ fn recover_angular_components(
         .filter_map(|module| wakaru_core::safe_relative_module_path(&module.filename).ok())
         .map(|path| path.to_string_lossy().to_lowercase())
         .collect::<HashSet<_>>();
-    recovered
+    let wakaru_core::AngularRecoveryReport {
+        components,
+        stats,
+        unknown_runtime_call_shapes,
+        ..
+    } = report;
+    let artifacts = components
         .into_iter()
         .map(|component| {
             let (module_index, module) = eligible
@@ -94,7 +144,65 @@ fn recover_angular_components(
                 module_indices: vec![module_index],
             })
         })
-        .collect()
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok((artifacts, stats, unknown_runtime_call_shapes))
+}
+
+fn format_unknown_runtime_call_shapes(
+    shapes: &[wakaru_core::AngularUnknownRuntimeCallShape],
+) -> String {
+    if shapes.is_empty() {
+        return String::new();
+    }
+
+    let mut shapes = shapes.iter().collect::<Vec<_>>();
+    shapes.sort_by(|left, right| {
+        right
+            .runtime_calls
+            .cmp(&left.runtime_calls)
+            .then_with(|| right.occurrences.cmp(&left.occurrences))
+            .then_with(|| left.phase.cmp(&right.phase))
+            .then_with(|| left.argument_counts.cmp(&right.argument_counts))
+    });
+    let visible = shapes
+        .iter()
+        .take(5)
+        .map(|shape| {
+            let phase = match shape.phase {
+                wakaru_core::AngularTemplatePhase::Creation => "creation",
+                wakaru_core::AngularTemplatePhase::Update => "update",
+                wakaru_core::AngularTemplatePhase::OutsideRender => "outside-render",
+                _ => "unknown-phase",
+            };
+            let argument_counts = shape
+                .argument_counts
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let occurrence_label = if shape.occurrences == 1 {
+                "occurrence"
+            } else {
+                "occurrences"
+            };
+            let call_label = if shape.runtime_calls == 1 {
+                "call"
+            } else {
+                "calls"
+            };
+            format!(
+                "{phase} [{argument_counts}] ({} {occurrence_label}/{} {call_label})",
+                shape.occurrences, shape.runtime_calls,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let omitted = shapes.len().saturating_sub(5);
+    if omitted == 0 {
+        format!("; unknown call shapes: {visible}")
+    } else {
+        format!("; unknown call shapes: {visible}, +{omitted} more")
+    }
 }
 
 fn angular_artifact_filename(

@@ -36,6 +36,53 @@ pub enum AngularRecoveryCompleteness {
     Partial,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AngularRecoveryIssueKind {
+    UnsupportedTemplateParameters,
+    UnsupportedStatement,
+    UnsupportedExpression,
+    UnsupportedInstruction,
+    UnknownRuntimeInstruction,
+    MalformedInstruction,
+    MissingTargetNode,
+    MalformedTemplateStructure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularRecoveryIssue {
+    pub kind: AngularRecoveryIssueKind,
+    pub instruction: Option<String>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularTemplateRecoveryStats {
+    pub runtime_calls_observed: usize,
+    pub rendered_instruction_calls: usize,
+    pub unsupported_runtime_calls: usize,
+    pub malformed_instruction_calls: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum AngularTemplatePhase {
+    Creation,
+    Update,
+    OutsideRender,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularUnknownRuntimeCallShape {
+    pub phase: AngularTemplatePhase,
+    pub argument_counts: Vec<usize>,
+    pub occurrences: usize,
+    pub runtime_calls: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RecoveredAngularComponent {
@@ -43,9 +90,35 @@ pub struct RecoveredAngularComponent {
     pub selector: String,
     pub source: String,
     pub completeness: AngularRecoveryCompleteness,
+    pub issues: Vec<AngularRecoveryIssue>,
+    pub stats: AngularTemplateRecoveryStats,
+    pub unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
     /// Index into the `AngularModuleSource` slice that contained the
     /// component definition.
     pub module_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularRecoveryStats {
+    pub modules_analyzed: usize,
+    pub component_candidates: usize,
+    pub recovered_components: usize,
+    pub rejected_component_candidates: usize,
+    pub complete_components: usize,
+    pub partial_components: usize,
+    pub runtime_calls_observed: usize,
+    pub rendered_instruction_calls: usize,
+    pub unsupported_runtime_calls: usize,
+    pub malformed_instruction_calls: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularRecoveryReport {
+    pub components: Vec<RecoveredAngularComponent>,
+    pub stats: AngularRecoveryStats,
+    pub unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,7 +178,14 @@ pub fn recover_angular_components_from_js(
     source: &str,
     options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
-    recover_angular_components_from_modules(
+    Ok(analyze_angular_components_from_js(source, options)?.components)
+}
+
+pub fn analyze_angular_components_from_js(
+    source: &str,
+    options: AngularRecoveryOptions,
+) -> Result<AngularRecoveryReport> {
+    analyze_angular_components_from_modules(
         &[AngularModuleSource {
             filename: "angular-recovery.js",
             source,
@@ -116,8 +196,15 @@ pub fn recover_angular_components_from_js(
 
 pub fn recover_angular_components_from_modules(
     sources: &[AngularModuleSource<'_>],
-    _options: AngularRecoveryOptions,
+    options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
+    Ok(analyze_angular_components_from_modules(sources, options)?.components)
+}
+
+pub fn analyze_angular_components_from_modules(
+    sources: &[AngularModuleSource<'_>],
+    _options: AngularRecoveryOptions,
+) -> Result<AngularRecoveryReport> {
     GLOBALS.set(&Default::default(), || {
         let modules = sources
             .iter()
@@ -129,8 +216,15 @@ pub fn recover_angular_components_from_modules(
 
 pub fn recover_angular_components_from_module_views(
     views: &[AngularModuleView<'_>],
-    _options: AngularRecoveryOptions,
+    options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
+    Ok(analyze_angular_components_from_module_views(views, options)?.components)
+}
+
+pub fn analyze_angular_components_from_module_views(
+    views: &[AngularModuleView<'_>],
+    _options: AngularRecoveryOptions,
+) -> Result<AngularRecoveryReport> {
     GLOBALS.set(&Default::default(), || {
         let evidence_modules = views
             .iter()
@@ -157,7 +251,7 @@ pub fn recover_angular_components_from_module_views(
 fn recover_prepared_modules(
     evidence_modules: &[PreparedAngularModule],
     readable_modules: Option<&[PreparedAngularModule]>,
-) -> Result<Vec<RecoveredAngularComponent>> {
+) -> Result<AngularRecoveryReport> {
     let readable_modules = readable_modules.unwrap_or(evidence_modules);
     let roles = IvyRoleTable::collect(evidence_modules);
     let readable_classes = readable_modules
@@ -168,16 +262,24 @@ fn recover_prepared_modules(
         .collect::<Vec<_>>();
 
     let mut recovered = Vec::new();
+    let mut stats = AngularRecoveryStats {
+        modules_analyzed: evidence_modules.len(),
+        ..AngularRecoveryStats::default()
+    };
+    let mut unknown_runtime_call_shapes =
+        HashMap::<(AngularTemplatePhase, Vec<usize>), (usize, usize)>::new();
     for (module_index, prepared) in evidence_modules.iter().enumerate() {
         let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
         prepared.module.visit_with(&mut calls);
 
         for candidate in &calls.define_component_calls {
+            stats.component_candidates += 1;
             let call = &candidate.call;
             let Some(descriptor) =
                 parse_component_descriptor(call, &classes, &roles, prepared.unresolved_ctxt)
             else {
+                stats.rejected_component_candidates += 1;
                 continue;
             };
             let recovered_template = recover_template(
@@ -204,21 +306,60 @@ fn recover_prepared_modules(
                 },
                 readable_modules[module_index].cm.clone(),
             )?;
+            for shape in &recovered_template.unknown_runtime_call_shapes {
+                let aggregate = unknown_runtime_call_shapes
+                    .entry((shape.phase, shape.argument_counts.clone()))
+                    .or_default();
+                aggregate.0 += shape.occurrences;
+                aggregate.1 += shape.runtime_calls;
+            }
             recovered.push(RecoveredAngularComponent {
                 name,
                 selector: descriptor.selector,
                 source,
-                completeness: if recovered_template.unsupported_instructions.is_empty() {
+                completeness: if recovered_template.issues.is_empty() {
+                    stats.complete_components += 1;
                     AngularRecoveryCompleteness::Complete
                 } else {
+                    stats.partial_components += 1;
                     AngularRecoveryCompleteness::Partial
                 },
+                issues: recovered_template.issues,
+                stats: recovered_template.stats,
+                unknown_runtime_call_shapes: recovered_template.unknown_runtime_call_shapes,
                 module_index,
             });
+            stats.recovered_components += 1;
+            stats.runtime_calls_observed += recovered_template.stats.runtime_calls_observed;
+            stats.rendered_instruction_calls += recovered_template.stats.rendered_instruction_calls;
+            stats.unsupported_runtime_calls += recovered_template.stats.unsupported_runtime_calls;
+            stats.malformed_instruction_calls +=
+                recovered_template.stats.malformed_instruction_calls;
         }
     }
 
-    Ok(recovered)
+    let mut unknown_runtime_call_shapes = unknown_runtime_call_shapes
+        .into_iter()
+        .map(|((phase, argument_counts), (occurrences, runtime_calls))| {
+            AngularUnknownRuntimeCallShape {
+                phase,
+                argument_counts,
+                occurrences,
+                runtime_calls,
+            }
+        })
+        .collect::<Vec<_>>();
+    unknown_runtime_call_shapes.sort_by(|left, right| {
+        left.phase
+            .cmp(&right.phase)
+            .then_with(|| left.argument_counts.cmp(&right.argument_counts))
+    });
+
+    Ok(AngularRecoveryReport {
+        components: recovered,
+        stats,
+        unknown_runtime_call_shapes,
+    })
 }
 
 fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularModule> {

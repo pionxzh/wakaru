@@ -170,9 +170,22 @@ workspace. Each artifact records the source module index.
 
 Recovery confidence is structural, not a percentage:
 
-- `Complete`: every emitted template region has a supported interpretation.
+- `Complete`: every render-phase operation observed by the analyzer was
+  rendered successfully, all instruction arguments and target nodes were
+  valid, and no statement or expression shape was skipped.
 - `Partial`: the component is proven, but one or more regions are preserved as
   explicit unsupported output.
+
+Recovery is fail-closed. Unsupported statements, expressions, instruction
+roles, malformed arguments, missing target nodes, and malformed element
+structure are typed issues rather than silent omissions. The core analysis API
+returns per-component issues and instruction-call accounting plus workspace
+totals for component candidates, rejected descriptors, complete/partial
+artifacts, rendered calls, unsupported calls, and malformed calls. Root
+operations surface the aggregate report when diagnostics are enabled. Unknown
+runtime calls are grouped by render phase and invocation arity; these
+privacy-safe shapes help prioritize compiler-pattern support without depending
+on Closure-renamed identifiers.
 
 No artifact is emitted when component identity itself is ambiguous.
 

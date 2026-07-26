@@ -254,6 +254,7 @@ pub enum DiagnosticCode {
     CrossModuleClassCall,
     OutputParseRecovered,
     OutputParseFailed,
+    ArtifactRecoveryReport,
     ArtifactRecoveryFailed,
 }
 
@@ -271,6 +272,7 @@ impl DiagnosticCode {
             Self::CrossModuleClassCall => "cross_module_class_call",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
+            Self::ArtifactRecoveryReport => "artifact_recovery_report",
             Self::ArtifactRecoveryFailed => "artifact_recovery_failed",
         }
     }
