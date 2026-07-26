@@ -170,6 +170,7 @@ struct ComponentDescriptor {
     class: ComponentClass,
     selector: String,
     styles: Vec<String>,
+    projection_selectors: Vec<String>,
     template: Function,
     constants: Option<Box<Expr>>,
 }
@@ -277,15 +278,20 @@ fn recover_prepared_modules(
         for candidate in &calls.define_component_calls {
             stats.component_candidates += 1;
             let call = &candidate.call;
-            let Some(descriptor) =
-                parse_component_descriptor(call, &classes, &roles, prepared.unresolved_ctxt)
-            else {
+            let Some(descriptor) = parse_component_descriptor(
+                call,
+                &classes,
+                &roles,
+                &template_functions,
+                prepared.unresolved_ctxt,
+            ) else {
                 stats.rejected_component_candidates += 1;
                 continue;
             };
             let recovered_template = recover_template(
                 &descriptor.template,
                 descriptor.constants.as_deref(),
+                &descriptor.projection_selectors,
                 &roles,
                 &template_functions,
                 prepared.unresolved_ctxt,
@@ -562,6 +568,7 @@ fn parse_component_descriptor(
     call: &swc_core::ecma::ast::CallExpr,
     classes: &HashMap<SymbolIdentity, ComponentClass>,
     roles: &IvyRoleTable,
+    template_functions: &TemplateFunctionTable,
     unresolved_ctxt: SyntaxContext,
 ) -> Option<ComponentDescriptor> {
     if roles.instruction_for_callee(&call.callee, unresolved_ctxt)
@@ -577,12 +584,14 @@ fn parse_component_descriptor(
     let template = descriptor_template(object, roles, unresolved_ctxt)?;
     let selector = descriptor_selector(object)?;
     let styles = descriptor_styles(object);
+    let projection_selectors = descriptor_projection_selectors(object, template_functions);
     let constants = descriptor_constants(object);
 
     Some(ComponentDescriptor {
         class,
         selector,
         styles,
+        projection_selectors,
         template,
         constants,
     })
@@ -737,6 +746,30 @@ fn descriptor_styles(object: &ObjectLit) -> Vec<String> {
     } else {
         first
     }
+}
+
+fn descriptor_projection_selectors(
+    object: &ObjectLit,
+    template_functions: &TemplateFunctionTable,
+) -> Vec<String> {
+    object
+        .props
+        .iter()
+        .find_map(|prop| {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            let Prop::KeyValue(key_value) = prop.as_ref() else {
+                return None;
+            };
+            (prop_name(&key_value.key).as_deref() == Some("ngContentSelectors"))
+                .then(|| {
+                    let value = template_functions.resolve_expression(key_value.value.as_ref());
+                    string_array(value.as_ref())
+                })
+                .flatten()
+        })
+        .unwrap_or_default()
 }
 
 fn descriptor_constants(object: &ObjectLit) -> Option<Box<Expr>> {
