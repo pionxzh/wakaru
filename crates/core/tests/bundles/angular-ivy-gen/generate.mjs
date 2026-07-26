@@ -14,6 +14,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const buildDirectory = join(root, 'target', 'angular-build', 'browser');
+const advancedBuildDirectory = join(
+  root,
+  'target',
+  'angular-advanced-build',
+  'browser',
+);
 const distDirectory = join(root, 'dist');
 
 function runNode(script, args) {
@@ -99,5 +105,56 @@ const closureSource = readFileSync(join(distDirectory, 'closure-simple.js'), 'ut
 for (const selector of ['app-root', 'fixture-card', 'fixture-lazy-card']) {
   if (!closureSource.includes(selector)) {
     throw new Error(`Closure output is missing ${selector}`);
+  }
+}
+
+runNode(join(root, 'node_modules', '@angular', 'cli', 'bin', 'ng.js'), [
+  'build',
+  '--configuration=advanced-producer',
+]);
+
+const advancedGenerated = readdirSync(advancedBuildDirectory)
+  .filter((filename) => filename.endsWith('.js'))
+  .sort();
+if (!advancedGenerated.includes('main.js')) {
+  throw new Error(
+    `expected rooted ADVANCED main.js, found ${JSON.stringify(advancedGenerated)}`,
+  );
+}
+
+runNode(join(root, 'node_modules', 'google-closure-compiler', 'cli.js'), [
+  ...advancedGenerated.map((filename) =>
+    `--js=${join(advancedBuildDirectory, filename)}`),
+  `--externs=${join(root, 'closure-advanced.externs.js')}`,
+  '--js_output_file=dist/closure-advanced.js',
+  '--compilation_level=ADVANCED',
+  '--language_in=ECMASCRIPT_NEXT',
+  '--language_out=ECMASCRIPT_2022',
+  '--module_resolution=NODE',
+  '--dependency_mode=PRUNE',
+  `--entry_point=${join(advancedBuildDirectory, 'main')}`,
+  '--warning_level=QUIET',
+  '--charset=UTF-8',
+]);
+
+const advancedClosureSource = readFileSync(
+  join(distDirectory, 'closure-advanced.js'),
+  'utf8',
+);
+for (const selector of ['app-root', 'fixture-card', 'fixture-lazy-card']) {
+  if (!advancedClosureSource.includes(selector)) {
+    throw new Error(`Rooted Closure ADVANCED output is missing ${selector}`);
+  }
+}
+for (const contractName of [
+  '__wakaruAngularDefinitions',
+  '__wakaruAngularRoots',
+  '__wakaruIvyRuntime',
+  'ɵɵdefineComponent',
+]) {
+  if (!advancedClosureSource.includes(contractName)) {
+    throw new Error(
+      `Rooted Closure ADVANCED output is missing ${contractName}`,
+    );
   }
 }
