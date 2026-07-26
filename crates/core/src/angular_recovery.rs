@@ -4,13 +4,14 @@
 //! concerns stay in unpackers; this module knows only module ASTs and semantic
 //! Ivy instruction identities.
 
+mod artifact;
 mod emitter;
 mod roles;
 mod syntax;
 mod template;
 mod workspace;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
@@ -24,7 +25,8 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
-use emitter::{emit_component_source, ComponentEmitInput};
+use artifact::{class_references, dependency_binding, ArtifactSymbolTable};
+use emitter::{clean_component_class, emit_component_source, ComponentEmitInput};
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use syntax::{prop_name, string_lit};
 use template::{ivy_template_score, recover_template, TemplateFunctionTable};
@@ -171,6 +173,7 @@ struct ComponentDescriptor {
     selector: String,
     styles: Vec<String>,
     projection_selectors: Vec<String>,
+    dependencies: Vec<Box<Expr>>,
     template: Function,
     constants: Option<Box<Expr>>,
 }
@@ -255,6 +258,14 @@ fn recover_prepared_modules(
 ) -> Result<AngularRecoveryReport> {
     let readable_modules = readable_modules.unwrap_or(evidence_modules);
     let roles = IvyRoleTable::collect(evidence_modules);
+    let evidence_artifact_symbols = evidence_modules
+        .iter()
+        .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
+        .collect::<Vec<_>>();
+    let readable_artifact_symbols = readable_modules
+        .iter()
+        .map(|prepared| ArtifactSymbolTable::collect(&prepared.module))
+        .collect::<Vec<_>>();
     let readable_classes = readable_modules
         .iter()
         .map(|prepared| {
@@ -301,16 +312,59 @@ fn recover_prepared_modules(
                 .get(&descriptor.class.portable_identity)
                 .unwrap_or(&descriptor.class);
             let name = recovered_component_name(readable_class.name.as_ref(), &descriptor.selector);
+            let class = clean_component_class(
+                &readable_class.class,
+                candidate.definition_field.as_ref(),
+                &roles,
+                prepared.unresolved_ctxt,
+            );
+            let reserved_names = HashSet::from([
+                Atom::from("Component"),
+                readable_class.name.clone(),
+                Atom::from(name.as_str()),
+            ]);
+            let mut class_roots = class_references(&class);
+            class_roots.retain(|root| root.0 != readable_class.name);
+            let mut support = readable_artifact_symbols[module_index].recover(
+                &class_roots,
+                &reserved_names,
+                true,
+            );
+            support.merge(evidence_artifact_symbols[module_index].recover(
+                &recovered_template.artifact_references,
+                &reserved_names,
+                true,
+            ));
+            let dependency_roots = descriptor
+                .dependencies
+                .iter()
+                .filter_map(|dependency| dependency_binding(dependency.as_ref()))
+                .collect::<HashSet<_>>();
+            let dependency_support = evidence_artifact_symbols[module_index].recover(
+                &dependency_roots,
+                &reserved_names,
+                false,
+            );
+            let dependencies = descriptor
+                .dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    let binding = dependency_binding(dependency.as_ref())?;
+                    dependency_support
+                        .provides(&binding)
+                        .then(|| binding.0.to_string())
+                })
+                .collect::<Vec<_>>();
+            support.merge(dependency_support);
             let source = emit_component_source(
                 ComponentEmitInput {
                     name: &name,
                     selector: &descriptor.selector,
                     styles: &descriptor.styles,
-                    class: &readable_class.class,
-                    roles: &roles,
-                    unresolved_ctxt: prepared.unresolved_ctxt,
+                    class: &class,
                     template: &recovered_template,
-                    definition_field: candidate.definition_field.as_ref(),
+                    support: &support,
+                    dependencies: &dependencies,
                 },
                 readable_modules[module_index].cm.clone(),
             )?;
@@ -585,6 +639,7 @@ fn parse_component_descriptor(
     let selector = descriptor_selector(object)?;
     let styles = descriptor_styles(object);
     let projection_selectors = descriptor_projection_selectors(object, template_functions);
+    let dependencies = descriptor_dependencies(object, template_functions);
     let constants = descriptor_constants(object);
 
     Some(ComponentDescriptor {
@@ -592,6 +647,7 @@ fn parse_component_descriptor(
         selector,
         styles,
         projection_selectors,
+        dependencies,
         template,
         constants,
     })
@@ -768,6 +824,38 @@ fn descriptor_projection_selectors(
                     string_array(value.as_ref())
                 })
                 .flatten()
+        })
+        .unwrap_or_default()
+}
+
+fn descriptor_dependencies(
+    object: &ObjectLit,
+    template_functions: &TemplateFunctionTable,
+) -> Vec<Box<Expr>> {
+    object
+        .props
+        .iter()
+        .find_map(|prop| {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            let Prop::KeyValue(key_value) = prop.as_ref() else {
+                return None;
+            };
+            (prop_name(&key_value.key).as_deref() == Some("dependencies")).then(|| {
+                let value = template_functions.resolve_expression(key_value.value.as_ref());
+                let Expr::Array(array) = value.as_ref() else {
+                    return Vec::new();
+                };
+                array
+                    .elems
+                    .iter()
+                    .filter_map(|element| {
+                        let element = element.as_ref()?;
+                        element.spread.is_none().then(|| element.expr.clone())
+                    })
+                    .collect()
+            })
         })
         .unwrap_or_default()
 }
