@@ -121,22 +121,35 @@ Ambiguous values are left unknown. Object-literal order alone is not proof.
 
 ## Pipeline placement
 
-Root recovery runs after the ordinary rewrite pipeline:
+Root recovery uses two views of the same generic module set:
 
-1. Finalize normal JavaScript without any Ivy-dependent rewrite.
-2. Build one generic module workspace from all finalized modules.
-3. Collect symbol-role evidence across the workspace.
-4. Analyze component definitions using the shared role table.
-5. Emit recovered artifacts independently from the JavaScript modules.
+1. After format-specific extraction and numeric-edge normalization, capture a
+   pre-rewrite evidence view only when Angular recovery is requested.
+2. Run the ordinary Wakaru pipeline and finalize normal JavaScript without an
+   Ivy-dependent rewrite.
+3. Build the Ivy role table and component/template IR from the evidence view.
+4. Match each proven component to a unique finalized class binding in the same
+   module. Use that readable class body when the match is unambiguous; otherwise
+   retain the evidence class.
+5. Emit artifacts independently from the JavaScript modules.
 
-This placement lets a regular AOT module and modules obtained from any unpacker
-use the same analyzer. The experimental implementation currently parses the
-finalized owned workspace once. Retaining finalized ASTs through root artifact
-recovery is a planned performance optimization; it must not alter the module
-workspace contract or move Ivy semantics into an unpacker. Standalone
-`angular::recover` is allowed to parse owned sources as a separate convenience
-operation, matching the public API boundary documented in
-[public-api.md](public-api.md).
+This split is required because an ordinary readability rule can erase useful
+compiler evidence. For example, `ObjectAssignSpread` changes a descriptor
+builder from `Object.assign({}, base, descriptor)` into an object spread. The
+result is better JavaScript, but no longer proves the same structural
+`DefineComponent` role to a matcher that intentionally recognizes the producer
+shape. Capturing evidence once avoids teaching the Ivy analyzer every shape
+created by every later Wakaru rule.
+
+The evidence sidecar is generic source keyed by the final module filename. The
+driver does not import Angular types or assign roles, and every unpacker still
+uses the same path. The current implementation materializes and reparses the
+two views only when recovery is enabled. Retaining resolved ASTs and a stable
+cross-stage origin ID would remove that cost later without changing the
+artifact contract.
+
+Standalone recovery receives one source view and therefore parses it once,
+matching the convenience API boundary documented in [public-api.md](public-api.md).
 
 The workspace may canonicalize a stable namespace argument passed into an
 immediately invoked function when the corresponding parameter is never
@@ -165,29 +178,29 @@ No artifact is emitted when component identity itself is ambiguous.
 
 ## Production feasibility validation
 
-The implementation is validated with ignored local artifacts rather than a
-committed application bundle. A generated Angular 22 production-AOT project
-was built as a multi-chunk application, flattened into a canonical single-file
-variant, and passed through Closure Compiler at `WHITESPACE_ONLY`, `SIMPLE`,
-and `ADVANCED` optimization levels.
+The committed primary corpus is a pinned Angular 22.0.8 CLI production
+application under `crates/core/tests/bundles/angular-ivy-gen/`. It builds three
+application components across a minified main chunk, shared Angular runtime
+chunk, and lazy ESM chunk. The generator also passes those outputs through
+Closure Compiler `SIMPLE`.
 
-All profiles recovered the three application component definitions with
-non-empty inline templates. The recovered regions include element structure,
-static text, interpolation, event listeners, property bindings, and scoped
-styles. Modern conditional, repeater, and deferred-view instructions remain
-explicit partial regions, matching the scope above.
+Both producer forms recover all three component definitions with non-empty
+inline templates. Covered regions include element structure, static text,
+interpolation, event listeners, property bindings, scoped styles, and
+cross-chunk runtime evidence. Modern conditional, repeater, and deferred-view
+instructions remain explicit partial regions, matching the scope above.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
 can replace those identifier characters and produce text that is not valid
-JavaScript. `ADVANCED` validation also retains component-definition roots:
-whole-program dead-code elimination can otherwise remove an application
-component completely, leaving no artifact for a decompiler to recover.
+JavaScript. Generic `ADVANCED` is not a committed positive fixture:
+whole-program dead-code elimination can remove Angular component metadata
+unless the producer supplies Angular-aware externs and retained roots. A
+future positive advanced fixture must encode that producer contract.
 
-A separate complete multi-file local corpus was also analyzed as one workspace
-to confirm that Ivy runtime evidence in companion files is available during
-component recovery. Its code, filenames, module labels, and provenance remain
-outside the repository.
+Local `WHITESPACE_ONLY` and `ADVANCED` experiments with retained roots, plus
+complete public application bundles, remain supplementary stress tests. They
+do not define the committed Angular vocabulary or success baseline.
 
 ## Tests and local corpus policy
 

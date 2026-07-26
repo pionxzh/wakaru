@@ -146,6 +146,18 @@ pub struct UnpackOutput {
     pub source_maps: Vec<(String, String)>,
 }
 
+/// Lockstep façade result for an explicitly requested pre-rewrite source view.
+///
+/// This keeps the ordinary [`PreparedUnpackOutput`] contract unchanged. The
+/// sidecar is generic module source; framework meaning is assigned only by the
+/// caller.
+#[doc(hidden)]
+#[derive(Debug, Clone, Default)]
+pub struct CapturedUnpackOutput {
+    pub output: PreparedUnpackOutput,
+    pub pre_rewrite_modules: Vec<(String, String)>,
+}
+
 /// Byte-range provenance for one unpacked module.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleProvenance {
