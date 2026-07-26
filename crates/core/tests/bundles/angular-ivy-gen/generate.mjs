@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+
+import { spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = dirname(fileURLToPath(import.meta.url));
+const buildDirectory = join(root, 'target', 'angular-build', 'browser');
+const distDirectory = join(root, 'dist');
+
+function runNode(script, args) {
+  const result = spawnSync(process.execPath, [script, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || `command exited ${result.status}`);
+  }
+}
+
+rmSync(join(root, 'target'), { recursive: true, force: true });
+rmSync(distDirectory, { recursive: true, force: true });
+
+runNode(join(root, 'node_modules', '@angular', 'cli', 'bin', 'ng.js'), [
+  'build',
+  '--configuration=production',
+]);
+
+const generated = readdirSync(buildDirectory)
+  .filter((filename) => filename.endsWith('.js'))
+  .map((filename) => ({
+    filename,
+    size: statSync(join(buildDirectory, filename)).size,
+  }));
+const main = generated.find(({ filename }) => filename === 'main.js');
+const chunks = generated
+  .filter(({ filename }) => filename !== 'main.js')
+  .sort((left, right) => right.size - left.size);
+
+if (!main || chunks.length !== 2) {
+  throw new Error(`expected main.js and two chunks, found ${JSON.stringify(generated)}`);
+}
+
+const filenameMap = new Map([
+  [main.filename, 'main.js'],
+  [chunks[0].filename, 'runtime.js'],
+  [chunks[1].filename, 'lazy.js'],
+]);
+
+mkdirSync(distDirectory, { recursive: true });
+for (const { filename } of generated) {
+  let source = readFileSync(join(buildDirectory, filename), 'utf8');
+  for (const [generatedName, canonicalName] of filenameMap) {
+    source = source.replaceAll(`./${generatedName}`, `./${canonicalName}`);
+  }
+  writeFileSync(join(distDirectory, filenameMap.get(filename)), source);
+}
+
+const mainSource = readFileSync(join(distDirectory, 'main.js'), 'utf8');
+if (
+  mainSource.includes('ɵsetClassMetadata') ||
+  mainSource.includes('template: `') ||
+  mainSource.includes('<article')
+) {
+  throw new Error('Angular output unexpectedly contains development metadata or source templates');
+}
+for (const selector of ['app-root', 'fixture-card']) {
+  if (!mainSource.includes(selector)) {
+    throw new Error(`Angular output is missing ${selector}`);
+  }
+}
+
+runNode(join(root, 'node_modules', 'google-closure-compiler', 'cli.js'), [
+  '--js=dist/runtime.js',
+  '--js=dist/main.js',
+  '--js=dist/lazy.js',
+  '--js_output_file=dist/closure-simple.js',
+  '--compilation_level=SIMPLE',
+  '--language_in=ECMASCRIPT_NEXT',
+  '--language_out=ECMASCRIPT_2022',
+  '--module_resolution=NODE',
+  '--warning_level=QUIET',
+  '--charset=UTF-8',
+]);
+
+const closureSource = readFileSync(join(distDirectory, 'closure-simple.js'), 'utf8');
+for (const selector of ['app-root', 'fixture-card', 'fixture-lazy-card']) {
+  if (!closureSource.includes(selector)) {
+    throw new Error(`Closure output is missing ${selector}`);
+  }
+}

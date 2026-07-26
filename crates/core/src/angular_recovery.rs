@@ -54,6 +54,19 @@ pub struct AngularModuleSource<'a> {
     pub source: &'a str,
 }
 
+/// Two views of one module used by root artifact recovery.
+///
+/// `evidence_source` is captured before readability rewrites can erase
+/// compiler-runtime shapes. `readable_source` is the finalized JavaScript
+/// whose class body should be used when the same component binding can be
+/// matched conservatively.
+#[derive(Debug, Clone, Copy)]
+pub struct AngularModuleView<'a> {
+    pub filename: &'a str,
+    pub evidence_source: &'a str,
+    pub readable_source: &'a str,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct AngularRecoveryOptions {}
@@ -69,6 +82,15 @@ struct PreparedAngularModule {
 struct ComponentClass {
     name: Atom,
     class: Box<Class>,
+    portable_identity: PortableSymbolIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PortableSymbolIdentity {
+    LocalBinding(Atom),
+    LocalMember { object: Atom, property: Atom },
+    GlobalBinding(Atom),
+    GlobalMember { object: Atom, property: Atom },
 }
 
 struct ComponentDescriptor {
@@ -99,61 +121,104 @@ pub fn recover_angular_components_from_modules(
     GLOBALS.set(&Default::default(), || {
         let modules = sources
             .iter()
-            .map(|source| prepare_module(source))
+            .map(prepare_module)
             .collect::<Result<Vec<_>>>()?;
-        let roles = IvyRoleTable::collect(&modules);
-
-        let mut recovered = Vec::new();
-        for (module_index, prepared) in modules.iter().enumerate() {
-            let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
-            let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
-            prepared.module.visit_with(&mut calls);
-
-            for candidate in &calls.define_component_calls {
-                let call = &candidate.call;
-                let Some(descriptor) =
-                    parse_component_descriptor(call, &classes, &roles, prepared.unresolved_ctxt)
-                else {
-                    continue;
-                };
-                let recovered_template = recover_template(
-                    &descriptor.template,
-                    descriptor.constants.as_deref(),
-                    &roles,
-                    prepared.unresolved_ctxt,
-                    prepared.cm.clone(),
-                )?;
-                let name =
-                    recovered_component_name(descriptor.class.name.as_ref(), &descriptor.selector);
-                let source = emit_component_source(
-                    ComponentEmitInput {
-                        name: &name,
-                        selector: &descriptor.selector,
-                        styles: &descriptor.styles,
-                        class: &descriptor.class.class,
-                        roles: &roles,
-                        unresolved_ctxt: prepared.unresolved_ctxt,
-                        template: &recovered_template,
-                        definition_field: candidate.definition_field.as_ref(),
-                    },
-                    prepared.cm.clone(),
-                )?;
-                recovered.push(RecoveredAngularComponent {
-                    name,
-                    selector: descriptor.selector,
-                    source,
-                    completeness: if recovered_template.unsupported_instructions.is_empty() {
-                        AngularRecoveryCompleteness::Complete
-                    } else {
-                        AngularRecoveryCompleteness::Partial
-                    },
-                    module_index,
-                });
-            }
-        }
-
-        Ok(recovered)
+        recover_prepared_modules(&modules, None)
     })
+}
+
+pub fn recover_angular_components_from_module_views(
+    views: &[AngularModuleView<'_>],
+    _options: AngularRecoveryOptions,
+) -> Result<Vec<RecoveredAngularComponent>> {
+    GLOBALS.set(&Default::default(), || {
+        let evidence_modules = views
+            .iter()
+            .map(|view| {
+                prepare_module(&AngularModuleSource {
+                    filename: view.filename,
+                    source: view.evidence_source,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let readable_modules = views
+            .iter()
+            .map(|view| {
+                prepare_module(&AngularModuleSource {
+                    filename: view.filename,
+                    source: view.readable_source,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        recover_prepared_modules(&evidence_modules, Some(&readable_modules))
+    })
+}
+
+fn recover_prepared_modules(
+    evidence_modules: &[PreparedAngularModule],
+    readable_modules: Option<&[PreparedAngularModule]>,
+) -> Result<Vec<RecoveredAngularComponent>> {
+    let readable_modules = readable_modules.unwrap_or(evidence_modules);
+    let roles = IvyRoleTable::collect(evidence_modules);
+    let readable_classes = readable_modules
+        .iter()
+        .map(|prepared| {
+            collect_portable_component_classes(&prepared.module, prepared.unresolved_ctxt)
+        })
+        .collect::<Vec<_>>();
+
+    let mut recovered = Vec::new();
+    for (module_index, prepared) in evidence_modules.iter().enumerate() {
+        let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
+        let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
+        prepared.module.visit_with(&mut calls);
+
+        for candidate in &calls.define_component_calls {
+            let call = &candidate.call;
+            let Some(descriptor) =
+                parse_component_descriptor(call, &classes, &roles, prepared.unresolved_ctxt)
+            else {
+                continue;
+            };
+            let recovered_template = recover_template(
+                &descriptor.template,
+                descriptor.constants.as_deref(),
+                &roles,
+                prepared.unresolved_ctxt,
+                prepared.cm.clone(),
+            )?;
+            let readable_class = readable_classes[module_index]
+                .get(&descriptor.class.portable_identity)
+                .unwrap_or(&descriptor.class);
+            let name = recovered_component_name(readable_class.name.as_ref(), &descriptor.selector);
+            let source = emit_component_source(
+                ComponentEmitInput {
+                    name: &name,
+                    selector: &descriptor.selector,
+                    styles: &descriptor.styles,
+                    class: &readable_class.class,
+                    roles: &roles,
+                    unresolved_ctxt: prepared.unresolved_ctxt,
+                    template: &recovered_template,
+                    definition_field: candidate.definition_field.as_ref(),
+                },
+                readable_modules[module_index].cm.clone(),
+            )?;
+            recovered.push(RecoveredAngularComponent {
+                name,
+                selector: descriptor.selector,
+                source,
+                completeness: if recovered_template.unsupported_instructions.is_empty() {
+                    AngularRecoveryCompleteness::Complete
+                } else {
+                    AngularRecoveryCompleteness::Partial
+                },
+                module_index,
+            });
+        }
+    }
+
+    Ok(recovered)
 }
 
 fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularModule> {
@@ -213,6 +278,33 @@ fn collect_component_classes(
     collector.classes
 }
 
+fn collect_portable_component_classes(
+    module: &Module,
+    unresolved_ctxt: SyntaxContext,
+) -> HashMap<PortableSymbolIdentity, ComponentClass> {
+    let mut classes = HashMap::new();
+    let mut ambiguous = std::collections::HashSet::new();
+    for class in collect_component_classes(module, unresolved_ctxt).into_values() {
+        let identity = class.portable_identity.clone();
+        if ambiguous.contains(&identity) {
+            continue;
+        }
+        match classes.entry(identity.clone()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(class);
+            }
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().name == class.name && entry.get().class.span == class.class.span => {
+            }
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                entry.remove();
+                ambiguous.insert(identity);
+            }
+        }
+    }
+    classes
+}
+
 struct ComponentClassCollector {
     unresolved_ctxt: SyntaxContext,
     classes: HashMap<SymbolIdentity, ComponentClass>,
@@ -223,14 +315,35 @@ impl ComponentClassCollector {
         let Some(identity) = symbol_identity(expression, self.unresolved_ctxt) else {
             return;
         };
+        let portable_identity = portable_symbol_identity(&identity);
         let name = Atom::from(to_valid_identifier_name(fallback_name));
         self.classes.insert(
             identity,
             ComponentClass {
                 name,
                 class: Box::new(class.clone()),
+                portable_identity,
             },
         );
+    }
+}
+
+fn portable_symbol_identity(identity: &SymbolIdentity) -> PortableSymbolIdentity {
+    match identity {
+        SymbolIdentity::LocalBinding(binding) => {
+            PortableSymbolIdentity::LocalBinding(binding.0.clone())
+        }
+        SymbolIdentity::LocalMember { object, property } => PortableSymbolIdentity::LocalMember {
+            object: object.0.clone(),
+            property: property.clone(),
+        },
+        SymbolIdentity::GlobalBinding(binding) => {
+            PortableSymbolIdentity::GlobalBinding(binding.clone())
+        }
+        SymbolIdentity::GlobalMember { object, property } => PortableSymbolIdentity::GlobalMember {
+            object: object.clone(),
+            property: property.clone(),
+        },
     }
 }
 
