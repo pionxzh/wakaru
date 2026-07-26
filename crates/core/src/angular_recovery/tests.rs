@@ -1265,3 +1265,82 @@ fn report_counts_rejected_component_descriptors() {
     assert_eq!(report.stats.rejected_component_candidates, 1);
     assert_eq!(report.components[0].selector, "valid-card");
 }
+
+#[test]
+fn recovers_nested_if_else_views_as_angular_control_flow() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function DetailsIfTemplate(rf, context) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p", 0);
+                core.ɵɵtext(1);
+                core.ɵɵelementEnd();
+            }
+            if (rf & 2) {
+                const parent = core.ɵɵnextContext();
+                core.ɵɵadvance();
+                core.ɵɵtextInterpolate(parent.detail);
+            }
+        }
+
+        function DetailsElseTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p", 0);
+                core.ɵɵtext(1, "Details hidden");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class NestedComponent {
+            showDetails = true;
+            detail = "Nested control flow";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: NestedComponent,
+                selectors: [["nested-card"]],
+                consts: [[1, "details"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "article");
+                        core.ɵɵtemplate(1, DetailsIfTemplate, 2, 1, "p", 0)(
+                            2,
+                            DetailsElseTemplate,
+                            2,
+                            0,
+                            "p",
+                            0
+                        );
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance();
+                        core.ɵɵconditional(context.showDetails ? 1 : 2);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("nested Ivy views should be analyzed");
+
+    assert_eq!(report.components.len(), 1);
+    assert_eq!(
+        report.components[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(report.components[0].source.contains("@if (showDetails) {"));
+    assert!(report.components[0]
+        .source
+        .contains(r#"<p class="details">{{ detail }}</p>"#));
+    assert!(report.components[0].source.contains("@else {"));
+    assert!(report.components[0]
+        .source
+        .contains(r#"<p class="details">Details hidden</p>"#));
+    assert!(!report.components[0].source.contains("<ng-template"));
+    assert_eq!(report.stats.runtime_calls_observed, 15);
+    assert_eq!(report.stats.rendered_instruction_calls, 15);
+    assert_eq!(report.stats.unsupported_runtime_calls, 0);
+    assert_eq!(report.stats.malformed_instruction_calls, 0);
+}
