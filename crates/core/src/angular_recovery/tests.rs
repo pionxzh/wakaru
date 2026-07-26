@@ -1032,6 +1032,8 @@ fn infers_text_interpolation_and_property_binding_relationships() {
 #[test]
 fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
     let evidence = r#"
+        const decorate = (value) => "before helper " + value;
+
         runtime.component = function(definition) {
             return noSideEffects(() => Object.assign({}, baseDefinition, {
                 type: definition.type,
@@ -1050,7 +1052,7 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
         };
 
         class PipelineCardComponent {
-            label = "before rewrites";
+            label = decorate("before rewrites");
 
             static compiled = runtime.component({
                 type: PipelineCardComponent,
@@ -1066,6 +1068,8 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
         }
     "#;
     let readable = r#"
+        const decorate = (value) => "after helper " + value;
+
         runtime.component = function(definition) {
             return noSideEffects(() => ({
                 ...baseDefinition,
@@ -1085,7 +1089,7 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
         };
 
         class PipelineCardComponent {
-            label = "after rewrites";
+            label = decorate("after rewrites");
 
             static compiled = runtime.component({
                 type: PipelineCardComponent,
@@ -1114,6 +1118,8 @@ fn uses_pre_rewrite_evidence_with_the_readable_class_view() {
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].selector, "pipeline-card");
     assert!(recovered[0].source.contains("<article"));
+    assert!(recovered[0].source.contains("\"after helper \" + value"));
+    assert!(!recovered[0].source.contains("\"before helper \" + value"));
     assert!(recovered[0].source.contains("\"after rewrites\""));
     assert!(!recovered[0].source.contains("\"before rewrites\""));
 }
@@ -1420,4 +1426,117 @@ fn recovers_projection_local_references_and_pipe_bindings() {
     assert_eq!(component.stats.rendered_instruction_calls, 20);
     assert_eq!(component.stats.unsupported_runtime_calls, 0);
     assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
+    let source = r#"
+        import {
+            signal as state,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+            ɵɵtext as text,
+            ɵɵadvance as advance,
+            ɵɵtextInterpolate as interpolate,
+        } from "@angular/core";
+        import { UpperCasePipe as Upper } from "@angular/common";
+        import { formatTitle, normalize } from "./format.js";
+
+        const suffix = "!";
+        const unused = "not part of the artifact";
+        function decorate(value) {
+            return normalize(value) + suffix;
+        }
+
+        class SupportComponent {
+            title = state(decorate("ready"));
+
+            static ɵcmp = define({
+                type: SupportComponent,
+                selectors: [["support-card"]],
+                template: function(rf, ctx) {
+                    if (rf & 1) {
+                        element(0, "p");
+                        text(1);
+                    }
+                    if (rf & 2) {
+                        advance(1);
+                        interpolate(formatTitle(ctx.title));
+                    }
+                },
+                dependencies: [Upper],
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("artifact support declarations should be recoverable");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"import { signal as state } from "@angular/core";"#));
+    assert!(component
+        .source
+        .contains(r#"import { UpperCasePipe as Upper } from "@angular/common";"#));
+    assert!(component
+        .source
+        .contains(r#"import { normalize } from "./format.js";"#));
+    assert!(component
+        .source
+        .contains(r#"import { formatTitle } from "./format.js";"#));
+    assert!(component.source.contains(r#"const suffix = "!";"#));
+    assert!(component.source.contains("function decorate(value)"));
+    assert!(component.source.contains("imports: [Upper]"));
+    assert!(component.source.contains("{{ formatTitle(title) }}"));
+    assert!(!component.source.contains("not part of the artifact"));
+    assert!(!component.source.contains("ɵɵdefineComponent"));
+    assert!(!component.source.contains("ɵɵelement"));
+    assert!(!component.source.contains("ɵɵtextInterpolate"));
+}
+
+#[test]
+fn refuses_a_local_helper_with_an_impure_dependency_closure() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        const runtimeConfig = makeConfig();
+        function decorate(value) {
+            return runtimeConfig.format(value);
+        }
+
+        class ConservativeSupportComponent {
+            label = decorate("ready");
+
+            static ɵcmp = define({
+                type: ConservativeSupportComponent,
+                selectors: [["conservative-support"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        element(0, "p");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("unsupported helper closures should not prevent component recovery");
+    let component = &recovered[0];
+
+    assert!(component
+        .source
+        .contains("// Unresolved artifact-local symbols: decorate"));
+    assert!(!component.source.contains("function decorate(value)"));
+    assert!(!component.source.contains("makeConfig()"));
 }
