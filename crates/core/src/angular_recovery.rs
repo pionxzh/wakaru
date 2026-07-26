@@ -17,8 +17,8 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, Class, ClassDecl, Expr, Function, Module, ObjectLit, Pat, Prop,
-    PropOrSpread, SimpleAssignTarget, VarDeclarator,
+    AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function, Module, ObjectLit, Pat,
+    Prop, PropOrSpread, SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -638,7 +638,13 @@ fn parse_component_descriptor(
     let template = descriptor_template(object, roles, unresolved_ctxt)?;
     let selector = descriptor_selector(object)?;
     let styles = descriptor_styles(object);
-    let projection_selectors = descriptor_projection_selectors(object, template_functions);
+    let projection_selectors = descriptor_projection_selectors(
+        object,
+        &template,
+        roles,
+        template_functions,
+        unresolved_ctxt,
+    );
     let dependencies = descriptor_dependencies(object, template_functions);
     let constants = descriptor_constants(object);
 
@@ -806,26 +812,76 @@ fn descriptor_styles(object: &ObjectLit) -> Vec<String> {
 
 fn descriptor_projection_selectors(
     object: &ObjectLit,
+    template: &Function,
+    roles: &IvyRoleTable,
     template_functions: &TemplateFunctionTable,
+    unresolved_ctxt: SyntaxContext,
 ) -> Vec<String> {
-    object
-        .props
-        .iter()
-        .find_map(|prop| {
-            let PropOrSpread::Prop(prop) = prop else {
-                return None;
-            };
-            let Prop::KeyValue(key_value) = prop.as_ref() else {
-                return None;
-            };
-            (prop_name(&key_value.key).as_deref() == Some("ngContentSelectors"))
-                .then(|| {
-                    let value = template_functions.resolve_expression(key_value.value.as_ref());
-                    string_array(value.as_ref())
-                })
-                .flatten()
+    if let Some(selectors) = object.props.iter().find_map(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return None;
+        };
+        (prop_name(&key_value.key).as_deref() == Some("ngContentSelectors"))
+            .then(|| {
+                let value = template_functions.resolve_expression(key_value.value.as_ref());
+                string_array(value.as_ref())
+            })
+            .flatten()
+    }) {
+        return selectors;
+    }
+
+    let mut projection_calls = ProjectionCallCollector {
+        roles,
+        unresolved_ctxt,
+        found: false,
+    };
+    template.visit_with(&mut projection_calls);
+    if !projection_calls.found {
+        return Vec::new();
+    }
+
+    let mut candidates = descriptor_expression_values(object)
+        .filter_map(|expression| {
+            let expression = template_functions.resolve_expression(expression);
+            let selectors = string_array(expression.as_ref())?;
+            (!selectors.is_empty()
+                && selectors
+                    .iter()
+                    .all(|selector| !selector.contains('{') && !selector.contains('}')))
+            .then_some(selectors)
         })
-        .unwrap_or_default()
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    if candidates.len() == 1 {
+        candidates.pop().unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+struct ProjectionCallCollector<'a> {
+    roles: &'a IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    found: bool,
+}
+
+impl Visit for ProjectionCallCollector<'_> {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(
+            self.roles
+                .instruction_for_callee(&call.callee, self.unresolved_ctxt),
+            Some(IvyInstruction::ProjectionDef | IvyInstruction::Projection)
+        ) {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
 }
 
 fn descriptor_dependencies(
