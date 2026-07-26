@@ -30,6 +30,15 @@
               "optimization": true,
               "outputHashing": "none",
               "sourceMap": false
+            },
+            "advanced-producer": {
+              "browser": "src/advanced-main.ts",
+              "outputPath": "target/angular-advanced-build",
+              "extractLicenses": false,
+              "namedChunks": false,
+              "optimization": true,
+              "outputHashing": "none",
+              "sourceMap": false
             }
           },
           "defaultConfiguration": "production"
