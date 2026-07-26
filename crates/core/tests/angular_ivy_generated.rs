@@ -9,6 +9,7 @@ const RUNTIME: &str = include_str!("bundles/angular-ivy-gen/dist/runtime.js");
 const MAIN: &str = include_str!("bundles/angular-ivy-gen/dist/main.js");
 const LAZY: &str = include_str!("bundles/angular-ivy-gen/dist/lazy.js");
 const CLOSURE_SIMPLE: &str = include_str!("bundles/angular-ivy-gen/dist/closure-simple.js");
+const CLOSURE_ADVANCED: &str = include_str!("bundles/angular-ivy-gen/dist/closure-advanced.js");
 
 fn assert_production_artifact(source: &str) {
     assert!(!source.contains("ɵsetClassMetadata"));
@@ -107,6 +108,39 @@ fn recovers_the_same_components_after_closure_simple() {
     assert!(by_selector["fixture-card"]
         .source
         .contains("@if (showDetails) {"));
+    assert!(by_selector["fixture-card"]
+        .source
+        .contains("{{ title | uppercase }}"));
+    assert!(by_selector["fixture-card"].source.contains("#selectButton"));
+    assert!(by_selector["fixture-card"]
+        .source
+        .contains(r#"<ng-content select="[card-extra]" />"#));
+}
+
+#[test]
+fn recovers_components_after_rooted_closure_advanced() {
+    assert_production_artifact(CLOSURE_ADVANCED);
+
+    let recovered =
+        recover_angular_components_from_js(CLOSURE_ADVANCED, AngularRecoveryOptions::default())
+            .expect("pinned rooted Closure ADVANCED output should parse");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    assert_eq!(by_selector.len(), 3);
+    assert!(by_selector.contains_key("app-root"));
+    assert!(by_selector.contains_key("fixture-lazy-card"));
+    assert_eq!(
+        by_selector["fixture-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["fixture-card"].issues,
+        by_selector["fixture-card"].source,
+    );
+    assert!(by_selector["fixture-card"].source.contains("@if ("));
+    assert!(by_selector["fixture-card"].source.contains("@else {"));
     assert!(by_selector["fixture-card"]
         .source
         .contains("{{ title | uppercase }}"));

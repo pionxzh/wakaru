@@ -1429,6 +1429,42 @@ fn recovers_projection_local_references_and_pipe_bindings() {
 }
 
 #[test]
+fn recovers_a_structurally_renamed_projection_selector_field() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class RenamedProjectionComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                a: RenamedProjectionComponent,
+                b: [["renamed-projection"]],
+                c: ["[projected-extra]"],
+                d: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵprojectionDef([[["", "projected-extra", ""]]]);
+                        core.ɵɵprojection(0);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("renamed projection descriptor fields should be analyzed");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"<ng-content select="[projected-extra]" />"#));
+}
+
+#[test]
 fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
     let source = r#"
         import {
