@@ -22,6 +22,9 @@ pub(super) enum IvyInstruction {
     Element,
     Text,
     Listener,
+    Template,
+    Conditional,
+    NextContext,
     Advance,
     TextInterpolate,
     TextInterpolate1,
@@ -47,6 +50,12 @@ impl IvyInstruction {
             "ɵɵelement" | "ɵɵdomElement" => Self::Element,
             "ɵɵtext" => Self::Text,
             "ɵɵlistener" | "ɵɵdomListener" => Self::Listener,
+            "ɵɵtemplate"
+            | "ɵɵdomTemplate"
+            | "ɵɵconditionalCreate"
+            | "ɵɵconditionalBranchCreate" => Self::Template,
+            "ɵɵconditional" => Self::Conditional,
+            "ɵɵnextContext" => Self::NextContext,
             "ɵɵadvance" => Self::Advance,
             "ɵɵtextInterpolate" => Self::TextInterpolate,
             "ɵɵtextInterpolate1" => Self::TextInterpolate1,
@@ -73,6 +82,9 @@ impl IvyInstruction {
             Self::Element => "ɵɵelement",
             Self::Text => "ɵɵtext",
             Self::Listener => "ɵɵlistener",
+            Self::Template => "ɵɵtemplate",
+            Self::Conditional => "ɵɵconditional",
+            Self::NextContext => "ɵɵnextContext",
             Self::Advance => "ɵɵadvance",
             Self::TextInterpolate => "ɵɵtextInterpolate",
             Self::TextInterpolate1 => "ɵɵtextInterpolate1",

@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_core::ecma::ast::{
-    BinaryOp, CallExpr, Callee, Expr, ExprOrSpread, Function, Lit, Pat, Stmt,
+    AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, Expr, ExprOrSpread, FnDecl, Function,
+    Lit, Module, Pat, SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -22,6 +23,79 @@ pub(super) struct RecoveredTemplate {
     pub(super) unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
 }
 
+#[derive(Default)]
+pub(super) struct TemplateFunctionTable {
+    functions: HashMap<BindingKey, Function>,
+}
+
+impl TemplateFunctionTable {
+    pub(super) fn collect(module: &Module) -> Self {
+        let mut collector = TemplateFunctionCollector::default();
+        module.visit_with(&mut collector);
+        Self {
+            functions: collector.functions,
+        }
+    }
+
+    fn resolve(&self, expression: &Expr) -> Option<ResolvedTemplateFunction> {
+        match strip_parentheses(expression) {
+            Expr::Ident(identifier) => {
+                let key = binding_key(identifier);
+                self.functions
+                    .get(&key)
+                    .cloned()
+                    .map(|function| ResolvedTemplateFunction {
+                        key: Some(key),
+                        function,
+                    })
+            }
+            Expr::Fn(function) => Some(ResolvedTemplateFunction {
+                key: None,
+                function: function.function.as_ref().clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct TemplateFunctionCollector {
+    functions: HashMap<BindingKey, Function>,
+}
+
+impl Visit for TemplateFunctionCollector {
+    fn visit_fn_decl(&mut self, declaration: &FnDecl) {
+        self.functions.insert(
+            binding_key(&declaration.ident),
+            declaration.function.as_ref().clone(),
+        );
+        declaration.function.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(binding), Some(Expr::Fn(function))) =
+            (&declarator.name, declarator.init.as_deref())
+        {
+            self.functions
+                .insert(binding_key(&binding.id), function.function.as_ref().clone());
+        }
+        declarator.visit_children_with(self);
+    }
+}
+
+struct ResolvedTemplateFunction {
+    key: Option<BindingKey>,
+    function: Function,
+}
+
+struct TemplateRecoveryEnvironment<'a> {
+    constants: &'a [Vec<TemplateAttribute>],
+    roles: &'a IvyRoleTable,
+    template_functions: &'a TemplateFunctionTable,
+    unresolved_ctxt: SyntaxContext,
+    cm: Lrc<SourceMap>,
+}
+
 #[derive(Clone)]
 struct InstructionCall {
     instruction: IvyInstruction,
@@ -35,6 +109,7 @@ struct TemplateProgram {
     issues: Vec<AngularRecoveryIssue>,
     stats: AngularTemplateRecoveryStats,
     unknown_runtime_call_shapes: HashMap<(AngularTemplatePhase, Vec<usize>), (usize, usize)>,
+    component_contexts: HashSet<BindingKey>,
 }
 
 #[derive(Clone)]
@@ -51,6 +126,17 @@ enum TemplateNodeKind {
     Text {
         value: String,
     },
+    EmbeddedView {
+        tree: Box<TemplateTree>,
+        attributes: Vec<TemplateAttribute>,
+        branch: Option<ConditionalBranch>,
+    },
+}
+
+enum ConditionalBranch {
+    If(String),
+    ElseIf(String),
+    Else,
 }
 
 struct TemplateNode {
@@ -112,69 +198,23 @@ pub(super) fn recover_template(
     template: &Function,
     constant_table: Option<&Expr>,
     roles: &IvyRoleTable,
+    template_functions: &TemplateFunctionTable,
     unresolved_ctxt: SyntaxContext,
     cm: Lrc<SourceMap>,
 ) -> Result<RecoveredTemplate> {
-    let Some(render_flags) = function_param_binding(template, 0) else {
-        return Ok(RecoveredTemplate {
-            source: "<!-- Unsupported Ivy template parameters -->".to_string(),
-            issues: vec![AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::UnsupportedTemplateParameters,
-                instruction: None,
-                detail: None,
-            }],
-            stats: AngularTemplateRecoveryStats::default(),
-            unknown_runtime_call_shapes: Vec::new(),
-        });
-    };
-    let context = function_param_binding(template, 1);
     let constants = constant_table
         .map(decode_component_constant_table)
         .unwrap_or_default();
-    let mut program = TemplateProgram::default();
-    if let Some(body) = &template.body {
-        collect_statements(
-            &body.stmts,
-            None,
-            &render_flags,
-            roles,
-            unresolved_ctxt,
-            &mut program,
-        );
-    }
-
-    let mut tree = TemplateTree::default();
-    for instruction in &program.create {
-        apply_create_instruction(
-            instruction,
-            &constants,
-            context.as_ref(),
-            &mut tree,
-            cm.clone(),
-            &mut program.issues,
-            &mut program.stats,
-        )?;
-    }
-    for instruction in &program.update {
-        apply_update_instruction(
-            instruction,
-            context.as_ref(),
-            &mut tree,
-            cm.clone(),
-            &mut program.issues,
-            &mut program.stats,
-        )?;
-    }
-    if !tree.stack.is_empty() {
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::MalformedTemplateStructure,
-                instruction: None,
-                detail: Some(format!("{} unclosed element(s)", tree.stack.len())),
-            },
-        );
-    }
+    let environment = TemplateRecoveryEnvironment {
+        constants: &constants,
+        roles,
+        template_functions,
+        unresolved_ctxt,
+        cm,
+    };
+    let mut active_templates = HashSet::new();
+    let (tree, program) =
+        recover_template_tree(template, &environment, true, &mut active_templates, 0)?;
 
     let mut source = render_tree(&tree);
     let mut rendered_issue_comments = HashSet::new();
@@ -219,6 +259,73 @@ pub(super) fn recover_template(
     })
 }
 
+fn recover_template_tree(
+    template: &Function,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    is_component_view: bool,
+    active_templates: &mut HashSet<BindingKey>,
+    depth: usize,
+) -> Result<(TemplateTree, TemplateProgram)> {
+    let mut program = TemplateProgram::default();
+    let Some(render_flags) = function_param_binding(template, 0) else {
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::UnsupportedTemplateParameters,
+                instruction: None,
+                detail: None,
+            },
+        );
+        return Ok((TemplateTree::default(), program));
+    };
+    if is_component_view {
+        if let Some(context) = function_param_binding(template, 1) {
+            program.component_contexts.insert(context);
+        }
+    }
+    if let Some(body) = &template.body {
+        collect_statements(
+            &body.stmts,
+            None,
+            &render_flags,
+            environment.roles,
+            environment.unresolved_ctxt,
+            &mut program,
+        );
+    }
+
+    let mut tree = TemplateTree::default();
+    for instruction in program.create.clone() {
+        apply_create_instruction(
+            &instruction,
+            &mut tree,
+            &mut program,
+            environment,
+            active_templates,
+            depth,
+        )?;
+    }
+    for instruction in program.update.clone() {
+        apply_update_instruction(
+            &instruction,
+            &mut tree,
+            environment.cm.clone(),
+            &mut program,
+        )?;
+    }
+    if !tree.stack.is_empty() {
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::MalformedTemplateStructure,
+                instruction: None,
+                detail: Some(format!("{} unclosed element(s)", tree.stack.len())),
+            },
+        );
+    }
+    Ok((tree, program))
+}
+
 pub(super) fn ivy_template_score(
     template: &Function,
     roles: &IvyRoleTable,
@@ -237,9 +344,12 @@ pub(super) fn ivy_template_score(
                 .map(|instruction| match instruction {
                     IvyInstruction::ElementStart
                     | IvyInstruction::Element
-                    | IvyInstruction::Text => 3,
+                    | IvyInstruction::Text
+                    | IvyInstruction::Template => 3,
                     IvyInstruction::ElementEnd
                     | IvyInstruction::Listener
+                    | IvyInstruction::Conditional
+                    | IvyInstruction::NextContext
                     | IvyInstruction::Advance
                     | IvyInstruction::TextInterpolate
                     | IvyInstruction::TextInterpolate1
@@ -372,6 +482,14 @@ fn collect_statement(
             unresolved_ctxt,
             program,
         ),
+        Stmt::Decl(Decl::Var(declaration)) => collect_variable_declaration(
+            declaration,
+            phase,
+            render_flags,
+            roles,
+            unresolved_ctxt,
+            program,
+        ),
         _ => record_issue(
             &mut program.issues,
             AngularRecoveryIssue {
@@ -381,6 +499,97 @@ fn collect_statement(
             },
         ),
     }
+}
+
+fn collect_variable_declaration(
+    declaration: &swc_core::ecma::ast::VarDecl,
+    phase: Option<u8>,
+    render_flags: &BindingKey,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    program: &mut TemplateProgram,
+) {
+    for declarator in &declaration.decls {
+        let supported_context_alias = match (&declarator.name, declarator.init.as_deref()) {
+            (Pat::Ident(binding), Some(Expr::Call(call))) if phase == Some(2) => {
+                collect_next_context_alias(
+                    &binding.id,
+                    call,
+                    phase,
+                    roles,
+                    unresolved_ctxt,
+                    program,
+                )
+            }
+            _ => false,
+        };
+        if supported_context_alias {
+            continue;
+        }
+
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::UnsupportedStatement,
+                instruction: None,
+                detail: Some("declaration".to_string()),
+            },
+        );
+        if let Some(initializer) = &declarator.init {
+            collect_expression(
+                initializer.as_ref(),
+                phase,
+                render_flags,
+                roles,
+                unresolved_ctxt,
+                program,
+            );
+        }
+    }
+}
+
+fn collect_next_context_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    call: &CallExpr,
+    phase: Option<u8>,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Some((_, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        roles.instruction_for_expr(root, unresolved_ctxt) == Some(IvyInstruction::NextContext)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    let valid = argument_lists.len() == 1
+        && argument_lists[0].len() <= 1
+        && argument_lists[0].first().is_none_or(|argument| {
+            matches!(
+                argument.expr.as_ref(),
+                Expr::Lit(Lit::Num(number))
+                    if number.value >= 0.0 && number.value.fract() == 0.0
+            )
+        });
+    if valid {
+        program.stats.rendered_instruction_calls += 1;
+        program.component_contexts.insert(binding_key(binding));
+    } else {
+        program.stats.malformed_instruction_calls += argument_lists.len();
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::MalformedInstruction,
+                instruction: Some("ɵɵnextContext".to_string()),
+                detail: Some("unexpected context-depth arguments".to_string()),
+            },
+        );
+    }
+    true
 }
 
 fn collect_if_test(
@@ -463,6 +672,41 @@ fn collect_expression(
                 unresolved_ctxt,
                 program,
             );
+        }
+        Expr::Assign(assignment) => {
+            let supported_context_alias = match (&assignment.left, assignment.right.as_ref()) {
+                (AssignTarget::Simple(SimpleAssignTarget::Ident(binding)), Expr::Call(call))
+                    if assignment.op == AssignOp::Assign =>
+                {
+                    collect_next_context_alias(
+                        &binding.id,
+                        call,
+                        phase,
+                        roles,
+                        unresolved_ctxt,
+                        program,
+                    )
+                }
+                _ => false,
+            };
+            if !supported_context_alias {
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
+                        instruction: None,
+                        detail: Some("assignment".to_string()),
+                    },
+                );
+                collect_expression(
+                    assignment.right.as_ref(),
+                    phase,
+                    render_flags,
+                    roles,
+                    unresolved_ctxt,
+                    program,
+                );
+            }
         }
         Expr::Call(call) => {
             let Some((root, argument_lists)) = call_chain(call) else {
@@ -590,6 +834,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::Element
                 | IvyInstruction::Text
                 | IvyInstruction::Listener
+                | IvyInstruction::Template
         ),
         2 => matches!(
             instruction,
@@ -607,6 +852,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::Attribute
                 | IvyInstruction::ClassProp
                 | IvyInstruction::StyleProp
+                | IvyInstruction::Conditional
         ),
         _ => false,
     }
@@ -724,52 +970,81 @@ fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
 
 fn apply_create_instruction(
     call: &InstructionCall,
-    constants: &[Vec<TemplateAttribute>],
-    context: Option<&BindingKey>,
     tree: &mut TemplateTree,
-    cm: Lrc<SourceMap>,
-    issues: &mut Vec<AngularRecoveryIssue>,
-    stats: &mut AngularTemplateRecoveryStats,
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    active_templates: &mut HashSet<BindingKey>,
+    depth: usize,
 ) -> Result<()> {
     match call.instruction {
         IvyInstruction::ElementStart => {
             let Some(index) = numeric_arg(&call.args, 0) else {
-                record_malformed_instruction(call, "missing numeric node index", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing numeric node index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let Some(tag) = call.args.get(1).and_then(|arg| string_lit(arg.as_ref())) else {
-                record_malformed_instruction(call, "missing literal element name", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing literal element name",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let attributes = numeric_arg(&call.args, 2)
-                .and_then(|index| constants.get(index).cloned())
+                .and_then(|index| environment.constants.get(index).cloned())
                 .unwrap_or_default();
             let node = tree.push_node(index, TemplateNodeKind::Element { tag, attributes });
             tree.stack.push(node);
         }
         IvyInstruction::Element => {
             let Some(index) = numeric_arg(&call.args, 0) else {
-                record_malformed_instruction(call, "missing numeric node index", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing numeric node index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let Some(tag) = call.args.get(1).and_then(|arg| string_lit(arg.as_ref())) else {
-                record_malformed_instruction(call, "missing literal element name", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing literal element name",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let attributes = numeric_arg(&call.args, 2)
-                .and_then(|index| constants.get(index).cloned())
+                .and_then(|index| environment.constants.get(index).cloned())
                 .unwrap_or_default();
             tree.push_node(index, TemplateNodeKind::Element { tag, attributes });
         }
         IvyInstruction::ElementEnd => {
             if tree.stack.pop().is_none() {
-                record_missing_target(call, "no open element", issues, stats);
+                record_missing_target(
+                    call,
+                    "no open element",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             }
         }
         IvyInstruction::Text => {
             let Some(index) = numeric_arg(&call.args, 0) else {
-                record_malformed_instruction(call, "missing numeric node index", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing numeric node index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let value = call
@@ -781,23 +1056,42 @@ fn apply_create_instruction(
         }
         IvyInstruction::Listener => {
             let Some(node) = tree.stack.last().copied() else {
-                record_missing_target(call, "no current element", issues, stats);
+                record_missing_target(
+                    call,
+                    "no current element",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let Some(event) = call.args.first().and_then(|arg| string_lit(arg.as_ref())) else {
-                record_malformed_instruction(call, "missing literal event name", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing literal event name",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let Some(handler) = call.args.get(1) else {
-                record_malformed_instruction(call, "missing event handler", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing event handler",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
-            let Ok(expression) = handler_expression(handler.as_ref(), context, cm) else {
+            let Ok(expression) = handler_expression(
+                handler.as_ref(),
+                &program.component_contexts,
+                environment.cm.clone(),
+            ) else {
                 record_malformed_instruction(
                     call,
                     "event handler could not be printed",
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
@@ -809,22 +1103,106 @@ fn apply_create_instruction(
                 },
             );
         }
+        IvyInstruction::Template => {
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric template index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            if numeric_arg(&call.args, 2).is_none() || numeric_arg(&call.args, 3).is_none() {
+                record_malformed_instruction(
+                    call,
+                    "missing template declaration or binding count",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(template_expression) = call.args.get(1) else {
+                record_malformed_instruction(
+                    call,
+                    "missing embedded template function",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(resolved) = environment
+                .template_functions
+                .resolve(template_expression.as_ref())
+            else {
+                record_malformed_instruction(
+                    call,
+                    "embedded template function could not be resolved",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            if depth >= 32
+                || resolved
+                    .key
+                    .as_ref()
+                    .is_some_and(|key| active_templates.contains(key))
+            {
+                record_malformed_instruction(
+                    call,
+                    "recursive embedded template graph",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            if let Some(key) = &resolved.key {
+                active_templates.insert(key.clone());
+            }
+            let child = recover_template_tree(
+                &resolved.function,
+                environment,
+                false,
+                active_templates,
+                depth + 1,
+            );
+            if let Some(key) = &resolved.key {
+                active_templates.remove(key);
+            }
+            let (child_tree, child_program) = child?;
+            merge_template_program(program, child_program);
+            let attributes = numeric_arg(&call.args, 5)
+                .and_then(|index| environment.constants.get(index).cloned())
+                .unwrap_or_default();
+            tree.push_node(
+                index,
+                TemplateNodeKind::EmbeddedView {
+                    tree: Box::new(child_tree),
+                    attributes,
+                    branch: None,
+                },
+            );
+        }
         _ => {
-            record_unsupported_instruction(call, "unsupported in creation phase", issues, stats);
+            record_unsupported_instruction(
+                call,
+                "unsupported in creation phase",
+                &mut program.issues,
+                &mut program.stats,
+            );
             return Ok(());
         }
     }
-    stats.rendered_instruction_calls += 1;
+    program.stats.rendered_instruction_calls += 1;
     Ok(())
 }
 
 fn apply_update_instruction(
     call: &InstructionCall,
-    context: Option<&BindingKey>,
     tree: &mut TemplateTree,
     cm: Lrc<SourceMap>,
-    issues: &mut Vec<AngularRecoveryIssue>,
-    stats: &mut AngularTemplateRecoveryStats,
+    program: &mut TemplateProgram,
 ) -> Result<()> {
     match call.instruction {
         IvyInstruction::Advance => {
@@ -835,8 +1213,8 @@ fn apply_update_instruction(
                     record_malformed_instruction(
                         call,
                         "advance amount is not a non-negative integer",
-                        issues,
-                        stats,
+                        &mut program.issues,
+                        &mut program.stats,
                     );
                     return Ok(());
                 };
@@ -857,17 +1235,17 @@ fn apply_update_instruction(
                 record_malformed_instruction(
                     call,
                     "unexpected interpolation argument count",
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             }
-            let Ok(value) = interpolation_value(call, context, cm) else {
+            let Ok(value) = interpolation_value(call, &program.component_contexts, cm) else {
                 record_malformed_instruction(
                     call,
                     "interpolation expression could not be printed",
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
@@ -875,8 +1253,8 @@ fn apply_update_instruction(
                 record_missing_target(
                     call,
                     &format!("no text node at cursor {}", tree.cursor),
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
@@ -884,8 +1262,8 @@ fn apply_update_instruction(
                 record_missing_target(
                     call,
                     &format!("cursor {} does not reference text", tree.cursor),
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
@@ -899,34 +1277,49 @@ fn apply_update_instruction(
                 record_missing_target(
                     call,
                     &format!("no element at cursor {}", tree.cursor),
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
-            if !matches!(tree.nodes[node].kind, TemplateNodeKind::Element { .. }) {
+            if !matches!(
+                tree.nodes[node].kind,
+                TemplateNodeKind::Element { .. } | TemplateNodeKind::EmbeddedView { .. }
+            ) {
                 record_missing_target(
                     call,
                     &format!("cursor {} does not reference an element", tree.cursor),
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             }
             let Some(name) = call.args.first().and_then(|arg| string_lit(arg.as_ref())) else {
-                record_malformed_instruction(call, "missing literal binding name", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing literal binding name",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
             let Some(value) = call.args.get(1) else {
-                record_malformed_instruction(call, "missing binding value", issues, stats);
+                record_malformed_instruction(
+                    call,
+                    "missing binding value",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
                 return Ok(());
             };
-            let Ok(expression) = print_template_expression(value.as_ref(), context, cm) else {
+            let Ok(expression) =
+                print_template_expression(value.as_ref(), &program.component_contexts, cm)
+            else {
                 record_malformed_instruction(
                     call,
                     "binding expression could not be printed",
-                    issues,
-                    stats,
+                    &mut program.issues,
+                    &mut program.stats,
                 );
                 return Ok(());
             };
@@ -945,13 +1338,184 @@ fn apply_update_instruction(
                 },
             );
         }
+        IvyInstruction::Conditional => {
+            if !apply_conditional_instruction(call, tree, cm, program) {
+                return Ok(());
+            }
+        }
         _ => {
-            record_unsupported_instruction(call, "unsupported in update phase", issues, stats);
+            record_unsupported_instruction(
+                call,
+                "unsupported in update phase",
+                &mut program.issues,
+                &mut program.stats,
+            );
             return Ok(());
         }
     }
-    stats.rendered_instruction_calls += 1;
+    program.stats.rendered_instruction_calls += 1;
     Ok(())
+}
+
+fn merge_template_program(parent: &mut TemplateProgram, child: TemplateProgram) {
+    for issue in child.issues {
+        record_issue(&mut parent.issues, issue);
+    }
+    parent.stats.runtime_calls_observed += child.stats.runtime_calls_observed;
+    parent.stats.rendered_instruction_calls += child.stats.rendered_instruction_calls;
+    parent.stats.unsupported_runtime_calls += child.stats.unsupported_runtime_calls;
+    parent.stats.malformed_instruction_calls += child.stats.malformed_instruction_calls;
+    for (shape, (occurrences, runtime_calls)) in child.unknown_runtime_call_shapes {
+        let aggregate = parent.unknown_runtime_call_shapes.entry(shape).or_default();
+        aggregate.0 += occurrences;
+        aggregate.1 += runtime_calls;
+    }
+}
+
+fn apply_conditional_instruction(
+    call: &InstructionCall,
+    tree: &mut TemplateTree,
+    cm: Lrc<SourceMap>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if !matches!(call.args.len(), 1 | 2) {
+        record_malformed_instruction(
+            call,
+            "expected a template selection and optional context value",
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return false;
+    }
+    let Some(selection) = call.args.first() else {
+        record_malformed_instruction(
+            call,
+            "missing template selection",
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return false;
+    };
+    let Some(branches) =
+        decode_conditional_branches(selection.as_ref(), &program.component_contexts, cm)
+    else {
+        record_malformed_instruction(
+            call,
+            "unsupported conditional template selection",
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return false;
+    };
+
+    for (index, branch) in branches {
+        let Some(&node) = tree.index_to_node.get(&index) else {
+            record_missing_target(
+                call,
+                &format!("no embedded template at index {index}"),
+                &mut program.issues,
+                &mut program.stats,
+            );
+            return false;
+        };
+        let TemplateNodeKind::EmbeddedView {
+            branch: node_branch,
+            ..
+        } = &mut tree.nodes[node].kind
+        else {
+            record_missing_target(
+                call,
+                &format!("index {index} does not reference an embedded template"),
+                &mut program.issues,
+                &mut program.stats,
+            );
+            return false;
+        };
+        *node_branch = Some(branch);
+    }
+    true
+}
+
+fn decode_conditional_branches(
+    selection: &Expr,
+    component_contexts: &HashSet<BindingKey>,
+    cm: Lrc<SourceMap>,
+) -> Option<Vec<(usize, ConditionalBranch)>> {
+    let mut branches = Vec::new();
+    decode_conditional_branch(
+        strip_parentheses(selection),
+        true,
+        component_contexts,
+        cm,
+        &mut branches,
+    )?;
+    (!branches.is_empty()).then_some(branches)
+}
+
+fn decode_conditional_branch(
+    selection: &Expr,
+    first: bool,
+    component_contexts: &HashSet<BindingKey>,
+    cm: Lrc<SourceMap>,
+    branches: &mut Vec<(usize, ConditionalBranch)>,
+) -> Option<()> {
+    let Expr::Cond(conditional) = strip_parentheses(selection) else {
+        return None;
+    };
+    let condition =
+        print_template_expression(conditional.test.as_ref(), component_contexts, cm.clone())
+            .ok()?;
+    let index = signed_integer(conditional.cons.as_ref())?;
+    if index < 0 {
+        return None;
+    }
+    branches.push((
+        index as usize,
+        if first {
+            ConditionalBranch::If(condition)
+        } else {
+            ConditionalBranch::ElseIf(condition)
+        },
+    ));
+
+    match strip_parentheses(conditional.alt.as_ref()) {
+        Expr::Cond(_) => decode_conditional_branch(
+            conditional.alt.as_ref(),
+            false,
+            component_contexts,
+            cm,
+            branches,
+        ),
+        alternate => {
+            let index = signed_integer(alternate)?;
+            if index >= 0 {
+                branches.push((index as usize, ConditionalBranch::Else));
+            } else if index != -1 {
+                return None;
+            }
+            Some(())
+        }
+    }
+}
+
+fn signed_integer(expression: &Expr) -> Option<isize> {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Num(number))
+            if number.value.fract() == 0.0
+                && number.value >= isize::MIN as f64
+                && number.value <= isize::MAX as f64 =>
+        {
+            Some(number.value as isize)
+        }
+        Expr::Unary(unary) if unary.op == UnaryOp::Minus => {
+            let Expr::Lit(Lit::Num(number)) = strip_parentheses(unary.arg.as_ref()) else {
+                return None;
+            };
+            (number.value.fract() == 0.0 && number.value <= isize::MAX as f64)
+                .then_some(-(number.value as isize))
+        }
+        _ => None,
+    }
 }
 
 fn record_malformed_instruction(
@@ -1023,14 +1587,14 @@ fn valid_interpolation_arity(call: &InstructionCall) -> bool {
 
 fn interpolation_value(
     call: &InstructionCall,
-    context: Option<&BindingKey>,
+    component_contexts: &HashSet<BindingKey>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     if call.instruction == IvyInstruction::TextInterpolate {
         let expression = call
             .args
             .first()
-            .map(|expr| print_template_expression(expr.as_ref(), context, cm))
+            .map(|expr| print_template_expression(expr.as_ref(), component_contexts, cm))
             .transpose()?
             .unwrap_or_default();
         return Ok(format!("{{{{ {expression} }}}}"));
@@ -1041,7 +1605,8 @@ fn interpolation_value(
         if index % 2 == 0 {
             output.push_str(&string_lit(argument.as_ref()).unwrap_or_default());
         } else {
-            let expression = print_template_expression(argument.as_ref(), context, cm.clone())?;
+            let expression =
+                print_template_expression(argument.as_ref(), component_contexts, cm.clone())?;
             output.push_str("{{ ");
             output.push_str(&expression);
             output.push_str(" }}");
@@ -1153,17 +1718,22 @@ impl TemplateTree {
     }
 
     fn add_attribute(&mut self, node: usize, attribute: TemplateAttribute) {
-        let TemplateNodeKind::Element { attributes, .. } = &mut self.nodes[node].kind else {
-            return;
-        };
-        attributes.push(attribute);
+        match &mut self.nodes[node].kind {
+            TemplateNodeKind::Element { attributes, .. }
+            | TemplateNodeKind::EmbeddedView { attributes, .. } => attributes.push(attribute),
+            TemplateNodeKind::Text { .. } => {}
+        }
     }
 }
 
 fn render_tree(tree: &TemplateTree) -> String {
+    render_tree_at_depth(tree, 0)
+}
+
+fn render_tree_at_depth(tree: &TemplateTree, depth: usize) -> String {
     tree.roots
         .iter()
-        .map(|&node| render_node(tree, node, 0))
+        .map(|&node| render_node(tree, node, depth))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1203,6 +1773,32 @@ fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
                 .collect::<Vec<_>>()
                 .join("\n");
             format!("{indent}<{tag}{attributes}>\n{children}\n{indent}</{tag}>")
+        }
+        TemplateNodeKind::EmbeddedView {
+            tree: embedded,
+            attributes,
+            branch,
+        } => {
+            let body = render_tree_at_depth(embedded, depth + 1);
+            match branch {
+                Some(ConditionalBranch::If(condition)) => {
+                    format!("{indent}@if ({condition}) {{\n{body}\n{indent}}}")
+                }
+                Some(ConditionalBranch::ElseIf(condition)) => {
+                    format!("{indent}@else if ({condition}) {{\n{body}\n{indent}}}")
+                }
+                Some(ConditionalBranch::Else) => {
+                    format!("{indent}@else {{\n{body}\n{indent}}}")
+                }
+                None => {
+                    let attributes = attributes
+                        .iter()
+                        .map(render_attribute)
+                        .collect::<Vec<_>>()
+                        .join("");
+                    format!("{indent}<ng-template{attributes}>\n{body}\n{indent}</ng-template>")
+                }
+            }
         }
     }
 }

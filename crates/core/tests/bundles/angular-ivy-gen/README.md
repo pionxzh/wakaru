@@ -13,10 +13,10 @@ The pinned Angular CLI application produces:
   Compiler `SIMPLE`.
 
 The source deliberately exercises element structure, static attributes, text
-interpolation, a listener, a property binding, component styles, and a
-cross-chunk component. The generated files contain production Ivy definitions;
-they do not contain `ɵsetClassMetadata` or a copy of the original HTML template
-literal.
+interpolation, a listener, a property binding, nested `@if` / `@else` embedded
+views, component styles, and a cross-chunk component. The generated files
+contain production Ivy definitions; they do not contain `ɵsetClassMetadata` or
+a copy of the original HTML template literal.
 
 Regenerate with:
 
