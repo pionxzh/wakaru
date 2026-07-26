@@ -355,6 +355,10 @@ throw `Class constructor … cannot be invoked without 'new'` at runtime. Rerun
 with `--level minimal`, which keeps every cross-module `.call`/`.apply` target
 a function.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
