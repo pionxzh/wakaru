@@ -10,6 +10,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::artifact::ArtifactSupportPlan;
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, prop_name, BindingKey};
 use super::template::RecoveredTemplate;
@@ -20,23 +21,32 @@ pub(super) struct ComponentEmitInput<'a> {
     pub(super) selector: &'a str,
     pub(super) styles: &'a [String],
     pub(super) class: &'a Class,
-    pub(super) roles: &'a IvyRoleTable,
-    pub(super) unresolved_ctxt: SyntaxContext,
     pub(super) template: &'a RecoveredTemplate,
-    pub(super) definition_field: Option<&'a Atom>,
+    pub(super) support: &'a ArtifactSupportPlan,
+    pub(super) dependencies: &'a [String],
 }
 
 pub(super) fn emit_component_source(
     input: ComponentEmitInput<'_>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
-    let class = clean_component_class(
-        input.class,
-        input.definition_field,
-        input.roles,
-        input.unresolved_ctxt,
-    );
-    let class_source = print_component_class(input.name, class, cm)?;
+    let class_source =
+        print_component_class(input.name, Box::new(input.class.clone()), cm.clone())?;
+    let support_source = {
+        let items = input.support.module_items();
+        if items.is_empty() {
+            None
+        } else {
+            Some(print_module(
+                &Module {
+                    span: DUMMY_SP,
+                    body: items,
+                    shebang: None,
+                },
+                cm,
+            )?)
+        }
+    };
 
     let mut metadata = String::new();
     metadata.push_str("@Component({\n");
@@ -55,14 +65,31 @@ pub(super) fn emit_component_source(
         }
         metadata.push_str("  ],\n");
     }
+    if !input.dependencies.is_empty() {
+        metadata.push_str("  imports: [");
+        metadata.push_str(&input.dependencies.join(", "));
+        metadata.push_str("],\n");
+    }
     metadata.push_str("})\n");
 
-    Ok(format!(
-        "import {{ Component }} from \"@angular/core\";\n\n{metadata}{class_source}"
-    ))
+    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
+    if let Some(support_source) = support_source {
+        source.push_str(&support_source);
+        source.push('\n');
+    }
+    let unresolved = input.support.unresolved_symbols();
+    if !unresolved.is_empty() {
+        source.push_str("\n// Unresolved artifact-local symbols: ");
+        source.push_str(&unresolved.join(", "));
+        source.push('\n');
+    }
+    source.push('\n');
+    source.push_str(&metadata);
+    source.push_str(&class_source);
+    Ok(source)
 }
 
-fn clean_component_class(
+pub(super) fn clean_component_class(
     class: &Class,
     definition_field: Option<&Atom>,
     roles: &IvyRoleTable,

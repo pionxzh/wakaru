@@ -8,6 +8,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use super::artifact::expression_references;
 use super::emitter::{handler_expression, print_template_expression};
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, string_lit, BindingKey};
@@ -21,6 +22,7 @@ pub(super) struct RecoveredTemplate {
     pub(super) issues: Vec<AngularRecoveryIssue>,
     pub(super) stats: AngularTemplateRecoveryStats,
     pub(super) unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
+    pub(super) artifact_references: HashSet<BindingKey>,
 }
 
 #[derive(Default)]
@@ -139,6 +141,7 @@ struct TemplateProgram {
     reference_aliases: Vec<(BindingKey, InstructionCall)>,
     local_reference_names: HashMap<BindingKey, String>,
     pipes: HashMap<usize, String>,
+    artifact_references: HashSet<BindingKey>,
 }
 
 #[derive(Default)]
@@ -297,6 +300,7 @@ pub(super) fn recover_template(
         issues: program.issues,
         stats: program.stats,
         unknown_runtime_call_shapes,
+        artifact_references: program.artifact_references,
     })
 }
 
@@ -1229,6 +1233,9 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
+            program
+                .artifact_references
+                .extend(expression_references(handler.as_ref()));
             tree.add_attribute(
                 node,
                 TemplateAttribute {
@@ -1633,6 +1640,7 @@ fn merge_template_program(parent: &mut TemplateProgram, child: TemplateProgram) 
         aggregate.0 += occurrences;
         aggregate.1 += runtime_calls;
     }
+    parent.artifact_references.extend(child.artifact_references);
 }
 
 fn apply_conditional_instruction(
@@ -1699,6 +1707,9 @@ fn apply_conditional_instruction(
         };
         *node_branch = Some(branch);
     }
+    program
+        .artifact_references
+        .extend(expression_references(selection.as_ref()));
     true
 }
 
@@ -2023,12 +2034,16 @@ fn recover_template_expression(
         }
     }
 
-    print_template_expression(
+    let printed = print_template_expression(
         expression,
         &program.component_contexts,
         &program.local_reference_names,
         environment.cm.clone(),
-    )
+    )?;
+    program
+        .artifact_references
+        .extend(expression_references(expression));
+    Ok(printed)
 }
 
 fn is_pipe_binding(instruction: IvyInstruction) -> bool {
