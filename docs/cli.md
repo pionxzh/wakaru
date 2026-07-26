@@ -344,6 +344,10 @@ Directory validation has no per-module status sidecar, so it also scans
 artifacts emitted after failed factory recovery. Unresolved numeric webpack
 runtime calls in those artifacts are not treated as relative module edges.
 
+Angular recovery profiles separate module-view preparation, Ivy-role
+inference, artifact-symbol indexing, and component rendering under
+`angular: ...` spans.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
