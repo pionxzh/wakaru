@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
@@ -10,10 +10,16 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use super::emitter::{handler_expression, print_template_expression};
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, string_lit, BindingKey};
+use super::{
+    AngularRecoveryIssue, AngularRecoveryIssueKind, AngularTemplatePhase,
+    AngularTemplateRecoveryStats, AngularUnknownRuntimeCallShape,
+};
 
 pub(super) struct RecoveredTemplate {
     pub(super) source: String,
-    pub(super) unsupported_instructions: Vec<String>,
+    pub(super) issues: Vec<AngularRecoveryIssue>,
+    pub(super) stats: AngularTemplateRecoveryStats,
+    pub(super) unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
 }
 
 #[derive(Clone)]
@@ -26,7 +32,9 @@ struct InstructionCall {
 struct TemplateProgram {
     create: Vec<InstructionCall>,
     update: Vec<InstructionCall>,
-    unsupported_instructions: Vec<String>,
+    issues: Vec<AngularRecoveryIssue>,
+    stats: AngularTemplateRecoveryStats,
+    unknown_runtime_call_shapes: HashMap<(AngularTemplatePhase, Vec<usize>), (usize, usize)>,
 }
 
 #[derive(Clone)]
@@ -59,6 +67,47 @@ struct TemplateTree {
     cursor: usize,
 }
 
+fn record_issue(issues: &mut Vec<AngularRecoveryIssue>, issue: AngularRecoveryIssue) {
+    if !issues.contains(&issue) {
+        issues.push(issue);
+    }
+}
+
+fn issue_comment(issue: &AngularRecoveryIssue) -> String {
+    let instruction = issue.instruction.as_deref().unwrap_or("unknown");
+    match issue.kind {
+        AngularRecoveryIssueKind::UnsupportedTemplateParameters => {
+            "Unsupported Ivy template parameters".to_string()
+        }
+        AngularRecoveryIssueKind::UnsupportedStatement => format!(
+            "Unsupported Ivy statement: {}",
+            issue.detail.as_deref().unwrap_or("unknown")
+        ),
+        AngularRecoveryIssueKind::UnsupportedExpression => format!(
+            "Unsupported Ivy expression: {}",
+            issue.detail.as_deref().unwrap_or("unknown")
+        ),
+        AngularRecoveryIssueKind::UnsupportedInstruction => {
+            format!("Unsupported Ivy instruction: {instruction}")
+        }
+        AngularRecoveryIssueKind::UnknownRuntimeInstruction => {
+            "Unsupported Ivy instruction: unknown-runtime-instruction".to_string()
+        }
+        AngularRecoveryIssueKind::MalformedInstruction => format!(
+            "Malformed Ivy instruction: {instruction} ({})",
+            issue.detail.as_deref().unwrap_or("unsupported arguments")
+        ),
+        AngularRecoveryIssueKind::MissingTargetNode => format!(
+            "Missing Ivy target node: {instruction} ({})",
+            issue.detail.as_deref().unwrap_or("unknown target")
+        ),
+        AngularRecoveryIssueKind::MalformedTemplateStructure => format!(
+            "Malformed Ivy template structure: {}",
+            issue.detail.as_deref().unwrap_or("unknown")
+        ),
+    }
+}
+
 pub(super) fn recover_template(
     template: &Function,
     constant_table: Option<&Expr>,
@@ -69,7 +118,13 @@ pub(super) fn recover_template(
     let Some(render_flags) = function_param_binding(template, 0) else {
         return Ok(RecoveredTemplate {
             source: "<!-- Unsupported Ivy template parameters -->".to_string(),
-            unsupported_instructions: vec!["template-parameters".to_string()],
+            issues: vec![AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::UnsupportedTemplateParameters,
+                instruction: None,
+                detail: None,
+            }],
+            stats: AngularTemplateRecoveryStats::default(),
+            unknown_runtime_call_shapes: Vec::new(),
         });
     };
     let context = function_param_binding(template, 1);
@@ -96,28 +151,71 @@ pub(super) fn recover_template(
             context.as_ref(),
             &mut tree,
             cm.clone(),
+            &mut program.issues,
+            &mut program.stats,
         )?;
     }
     for instruction in &program.update {
-        apply_update_instruction(instruction, context.as_ref(), &mut tree, cm.clone())?;
+        apply_update_instruction(
+            instruction,
+            context.as_ref(),
+            &mut tree,
+            cm.clone(),
+            &mut program.issues,
+            &mut program.stats,
+        )?;
+    }
+    if !tree.stack.is_empty() {
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::MalformedTemplateStructure,
+                instruction: None,
+                detail: Some(format!("{} unclosed element(s)", tree.stack.len())),
+            },
+        );
     }
 
     let mut source = render_tree(&tree);
-    for instruction in &program.unsupported_instructions {
+    let mut rendered_issue_comments = HashSet::new();
+    for issue in &program.issues {
+        let comment = issue_comment(issue);
+        if !rendered_issue_comments.insert(comment.clone()) {
+            continue;
+        }
         if !source.is_empty() {
             source.push('\n');
         }
-        source.push_str("<!-- Unsupported Ivy instruction: ");
-        source.push_str(instruction);
+        source.push_str("<!-- ");
+        source.push_str(&comment);
         source.push_str(" -->");
     }
+    let mut unknown_runtime_call_shapes = program
+        .unknown_runtime_call_shapes
+        .into_iter()
+        .map(|((phase, argument_counts), (occurrences, runtime_calls))| {
+            AngularUnknownRuntimeCallShape {
+                phase,
+                argument_counts,
+                occurrences,
+                runtime_calls,
+            }
+        })
+        .collect::<Vec<_>>();
+    unknown_runtime_call_shapes.sort_by(|left, right| {
+        left.phase
+            .cmp(&right.phase)
+            .then_with(|| left.argument_counts.cmp(&right.argument_counts))
+    });
     Ok(RecoveredTemplate {
         source: if source.is_empty() {
             "<!-- Empty Ivy template -->".to_string()
         } else {
             source
         },
-        unsupported_instructions: program.unsupported_instructions,
+        issues: program.issues,
+        stats: program.stats,
+        unknown_runtime_call_shapes,
     })
 }
 
@@ -209,6 +307,7 @@ fn collect_statement(
     program: &mut TemplateProgram,
 ) {
     match statement {
+        Stmt::Empty(_) => {}
         Stmt::Block(block) => collect_statements(
             &block.stmts,
             phase,
@@ -218,7 +317,7 @@ fn collect_statement(
             program,
         ),
         Stmt::If(if_statement) => {
-            let branch_phase = collect_if_test(
+            let (branch_phase, is_render_guard) = collect_if_test(
                 if_statement.test.as_ref(),
                 phase,
                 render_flags,
@@ -226,6 +325,16 @@ fn collect_statement(
                 unresolved_ctxt,
                 program,
             );
+            if !is_render_guard {
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedStatement,
+                        instruction: None,
+                        detail: Some("conditional control flow".to_string()),
+                    },
+                );
+            }
             collect_statement(
                 if_statement.cons.as_ref(),
                 branch_phase,
@@ -235,6 +344,16 @@ fn collect_statement(
                 program,
             );
             if let Some(alternate) = &if_statement.alt {
+                if is_render_guard {
+                    record_issue(
+                        &mut program.issues,
+                        AngularRecoveryIssue {
+                            kind: AngularRecoveryIssueKind::UnsupportedStatement,
+                            instruction: None,
+                            detail: Some("render-flag alternate branch".to_string()),
+                        },
+                    );
+                }
                 collect_statement(
                     alternate.as_ref(),
                     phase,
@@ -253,7 +372,14 @@ fn collect_statement(
             unresolved_ctxt,
             program,
         ),
-        _ => {}
+        _ => record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::UnsupportedStatement,
+                instruction: None,
+                detail: Some(statement_kind(statement).to_string()),
+            },
+        ),
     }
 }
 
@@ -264,13 +390,14 @@ fn collect_if_test(
     roles: &IvyRoleTable,
     unresolved_ctxt: SyntaxContext,
     program: &mut TemplateProgram,
-) -> Option<u8> {
+) -> (Option<u8>, bool) {
     let test = strip_parentheses(test);
     let Expr::Seq(sequence) = test else {
-        return render_flag_mask(test, render_flags).or(phase);
+        let mask = render_flag_mask(test, render_flags);
+        return (mask.or(phase), mask.is_some());
     };
     let Some((condition, effects)) = sequence.exprs.split_last() else {
-        return phase;
+        return (phase, false);
     };
     for effect in effects {
         collect_expression(
@@ -282,7 +409,8 @@ fn collect_if_test(
             program,
         );
     }
-    render_flag_mask(strip_parentheses(condition), render_flags).or(phase)
+    let mask = render_flag_mask(strip_parentheses(condition), render_flags);
+    (mask.or(phase), mask.is_some())
 }
 
 fn collect_expression(
@@ -315,7 +443,18 @@ fn collect_expression(
             }
         }
         Expr::Bin(binary) if binary.op == BinaryOp::LogicalAnd => {
-            let branch_phase = render_flag_mask(binary.left.as_ref(), render_flags).or(phase);
+            let mask = render_flag_mask(binary.left.as_ref(), render_flags);
+            if mask.is_none() {
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
+                        instruction: None,
+                        detail: Some("conditional logical-and".to_string()),
+                    },
+                );
+            }
+            let branch_phase = mask.or(phase);
             collect_expression(
                 binary.right.as_ref(),
                 branch_phase,
@@ -327,34 +466,216 @@ fn collect_expression(
         }
         Expr::Call(call) => {
             let Some((root, argument_lists)) = call_chain(call) else {
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
+                        instruction: None,
+                        detail: Some("non-expression call target".to_string()),
+                    },
+                );
                 return;
             };
             let Some(instruction) = roles.instruction_for_expr(root, unresolved_ctxt) else {
                 if let Some(name) = roles.ivy_name_for_expr(root, unresolved_ctxt) {
-                    if !program.unsupported_instructions.contains(&name) {
-                        program.unsupported_instructions.push(name);
-                    }
+                    program.stats.runtime_calls_observed += argument_lists.len();
+                    program.stats.unsupported_runtime_calls += argument_lists.len();
+                    record_issue(
+                        &mut program.issues,
+                        AngularRecoveryIssue {
+                            kind: AngularRecoveryIssueKind::UnsupportedInstruction,
+                            instruction: Some(name),
+                            detail: phase.map(|phase| format!("render phase {phase}")),
+                        },
+                    );
                 } else if matches!(phase, Some(1 | 2))
                     || roles.is_known_runtime_member(root, unresolved_ctxt)
                 {
-                    let name = "unknown-runtime-instruction".to_string();
-                    if !program.unsupported_instructions.contains(&name) {
-                        program.unsupported_instructions.push(name);
-                    }
+                    program.stats.runtime_calls_observed += argument_lists.len();
+                    program.stats.unsupported_runtime_calls += argument_lists.len();
+                    let template_phase = match phase {
+                        Some(1) => AngularTemplatePhase::Creation,
+                        Some(2) => AngularTemplatePhase::Update,
+                        _ => AngularTemplatePhase::OutsideRender,
+                    };
+                    let argument_counts = argument_lists
+                        .iter()
+                        .map(|arguments| arguments.len())
+                        .collect::<Vec<_>>();
+                    let shape = program
+                        .unknown_runtime_call_shapes
+                        .entry((template_phase, argument_counts))
+                        .or_default();
+                    shape.0 += 1;
+                    shape.1 += argument_lists.len();
+                    record_issue(
+                        &mut program.issues,
+                        AngularRecoveryIssue {
+                            kind: AngularRecoveryIssueKind::UnknownRuntimeInstruction,
+                            instruction: None,
+                            detail: phase.map(|phase| {
+                                format!(
+                                    "render phase {phase}, {} argument list(s)",
+                                    argument_lists.len()
+                                )
+                            }),
+                        },
+                    );
+                } else {
+                    record_issue(
+                        &mut program.issues,
+                        AngularRecoveryIssue {
+                            kind: AngularRecoveryIssueKind::UnsupportedExpression,
+                            instruction: None,
+                            detail: Some("call outside a render phase".to_string()),
+                        },
+                    );
                 }
                 return;
             };
-            let target = match phase {
-                Some(1) => &mut program.create,
-                Some(2) => &mut program.update,
-                _ => return,
+            let Some(phase) = phase else {
+                program.stats.runtime_calls_observed += argument_lists.len();
+                program.stats.unsupported_runtime_calls += argument_lists.len();
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedInstruction,
+                        instruction: Some(instruction.canonical_export_name().to_string()),
+                        detail: Some("outside a creation or update phase".to_string()),
+                    },
+                );
+                return;
+            };
+            if !instruction_supported_in_phase(instruction, phase) {
+                program.stats.runtime_calls_observed += argument_lists.len();
+                program.stats.unsupported_runtime_calls += argument_lists.len();
+                record_issue(
+                    &mut program.issues,
+                    AngularRecoveryIssue {
+                        kind: AngularRecoveryIssueKind::UnsupportedInstruction,
+                        instruction: Some(instruction.canonical_export_name().to_string()),
+                        detail: Some(format!("unsupported in render phase {phase}")),
+                    },
+                );
+                return;
+            }
+            program.stats.runtime_calls_observed += argument_lists.len();
+            let target = if phase == 1 {
+                &mut program.create
+            } else {
+                &mut program.update
             };
             target.extend(argument_lists.into_iter().map(|args| InstructionCall {
                 instruction,
                 args: args.iter().map(|arg| arg.expr.clone()).collect(),
             }));
         }
-        _ => {}
+        _ => record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::UnsupportedExpression,
+                instruction: None,
+                detail: Some(expression_kind(expression).to_string()),
+            },
+        ),
+    }
+}
+
+fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> bool {
+    match phase {
+        1 => matches!(
+            instruction,
+            IvyInstruction::ElementStart
+                | IvyInstruction::ElementEnd
+                | IvyInstruction::Element
+                | IvyInstruction::Text
+                | IvyInstruction::Listener
+        ),
+        2 => matches!(
+            instruction,
+            IvyInstruction::Advance
+                | IvyInstruction::TextInterpolate
+                | IvyInstruction::TextInterpolate1
+                | IvyInstruction::TextInterpolate2
+                | IvyInstruction::TextInterpolate3
+                | IvyInstruction::TextInterpolate4
+                | IvyInstruction::TextInterpolate5
+                | IvyInstruction::TextInterpolate6
+                | IvyInstruction::TextInterpolate7
+                | IvyInstruction::TextInterpolate8
+                | IvyInstruction::Property
+                | IvyInstruction::Attribute
+                | IvyInstruction::ClassProp
+                | IvyInstruction::StyleProp
+        ),
+        _ => false,
+    }
+}
+
+fn statement_kind(statement: &Stmt) -> &'static str {
+    match statement {
+        Stmt::Block(_) => "block",
+        Stmt::Empty(_) => "empty",
+        Stmt::Debugger(_) => "debugger",
+        Stmt::With(_) => "with",
+        Stmt::Return(_) => "return",
+        Stmt::Labeled(_) => "labeled",
+        Stmt::Break(_) => "break",
+        Stmt::Continue(_) => "continue",
+        Stmt::If(_) => "if",
+        Stmt::Switch(_) => "switch",
+        Stmt::Throw(_) => "throw",
+        Stmt::Try(_) => "try",
+        Stmt::While(_) => "while",
+        Stmt::DoWhile(_) => "do-while",
+        Stmt::For(_) => "for",
+        Stmt::ForIn(_) => "for-in",
+        Stmt::ForOf(_) => "for-of",
+        Stmt::Decl(_) => "declaration",
+        Stmt::Expr(_) => "expression",
+    }
+}
+
+fn expression_kind(expression: &Expr) -> &'static str {
+    match expression {
+        Expr::This(_) => "this",
+        Expr::Array(_) => "array",
+        Expr::Object(_) => "object",
+        Expr::Fn(_) => "function",
+        Expr::Unary(_) => "unary",
+        Expr::Update(_) => "update",
+        Expr::Bin(_) => "binary",
+        Expr::Assign(_) => "assignment",
+        Expr::Member(_) => "member",
+        Expr::SuperProp(_) => "super-property",
+        Expr::Cond(_) => "conditional",
+        Expr::Call(_) => "call",
+        Expr::New(_) => "new",
+        Expr::Seq(_) => "sequence",
+        Expr::Ident(_) => "identifier",
+        Expr::Lit(_) => "literal",
+        Expr::Tpl(_) => "template-literal",
+        Expr::TaggedTpl(_) => "tagged-template",
+        Expr::Arrow(_) => "arrow",
+        Expr::Class(_) => "class",
+        Expr::Yield(_) => "yield",
+        Expr::MetaProp(_) => "meta-property",
+        Expr::Await(_) => "await",
+        Expr::Paren(_) => "parenthesized",
+        Expr::JSXMember(_)
+        | Expr::JSXNamespacedName(_)
+        | Expr::JSXEmpty(_)
+        | Expr::JSXElement(_)
+        | Expr::JSXFragment(_) => "jsx",
+        Expr::TsTypeAssertion(_)
+        | Expr::TsConstAssertion(_)
+        | Expr::TsNonNull(_)
+        | Expr::TsAs(_)
+        | Expr::TsInstantiation(_)
+        | Expr::TsSatisfies(_) => "typescript",
+        Expr::PrivateName(_) => "private-name",
+        Expr::OptChain(_) => "optional-chain",
+        Expr::Invalid(_) => "invalid",
     }
 }
 
@@ -407,13 +728,17 @@ fn apply_create_instruction(
     context: Option<&BindingKey>,
     tree: &mut TemplateTree,
     cm: Lrc<SourceMap>,
+    issues: &mut Vec<AngularRecoveryIssue>,
+    stats: &mut AngularTemplateRecoveryStats,
 ) -> Result<()> {
     match call.instruction {
         IvyInstruction::ElementStart => {
             let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(call, "missing numeric node index", issues, stats);
                 return Ok(());
             };
             let Some(tag) = call.args.get(1).and_then(|arg| string_lit(arg.as_ref())) else {
+                record_malformed_instruction(call, "missing literal element name", issues, stats);
                 return Ok(());
             };
             let attributes = numeric_arg(&call.args, 2)
@@ -424,9 +749,11 @@ fn apply_create_instruction(
         }
         IvyInstruction::Element => {
             let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(call, "missing numeric node index", issues, stats);
                 return Ok(());
             };
             let Some(tag) = call.args.get(1).and_then(|arg| string_lit(arg.as_ref())) else {
+                record_malformed_instruction(call, "missing literal element name", issues, stats);
                 return Ok(());
             };
             let attributes = numeric_arg(&call.args, 2)
@@ -435,10 +762,14 @@ fn apply_create_instruction(
             tree.push_node(index, TemplateNodeKind::Element { tag, attributes });
         }
         IvyInstruction::ElementEnd => {
-            tree.stack.pop();
+            if tree.stack.pop().is_none() {
+                record_missing_target(call, "no open element", issues, stats);
+                return Ok(());
+            }
         }
         IvyInstruction::Text => {
             let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(call, "missing numeric node index", issues, stats);
                 return Ok(());
             };
             let value = call
@@ -450,15 +781,26 @@ fn apply_create_instruction(
         }
         IvyInstruction::Listener => {
             let Some(node) = tree.stack.last().copied() else {
+                record_missing_target(call, "no current element", issues, stats);
                 return Ok(());
             };
             let Some(event) = call.args.first().and_then(|arg| string_lit(arg.as_ref())) else {
+                record_malformed_instruction(call, "missing literal event name", issues, stats);
                 return Ok(());
             };
             let Some(handler) = call.args.get(1) else {
+                record_malformed_instruction(call, "missing event handler", issues, stats);
                 return Ok(());
             };
-            let expression = handler_expression(handler.as_ref(), context, cm)?;
+            let Ok(expression) = handler_expression(handler.as_ref(), context, cm) else {
+                record_malformed_instruction(
+                    call,
+                    "event handler could not be printed",
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            };
             tree.add_attribute(
                 node,
                 TemplateAttribute {
@@ -467,8 +809,12 @@ fn apply_create_instruction(
                 },
             );
         }
-        _ => {}
+        _ => {
+            record_unsupported_instruction(call, "unsupported in creation phase", issues, stats);
+            return Ok(());
+        }
     }
+    stats.rendered_instruction_calls += 1;
     Ok(())
 }
 
@@ -477,10 +823,25 @@ fn apply_update_instruction(
     context: Option<&BindingKey>,
     tree: &mut TemplateTree,
     cm: Lrc<SourceMap>,
+    issues: &mut Vec<AngularRecoveryIssue>,
+    stats: &mut AngularTemplateRecoveryStats,
 ) -> Result<()> {
     match call.instruction {
         IvyInstruction::Advance => {
-            let amount = numeric_arg(&call.args, 0).unwrap_or(1);
+            let amount = if call.args.is_empty() {
+                1
+            } else {
+                let Some(amount) = numeric_arg(&call.args, 0) else {
+                    record_malformed_instruction(
+                        call,
+                        "advance amount is not a non-negative integer",
+                        issues,
+                        stats,
+                    );
+                    return Ok(());
+                };
+                amount
+            };
             tree.cursor = tree.cursor.saturating_add(amount);
         }
         IvyInstruction::TextInterpolate
@@ -492,27 +853,83 @@ fn apply_update_instruction(
         | IvyInstruction::TextInterpolate6
         | IvyInstruction::TextInterpolate7
         | IvyInstruction::TextInterpolate8 => {
-            let value = interpolation_value(call, context, cm)?;
-            if let Some(&node) = tree.index_to_node.get(&tree.cursor) {
-                if let TemplateNodeKind::Text { value: current } = &mut tree.nodes[node].kind {
-                    *current = value;
-                }
+            if !valid_interpolation_arity(call) {
+                record_malformed_instruction(
+                    call,
+                    "unexpected interpolation argument count",
+                    issues,
+                    stats,
+                );
+                return Ok(());
             }
+            let Ok(value) = interpolation_value(call, context, cm) else {
+                record_malformed_instruction(
+                    call,
+                    "interpolation expression could not be printed",
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            };
+            let Some(&node) = tree.index_to_node.get(&tree.cursor) else {
+                record_missing_target(
+                    call,
+                    &format!("no text node at cursor {}", tree.cursor),
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            };
+            let TemplateNodeKind::Text { value: current } = &mut tree.nodes[node].kind else {
+                record_missing_target(
+                    call,
+                    &format!("cursor {} does not reference text", tree.cursor),
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            };
+            *current = value;
         }
         IvyInstruction::Property
         | IvyInstruction::Attribute
         | IvyInstruction::ClassProp
         | IvyInstruction::StyleProp => {
             let Some(&node) = tree.index_to_node.get(&tree.cursor) else {
+                record_missing_target(
+                    call,
+                    &format!("no element at cursor {}", tree.cursor),
+                    issues,
+                    stats,
+                );
                 return Ok(());
             };
+            if !matches!(tree.nodes[node].kind, TemplateNodeKind::Element { .. }) {
+                record_missing_target(
+                    call,
+                    &format!("cursor {} does not reference an element", tree.cursor),
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            }
             let Some(name) = call.args.first().and_then(|arg| string_lit(arg.as_ref())) else {
+                record_malformed_instruction(call, "missing literal binding name", issues, stats);
                 return Ok(());
             };
             let Some(value) = call.args.get(1) else {
+                record_malformed_instruction(call, "missing binding value", issues, stats);
                 return Ok(());
             };
-            let expression = print_template_expression(value.as_ref(), context, cm)?;
+            let Ok(expression) = print_template_expression(value.as_ref(), context, cm) else {
+                record_malformed_instruction(
+                    call,
+                    "binding expression could not be printed",
+                    issues,
+                    stats,
+                );
+                return Ok(());
+            };
             let prefix = match call.instruction {
                 IvyInstruction::Property => "",
                 IvyInstruction::Attribute => "attr.",
@@ -528,9 +945,80 @@ fn apply_update_instruction(
                 },
             );
         }
-        _ => {}
+        _ => {
+            record_unsupported_instruction(call, "unsupported in update phase", issues, stats);
+            return Ok(());
+        }
     }
+    stats.rendered_instruction_calls += 1;
     Ok(())
+}
+
+fn record_malformed_instruction(
+    call: &InstructionCall,
+    detail: &str,
+    issues: &mut Vec<AngularRecoveryIssue>,
+    stats: &mut AngularTemplateRecoveryStats,
+) {
+    stats.malformed_instruction_calls += 1;
+    record_issue(
+        issues,
+        AngularRecoveryIssue {
+            kind: AngularRecoveryIssueKind::MalformedInstruction,
+            instruction: Some(call.instruction.canonical_export_name().to_string()),
+            detail: Some(detail.to_string()),
+        },
+    );
+}
+
+fn record_missing_target(
+    call: &InstructionCall,
+    detail: &str,
+    issues: &mut Vec<AngularRecoveryIssue>,
+    stats: &mut AngularTemplateRecoveryStats,
+) {
+    stats.malformed_instruction_calls += 1;
+    record_issue(
+        issues,
+        AngularRecoveryIssue {
+            kind: AngularRecoveryIssueKind::MissingTargetNode,
+            instruction: Some(call.instruction.canonical_export_name().to_string()),
+            detail: Some(detail.to_string()),
+        },
+    );
+}
+
+fn record_unsupported_instruction(
+    call: &InstructionCall,
+    detail: &str,
+    issues: &mut Vec<AngularRecoveryIssue>,
+    stats: &mut AngularTemplateRecoveryStats,
+) {
+    stats.unsupported_runtime_calls += 1;
+    record_issue(
+        issues,
+        AngularRecoveryIssue {
+            kind: AngularRecoveryIssueKind::UnsupportedInstruction,
+            instruction: Some(call.instruction.canonical_export_name().to_string()),
+            detail: Some(detail.to_string()),
+        },
+    );
+}
+
+fn valid_interpolation_arity(call: &InstructionCall) -> bool {
+    let expected = match call.instruction {
+        IvyInstruction::TextInterpolate => return !call.args.is_empty(),
+        IvyInstruction::TextInterpolate1 => 3,
+        IvyInstruction::TextInterpolate2 => 5,
+        IvyInstruction::TextInterpolate3 => 7,
+        IvyInstruction::TextInterpolate4 => 9,
+        IvyInstruction::TextInterpolate5 => 11,
+        IvyInstruction::TextInterpolate6 => 13,
+        IvyInstruction::TextInterpolate7 => 15,
+        IvyInstruction::TextInterpolate8 => 17,
+        _ => return false,
+    };
+    call.args.len() == expected
 }
 
 fn interpolation_value(
