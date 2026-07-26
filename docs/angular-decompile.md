@@ -44,13 +44,15 @@ Initial recovery covers:
 - text interpolation;
 - property, attribute, class, and style bindings;
 - event listeners;
+- nested embedded views selected by modern `@if` / `@else if` / `@else`
+  control flow, including component-context reads through `ɵɵnextContext`;
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Embedded views, modern control-flow blocks, projection, pipes, local template
-references, and dependency/import reconstruction are incremental extensions.
-Unsupported instruction regions remain explicit in the recovery IR and must
-not be silently rendered as if recovery were complete.
+Repeaters, deferred views, projection, pipes, local template references, and
+dependency/import reconstruction are incremental extensions. Unsupported
+instruction regions remain explicit in the recovery IR and must not be
+silently rendered as if recovery were complete.
 
 ## Architecture boundary
 
@@ -200,8 +202,10 @@ Closure Compiler `SIMPLE`.
 Both producer forms recover all three component definitions with non-empty
 inline templates. Covered regions include element structure, static text,
 interpolation, event listeners, property bindings, scoped styles, and
-cross-chunk runtime evidence. Modern conditional, repeater, and deferred-view
-instructions remain explicit partial regions, matching the scope above.
+cross-chunk runtime evidence. The fixture also recovers a nested modern
+`@if` / `@else` block from both the Angular chunks and their Closure `SIMPLE`
+aggregate. Repeater and deferred-view instructions remain explicit partial
+regions, matching the scope above.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
