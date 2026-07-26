@@ -7,7 +7,9 @@ import { FixtureCardComponent } from './fixture-card.component';
   template: `
     <main>
       <h1>{{ title }}</h1>
-      <fixture-card />
+      <fixture-card>
+        <span card-extra>Projected content</span>
+      </fixture-card>
     </main>
   `,
   styles: [':host { display: block; }'],

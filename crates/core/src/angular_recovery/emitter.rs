@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
@@ -111,6 +111,7 @@ fn print_component_class(name: &str, class: Box<Class>, cm: Lrc<SourceMap>) -> R
 pub(super) fn handler_expression(
     expression: &Expr,
     component_contexts: &HashSet<BindingKey>,
+    local_references: &HashMap<BindingKey, String>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
@@ -119,24 +120,24 @@ pub(super) fn handler_expression(
         Expr::Fn(function) => {
             let body = function.function.body.as_ref();
             if let Some(expression) = body.and_then(single_return_expression) {
-                print_template_expression(expression, component_contexts, cm)
+                print_template_expression(expression, component_contexts, local_references, cm)
             } else {
                 print_expression(&expression, cm)
             }
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
             BlockStmtOrExpr::Expr(expression) => {
-                print_template_expression(expression, component_contexts, cm)
+                print_template_expression(expression, component_contexts, local_references, cm)
             }
             BlockStmtOrExpr::BlockStmt(block) => {
                 if let Some(expression) = single_return_expression(block) {
-                    print_template_expression(expression, component_contexts, cm)
+                    print_template_expression(expression, component_contexts, local_references, cm)
                 } else {
                     print_expression(&expression, cm)
                 }
             }
         },
-        _ => print_template_expression(&expression, component_contexts, cm),
+        _ => print_template_expression(&expression, component_contexts, local_references, cm),
     }
 }
 
@@ -176,12 +177,14 @@ fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&E
 pub(super) fn print_template_expression(
     expression: &Expr,
     component_contexts: &HashSet<BindingKey>,
+    local_references: &HashMap<BindingKey, String>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
-    if !component_contexts.is_empty() {
-        expression.visit_mut_with(&mut ContextPrefixCleaner {
+    if !component_contexts.is_empty() || !local_references.is_empty() {
+        expression.visit_mut_with(&mut TemplateBindingCleaner {
             contexts: component_contexts,
+            local_references,
         });
     }
     print_expression(&expression, cm)
@@ -235,13 +238,24 @@ fn print_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
         .map_err(|error| anyhow!("Angular artifact is not UTF-8: {error}"))
 }
 
-struct ContextPrefixCleaner<'a> {
+struct TemplateBindingCleaner<'a> {
     contexts: &'a HashSet<BindingKey>,
+    local_references: &'a HashMap<BindingKey, String>,
 }
 
-impl VisitMut for ContextPrefixCleaner<'_> {
+impl VisitMut for TemplateBindingCleaner<'_> {
     fn visit_mut_expr(&mut self, expression: &mut Expr) {
         expression.visit_mut_children_with(self);
+        if let Expr::Ident(identifier) = expression {
+            if let Some(name) = self.local_references.get(&binding_key(identifier)) {
+                *identifier = Ident::new(
+                    Atom::from(name.as_str()),
+                    identifier.span,
+                    SyntaxContext::empty(),
+                );
+            }
+            return;
+        }
         let Expr::Member(member) = expression else {
             return;
         };

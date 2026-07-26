@@ -1,16 +1,20 @@
 import { Component } from '@angular/core';
+import { UpperCasePipe } from '@angular/common';
 
 @Component({
   selector: 'fixture-card',
+  imports: [UpperCasePipe],
   template: `
     <article class="card">
-      <h2>{{ title }}</h2>
-      <button type="button" (click)="select()" [disabled]="disabled">Select</button>
+      <h2>{{ title | uppercase }}</h2>
+      <button #selectButton type="button" (click)="select()" [disabled]="disabled">Select</button>
+      <small>Button disabled: {{ selectButton.disabled }}</small>
       @if (showDetails) {
         <p class="details">{{ detail }}</p>
       } @else {
         <p class="details">Details hidden</p>
       }
+      <ng-content select="[card-extra]" />
     </article>
   `,
   styles: [
