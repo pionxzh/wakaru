@@ -1,0 +1,1 @@
+import{A as i,D as m,F as s,s as a,v as n,z as o}from"./runtime.js";var r=class t{message="chunk";static \u0275fac=function(e){return new(e||t)};static \u0275cmp=n({type:t,selectors:[["fixture-lazy-card"]],decls:2,vars:1,template:function(e,p){e&1&&(o(0,"aside"),m(1),i()),e&2&&(a(),s("Lazy ",p.message))},encapsulation:2})};export{r as LazyCardComponent};

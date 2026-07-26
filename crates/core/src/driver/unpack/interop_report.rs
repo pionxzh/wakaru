@@ -306,6 +306,7 @@ pub fn explain_interop(source: &str, mut options: DecompileOptions) -> Result<In
             ScopeHoistPolicy::Fallback
         },
         Some(&sink),
+        false,
     )?;
     let mut modules = sink
         .modules

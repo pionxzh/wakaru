@@ -34,9 +34,9 @@ pub mod vue_recovery;
 pub mod vue_template;
 
 pub use angular_recovery::{
-    recover_angular_components_from_js, recover_angular_components_from_modules,
-    AngularModuleSource, AngularRecoveryCompleteness, AngularRecoveryOptions,
-    RecoveredAngularComponent,
+    recover_angular_components_from_js, recover_angular_components_from_module_views,
+    recover_angular_components_from_modules, AngularModuleSource, AngularModuleView,
+    AngularRecoveryCompleteness, AngularRecoveryOptions, RecoveredAngularComponent,
 };
 pub use driver::{
     decompile, deduplicate_path, explain_commonjs_exports, filename_case_key, format_trace_events,

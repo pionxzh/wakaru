@@ -26,14 +26,16 @@ pub(crate) use output::{split_logical_path, PathSegment};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
-    DceMode, DecompileOptions, DecompileOutput, PreparedInputId, PreparedModuleOutput,
-    PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
+    CapturedUnpackOutput, DceMode, DecompileOptions, DecompileOutput, PreparedInputId,
+    PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning,
+    UnpackWarningKind,
 };
 pub use unpack::{
     explain_interop, prepare_unpack_input, prepare_unpack_input_with_policy,
-    unpack_prepared_inputs, unpack_prepared_inputs_with_policy, EdgeReport, InteropReport,
-    ModuleInterop, PreparedInputDetection, PreparedUnpackInput, ProviderReport, ScopeHoistPolicy,
-    SplitRefusal, SplitRefusalReason,
+    unpack_prepared_inputs, unpack_prepared_inputs_with_policy,
+    unpack_prepared_inputs_with_policy_and_capture, EdgeReport, InteropReport, ModuleInterop,
+    PreparedInputDetection, PreparedUnpackInput, ProviderReport, ScopeHoistPolicy, SplitRefusal,
+    SplitRefusalReason,
 };
 
 /// Legacy adapters retained for `wakaru-core`'s integration tests.

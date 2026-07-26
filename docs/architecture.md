@@ -46,8 +46,10 @@ Two main operations:
                                       recovery
 ```
 
-Framework artifact recovery consumes the generic finalized module workspace;
-it is not part of bundle detection or the ordered JavaScript rewrite registry.
+Framework artifact recovery consumes generic module views owned by the root
+operation: compiler evidence captured before readability rewrites and the
+finalized readable modules. It is not part of bundle detection or the ordered
+JavaScript rewrite registry.
 See [angular-decompile.md](angular-decompile.md) for the Angular Ivy boundary
 and [vue-decompile.md](vue-decompile.md) for the existing Vue recovery path.
 
@@ -311,8 +313,11 @@ When unpacking bundles, the driver runs a two-phase pipeline:
 1. **Phase 1 (parallel, largest modules first):** Obtain a resolved module AST. Source-only detector
    output is parsed and resolved here; webpack5 can hand off its already
    resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
-   backed by detector-owned runtime facts, then run the rule registry up to
-   `UnEsm` and read each `require()` call's edge (Phase 1a). Once every module
+   backed by detector-owned runtime facts. When root framework recovery is
+   enabled, materialize an optional generic evidence view after those exact
+   normalizations and before the readability registry. Then run the rule
+   registry up to `UnEsm` and read each `require()` call's edge (Phase 1a).
+   Once every module
    has reached `UnEsm` (barrier 0) and the plan is built from every module's
    edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS,
    unless its only export is one `module.exports = v` every write lands on;
@@ -367,6 +372,11 @@ private prepared AST sidecar. Public/raw unpack APIs materialize every sidecar
 back into `UnpackedModule::code`; the normal driver consumes it once at the
 Phase 1 boundary. Aggressive nested scope splitting likewise materializes first
 because that pass operates on emitted module text.
+
+The optional pre-rewrite evidence view is also format-neutral. Enabling it does
+not make the driver assign Angular, Vue, or other framework meaning; it only
+preserves the compiler shapes that a root artifact analyzer requested. The
+normal JavaScript output continues through the same rule pipeline.
 
 ## File structure
 

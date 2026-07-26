@@ -8,13 +8,14 @@ use crate::output::{
 
 pub(crate) fn recover_artifacts(
     modules: &[ModuleOutput],
+    pre_rewrite_modules: &[(String, String)],
     recovery: crate::RecoveryOptions,
 ) -> (Vec<ArtifactOutput>, Vec<Diagnostic>) {
     if !recovery.angular_components() {
         return (Vec::new(), Vec::new());
     }
 
-    match recover_angular_components(modules) {
+    match recover_angular_components(modules, pre_rewrite_modules) {
         Ok(artifacts) => (artifacts, Vec::new()),
         Err(error) => (
             Vec::new(),
@@ -30,7 +31,10 @@ pub(crate) fn recover_artifacts(
     }
 }
 
-fn recover_angular_components(modules: &[ModuleOutput]) -> anyhow::Result<Vec<ArtifactOutput>> {
+fn recover_angular_components(
+    modules: &[ModuleOutput],
+    pre_rewrite_modules: &[(String, String)],
+) -> anyhow::Result<Vec<ArtifactOutput>> {
     let eligible = modules
         .iter()
         .enumerate()
@@ -40,15 +44,23 @@ fn recover_angular_components(modules: &[ModuleOutput]) -> anyhow::Result<Vec<Ar
         return Ok(Vec::new());
     }
 
-    let sources = eligible
+    let evidence_by_filename = pre_rewrite_modules
         .iter()
-        .map(|(_, module)| wakaru_core::AngularModuleSource {
-            filename: &module.filename,
-            source: &module.code,
+        .map(|(filename, source)| (filename.as_str(), source.as_str()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let views = eligible
+        .iter()
+        .map(|(_, module)| wakaru_core::AngularModuleView {
+            filename: module.filename.as_str(),
+            evidence_source: evidence_by_filename
+                .get(module.filename.as_str())
+                .copied()
+                .unwrap_or(module.code.as_str()),
+            readable_source: module.code.as_str(),
         })
         .collect::<Vec<_>>();
-    let recovered = wakaru_core::recover_angular_components_from_modules(
-        &sources,
+    let recovered = wakaru_core::recover_angular_components_from_module_views(
+        &views,
         wakaru_core::AngularRecoveryOptions::default(),
     )?;
 
