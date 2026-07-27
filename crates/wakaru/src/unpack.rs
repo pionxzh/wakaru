@@ -775,9 +775,9 @@ mod tests {
             output.diagnostics
         );
         let artifact = &output.artifacts[0];
-        assert_eq!(artifact.kind, crate::ArtifactKind::AngularComponent);
+        assert_eq!(artifact.kind, crate::ArtifactKind::AngularModule);
         assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
-        assert_eq!(artifact.filename, "local-card.component.ts");
+        assert!(artifact.filename.ends_with(".angular.ts"));
         assert_eq!(artifact.module_indices.len(), 1);
         assert!(artifact.code.contains("<article></article>"));
         assert!(!artifact.code.contains("shared."));
@@ -799,7 +799,11 @@ mod tests {
         .expect("generated Angular chunks should decompile and recover artifacts");
 
         assert_eq!(output.modules.len(), 3);
-        assert_eq!(output.artifacts.len(), 3);
+        assert_eq!(output.artifacts.len(), 2);
+        assert!(output
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.kind == crate::ArtifactKind::AngularModule));
         assert!(output.artifacts.iter().any(|artifact| {
             artifact.status == crate::ArtifactStatus::Complete
                 && artifact.code.contains("selector: \"fixture-card\"")

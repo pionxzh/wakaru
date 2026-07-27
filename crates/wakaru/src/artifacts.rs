@@ -16,7 +16,7 @@ pub(crate) fn recover_artifacts(
         return (Vec::new(), Vec::new());
     }
 
-    match recover_angular_components(modules, pre_rewrite_modules) {
+    match recover_angular_modules(modules, pre_rewrite_modules) {
         Ok((artifacts, stats, unknown_runtime_call_shapes)) => {
             let unknown_shape_summary =
                 format_unknown_runtime_call_shapes(&unknown_runtime_call_shapes);
@@ -58,7 +58,7 @@ pub(crate) fn recover_artifacts(
             vec![Diagnostic {
                 severity: DiagnosticSeverity::Warning,
                 code: DiagnosticCode::ArtifactRecoveryFailed,
-                message: format!("Angular component recovery was skipped: {error}"),
+                message: format!("Angular module recovery was skipped: {error}"),
                 input: None,
                 module: None,
                 span: None,
@@ -67,7 +67,7 @@ pub(crate) fn recover_artifacts(
     }
 }
 
-fn recover_angular_components(
+fn recover_angular_modules(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
 ) -> anyhow::Result<(
@@ -114,29 +114,24 @@ fn recover_angular_components(
         .map(|path| path.to_string_lossy().to_lowercase())
         .collect::<HashSet<_>>();
     let wakaru_core::AngularRecoveryReport {
-        components,
+        modules: recovered_modules,
         stats,
         unknown_runtime_call_shapes,
         ..
     } = report;
-    let artifacts = components
+    let artifacts = recovered_modules
         .into_iter()
-        .map(|component| {
+        .map(|recovered_module| {
             let (module_index, module) = eligible
-                .get(component.module_index)
+                .get(recovered_module.module_index)
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("component source module index is out of bounds"))?;
-            let filename = angular_artifact_filename(
-                &module.filename,
-                &component.name,
-                &component.selector,
-                &mut seen,
-            );
+                .ok_or_else(|| anyhow::anyhow!("Angular source module index is out of bounds"))?;
+            let filename = angular_module_artifact_filename(&module.filename, &mut seen);
             Ok(ArtifactOutput {
                 filename,
-                code: component.source,
-                kind: ArtifactKind::AngularComponent,
-                status: match component.completeness {
+                code: recovered_module.source,
+                kind: ArtifactKind::AngularModule,
+                status: match recovered_module.completeness {
                     wakaru_core::AngularRecoveryCompleteness::Complete => ArtifactStatus::Complete,
                     wakaru_core::AngularRecoveryCompleteness::Partial => ArtifactStatus::Partial,
                     _ => ArtifactStatus::Partial,
@@ -205,12 +200,7 @@ fn format_unknown_runtime_call_shapes(
     }
 }
 
-fn angular_artifact_filename(
-    module_filename: &str,
-    component_name: &str,
-    selector: &str,
-    seen: &mut HashSet<String>,
-) -> String {
+fn angular_module_artifact_filename(module_filename: &str, seen: &mut HashSet<String>) -> String {
     let module_path =
         wakaru_core::safe_relative_module_path(module_filename).unwrap_or_else(|_| {
             Path::new(module_filename)
@@ -219,19 +209,21 @@ fn angular_artifact_filename(
                 .unwrap_or_else(|| PathBuf::from("module.js"))
         });
     let parent = module_path.parent().filter(|path| *path != Path::new(""));
-    let stem = safe_selector_stem(selector)
-        .or_else(|| component_name_stem(component_name))
-        .unwrap_or_else(|| "component".to_string());
-    let filename = format!("{stem}.component.ts");
+    let stem = module_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    let filename = format!("{stem}.angular.ts");
     let candidate = parent
         .map(|parent| parent.join(&filename))
         .unwrap_or_else(|| PathBuf::from(filename));
-    deduplicate_component_path(&candidate, seen)
+    deduplicate_angular_module_path(&candidate, seen)
         .to_string_lossy()
         .replace('\\', "/")
 }
 
-fn deduplicate_component_path(path: &Path, seen: &mut HashSet<String>) -> PathBuf {
+fn deduplicate_angular_module_path(path: &Path, seen: &mut HashSet<String>) -> PathBuf {
     if seen.insert(path.to_string_lossy().to_lowercase()) {
         return path.to_path_buf();
     }
@@ -239,14 +231,12 @@ fn deduplicate_component_path(path: &Path, seen: &mut HashSet<String>) -> PathBu
     let filename = path
         .file_name()
         .and_then(|filename| filename.to_str())
-        .unwrap_or("component.component.ts");
-    let stem = filename
-        .strip_suffix(".component.ts")
-        .unwrap_or("component");
+        .unwrap_or("module.angular.ts");
+    let stem = filename.strip_suffix(".angular.ts").unwrap_or("module");
     let parent = path.parent().unwrap_or(Path::new(""));
     let mut suffix = 2;
     loop {
-        let candidate = parent.join(format!("{stem}_{suffix}.component.ts"));
+        let candidate = parent.join(format!("{stem}_{suffix}.angular.ts"));
         if seen.insert(candidate.to_string_lossy().to_lowercase()) {
             return candidate;
         }
@@ -254,65 +244,24 @@ fn deduplicate_component_path(path: &Path, seen: &mut HashSet<String>) -> PathBu
     }
 }
 
-fn safe_selector_stem(selector: &str) -> Option<String> {
-    (!selector.is_empty()
-        && selector
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')))
-    .then(|| selector.replace('_', "-").to_ascii_lowercase())
-}
-
-fn component_name_stem(name: &str) -> Option<String> {
-    let name = name.strip_suffix("Component").unwrap_or(name);
-    let mut stem = String::new();
-    for (index, character) in name.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if index > 0 && !stem.ends_with('-') {
-                stem.push('-');
-            }
-            stem.push(character.to_ascii_lowercase());
-        } else if character.is_ascii_alphanumeric() {
-            stem.push(character.to_ascii_lowercase());
-        } else if !stem.ends_with('-') {
-            stem.push('-');
-        }
-    }
-    let stem = stem.trim_matches('-').to_string();
-    (!stem.is_empty()).then_some(stem)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn artifact_names_are_relative_and_deduplicated_case_insensitively() {
+    fn module_artifact_names_are_relative_and_deduplicated_case_insensitively() {
         let mut seen = HashSet::new();
         assert_eq!(
-            angular_artifact_filename("/tmp/input.js", "DemoCardComponent", "demo-card", &mut seen,),
-            "demo-card.component.ts"
+            angular_module_artifact_filename("/tmp/input.js", &mut seen),
+            "input.angular.ts"
         );
         assert_eq!(
-            angular_artifact_filename("src/other.js", "OtherComponent", "DEMO-CARD", &mut seen,),
-            "src/demo-card.component.ts"
+            angular_module_artifact_filename("src/feature.js", &mut seen),
+            "src/feature.angular.ts"
         );
         assert_eq!(
-            angular_artifact_filename("src/third.js", "ThirdComponent", "demo-card", &mut seen,),
-            "src/demo-card_2.component.ts"
-        );
-    }
-
-    #[test]
-    fn unsafe_selector_falls_back_to_component_name() {
-        let mut seen = HashSet::new();
-        assert_eq!(
-            angular_artifact_filename(
-                "src/input.js",
-                "DemoCardComponent",
-                "[demo-card]",
-                &mut seen,
-            ),
-            "src/demo-card.component.ts"
+            angular_module_artifact_filename("src/FEATURE.mjs", &mut seen),
+            "src/FEATURE_2.angular.ts"
         );
     }
 }
