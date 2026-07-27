@@ -240,7 +240,10 @@ modules under `--angular`, which supports inspecting an unbundled production
 build. Default directory mode preserves ordinary production chunks as intact
 modules rather than heuristically splitting their internal scope-hoisted code.
 The Ivy analyzer consumes the same generic module workspace whether the modules
-came from a regular build or any supported unpacker.
+came from a regular build or any supported unpacker. When ordinary ESM
+import/export bindings prove that one recovered component depends on another,
+the artifacts receive relative imports between their final `.angular.ts`
+filenames. Closure loader dependencies are not treated as ESM evidence.
 
 Complete artifacts contain only supported template regions. Partial artifacts
 preserve unsupported Ivy instructions explicitly instead of guessing.

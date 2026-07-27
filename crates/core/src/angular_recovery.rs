@@ -159,9 +159,25 @@ pub struct RecoveredAngularModule {
     pub completeness: AngularRecoveryCompleteness,
     /// Indices into `AngularRecoveryReport::components`.
     pub component_indices: Vec<usize>,
+    /// Proven component edges to recovered artifacts in other source modules.
+    pub dependencies: Vec<RecoveredAngularModuleDependency>,
     pub issues: Vec<AngularRecoveryIssue>,
     /// Index into the analyzed `AngularModuleSource`/`AngularModuleView` slice.
     pub module_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveredAngularModuleDependency {
+    /// Index of the component containing the dependency.
+    pub component_index: usize,
+    /// Index of the recovered target component.
+    pub target_component_index: usize,
+    pub target_module_index: usize,
+    /// Exported class name in the target artifact.
+    pub target_name: String,
+    /// Collision-free local name used by this artifact.
+    pub local_name: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -258,6 +274,24 @@ struct RecoveredModuleComponentDraft {
     readable_class_identity: SymbolIdentity,
     completeness: AngularRecoveryCompleteness,
     issues: Vec<AngularRecoveryIssue>,
+}
+
+#[derive(Clone)]
+struct RecoveredComponentTarget {
+    component_index: usize,
+    module_index: usize,
+    name: String,
+}
+
+struct ComponentAliasResolver {
+    aliases: workspace::WorkspaceAliasIndex,
+    targets_by_group: HashMap<usize, Vec<RecoveredComponentTarget>>,
+    targets_by_symbol: HashMap<workspace::WorkspaceSymbol, Vec<RecoveredComponentTarget>>,
+}
+
+struct ComponentRelationshipIndex {
+    evidence: ComponentAliasResolver,
+    readable: ComponentAliasResolver,
 }
 
 pub fn recover_angular_components_from_js(
@@ -417,7 +451,7 @@ fn recover_prepared_modules(
     };
 
     let mut recovered = Vec::new();
-    let mut recovered_modules = Vec::new();
+    let mut recovered_module_drafts = Vec::with_capacity(evidence_modules.len());
     let mut stats = AngularRecoveryStats {
         modules_analyzed: evidence_modules.len(),
         ..AngularRecoveryStats::default()
@@ -574,16 +608,34 @@ fn recover_prepared_modules(
             stats.malformed_instruction_calls +=
                 recovered_template.stats.malformed_instruction_calls;
         }
-        if !module_drafts.is_empty() {
-            recovered_modules.push(emit_recovered_angular_module(
-                module_index,
-                &module_drafts,
-                &evidence_artifact_symbols[module_index],
-                &readable_artifact_symbols[module_index],
-                emit_cm,
-            )?);
-        }
+        recovered_module_drafts.push(module_drafts);
     }
+    drop(_component_enter);
+
+    let recovered_modules = {
+        let span = tracing::info_span!("angular: link module artifacts");
+        let _enter = span.enter();
+        let relationships = ComponentRelationshipIndex::new(
+            evidence_modules,
+            readable_modules,
+            &recovered_module_drafts,
+        );
+        recovered_module_drafts
+            .iter()
+            .enumerate()
+            .filter(|(_, drafts)| !drafts.is_empty())
+            .map(|(module_index, drafts)| {
+                emit_recovered_angular_module(
+                    module_index,
+                    drafts,
+                    &evidence_artifact_symbols[module_index],
+                    &readable_artifact_symbols[module_index],
+                    &relationships,
+                    Default::default(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
 
     let mut unknown_runtime_call_shapes = unknown_runtime_call_shapes
         .into_iter()
@@ -610,11 +662,100 @@ fn recover_prepared_modules(
     })
 }
 
+impl ComponentRelationshipIndex {
+    fn new(
+        evidence_modules: &[PreparedAngularModule],
+        readable_modules: &[PreparedAngularModule],
+        drafts: &[Vec<RecoveredModuleComponentDraft>],
+    ) -> Self {
+        Self {
+            evidence: ComponentAliasResolver::new(evidence_modules, drafts, false),
+            readable: ComponentAliasResolver::new(readable_modules, drafts, true),
+        }
+    }
+}
+
+impl ComponentAliasResolver {
+    fn new(
+        modules: &[PreparedAngularModule],
+        drafts: &[Vec<RecoveredModuleComponentDraft>],
+        readable: bool,
+    ) -> Self {
+        let aliases = workspace::WorkspaceAliasIndex::collect(modules);
+        let mut targets_by_group = HashMap::<usize, Vec<RecoveredComponentTarget>>::new();
+        let mut targets_by_symbol =
+            HashMap::<workspace::WorkspaceSymbol, Vec<RecoveredComponentTarget>>::new();
+        for (module_index, module_drafts) in drafts.iter().enumerate() {
+            for draft in module_drafts {
+                let identity = if readable {
+                    &draft.readable_class_identity
+                } else {
+                    &draft.evidence_class_identity
+                };
+                let Some(symbol) = workspace_symbol(identity) else {
+                    continue;
+                };
+                let target = RecoveredComponentTarget {
+                    component_index: draft.component_index,
+                    module_index,
+                    name: draft.name.clone(),
+                };
+                if let Some(group) = aliases.group(&symbol) {
+                    targets_by_group.entry(group).or_default().push(target);
+                } else {
+                    targets_by_symbol.entry(symbol).or_default().push(target);
+                }
+            }
+        }
+        Self {
+            aliases,
+            targets_by_group,
+            targets_by_symbol,
+        }
+    }
+
+    fn resolve_binding(&self, binding: &BindingKey) -> Option<RecoveredComponentTarget> {
+        self.resolve_symbol(&workspace::WorkspaceSymbol::Binding(binding.clone()))
+    }
+
+    fn resolve_symbol(
+        &self,
+        symbol: &workspace::WorkspaceSymbol,
+    ) -> Option<RecoveredComponentTarget> {
+        let candidates = if let Some(group) = self.aliases.group(symbol) {
+            self.targets_by_group.get(&group)?
+        } else {
+            self.targets_by_symbol.get(symbol)?
+        };
+        let first = candidates.first()?;
+        candidates
+            .iter()
+            .all(|candidate| candidate.component_index == first.component_index)
+            .then(|| first.clone())
+    }
+}
+
+fn workspace_symbol(identity: &SymbolIdentity) -> Option<workspace::WorkspaceSymbol> {
+    match identity {
+        SymbolIdentity::LocalBinding(binding) => {
+            Some(workspace::WorkspaceSymbol::Binding(binding.clone()))
+        }
+        SymbolIdentity::LocalMember { object, property } => {
+            Some(workspace::WorkspaceSymbol::Member {
+                object: object.clone(),
+                property: property.clone(),
+            })
+        }
+        SymbolIdentity::GlobalBinding(_) | SymbolIdentity::GlobalMember { .. } => None,
+    }
+}
+
 fn emit_recovered_angular_module(
     module_index: usize,
     drafts: &[RecoveredModuleComponentDraft],
     evidence_symbols: &ArtifactSymbolTable,
     readable_symbols: &ArtifactSymbolTable,
+    relationships: &ComponentRelationshipIndex,
     cm: Lrc<SourceMap>,
 ) -> Result<RecoveredAngularModule> {
     let mut evidence_component_names = HashMap::<BindingKey, String>::new();
@@ -669,6 +810,86 @@ fn emit_recovered_angular_module(
         })
         .collect::<HashSet<_>>();
 
+    let readable_target_bindings = readable_symbols
+        .bindings()
+        .filter_map(|binding| {
+            relationships
+                .readable
+                .resolve_binding(binding)
+                .map(|target| (target.component_index, binding.clone()))
+        })
+        .fold(
+            HashMap::<usize, Vec<BindingKey>>::new(),
+            |mut bindings, (component_index, binding)| {
+                bindings.entry(component_index).or_default().push(binding);
+                bindings
+            },
+        );
+    let mut linked_dependencies = HashMap::<BindingKey, (RecoveredComponentTarget, String)>::new();
+    let mut local_names_by_target = HashMap::<usize, String>::new();
+    let mut module_dependencies = Vec::new();
+    let mut seen_module_dependencies = HashSet::new();
+    for draft in drafts {
+        for dependency in &draft.dependencies {
+            let Some(binding) = dependency_binding(dependency.as_ref()) else {
+                continue;
+            };
+            if evidence_component_names.contains_key(&binding) || template_roots.contains(&binding)
+            {
+                continue;
+            }
+            let Some(target) = relationships.evidence.resolve_binding(&binding) else {
+                continue;
+            };
+            if target.module_index == module_index {
+                continue;
+            }
+            if let Some((existing, _)) = linked_dependencies.get(&binding) {
+                if existing.component_index != target.component_index {
+                    continue;
+                }
+            }
+            let local_name = if let Some(name) = local_names_by_target.get(&target.component_index)
+            {
+                name.clone()
+            } else {
+                let name = reserve_unique_artifact_name(&target.name, &mut reserved_names);
+                local_names_by_target.insert(target.component_index, name.clone());
+                name
+            };
+            linked_dependencies.insert(binding.clone(), (target.clone(), local_name.clone()));
+            evidence_component_bindings.insert(binding.clone());
+            reserved_names.insert(binding.0.clone());
+            if renamed_bindings.insert(binding.clone()) {
+                renames.push(BindingRename {
+                    old: binding,
+                    new: Atom::from(local_name.as_str()),
+                });
+            }
+            if let Some(readable_bindings) = readable_target_bindings.get(&target.component_index) {
+                for readable_binding in readable_bindings {
+                    readable_component_bindings.insert(readable_binding.clone());
+                    reserved_names.insert(readable_binding.0.clone());
+                    if renamed_bindings.insert(readable_binding.clone()) {
+                        renames.push(BindingRename {
+                            old: readable_binding.clone(),
+                            new: Atom::from(local_name.as_str()),
+                        });
+                    }
+                }
+            }
+            if seen_module_dependencies.insert((draft.component_index, target.component_index)) {
+                module_dependencies.push(RecoveredAngularModuleDependency {
+                    component_index: draft.component_index,
+                    target_component_index: target.component_index,
+                    target_module_index: target.module_index,
+                    target_name: target.name,
+                    local_name,
+                });
+            }
+        }
+    }
+
     let mut support = readable_symbols.recover_with_provided(
         &readable_roots,
         &reserved_names,
@@ -696,11 +917,19 @@ fn emit_recovered_angular_module(
                 .iter()
                 .filter_map(|dependency| {
                     let binding = dependency_binding(dependency.as_ref())?;
-                    evidence_component_names.get(&binding).cloned().or_else(|| {
-                        dependency_support
-                            .provides(&binding)
-                            .then(|| binding.0.to_string())
-                    })
+                    evidence_component_names
+                        .get(&binding)
+                        .cloned()
+                        .or_else(|| {
+                            linked_dependencies
+                                .get(&binding)
+                                .map(|(_, local_name)| local_name.clone())
+                        })
+                        .or_else(|| {
+                            dependency_support
+                                .provides(&binding)
+                                .then(|| binding.0.to_string())
+                        })
                 })
                 .filter(|name| seen.insert(name.clone()))
                 .collect::<Vec<_>>()
@@ -733,6 +962,7 @@ fn emit_recovered_angular_module(
         source,
         completeness,
         component_indices: drafts.iter().map(|draft| draft.component_index).collect(),
+        dependencies: module_dependencies,
         issues: drafts
             .iter()
             .flat_map(|draft| draft.issues.iter().cloned())
@@ -746,6 +976,19 @@ fn local_identity_binding(identity: &SymbolIdentity) -> Option<&BindingKey> {
         return None;
     };
     Some(binding)
+}
+
+fn reserve_unique_artifact_name(preferred: &str, reserved_names: &mut HashSet<Atom>) -> String {
+    if reserved_names.insert(Atom::from(preferred)) {
+        return preferred.to_string();
+    }
+    for suffix in 2usize.. {
+        let candidate = format!("{preferred}_{suffix}");
+        if reserved_names.insert(Atom::from(candidate.as_str())) {
+            return candidate;
+        }
+    }
+    unreachable!("the artifact-name suffix space is unbounded")
 }
 
 fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularModule> {
