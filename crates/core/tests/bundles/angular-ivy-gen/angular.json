@@ -39,6 +39,15 @@
               "optimization": true,
               "outputHashing": "none",
               "sourceMap": false
+            },
+            "advanced-structural-producer": {
+              "browser": "src/advanced-structural-main.ts",
+              "outputPath": "target/angular-advanced-structural-build",
+              "extractLicenses": false,
+              "namedChunks": false,
+              "optimization": true,
+              "outputHashing": "none",
+              "sourceMap": false
             }
           },
           "defaultConfiguration": "production"

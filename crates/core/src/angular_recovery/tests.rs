@@ -1455,6 +1455,217 @@ fn recovers_nested_if_else_views_as_angular_control_flow() {
 }
 
 #[test]
+fn infers_an_embedded_template_continuation_from_shared_forwarding() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵconditional": runtime.conditional,
+        };
+        runtime.firstTemplate = function(index, template, decls, vars, tag, attrs) {
+            controlFlowMarker();
+            createTemplate(
+                currentView(),
+                index,
+                template,
+                decls,
+                vars,
+                tag,
+                attrs,
+                256
+            );
+            return runtime.nextTemplate;
+        };
+        runtime.nextTemplate = function(
+            index,
+            template,
+            decls,
+            vars,
+            tag,
+            attrs,
+            localRefs,
+            extractor
+        ) {
+            controlFlowMarker();
+            createTemplate(
+                currentView(),
+                index,
+                template,
+                decls,
+                vars,
+                tag,
+                attrs,
+                512,
+                localRefs,
+                extractor
+            );
+            return runtime.nextTemplate;
+        };
+        runtime.emptyFirstTemplate = function() {
+            createNext(currentView());
+            return runtime.nextTemplate;
+        };
+
+        function DetailsTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Details");
+                runtime.end();
+            }
+        }
+
+        function EmptyTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Empty");
+                runtime.end();
+            }
+        }
+
+        class ContinuationComponent {
+            showDetails = true;
+
+            static compiled = runtime.component({
+                type: ContinuationComponent,
+                selectors: [["continuation-card"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "article");
+                        runtime.firstTemplate(
+                            1,
+                            DetailsTemplate,
+                            2,
+                            0,
+                            "p",
+                            null
+                        )(
+                            2,
+                            EmptyTemplate,
+                            2,
+                            0,
+                            "p",
+                            null
+                        );
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.conditional(context.showDetails ? 1 : 2);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("template continuation roles should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (showDetails) {"));
+    assert!(component.source.contains("<p>Details</p>"));
+    assert!(component.source.contains("@else {"));
+    assert!(component.source.contains("<p>Empty</p>"));
+}
+
+#[test]
+fn rejects_an_embedded_template_continuation_without_shared_forwarding() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+        };
+        runtime.firstTemplate = function(index, template, decls, vars) {
+            createFirst(currentView(), index, template, decls, vars);
+            return runtime.nextTemplate;
+        };
+        runtime.nextTemplate = function(
+            index,
+            template,
+            decls,
+            vars,
+            tag,
+            attrs,
+            localRefs,
+            extractor
+        ) {
+            createNext(
+                currentView(),
+                index,
+                template,
+                decls,
+                vars,
+                tag,
+                attrs,
+                localRefs,
+                extractor
+            );
+            return runtime.nextTemplate;
+        };
+
+        function DetailsTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Details");
+                runtime.end();
+            }
+        }
+
+        class LookalikeComponent {
+            static compiled = runtime.component({
+                type: LookalikeComponent,
+                selectors: [["lookalike-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.start(0, "article");
+                        runtime.firstTemplate(1, DetailsTemplate, 2, 0);
+                        runtime.end();
+                    }
+                },
+            });
+        }
+
+        class EmptyWrapperComponent {
+            static compiled = runtime.component({
+                type: EmptyWrapperComponent,
+                selectors: [["empty-wrapper-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.start(0, "article");
+                        runtime.emptyFirstTemplate(1, DetailsTemplate, 2, 0);
+                        runtime.end();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the lookalike template continuation should be analyzed");
+    for selector in ["lookalike-card", "empty-wrapper-card"] {
+        let component = report
+            .components
+            .iter()
+            .find(|component| component.selector == selector)
+            .expect("both lookalike components should be reported");
+        assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+        assert!(component
+            .source
+            .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+        assert!(!component.source.contains("<p>Details</p>"));
+    }
+}
+
+#[test]
 fn recovers_assignment_backed_nested_view_functions_through_a_stable_alias() {
     let source = r#"
         import * as core from "@angular/core";
