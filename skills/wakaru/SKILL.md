@@ -202,7 +202,9 @@ keeps the decompiled JavaScript and writes one module-derived Angular sidecar.
 directory mode processes ordinary JavaScript modules as well as detected
 bundles. In default directory mode it preserves ordinary production chunks
 intact so relative ESM symbol edges remain available to the Ivy analyzer;
-structural bundle detection still runs.
+structural bundle detection still runs. Proven ESM component edges become
+relative imports between recovered `.angular.ts` artifacts; Closure loader
+dependencies are not guessed as source-level imports.
 
 In JSON, recovered artifacts use `kind: "angular_module"` and status
 `recovered_angular_module` or `partial_angular_module`. Paired JavaScript uses
