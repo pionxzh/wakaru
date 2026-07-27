@@ -199,6 +199,27 @@ specialized helpers must forward the name and value in order to a direct
 `setProperty` call. A direct renderer call with those operands reversed remains
 unknown.
 
+Closure may preserve the view-state helpers while inlining
+`ɵɵgetCurrentView()` into a direct member read. The classifier identifies
+`ɵɵrestoreView` and `ɵɵresetView` only as a unique pair that writes the same
+state member: the restore helper assigns its parameter and returns that
+parameter's context slot, while the reset helper assigns `null` and returns its
+parameter unchanged. `ɵɵnextContext` additionally requires proven initializer
+use in an embedded view's update phase, its numeric depth default, and the
+compiled parent/context slot traversal. A member-valued creation-phase
+declaration is treated as an inlined current-view capture only when the same
+binding is later passed to a proven restore helper inside that view. The member
+shape alone is not semantic evidence, and ambiguous helper pairs remain
+unknown. When the getter call survives, its zero-argument function must return
+a member of the same state object and the captured result must flow to the
+proven restore helper before it receives the `ɵɵgetCurrentView` role.
+
+Closure can similarly reduce `ɵɵreference(slot)` to a direct view-slot read.
+The specialized form is accepted only with proven update-phase initializer
+uses and the Angular `27 + slot` layout relation; a different offset remains an
+unknown runtime call. Resolving that slot to a template reference is still
+view-local and requires a matching creation-table declaration.
+
 ### Performance and profiling
 
 `--profile` exposes these top-level Angular spans:
@@ -314,9 +335,12 @@ stable predeclared assignments. Reassigning one of those bindings is a negative
 fixture and remains partial.
 The minimally rooted `ADVANCED` profile proves interpolation, chained
 embedded-template, conditional, and property role inference from runtime
-behavior. Its nested conditional bodies and property bindings are recovered;
-unproven pipe, projection, and optimized view-context operations remain
-explicit partial regions.
+behavior. It also proves parent-context traversal and the paired
+restore/reset view-state helpers without retaining their public role names.
+One generated conditional component exercises Closure's inlined
+current-view capture, a restored listener, and a nested property binding as a
+complete artifact. Unproven pipe and projection operations remain explicit
+partial regions.
 Deferred-view instructions remain explicit partial regions, matching the scope
 above.
 
@@ -376,6 +400,7 @@ Pause and re-check this boundary after each milestone:
 9. repeaters, loop-local aliases, and captured-view listeners.
 10. assignment-backed embedded-view functions and stable aliases.
 11. minimally rooted Closure `ADVANCED` role inference from runtime behavior.
+12. Closure view-state role families and optimizer-inlined view captures.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

@@ -166,7 +166,11 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         "ɵɵtextInterpolate1",
         "ɵɵtemplate",
         "ɵɵconditional",
+        "ɵɵgetCurrentView",
+        "ɵɵnextContext",
         "ɵɵproperty",
+        "ɵɵresetView",
+        "ɵɵrestoreView",
     ] {
         assert!(
             !CLOSURE_ADVANCED_STRUCTURAL.contains(omitted_role),
@@ -185,7 +189,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 3);
+    assert_eq!(by_selector.len(), 4);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -206,6 +210,22 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["fixture-lazy-card"]
         .source
         .contains("<aside>Lazy {{ message }}</aside>"));
+    assert_eq!(
+        by_selector["structural-view-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-view-card"].issues,
+        by_selector["structural-view-card"].source,
+    );
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("@if (visible) {"));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("(click)=\"select()\""));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("[disabled]=\"disabled\""));
     assert_eq!(
         by_selector["fixture-card"].completeness,
         AngularRecoveryCompleteness::Partial
