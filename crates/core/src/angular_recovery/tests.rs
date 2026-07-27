@@ -2147,6 +2147,253 @@ fn recovers_repeater_views_with_local_bindings_and_restored_listeners() {
 }
 
 #[test]
+fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
+    let source = r#"
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.listener = function(name, handler, target) {
+            addListener(name, handler, target);
+            return runtime.listener;
+        };
+        runtime.template = function(index, view, decls, vars, tag) {
+            createTemplate(index, view, decls, vars, tag);
+            return runtime.template;
+        };
+        runtime.conditional = function(index) {
+            selectTemplate(index);
+        };
+        runtime.property = function(name, value, sanitizer) {
+            setProperty(name, value, sanitizer);
+            return runtime.property;
+        };
+        runtime.reference = function(slot) {
+            return runtime.state.context[27 + slot];
+        };
+        runtime.next = function(depth = 1) {
+            let view = runtime.state.context;
+            while (depth > 0) {
+                view = view[14];
+                depth--;
+            }
+            return (runtime.state.context = view)[8];
+        };
+        runtime.get = function() {
+            return runtime.state.current;
+        };
+        runtime.restore = function(view) {
+            return runtime.state.context = view, view[8];
+        };
+        runtime.reset = function(value) {
+            return runtime.state.context = null, value;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵlistener": runtime.listener,
+            "ɵɵtemplate": runtime.template,
+            "ɵɵconditional": runtime.conditional,
+            "ɵɵproperty": runtime.property,
+        };
+
+        function ConditionalButton(rf) {
+            if (rf & 1) {
+                const savedView = runtime.state.current;
+                const savedViewFromGetter = runtime.get();
+                runtime.start(0, "button", null, 0);
+                runtime.listener("click", function() {
+                    runtime.restore(savedView);
+                    const action = runtime.reference(1);
+                    const context = runtime.next();
+                    return runtime.reset(context.select(action));
+                });
+                runtime.text(1, "Nested view");
+                runtime.end();
+                runtime.start(2, "button");
+                runtime.listener("click", function() {
+                    runtime.restore(savedViewFromGetter);
+                    const context = runtime.next();
+                    return runtime.reset(context.select());
+                });
+                runtime.text(3, "Named capture");
+                runtime.end();
+            }
+            if (rf & 2) {
+                const action = runtime.reference(1);
+                const context = runtime.next();
+                runtime.property("disabled", context.disabled);
+            }
+        }
+
+        class ClosureViewStateComponent {
+            static compiled = runtime.define({
+                type: ClosureViewStateComponent,
+                selectors: [["closure-view-state"]],
+                consts: [["action", ""]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.template(0, ConditionalButton, 4, 1, "button");
+                    }
+                    if (rf & 2) {
+                        runtime.conditional(context.visible ? 0 : -1);
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure view-state helpers should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (visible) {"));
+    assert!(component.source.contains(
+        r#"<button #action (click)="select(action)" [disabled]="disabled">Nested view</button>"#
+    ));
+    assert!(component
+        .source
+        .contains(r#"<button (click)="select()">Named capture</button>"#));
+    assert!(!component.source.contains("runtime."));
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn rejects_unpaired_closure_view_state_lookalikes() {
+    let source = r#"
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.listener = function(name, handler, target) {
+            addListener(name, handler, target);
+            return runtime.listener;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+        };
+        runtime.restoreLookalike = function(view) {
+            return runtime.state.context = view, view[8];
+        };
+        runtime.resetLookalike = function(value) {
+            return runtime.other.context = null, value;
+        };
+
+        class ViewStateLookalikeComponent {
+            static compiled = runtime.define({
+                type: ViewStateLookalikeComponent,
+                selectors: [["view-state-lookalike"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = runtime.state.current;
+                        runtime.start(0, "button");
+                        runtime.listener("click", function() {
+                            runtime.restoreLookalike(savedView);
+                            return runtime.resetLookalike(context.select());
+                        });
+                        runtime.end();
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("unpaired view-state lookalikes should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(!component.source.contains(r#"(click)="select()""#));
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnsupportedStatement
+            && issue.detail.as_deref() == Some("declaration")
+    }));
+}
+
+#[test]
+fn rejects_a_closure_reference_helper_with_the_wrong_slot_offset() {
+    let source = r#"
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.property = function(name, value, sanitizer) {
+            setProperty(name, value, sanitizer);
+            return runtime.property;
+        };
+        runtime.referenceLookalike = function(slot) {
+            return runtime.state.context[28 + slot];
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵproperty": runtime.property,
+        };
+
+        class ReferenceLookalikeComponent {
+            static compiled = runtime.define({
+                type: ReferenceLookalikeComponent,
+                selectors: [["reference-lookalike"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.start(0, "button");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        const target = runtime.referenceLookalike(1);
+                        runtime.property("disabled", target.disabled);
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a reference lookalike should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
 fn recovers_builtin_repeater_track_expressions() {
     let source = r#"
         import * as core from "@angular/core";
