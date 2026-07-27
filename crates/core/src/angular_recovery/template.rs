@@ -421,6 +421,11 @@ fn recover_template_tree(
         }
     }
     if let Some(body) = &template.body {
+        program.saved_views.extend(inlined_current_view_captures(
+            body,
+            environment.roles,
+            environment.unresolved_ctxt,
+        ));
         collect_statements(
             &body.stmts,
             None,
@@ -710,7 +715,8 @@ fn collect_variable_declaration(
                 )
             }
             (Pat::Ident(binding), Some(initializer)) => {
-                collect_view_context_alias(&binding.id, initializer, phase, program)
+                is_inlined_current_view_alias(&binding.id, initializer, phase, program)
+                    || collect_view_context_alias(&binding.id, initializer, phase, program)
             }
             _ => false,
         };
@@ -737,6 +743,73 @@ fn collect_variable_declaration(
             );
         }
     }
+}
+
+fn inlined_current_view_captures(
+    body: &BlockStmt,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> HashSet<BindingKey> {
+    struct Collector<'a> {
+        roles: &'a IvyRoleTable,
+        unresolved_ctxt: SyntaxContext,
+        member_initializers: HashSet<BindingKey>,
+        restored_bindings: HashSet<BindingKey>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(initializer)) =
+                (&declarator.name, declarator.init.as_deref())
+            {
+                if matches!(strip_parentheses(initializer), Expr::Member(_)) {
+                    self.member_initializers.insert(binding_key(&binding.id));
+                }
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Some((root, argument_lists)) = call_chain(call) {
+                if self.roles.instruction_for_expr(root, self.unresolved_ctxt)
+                    == Some(IvyInstruction::RestoreView)
+                    && argument_lists.len() == 1
+                    && argument_lists[0].len() == 1
+                {
+                    if let Expr::Ident(saved_view) =
+                        strip_parentheses(argument_lists[0][0].expr.as_ref())
+                    {
+                        self.restored_bindings.insert(binding_key(saved_view));
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        roles,
+        unresolved_ctxt,
+        member_initializers: HashSet::new(),
+        restored_bindings: HashSet::new(),
+    };
+    body.visit_with(&mut collector);
+    collector
+        .member_initializers
+        .intersection(&collector.restored_bindings)
+        .cloned()
+        .collect()
+}
+
+fn is_inlined_current_view_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    initializer: &Expr,
+    phase: Option<u8>,
+    program: &TemplateProgram,
+) -> bool {
+    phase == Some(1)
+        && program.saved_views.contains(&binding_key(binding))
+        && matches!(strip_parentheses(initializer), Expr::Member(_))
 }
 
 fn collect_current_view_alias(
@@ -1382,6 +1455,12 @@ fn recover_view_listener_handler(
                     let Expr::Call(call) = strip_parentheses(initializer) else {
                         return Err("unsupported view-local alias initializer".to_string());
                     };
+                    if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+                        validate_restore_view_call(call, program)?;
+                        component_contexts.insert(binding_key(&binding.id));
+                        runtime_calls += 1;
+                        continue;
+                    }
                     if is_instruction_call(call, IvyInstruction::Reference, environment) {
                         let argument_lists = validated_single_call(call, "ɵɵreference")?;
                         let [slot] = argument_lists[0] else {
@@ -1414,6 +1493,16 @@ fn recover_view_listener_handler(
                     }
                     return Err("unsupported view-local runtime alias".to_string());
                 }
+            }
+            Stmt::Expr(expression) => {
+                let Expr::Call(call) = strip_parentheses(expression.expr.as_ref()) else {
+                    return Err("unsupported restored handler expression".to_string());
+                };
+                if !is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+                    return Err("restored handler expression is not ɵɵrestoreView".to_string());
+                }
+                validate_restore_view_call(call, program)?;
+                runtime_calls += 1;
             }
             Stmt::Return(ReturnStmt {
                 arg: Some(returned),
@@ -1483,14 +1572,28 @@ fn statement_restore_view_call<'a>(
     statement: &'a Stmt,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) -> Option<&'a CallExpr> {
-    let Stmt::Decl(Decl::Var(declaration)) = statement else {
-        return None;
-    };
-    declaration
-        .decls
-        .iter()
-        .filter_map(|declarator| declarator.init.as_deref())
-        .find_map(|initializer| restored_view_call(initializer, environment))
+    match statement {
+        Stmt::Decl(Decl::Var(declaration)) => declaration
+            .decls
+            .iter()
+            .filter_map(|declarator| declarator.init.as_deref())
+            .find_map(|initializer| {
+                restored_view_call(initializer, environment).or_else(|| {
+                    let Expr::Call(call) = strip_parentheses(initializer) else {
+                        return None;
+                    };
+                    is_instruction_call(call, IvyInstruction::RestoreView, environment)
+                        .then_some(call)
+                })
+            }),
+        Stmt::Expr(expression) => {
+            let Expr::Call(call) = strip_parentheses(expression.expr.as_ref()) else {
+                return None;
+            };
+            is_instruction_call(call, IvyInstruction::RestoreView, environment).then_some(call)
+        }
+        _ => None,
+    }
 }
 
 fn restored_view_call<'a>(
@@ -1524,6 +1627,23 @@ fn is_instruction_call(
             .instruction_for_expr(root, environment.unresolved_ctxt)
             == Some(instruction)
     })
+}
+
+fn validate_restore_view_call(
+    call: &CallExpr,
+    program: &TemplateProgram,
+) -> std::result::Result<(), String> {
+    let argument_lists = validated_single_call(call, "ɵɵrestoreView")?;
+    let [saved_view] = argument_lists[0] else {
+        return Err("ɵɵrestoreView expected one saved view".to_string());
+    };
+    let Expr::Ident(saved_view) = strip_parentheses(saved_view.expr.as_ref()) else {
+        return Err("ɵɵrestoreView saved view is not an identifier".to_string());
+    };
+    if !program.saved_views.contains(&binding_key(saved_view)) {
+        return Err("ɵɵrestoreView does not reference a captured view".to_string());
+    }
+    Ok(())
 }
 
 fn validated_single_call<'a>(
