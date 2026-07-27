@@ -1023,8 +1023,10 @@ fn is_next_context_shape(
     };
     if !is_numeric_default(parameter, 1.0)
         || !observations.iter().all(|observation| {
-            observation.usage == TemplateCallUsage::Initializer
-                && observation.phase == 2
+            matches!(
+                observation.usage,
+                TemplateCallUsage::Effect | TemplateCallUsage::Initializer
+            ) && observation.phase == 2
                 && matches!(observation.arguments.len(), 0 | 1)
                 && observation
                     .arguments
@@ -1104,7 +1106,11 @@ fn is_reference_shape(
     let [slot] = parameters.as_slice() else {
         return false;
     };
-    (direct_calls(definition).len() >= 2 || returns_parameter_offset_member(definition, slot, 27))
+    (direct_calls(definition).len() >= 2
+        || (loads_parameter_from_offset_member(definition, slot, 27)
+            && exact_returned_identity(definition)
+                == Some(SymbolIdentity::LocalBinding(slot.clone()))
+            && contains_throw_statement(&definition.body)))
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Initializer
                 && observation.phase == 2
@@ -1116,43 +1122,97 @@ fn is_reference_shape(
         })
 }
 
-fn returns_parameter_offset_member(
+fn loads_parameter_from_offset_member(
     function: &RuntimeFunction,
     parameter: &BindingKey,
     offset: u64,
 ) -> bool {
-    let mut returns = ReturnExpressionCollector::default();
-    function.body.visit_with(&mut returns);
-    returns.expressions.iter().any(|expression| {
-        let expression = match strip_parentheses(expression.as_ref()) {
-            Expr::Seq(sequence) => sequence.exprs.last().map(|expression| expression.as_ref()),
-            expression => Some(expression),
-        };
-        let Some(Expr::Member(member)) = expression.map(strip_parentheses) else {
-            return false;
-        };
-        if !matches!(strip_parentheses(member.obj.as_ref()), Expr::Member(_)) {
-            return false;
-        }
-        let MemberProp::Computed(computed) = &member.prop else {
-            return false;
-        };
-        let Expr::Bin(binary) = strip_parentheses(computed.expr.as_ref()) else {
-            return false;
-        };
-        if binary.op != BinaryOp::Add {
-            return false;
-        }
-        let operands_match = |left: &Expr, right: &Expr| {
-            computed_member_offset(left) == Some(offset)
+    struct Finder<'a> {
+        parameter: &'a BindingKey,
+        offset: u64,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == swc_core::ecma::ast::AssignOp::Assign
                 && matches!(
-                    strip_parentheses(right),
-                    Expr::Ident(identifier) if binding_key(identifier) == *parameter
+                    &assignment.left,
+                    AssignTarget::Simple(SimpleAssignTarget::Ident(identifier))
+                        if binding_key(&identifier.id) == *self.parameter
                 )
-        };
-        operands_match(binary.left.as_ref(), binary.right.as_ref())
-            || operands_match(binary.right.as_ref(), binary.left.as_ref())
-    })
+                && matches!(
+                    strip_parentheses(assignment.right.as_ref()),
+                    Expr::Member(member)
+                        if member_uses_parameter_offset(member, self.parameter, self.offset)
+                )
+            {
+                self.found = true;
+                return;
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        parameter,
+        offset,
+        found: false,
+    };
+    function.body.visit_with(&mut finder);
+    finder.found
+}
+
+fn contains_throw_statement(block: &BlockStmt) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_throw_stmt(&mut self, _statement: &swc_core::ecma::ast::ThrowStmt) {
+            self.found = true;
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder { found: false };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+fn member_uses_parameter_offset(
+    member: &swc_core::ecma::ast::MemberExpr,
+    parameter: &BindingKey,
+    offset: u64,
+) -> bool {
+    if !matches!(strip_parentheses(member.obj.as_ref()), Expr::Member(_)) {
+        return false;
+    }
+    let MemberProp::Computed(computed) = &member.prop else {
+        return false;
+    };
+    let Expr::Bin(binary) = strip_parentheses(computed.expr.as_ref()) else {
+        return false;
+    };
+    if binary.op != BinaryOp::Add {
+        return false;
+    }
+    let operands_match = |left: &Expr, right: &Expr| {
+        computed_member_offset(left) == Some(offset)
+            && matches!(
+                strip_parentheses(right),
+                Expr::Ident(identifier) if binding_key(identifier) == *parameter
+            )
+    };
+    operands_match(binary.left.as_ref(), binary.right.as_ref())
+        || operands_match(binary.right.as_ref(), binary.left.as_ref())
 }
 
 fn computed_member_offset(expression: &Expr) -> Option<u64> {
