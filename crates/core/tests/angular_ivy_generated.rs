@@ -157,7 +157,7 @@ fn recovers_components_after_rooted_closure_advanced() {
 }
 
 #[test]
-fn infers_interpolation_roles_after_minimally_rooted_closure_advanced() {
+fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert_production_artifact(CLOSURE_ADVANCED_STRUCTURAL);
     assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
     for omitted_role in [
@@ -210,12 +210,21 @@ fn infers_interpolation_roles_after_minimally_rooted_closure_advanced() {
         by_selector["fixture-card"].completeness,
         AngularRecoveryCompleteness::Partial
     );
-    assert!(by_selector["fixture-card"]
-        .source
-        .contains("<ng-template class=\"details\">"));
+    assert_eq!(
+        by_selector["fixture-card"]
+            .source
+            .matches("<p class=\"details\">")
+            .count(),
+        2
+    );
     assert!(by_selector["fixture-card"]
         .source
         .contains("<p class=\"details\">Details hidden</p>"));
+    assert!(by_selector["fixture-card"].source.contains("@if (cg) {"));
+    assert!(by_selector["fixture-card"].source.contains("@else {"));
+    assert!(by_selector["fixture-card"]
+        .source
+        .contains("[disabled]=\"disabled\""));
     assert_eq!(report.stats.malformed_instruction_calls, 0);
 }
 
