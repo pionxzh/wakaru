@@ -89,7 +89,9 @@ pub struct ModuleOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ArtifactKind {
+    /// Legacy per-component artifact kind retained for API compatibility.
     AngularComponent,
+    AngularModule,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

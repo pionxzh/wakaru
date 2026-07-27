@@ -2883,6 +2883,135 @@ fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
 }
 
 #[test]
+fn groups_sibling_components_and_relationships_into_one_module_artifact() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const sharedLabel = value => value.toUpperCase();
+
+        class a {
+            label = sharedLabel("child");
+
+            static compiled = core.ɵɵdefineComponent({
+                type: a,
+                selectors: [["child-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "span");
+                    }
+                },
+            });
+        }
+
+        class b {
+            childType = a;
+            label = sharedLabel("parent");
+
+            static compiled = core.ɵɵdefineComponent({
+                type: b,
+                selectors: [["parent-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "main");
+                    }
+                },
+                dependencies: [a],
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_modules(
+        &[AngularModuleSource {
+            filename: "feature.js",
+            source,
+        }],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("sibling components should recover as one module");
+
+    assert_eq!(report.components.len(), 2);
+    assert_eq!(report.modules.len(), 1);
+    let module = &report.modules[0];
+    assert_eq!(module.module_index, 0);
+    assert_eq!(module.component_indices, vec![0, 1]);
+    assert_eq!(
+        module.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        module.issues,
+        module.source,
+    );
+    assert_eq!(
+        module
+            .source
+            .matches(r#"import { Component } from "@angular/core";"#)
+            .count(),
+        1
+    );
+    assert_eq!(module.source.matches("const sharedLabel =").count(), 1);
+    assert_eq!(module.source.matches("@Component({").count(), 2);
+    assert!(module.source.contains("export class ChildCardComponent"));
+    assert!(module.source.contains("export class ParentCardComponent"));
+    assert!(module.source.contains("childType = ChildCardComponent;"));
+    assert!(module.source.contains("imports: [ChildCardComponent]"));
+    assert!(!module
+        .source
+        .contains("Unresolved artifact-local symbols: a"));
+    assert_typescript_parses(&module.source);
+}
+
+#[test]
+fn disambiguates_inferred_sibling_component_names() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class a {
+            static compiled = core.ɵɵdefineComponent({
+                type: a,
+                selectors: [["same-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "span");
+                    }
+                },
+            });
+        }
+
+        class b {
+            childType = a;
+
+            static compiled = core.ɵɵdefineComponent({
+                type: b,
+                selectors: [["same-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "main");
+                    }
+                },
+                dependencies: [a],
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("duplicate inferred names should remain recoverable");
+    assert_eq!(
+        report
+            .components
+            .iter()
+            .map(|component| component.name.as_str())
+            .collect::<Vec<_>>(),
+        ["SameCardComponent", "SameCardComponent_2"]
+    );
+    let module = &report.modules[0];
+    assert!(module.source.contains("export class SameCardComponent {"));
+    assert!(module.source.contains("export class SameCardComponent_2 {"));
+    assert!(module.source.contains("childType = SameCardComponent;"));
+    assert!(module.source.contains("imports: [SameCardComponent]"));
+    assert_typescript_parses(&module.source);
+}
+
+#[test]
 fn refuses_a_local_helper_with_an_impure_dependency_closure() {
     let source = r#"
         import {
@@ -2919,4 +3048,31 @@ fn refuses_a_local_helper_with_an_impure_dependency_closure() {
         .contains("// Unresolved artifact-local symbols: decorate"));
     assert!(!component.source.contains("function decorate(value)"));
     assert!(!component.source.contains("makeConfig()"));
+}
+
+fn assert_typescript_parses(source: &str) {
+    use swc_core::ecma::parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
+
+    let cm: Lrc<SourceMap> = Default::default();
+    let file = cm.new_source_file(
+        FileName::Custom("recovered.angular.ts".to_string()).into(),
+        source.to_string(),
+    );
+    let lexer = Lexer::new(
+        Syntax::Typescript(TsSyntax {
+            decorators: true,
+            ..Default::default()
+        }),
+        Default::default(),
+        StringInput::from(&*file),
+        None,
+    );
+    let mut parser = Parser::new_from(lexer);
+    parser.parse_module().unwrap_or_else(|error| {
+        panic!("the grouped inspection artifact should parse as TypeScript: {error:?}\n{source}")
+    });
+    assert!(
+        parser.take_errors().is_empty(),
+        "the grouped inspection artifact should parse without recovery errors"
+    );
 }
