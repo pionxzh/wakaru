@@ -314,6 +314,10 @@ enum TemplateNodeKind {
     Projection {
         selector: Option<String>,
     },
+    UnsupportedRegion {
+        comment: String,
+        placement_unknown: bool,
+    },
 }
 
 enum ConditionalBranch {
@@ -334,7 +338,14 @@ struct TemplateTree {
     stack: Vec<usize>,
     index_to_node: HashMap<usize, usize>,
     local_reference_slots: HashMap<usize, String>,
+    placed_issue_operations: HashSet<(AngularTemplatePhase, usize)>,
     cursor: usize,
+}
+
+#[derive(Clone, Copy)]
+struct TreeInsertionPoint {
+    parent: Option<usize>,
+    position: usize,
 }
 
 fn record_issue(issues: &mut Vec<AngularRecoveryIssue>, issue: AngularRecoveryIssue) {
@@ -473,6 +484,67 @@ fn issue_comment(issue: &AngularRecoveryIssue) -> String {
     }
 }
 
+fn issue_operation_key(issue: &AngularRecoveryIssue) -> Option<(AngularTemplatePhase, usize)> {
+    Some((issue.phase?, issue.operation_index?))
+}
+
+fn place_new_operation_issues(
+    tree: &mut TemplateTree,
+    issues: &[AngularRecoveryIssue],
+    issue_start: usize,
+    view_id: usize,
+    insertion_point: Option<TreeInsertionPoint>,
+) {
+    let Some(insertion_point) = insertion_point else {
+        return;
+    };
+    let regions = issues[issue_start..]
+        .iter()
+        .filter(|issue| issue.view_id == Some(view_id))
+        .filter_map(|issue| {
+            let key = issue_operation_key(issue)?;
+            Some((key, issue_comment(issue)))
+        })
+        .collect::<Vec<_>>();
+    if regions.is_empty() {
+        return;
+    }
+    tree.placed_issue_operations
+        .extend(regions.iter().map(|(key, _)| *key));
+    tree.insert_unsupported_regions(
+        insertion_point,
+        regions.into_iter().map(|(_, comment)| comment),
+        false,
+    );
+}
+
+fn place_remaining_view_issues(
+    tree: &mut TemplateTree,
+    issues: &[AngularRecoveryIssue],
+    view_id: usize,
+) {
+    let comments = issues
+        .iter()
+        .filter(|issue| issue.view_id == Some(view_id))
+        .filter(|issue| {
+            issue_operation_key(issue)
+                .is_none_or(|key| !tree.placed_issue_operations.contains(&key))
+        })
+        .map(issue_comment)
+        .collect::<Vec<_>>();
+    if comments.is_empty() {
+        return;
+    }
+    tree.insert_unsupported_regions(
+        TreeInsertionPoint {
+            parent: None,
+            position: tree.roots.len(),
+        },
+        comments,
+        true,
+    );
+}
+
 pub(super) fn recover_template(
     template: &Function,
     constant_table: Option<&Expr>,
@@ -505,20 +577,7 @@ pub(super) fn recover_template(
         0,
     )?;
 
-    let mut source = render_tree(&tree);
-    let mut rendered_issue_comments = HashSet::new();
-    for issue in &program.issues {
-        let comment = issue_comment(issue);
-        if !rendered_issue_comments.insert(comment.clone()) {
-            continue;
-        }
-        if !source.is_empty() {
-            source.push('\n');
-        }
-        source.push_str("<!-- ");
-        source.push_str(&comment);
-        source.push_str(" -->");
-    }
+    let source = render_tree(&tree);
     let mut unknown_runtime_call_shapes = program
         .unknown_runtime_call_shapes
         .into_iter()
@@ -593,6 +652,8 @@ fn recover_template_tree(
 
     let mut tree = TemplateTree::default();
     for instruction in program.create.clone() {
+        let insertion_point = tree.next_insertion_point();
+        let issue_start = program.issues.len();
         apply_create_instruction(
             &instruction,
             &mut tree,
@@ -605,10 +666,26 @@ fn recover_template_tree(
                 depth,
             },
         )?;
+        place_new_operation_issues(
+            &mut tree,
+            &program.issues,
+            issue_start,
+            program.view_id,
+            Some(insertion_point),
+        );
     }
     resolve_reference_aliases(&mut program, &tree, ancestor_references);
     for instruction in program.update.clone() {
+        let insertion_point = tree.update_issue_insertion_point(instruction.instruction);
+        let issue_start = program.issues.len();
         apply_update_instruction(&instruction, &mut tree, &mut program, environment)?;
+        place_new_operation_issues(
+            &mut tree,
+            &program.issues,
+            issue_start,
+            program.view_id,
+            insertion_point,
+        );
     }
     if !tree.stack.is_empty() {
         record_program_issue(
@@ -624,6 +701,7 @@ fn recover_template_tree(
             environment,
         );
     }
+    place_remaining_view_issues(&mut tree, &program.issues, program.view_id);
     Ok((tree, program))
 }
 
@@ -3651,24 +3729,119 @@ impl TemplateTree {
             | TemplateNodeKind::EmbeddedView { attributes, .. } => attributes.push(attribute),
             TemplateNodeKind::Text { .. }
             | TemplateNodeKind::Repeater { .. }
-            | TemplateNodeKind::Projection { .. } => {}
+            | TemplateNodeKind::Projection { .. }
+            | TemplateNodeKind::UnsupportedRegion { .. } => {}
+        }
+    }
+
+    fn next_insertion_point(&self) -> TreeInsertionPoint {
+        match self.stack.last().copied() {
+            Some(parent) => TreeInsertionPoint {
+                parent: Some(parent),
+                position: self.nodes[parent].children.len(),
+            },
+            None => TreeInsertionPoint {
+                parent: None,
+                position: self.roots.len(),
+            },
+        }
+    }
+
+    fn update_issue_insertion_point(
+        &self,
+        instruction: IvyInstruction,
+    ) -> Option<TreeInsertionPoint> {
+        if !matches!(
+            instruction,
+            IvyInstruction::TextInterpolate
+                | IvyInstruction::TextInterpolate1
+                | IvyInstruction::TextInterpolate2
+                | IvyInstruction::TextInterpolate3
+                | IvyInstruction::TextInterpolate4
+                | IvyInstruction::TextInterpolate5
+                | IvyInstruction::TextInterpolate6
+                | IvyInstruction::TextInterpolate7
+                | IvyInstruction::TextInterpolate8
+                | IvyInstruction::Property
+                | IvyInstruction::Attribute
+                | IvyInstruction::ClassProp
+                | IvyInstruction::StyleProp
+                | IvyInstruction::Repeater
+        ) {
+            return None;
+        }
+        let node = *self.index_to_node.get(&self.cursor)?;
+        self.insertion_point_before_node(node)
+    }
+
+    fn insertion_point_before_node(&self, target: usize) -> Option<TreeInsertionPoint> {
+        if let Some(position) = self.roots.iter().position(|node| *node == target) {
+            return Some(TreeInsertionPoint {
+                parent: None,
+                position,
+            });
+        }
+        self.nodes.iter().enumerate().find_map(|(parent, node)| {
+            node.children
+                .iter()
+                .position(|child| *child == target)
+                .map(|position| TreeInsertionPoint {
+                    parent: Some(parent),
+                    position,
+                })
+        })
+    }
+
+    fn insert_unsupported_regions(
+        &mut self,
+        insertion_point: TreeInsertionPoint,
+        comments: impl IntoIterator<Item = String>,
+        placement_unknown: bool,
+    ) {
+        for (offset, comment) in comments.into_iter().enumerate() {
+            let node = self.nodes.len();
+            self.nodes.push(TemplateNode {
+                kind: TemplateNodeKind::UnsupportedRegion {
+                    comment,
+                    placement_unknown,
+                },
+                children: Vec::new(),
+            });
+            let siblings = match insertion_point.parent {
+                Some(parent) => &mut self.nodes[parent].children,
+                None => &mut self.roots,
+            };
+            siblings.insert(
+                (insertion_point.position + offset).min(siblings.len()),
+                node,
+            );
         }
     }
 }
 
 fn render_tree(tree: &TemplateTree) -> String {
-    render_tree_at_depth(tree, 0)
+    render_tree_at_depth(tree, 0, &mut HashSet::new())
 }
 
-fn render_tree_at_depth(tree: &TemplateTree, depth: usize) -> String {
+fn render_tree_at_depth(
+    tree: &TemplateTree,
+    depth: usize,
+    rendered_issue_comments: &mut HashSet<String>,
+) -> String {
     tree.roots
         .iter()
-        .map(|&node| render_node(tree, node, depth))
+        .map(|&node| render_node(tree, node, depth, rendered_issue_comments))
+        .filter(|rendered| !rendered.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
+fn render_node(
+    tree: &TemplateTree,
+    node: usize,
+    depth: usize,
+    rendered_issue_comments: &mut HashSet<String>,
+) -> String {
     let current = &tree.nodes[node];
     let indent = "  ".repeat(depth);
     match &current.kind {
@@ -3708,9 +3881,13 @@ fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
             let children = current
                 .children
                 .iter()
-                .map(|&child| render_node(tree, child, depth + 1))
-                .collect::<Vec<_>>()
-                .join("\n");
+                .map(|&child| render_node(tree, child, depth + 1, rendered_issue_comments))
+                .filter(|rendered| !rendered.is_empty())
+                .collect::<Vec<_>>();
+            if children.is_empty() {
+                return format!("{indent}<{tag}{attributes}></{tag}>");
+            }
+            let children = children.join("\n");
             format!("{indent}<{tag}{attributes}>\n{children}\n{indent}</{tag}>")
         }
         TemplateNodeKind::EmbeddedView {
@@ -3718,7 +3895,7 @@ fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
             attributes,
             branch,
         } => {
-            let body = render_tree_at_depth(embedded, depth + 1);
+            let body = render_tree_at_depth(embedded, depth + 1, rendered_issue_comments);
             match branch {
                 Some(ConditionalBranch::If(condition)) => {
                     format!("{indent}@if ({condition}) {{\n{body}\n{indent}}}")
@@ -3747,13 +3924,28 @@ fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
             collection,
         } => {
             let collection = collection.as_deref().unwrap_or("/* unknown collection */");
-            let body = render_tree_at_depth(body, depth + 1);
+            let body = render_tree_at_depth(body, depth + 1, rendered_issue_comments);
             let mut rendered = format!(
                 "{indent}@for ({item} of {collection}; track {track}) {{\n{body}\n{indent}}}"
             );
             if let Some(empty) = empty {
-                let empty = render_tree_at_depth(empty, depth + 1);
+                let empty = render_tree_at_depth(empty, depth + 1, rendered_issue_comments);
                 rendered.push_str(&format!("\n{indent}@empty {{\n{empty}\n{indent}}}"));
+            }
+            rendered
+        }
+        TemplateNodeKind::UnsupportedRegion {
+            comment,
+            placement_unknown,
+        } => {
+            if !rendered_issue_comments.insert(comment.clone()) {
+                return String::new();
+            }
+            let mut rendered = format!("{indent}<!-- {comment} -->");
+            if *placement_unknown {
+                rendered.push_str(&format!(
+                    "\n{indent}<!-- Wakaru: placement unknown within this view -->"
+                ));
             }
             rendered
         }
