@@ -46,6 +46,9 @@ Initial recovery covers:
 - event listeners;
 - nested embedded views selected by modern `@if` / `@else if` / `@else`
   control flow, including component-context reads through `ɵɵnextContext`;
+- modern `@for` / `@empty` repeaters when the creation/update pair and track
+  function are proven, including `$implicit` loop bindings and captured-view
+  listeners that use `ɵɵrestoreView` / `ɵɵresetView`;
 - content projection, including selector-bearing `<ng-content>` slots;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
@@ -56,10 +59,10 @@ Initial recovery covers:
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Repeaters, deferred views, cross-artifact dependency linking, and original
-package provenance after bundling are incremental extensions. Unsupported
-instruction regions remain explicit in the recovery IR and must not be
-silently rendered as if recovery were complete.
+Deferred views, legacy structural-directive syntax, cross-artifact dependency
+linking, and original package provenance after bundling are incremental
+extensions. Unsupported instruction regions remain explicit in the recovery
+IR and must not be silently rendered as if recovery were complete.
 
 ## Architecture boundary
 
@@ -274,8 +277,11 @@ interpolation, event listeners, property bindings, scoped styles, and
 cross-chunk runtime evidence. The fixture also recovers a nested modern
 `@if` / `@else` block, a selector-bearing projection slot, a local template
 reference, and a pipe binding from both the Angular chunks and their Closure
-`SIMPLE` and rooted `ADVANCED` aggregates. Repeater and deferred-view
-instructions remain explicit partial regions, matching the scope above.
+`SIMPLE` and rooted `ADVANCED` aggregates. The isolated direct-compiler fixture
+additionally recovers a modern `@for` / `@empty` repeater, its track expression,
+loop-local reference, and captured-view listener as a complete artifact.
+Deferred-view instructions remain explicit partial regions, matching the scope
+above.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -330,6 +336,7 @@ Pause and re-check this boundary after each milestone:
 6. projection, local references, and pipes.
 7. artifact-local helpers, imports, and materializable dependencies.
 8. rooted Closure `ADVANCED` validation and representative-corpus profiling.
+9. repeaters, loop-local aliases, and captured-view listeners.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

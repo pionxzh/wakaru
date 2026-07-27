@@ -10,6 +10,8 @@ const MAIN: &str = include_str!("bundles/angular-ivy-gen/dist/main.js");
 const LAZY: &str = include_str!("bundles/angular-ivy-gen/dist/lazy.js");
 const CLOSURE_SIMPLE: &str = include_str!("bundles/angular-ivy-gen/dist/closure-simple.js");
 const CLOSURE_ADVANCED: &str = include_str!("bundles/angular-ivy-gen/dist/closure-advanced.js");
+const TEMPLATE_CONSTRUCTS: &str =
+    include_str!("bundles/angular-ivy-gen/dist/template-constructs.js");
 
 fn assert_production_artifact(source: &str) {
     assert!(!source.contains("ɵsetClassMetadata"));
@@ -148,4 +150,96 @@ fn recovers_components_after_rooted_closure_advanced() {
     assert!(by_selector["fixture-card"]
         .source
         .contains(r#"<ng-content select="[card-extra]" />"#));
+}
+
+#[test]
+fn recovers_flat_bindings_from_isolated_angular_compiler_output() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-flat-bindings")
+        .expect("flat binding component should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(component.source.contains(
+        "<article title=\"Flat bindings\" (click)=\"activate($event)\" \
+         [style.opacity]=\"opacity\" [class.active]=\"active\" \
+         [attr.aria-label]=\"label\">"
+    ));
+    assert!(component
+        .source
+        .contains("<h2>{{ prefix }} {{ label }}</h2>"));
+    assert!(component
+        .source
+        .contains("<input [disabled]=\"disabled\" />"));
+}
+
+#[test]
+fn recovers_view_local_angular_template_constructs() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for authored_template_fragment in ["@if", "@for", "<ng-content", "#row"] {
+        assert!(
+            !TEMPLATE_CONSTRUCTS.contains(authored_template_fragment),
+            "generated fixture should not retain {authored_template_fragment}"
+        );
+    }
+    for instruction in [
+        "ɵɵconditionalCreate",
+        "ɵɵrepeaterCreate",
+        "ɵɵprojection",
+        "ɵɵpipeBind1",
+        "ɵɵreference",
+    ] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-structural-constructs")
+        .expect("structural component identity should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (showDetails) {"));
+    assert!(component
+        .source
+        .contains("<h2>{{ title | uppercase }}</h2>"));
+    assert!(component.source.contains("@else {"));
+    assert!(component
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(component.source.contains("#row"));
+    assert!(component.source.contains("(click)=\"select(row, item)\""));
+    assert!(component.source.contains("{{ item.label }}"));
+    assert!(component.source.contains("@empty {"));
+    assert!(component.source.contains("<p>No items</p>"));
+    assert!(component
+        .source
+        .contains(r#"<ng-content select="[card-footer]" />"#));
+    assert!(!component.source.contains("ɵɵ"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
 }
