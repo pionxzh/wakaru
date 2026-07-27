@@ -114,10 +114,13 @@ The low-level Angular namespace provides `analyze_angular_components_*`
 operations alongside the convenience `recover_angular_components_*` wrappers.
 Analysis returns the same recovered components plus typed, fail-closed recovery
 issues and aggregate accounting for candidate descriptors and render-phase
-runtime calls. Unknown runtime calls are also grouped by phase and argument-list
-shape at component and workspace scope. The root façade keeps those framework
-details out of `ArtifactOutput`; optional diagnostics expose only the aggregate
-report.
+runtime calls. Issue entries preserve occurrences and identify the source
+module index, recovered component, view, render phase, per-view operation
+ordinal, and module-relative source range. When known, they distinguish the
+canonical Ivy role from the concise callee spelling in the evidence source.
+Unknown runtime calls are also grouped by phase and argument-list shape at
+component and workspace scope. The root façade keeps those framework details
+out of `ArtifactOutput`; optional diagnostics expose only the aggregate report.
 
 Private option fields and non-exhaustive result types allow that integrated
 surface to be added without a breaking change. Future framework namespaces may
