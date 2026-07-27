@@ -181,6 +181,14 @@ identifier aliases of that binding. This covers Closure ModuleManager-style
 `var view; view = function (...) { ... }` output without treating an arbitrary
 or reassigned runtime value as a template function.
 
+Closure `ADVANCED` can also turn the first embedded-template instruction into
+a wrapper that returns a separate self-returning continuation used by chained
+calls. The Ivy classifier treats both functions as the same template role only
+when calls in creation blocks have valid embedded-template arguments, the
+continuation has the expected eight-parameter family shape, and both functions
+forward their parameter dependencies in order to the same internal callee.
+Matching arity or a returned function alone is insufficient.
+
 ### Performance and profiling
 
 `--profile` exposes these top-level Angular spans:
@@ -276,12 +284,15 @@ application under `crates/core/tests/bundles/angular-ivy-gen/`. It builds three
 application components across a minified main chunk, shared Angular runtime
 chunk, and lazy ESM chunk. The generator also passes those outputs through
 Closure Compiler `SIMPLE`, and passes a separate retained-root producer entry
-through Closure Compiler `ADVANCED`.
+through Closure Compiler `ADVANCED`. A second minimally rooted `ADVANCED`
+profile retains only the canonical component-definition role; all template
+instruction roles remain Closure-renamed.
 
-All three producer forms recover all three component definitions with non-empty
-inline templates. Covered regions include element structure, static text,
-interpolation, event listeners, property bindings, scoped styles, and
-cross-chunk runtime evidence. The fixture also recovers a nested modern
+The original Angular, `SIMPLE`, and fully rooted `ADVANCED` producer forms
+recover all three component definitions with non-empty inline templates.
+Covered regions include element structure, static text, interpolation, event
+listeners, property bindings, scoped styles, and cross-chunk runtime evidence.
+The fixture also recovers a nested modern
 `@if` / `@else` block, a selector-bearing projection slot, a local template
 reference, and a pipe binding from both the Angular chunks and their Closure
 `SIMPLE` and rooted `ADVANCED` aggregates. The isolated direct-compiler fixture
@@ -291,6 +302,10 @@ An assignment-backed derivative of that generated artifact proves the same
 nested views after their function declarations are mechanically lowered to
 stable predeclared assignments. Reassigning one of those bindings is a negative
 fixture and remains partial.
+The minimally rooted `ADVANCED` profile proves interpolation and chained
+embedded-template role inference from runtime behavior. Its nested view bodies
+are recovered even though conditional selection and property bindings remain
+explicit partial regions.
 Deferred-view instructions remain explicit partial regions, matching the scope
 above.
 
@@ -349,6 +364,7 @@ Pause and re-check this boundary after each milestone:
 8. rooted Closure `ADVANCED` validation and representative-corpus profiling.
 9. repeaters, loop-local aliases, and captured-view listeners.
 10. assignment-backed embedded-view functions and stable aliases.
+11. minimally rooted Closure `ADVANCED` role inference from runtime behavior.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
