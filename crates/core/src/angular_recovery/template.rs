@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
-use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
+use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
     Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, Lit, MemberProp, Module, Pat, ReturnStmt,
@@ -19,8 +19,8 @@ use super::emitter::{
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, member_prop_name, string_lit, BindingKey};
 use super::{
-    AngularRecoveryIssue, AngularRecoveryIssueKind, AngularTemplatePhase,
-    AngularTemplateRecoveryStats, AngularUnknownRuntimeCallShape,
+    AngularRecoveryIssue, AngularRecoveryIssueKind, AngularRecoverySourceRange,
+    AngularTemplatePhase, AngularTemplateRecoveryStats, AngularUnknownRuntimeCallShape,
 };
 
 pub(super) struct RecoveredTemplate {
@@ -204,17 +204,36 @@ struct TemplateRecoveryEnvironment<'a> {
     roles: &'a IvyRoleTable,
     template_functions: &'a TemplateFunctionTable,
     unresolved_ctxt: SyntaxContext,
+    source_start_pos: u32,
     cm: Lrc<SourceMap>,
+}
+
+pub(super) struct TemplateRecoveryContext {
+    pub(super) unresolved_ctxt: SyntaxContext,
+    pub(super) source_start_pos: u32,
+    pub(super) cm: Lrc<SourceMap>,
+}
+
+#[derive(Clone)]
+struct TemplateOperationProvenance {
+    view_id: usize,
+    phase: AngularTemplatePhase,
+    operation_index: usize,
+    source_range: Option<AngularRecoverySourceRange>,
+    actual_callee: Option<String>,
 }
 
 #[derive(Clone)]
 struct InstructionCall {
     instruction: IvyInstruction,
     args: Vec<Box<Expr>>,
+    provenance: TemplateOperationProvenance,
 }
 
 #[derive(Default)]
 struct TemplateProgram {
+    view_id: usize,
+    next_operation_index: usize,
     create: Vec<InstructionCall>,
     update: Vec<InstructionCall>,
     issues: Vec<AngularRecoveryIssue>,
@@ -229,6 +248,33 @@ struct TemplateProgram {
     local_reference_names: HashMap<BindingKey, String>,
     pipes: HashMap<usize, String>,
     artifact_references: HashSet<BindingKey>,
+}
+
+impl TemplateProgram {
+    fn new(view_id: usize) -> Self {
+        Self {
+            view_id,
+            ..Self::default()
+        }
+    }
+
+    fn next_operation(
+        &mut self,
+        phase: AngularTemplatePhase,
+        span: Span,
+        actual_callee: Option<String>,
+        source_start_pos: u32,
+    ) -> TemplateOperationProvenance {
+        let operation_index = self.next_operation_index;
+        self.next_operation_index = self.next_operation_index.saturating_add(1);
+        TemplateOperationProvenance {
+            view_id: self.view_id,
+            phase,
+            operation_index,
+            source_range: relative_source_range(span, source_start_pos),
+            actual_callee,
+        }
+    }
 }
 
 type ReferenceScope = HashMap<usize, String>;
@@ -292,9 +338,104 @@ struct TemplateTree {
 }
 
 fn record_issue(issues: &mut Vec<AngularRecoveryIssue>, issue: AngularRecoveryIssue) {
-    if !issues.contains(&issue) {
-        issues.push(issue);
+    issues.push(issue);
+}
+
+fn issue(
+    kind: AngularRecoveryIssueKind,
+    instruction: Option<String>,
+    detail: Option<String>,
+) -> AngularRecoveryIssue {
+    AngularRecoveryIssue::new(kind, instruction, detail)
+}
+
+fn issue_at_operation(
+    mut issue: AngularRecoveryIssue,
+    provenance: &TemplateOperationProvenance,
+) -> AngularRecoveryIssue {
+    issue.view_id = Some(provenance.view_id);
+    issue.phase = Some(provenance.phase);
+    issue.operation_index = Some(provenance.operation_index);
+    issue.source_range = provenance.source_range;
+    issue.actual_callee.clone_from(&provenance.actual_callee);
+    issue
+}
+
+fn record_program_issue(
+    program: &mut TemplateProgram,
+    issue: AngularRecoveryIssue,
+    phase: Option<u8>,
+    span: Span,
+    actual_callee: Option<&Expr>,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) {
+    let provenance = program.next_operation(
+        template_phase(phase),
+        span,
+        actual_callee.and_then(concise_callee_spelling),
+        environment.source_start_pos,
+    );
+    record_issue(&mut program.issues, issue_at_operation(issue, &provenance));
+}
+
+fn call_provenances(
+    program: &mut TemplateProgram,
+    phase: Option<u8>,
+    call: &CallExpr,
+    root: &Expr,
+    count: usize,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> Vec<TemplateOperationProvenance> {
+    let actual_callee = concise_callee_spelling(root);
+    (0..count)
+        .map(|_| {
+            program.next_operation(
+                template_phase(phase),
+                call.span,
+                actual_callee.clone(),
+                environment.source_start_pos,
+            )
+        })
+        .collect()
+}
+
+fn template_phase(phase: Option<u8>) -> AngularTemplatePhase {
+    match phase {
+        Some(1) => AngularTemplatePhase::Creation,
+        Some(2) => AngularTemplatePhase::Update,
+        _ => AngularTemplatePhase::OutsideRender,
     }
+}
+
+fn relative_source_range(span: Span, source_start_pos: u32) -> Option<AngularRecoverySourceRange> {
+    if span.lo.0 == 0 || span.hi.0 == 0 {
+        return None;
+    }
+    let start = span.lo.0.checked_sub(source_start_pos)?;
+    let end = span.hi.0.checked_sub(source_start_pos)?;
+    (start <= end).then_some(AngularRecoverySourceRange { start, end })
+}
+
+fn concise_callee_spelling(expression: &Expr) -> Option<String> {
+    fn collect(expression: &Expr, parts: &mut Vec<String>) -> Option<()> {
+        match strip_parentheses(expression) {
+            Expr::Ident(identifier) => {
+                parts.push(identifier.sym.to_string());
+                Some(())
+            }
+            Expr::Member(member) => {
+                collect(member.obj.as_ref(), parts)?;
+                parts.push(member_prop_name(&member.prop)?.to_string());
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    let mut parts = Vec::new();
+    collect(expression, &mut parts)?;
+    let spelling = parts.join(".");
+    (!spelling.is_empty() && spelling.len() <= 128).then_some(spelling)
 }
 
 fn issue_comment(issue: &AngularRecoveryIssue) -> String {
@@ -338,8 +479,7 @@ pub(super) fn recover_template(
     projection_selectors: &[String],
     roles: &IvyRoleTable,
     template_functions: &TemplateFunctionTable,
-    unresolved_ctxt: SyntaxContext,
-    cm: Lrc<SourceMap>,
+    context: TemplateRecoveryContext,
 ) -> Result<RecoveredTemplate> {
     let constants = constant_table
         .map(decode_component_constant_table)
@@ -349,12 +489,21 @@ pub(super) fn recover_template(
         projection_selectors,
         roles,
         template_functions,
-        unresolved_ctxt,
-        cm,
+        unresolved_ctxt: context.unresolved_ctxt,
+        source_start_pos: context.source_start_pos,
+        cm: context.cm,
     };
     let mut active_templates = HashSet::new();
-    let (tree, program) =
-        recover_template_tree(template, &environment, true, &mut active_templates, &[], 0)?;
+    let mut next_view_id = 0;
+    let (tree, program) = recover_template_tree(
+        template,
+        &environment,
+        true,
+        &mut active_templates,
+        &mut next_view_id,
+        &[],
+        0,
+    )?;
 
     let mut source = render_tree(&tree);
     let mut rendered_issue_comments = HashSet::new();
@@ -405,18 +554,25 @@ fn recover_template_tree(
     environment: &TemplateRecoveryEnvironment<'_>,
     is_component_view: bool,
     active_templates: &mut HashSet<BindingKey>,
+    next_view_id: &mut usize,
     ancestor_references: &[ReferenceScope],
     depth: usize,
 ) -> Result<(TemplateTree, TemplateProgram)> {
-    let mut program = TemplateProgram::default();
+    let view_id = *next_view_id;
+    *next_view_id = view_id.saturating_add(1);
+    let mut program = TemplateProgram::new(view_id);
     let Some(render_flags) = function_param_binding(template, 0) else {
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::UnsupportedTemplateParameters,
-                instruction: None,
-                detail: None,
-            },
+        record_program_issue(
+            &mut program,
+            issue(
+                AngularRecoveryIssueKind::UnsupportedTemplateParameters,
+                None,
+                None,
+            ),
+            None,
+            template.span,
+            None,
+            environment,
         );
         return Ok((TemplateTree::default(), program));
     };
@@ -432,14 +588,7 @@ fn recover_template_tree(
             environment.roles,
             environment.unresolved_ctxt,
         ));
-        collect_statements(
-            &body.stmts,
-            None,
-            &render_flags,
-            environment.roles,
-            environment.unresolved_ctxt,
-            &mut program,
-        );
+        collect_statements(&body.stmts, None, &render_flags, environment, &mut program);
     }
 
     let mut tree = TemplateTree::default();
@@ -449,9 +598,12 @@ fn recover_template_tree(
             &mut tree,
             &mut program,
             environment,
-            active_templates,
-            ancestor_references,
-            depth,
+            ViewRecoveryState {
+                active_templates,
+                next_view_id,
+                ancestor_references,
+                depth,
+            },
         )?;
     }
     resolve_reference_aliases(&mut program, &tree, ancestor_references);
@@ -459,13 +611,17 @@ fn recover_template_tree(
         apply_update_instruction(&instruction, &mut tree, &mut program, environment)?;
     }
     if !tree.stack.is_empty() {
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::MalformedTemplateStructure,
-                instruction: None,
-                detail: Some(format!("{} unclosed element(s)", tree.stack.len())),
-            },
+        record_program_issue(
+            &mut program,
+            issue(
+                AngularRecoveryIssueKind::MalformedTemplateStructure,
+                None,
+                Some(format!("{} unclosed element(s)", tree.stack.len())),
+            ),
+            Some(1),
+            template.span,
+            None,
+            environment,
         );
     }
     Ok((tree, program))
@@ -597,19 +753,11 @@ fn collect_statements(
     statements: &[Stmt],
     phase: Option<u8>,
     render_flags: &BindingKey,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) {
     for statement in statements {
-        collect_statement(
-            statement,
-            phase,
-            render_flags,
-            roles,
-            unresolved_ctxt,
-            program,
-        );
+        collect_statement(statement, phase, render_flags, environment, program);
     }
 }
 
@@ -617,64 +765,63 @@ fn collect_statement(
     statement: &Stmt,
     phase: Option<u8>,
     render_flags: &BindingKey,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) {
     match statement {
         Stmt::Empty(_) => {}
-        Stmt::Block(block) => collect_statements(
-            &block.stmts,
-            phase,
-            render_flags,
-            roles,
-            unresolved_ctxt,
-            program,
-        ),
+        Stmt::Block(block) => {
+            collect_statements(&block.stmts, phase, render_flags, environment, program)
+        }
         Stmt::If(if_statement) => {
             let (branch_phase, is_render_guard) = collect_if_test(
                 if_statement.test.as_ref(),
                 phase,
                 render_flags,
-                roles,
-                unresolved_ctxt,
+                environment,
                 program,
             );
             if !is_render_guard {
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedStatement,
-                        instruction: None,
-                        detail: Some("conditional control flow".to_string()),
-                    },
+                record_program_issue(
+                    program,
+                    issue(
+                        AngularRecoveryIssueKind::UnsupportedStatement,
+                        None,
+                        Some("conditional control flow".to_string()),
+                    ),
+                    phase,
+                    if_statement.span,
+                    None,
+                    environment,
                 );
             }
             collect_statement(
                 if_statement.cons.as_ref(),
                 branch_phase,
                 render_flags,
-                roles,
-                unresolved_ctxt,
+                environment,
                 program,
             );
             if let Some(alternate) = &if_statement.alt {
                 if is_render_guard {
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::UnsupportedStatement,
-                            instruction: None,
-                            detail: Some("render-flag alternate branch".to_string()),
-                        },
+                    record_program_issue(
+                        program,
+                        issue(
+                            AngularRecoveryIssueKind::UnsupportedStatement,
+                            None,
+                            Some("render-flag alternate branch".to_string()),
+                        ),
+                        phase,
+                        alternate.span(),
+                        None,
+                        environment,
                     );
                 }
                 collect_statement(
                     alternate.as_ref(),
                     phase,
                     render_flags,
-                    roles,
-                    unresolved_ctxt,
+                    environment,
                     program,
                 );
             }
@@ -683,25 +830,23 @@ fn collect_statement(
             expression.expr.as_ref(),
             phase,
             render_flags,
-            roles,
-            unresolved_ctxt,
+            environment,
             program,
         ),
-        Stmt::Decl(Decl::Var(declaration)) => collect_variable_declaration(
-            declaration,
+        Stmt::Decl(Decl::Var(declaration)) => {
+            collect_variable_declaration(declaration, phase, render_flags, environment, program)
+        }
+        _ => record_program_issue(
+            program,
+            issue(
+                AngularRecoveryIssueKind::UnsupportedStatement,
+                None,
+                Some(statement_kind(statement).to_string()),
+            ),
             phase,
-            render_flags,
-            roles,
-            unresolved_ctxt,
-            program,
-        ),
-        _ => record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::UnsupportedStatement,
-                instruction: None,
-                detail: Some(statement_kind(statement).to_string()),
-            },
+            statement.span(),
+            None,
+            environment,
         ),
     }
 }
@@ -710,35 +855,15 @@ fn collect_variable_declaration(
     declaration: &swc_core::ecma::ast::VarDecl,
     phase: Option<u8>,
     render_flags: &BindingKey,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) {
     for declarator in &declaration.decls {
         let supported_compiler_alias = match (&declarator.name, declarator.init.as_deref()) {
             (Pat::Ident(binding), Some(Expr::Call(call))) => {
-                collect_current_view_alias(
-                    &binding.id,
-                    call,
-                    phase,
-                    roles,
-                    unresolved_ctxt,
-                    program,
-                ) || collect_next_context_alias(
-                    &binding.id,
-                    call,
-                    phase,
-                    roles,
-                    unresolved_ctxt,
-                    program,
-                ) || collect_reference_alias(
-                    &binding.id,
-                    call,
-                    phase,
-                    roles,
-                    unresolved_ctxt,
-                    program,
-                )
+                collect_current_view_alias(&binding.id, call, phase, environment, program)
+                    || collect_next_context_alias(&binding.id, call, phase, environment, program)
+                    || collect_reference_alias(&binding.id, call, phase, environment, program)
             }
             (Pat::Ident(binding), Some(initializer)) => {
                 is_inlined_current_view_alias(&binding.id, initializer, phase, program)
@@ -750,21 +875,24 @@ fn collect_variable_declaration(
             continue;
         }
 
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::UnsupportedStatement,
-                instruction: None,
-                detail: Some("declaration".to_string()),
-            },
+        record_program_issue(
+            program,
+            issue(
+                AngularRecoveryIssueKind::UnsupportedStatement,
+                None,
+                Some("declaration".to_string()),
+            ),
+            phase,
+            declarator.span,
+            None,
+            environment,
         );
         if let Some(initializer) = &declarator.init {
             collect_expression(
                 initializer.as_ref(),
                 phase,
                 render_flags,
-                roles,
-                unresolved_ctxt,
+                environment,
                 program,
             );
         }
@@ -842,33 +970,48 @@ fn collect_current_view_alias(
     binding: &swc_core::ecma::ast::Ident,
     call: &CallExpr,
     phase: Option<u8>,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) -> bool {
     if phase != Some(1) {
         return false;
     }
-    let Some((_, argument_lists)) = call_chain(call).filter(|(root, _)| {
-        roles.instruction_for_expr(root, unresolved_ctxt) == Some(IvyInstruction::GetCurrentView)
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::GetCurrentView)
     }) else {
         return false;
     };
 
     program.stats.runtime_calls_observed += argument_lists.len();
+    let provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
     if argument_lists.len() == 1 && argument_lists[0].is_empty() {
         program.stats.rendered_instruction_calls += 1;
         program.saved_views.insert(binding_key(binding));
     } else {
         program.stats.malformed_instruction_calls += argument_lists.len();
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::MalformedInstruction,
-                instruction: Some("ɵɵgetCurrentView".to_string()),
-                detail: Some("expected no arguments".to_string()),
-            },
-        );
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵgetCurrentView".to_string()),
+                        Some("expected no arguments".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
     }
     true
 }
@@ -938,34 +1081,49 @@ fn collect_next_context_alias(
     binding: &swc_core::ecma::ast::Ident,
     call: &CallExpr,
     phase: Option<u8>,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) -> bool {
     if phase != Some(2) {
         return false;
     }
-    let Some((_, argument_lists)) = call_chain(call).filter(|(root, _)| {
-        roles.instruction_for_expr(root, unresolved_ctxt) == Some(IvyInstruction::NextContext)
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::NextContext)
     }) else {
         return false;
     };
 
     program.stats.runtime_calls_observed += argument_lists.len();
+    let provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
     if let Some(context_hop) = context_hop(&argument_lists) {
         program.stats.rendered_instruction_calls += 1;
         program.component_contexts.insert(binding_key(binding));
         program.update_context_depth = program.update_context_depth.saturating_add(context_hop);
     } else {
         program.stats.malformed_instruction_calls += argument_lists.len();
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::MalformedInstruction,
-                instruction: Some("ɵɵnextContext".to_string()),
-                detail: Some("unexpected context-depth arguments".to_string()),
-            },
-        );
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵnextContext".to_string()),
+                        Some("unexpected context-depth arguments".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
     }
     true
 }
@@ -985,32 +1143,50 @@ fn collect_reference_alias(
     binding: &swc_core::ecma::ast::Ident,
     call: &CallExpr,
     phase: Option<u8>,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) -> bool {
     if phase != Some(2) {
         return false;
     }
-    let Some((_, argument_lists)) = call_chain(call).filter(|(root, _)| {
-        roles.instruction_for_expr(root, unresolved_ctxt) == Some(IvyInstruction::Reference)
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::Reference)
     }) else {
         return false;
     };
 
     program.stats.runtime_calls_observed += argument_lists.len();
+    let mut provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
     if argument_lists.len() != 1 {
         program.stats.malformed_instruction_calls += argument_lists.len();
-        record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::MalformedInstruction,
-                instruction: Some("ɵɵreference".to_string()),
-                detail: Some("unexpected chained invocation".to_string()),
-            },
-        );
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵreference".to_string()),
+                        Some("unexpected chained invocation".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
         return true;
     }
+    let provenance = provenances
+        .pop()
+        .expect("a call chain always contains one invocation");
     program.reference_aliases.push((
         binding_key(binding),
         InstructionCall {
@@ -1019,6 +1195,7 @@ fn collect_reference_alias(
                 .iter()
                 .map(|argument| argument.expr.clone())
                 .collect(),
+            provenance,
         },
         program.update_context_depth,
     ));
@@ -1029,8 +1206,7 @@ fn collect_if_test(
     test: &Expr,
     phase: Option<u8>,
     render_flags: &BindingKey,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) -> (Option<u8>, bool) {
     let test = strip_parentheses(test);
@@ -1042,14 +1218,7 @@ fn collect_if_test(
         return (phase, false);
     };
     for effect in effects {
-        collect_expression(
-            effect.as_ref(),
-            phase,
-            render_flags,
-            roles,
-            unresolved_ctxt,
-            program,
-        );
+        collect_expression(effect.as_ref(), phase, render_flags, environment, program);
     }
     let mask = render_flag_mask(strip_parentheses(condition), render_flags);
     (mask.or(phase), mask.is_some())
@@ -1059,8 +1228,7 @@ fn collect_expression(
     expression: &Expr,
     phase: Option<u8>,
     render_flags: &BindingKey,
-    roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
+    environment: &TemplateRecoveryEnvironment<'_>,
     program: &mut TemplateProgram,
 ) {
     match expression {
@@ -1068,8 +1236,7 @@ fn collect_expression(
             paren.expr.as_ref(),
             phase,
             render_flags,
-            roles,
-            unresolved_ctxt,
+            environment,
             program,
         ),
         Expr::Seq(sequence) => {
@@ -1078,8 +1245,7 @@ fn collect_expression(
                     expression.as_ref(),
                     phase,
                     render_flags,
-                    roles,
-                    unresolved_ctxt,
+                    environment,
                     program,
                 );
             }
@@ -1087,13 +1253,17 @@ fn collect_expression(
         Expr::Bin(binary) if binary.op == BinaryOp::LogicalAnd => {
             let mask = render_flag_mask(binary.left.as_ref(), render_flags);
             if mask.is_none() {
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
-                        instruction: None,
-                        detail: Some("conditional logical-and".to_string()),
-                    },
+                record_program_issue(
+                    program,
+                    issue(
+                        AngularRecoveryIssueKind::UnsupportedExpression,
+                        None,
+                        Some("conditional logical-and".to_string()),
+                    ),
+                    phase,
+                    binary.span,
+                    None,
+                    environment,
                 );
             }
             let branch_phase = mask.or(phase);
@@ -1101,8 +1271,7 @@ fn collect_expression(
                 binary.right.as_ref(),
                 branch_phase,
                 render_flags,
-                roles,
-                unresolved_ctxt,
+                environment,
                 program,
             );
         }
@@ -1111,77 +1280,87 @@ fn collect_expression(
                 (AssignTarget::Simple(SimpleAssignTarget::Ident(binding)), Expr::Call(call))
                     if assignment.op == AssignOp::Assign =>
                 {
-                    collect_next_context_alias(
-                        &binding.id,
-                        call,
-                        phase,
-                        roles,
-                        unresolved_ctxt,
-                        program,
-                    ) || collect_reference_alias(
-                        &binding.id,
-                        call,
-                        phase,
-                        roles,
-                        unresolved_ctxt,
-                        program,
-                    )
+                    collect_next_context_alias(&binding.id, call, phase, environment, program)
+                        || collect_reference_alias(&binding.id, call, phase, environment, program)
                 }
                 _ => false,
             };
             if !supported_context_alias {
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
-                        instruction: None,
-                        detail: Some("assignment".to_string()),
-                    },
+                record_program_issue(
+                    program,
+                    issue(
+                        AngularRecoveryIssueKind::UnsupportedExpression,
+                        None,
+                        Some("assignment".to_string()),
+                    ),
+                    phase,
+                    assignment.span,
+                    None,
+                    environment,
                 );
                 collect_expression(
                     assignment.right.as_ref(),
                     phase,
                     render_flags,
-                    roles,
-                    unresolved_ctxt,
+                    environment,
                     program,
                 );
             }
         }
         Expr::Call(call) => {
             let Some((root, argument_lists)) = call_chain(call) else {
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedExpression,
-                        instruction: None,
-                        detail: Some("non-expression call target".to_string()),
-                    },
+                record_program_issue(
+                    program,
+                    issue(
+                        AngularRecoveryIssueKind::UnsupportedExpression,
+                        None,
+                        Some("non-expression call target".to_string()),
+                    ),
+                    phase,
+                    call.span,
+                    None,
+                    environment,
                 );
                 return;
             };
-            let Some(instruction) = roles.instruction_for_expr(root, unresolved_ctxt) else {
-                if let Some(name) = roles.ivy_name_for_expr(root, unresolved_ctxt) {
-                    program.stats.runtime_calls_observed += argument_lists.len();
-                    program.stats.unsupported_runtime_calls += argument_lists.len();
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::UnsupportedInstruction,
-                            instruction: Some(name),
-                            detail: phase.map(|phase| format!("render phase {phase}")),
-                        },
-                    );
-                } else if matches!(phase, Some(1 | 2))
-                    || roles.is_known_runtime_member(root, unresolved_ctxt)
+            let Some(instruction) = environment
+                .roles
+                .instruction_for_expr(root, environment.unresolved_ctxt)
+            else {
+                if let Some(name) = environment
+                    .roles
+                    .ivy_name_for_expr(root, environment.unresolved_ctxt)
                 {
                     program.stats.runtime_calls_observed += argument_lists.len();
                     program.stats.unsupported_runtime_calls += argument_lists.len();
-                    let template_phase = match phase {
-                        Some(1) => AngularTemplatePhase::Creation,
-                        Some(2) => AngularTemplatePhase::Update,
-                        _ => AngularTemplatePhase::OutsideRender,
-                    };
+                    for provenance in call_provenances(
+                        program,
+                        phase,
+                        call,
+                        root,
+                        argument_lists.len(),
+                        environment,
+                    ) {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::UnsupportedInstruction,
+                                    Some(name.clone()),
+                                    phase.map(|phase| format!("render phase {phase}")),
+                                ),
+                                &provenance,
+                            ),
+                        );
+                    }
+                } else if matches!(phase, Some(1 | 2))
+                    || environment
+                        .roles
+                        .is_known_runtime_member(root, environment.unresolved_ctxt)
+                {
+                    program.stats.runtime_calls_observed += argument_lists.len();
+                    program.stats.unsupported_runtime_calls += argument_lists.len();
+                    let template_phase = template_phase(phase);
                     let argument_counts = argument_lists
                         .iter()
                         .map(|arguments| arguments.len())
@@ -1192,27 +1371,43 @@ fn collect_expression(
                         .or_default();
                     shape.0 += 1;
                     shape.1 += argument_lists.len();
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::UnknownRuntimeInstruction,
-                            instruction: None,
-                            detail: phase.map(|phase| {
-                                format!(
-                                    "render phase {phase}, {} argument list(s)",
-                                    argument_lists.len()
-                                )
-                            }),
-                        },
-                    );
+                    for provenance in call_provenances(
+                        program,
+                        phase,
+                        call,
+                        root,
+                        argument_lists.len(),
+                        environment,
+                    ) {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::UnknownRuntimeInstruction,
+                                    None,
+                                    phase.map(|phase| {
+                                        format!(
+                                            "render phase {phase}, {} argument list(s)",
+                                            argument_lists.len()
+                                        )
+                                    }),
+                                ),
+                                &provenance,
+                            ),
+                        );
+                    }
                 } else {
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::UnsupportedExpression,
-                            instruction: None,
-                            detail: Some("call outside a render phase".to_string()),
-                        },
+                    record_program_issue(
+                        program,
+                        issue(
+                            AngularRecoveryIssueKind::UnsupportedExpression,
+                            None,
+                            Some("call outside a render phase".to_string()),
+                        ),
+                        phase,
+                        call.span,
+                        Some(root),
+                        environment,
                     );
                 }
                 return;
@@ -1220,66 +1415,116 @@ fn collect_expression(
             let Some(phase) = phase else {
                 program.stats.runtime_calls_observed += argument_lists.len();
                 program.stats.unsupported_runtime_calls += argument_lists.len();
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedInstruction,
-                        instruction: Some(instruction.canonical_export_name().to_string()),
-                        detail: Some("outside a creation or update phase".to_string()),
-                    },
-                );
+                for provenance in
+                    call_provenances(program, None, call, root, argument_lists.len(), environment)
+                {
+                    record_issue(
+                        &mut program.issues,
+                        issue_at_operation(
+                            issue(
+                                AngularRecoveryIssueKind::UnsupportedInstruction,
+                                Some(instruction.canonical_export_name().to_string()),
+                                Some("outside a creation or update phase".to_string()),
+                            ),
+                            &provenance,
+                        ),
+                    );
+                }
                 return;
             };
             if instruction == IvyInstruction::NextContext && phase == 2 {
                 program.stats.runtime_calls_observed += argument_lists.len();
+                let provenances = call_provenances(
+                    program,
+                    Some(phase),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                );
                 if let Some(context_hop) = context_hop(&argument_lists) {
                     program.stats.rendered_instruction_calls += argument_lists.len();
                     program.update_context_depth =
                         program.update_context_depth.saturating_add(context_hop);
                 } else {
                     program.stats.malformed_instruction_calls += argument_lists.len();
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::MalformedInstruction,
-                            instruction: Some("ɵɵnextContext".to_string()),
-                            detail: Some("unexpected context-depth arguments".to_string()),
-                        },
-                    );
+                    for provenance in provenances {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::MalformedInstruction,
+                                    Some("ɵɵnextContext".to_string()),
+                                    Some("unexpected context-depth arguments".to_string()),
+                                ),
+                                &provenance,
+                            ),
+                        );
+                    }
                 }
                 return;
             }
             if !instruction_supported_in_phase(instruction, phase) {
                 program.stats.runtime_calls_observed += argument_lists.len();
                 program.stats.unsupported_runtime_calls += argument_lists.len();
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedInstruction,
-                        instruction: Some(instruction.canonical_export_name().to_string()),
-                        detail: Some(format!("unsupported in render phase {phase}")),
-                    },
-                );
+                for provenance in call_provenances(
+                    program,
+                    Some(phase),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                ) {
+                    record_issue(
+                        &mut program.issues,
+                        issue_at_operation(
+                            issue(
+                                AngularRecoveryIssueKind::UnsupportedInstruction,
+                                Some(instruction.canonical_export_name().to_string()),
+                                Some(format!("unsupported in render phase {phase}")),
+                            ),
+                            &provenance,
+                        ),
+                    );
+                }
                 return;
             }
             program.stats.runtime_calls_observed += argument_lists.len();
+            let provenances = call_provenances(
+                program,
+                Some(phase),
+                call,
+                root,
+                argument_lists.len(),
+                environment,
+            );
             let target = if phase == 1 {
                 &mut program.create
             } else {
                 &mut program.update
             };
-            target.extend(argument_lists.into_iter().map(|args| InstructionCall {
-                instruction,
-                args: args.iter().map(|arg| arg.expr.clone()).collect(),
-            }));
+            target.extend(
+                argument_lists
+                    .into_iter()
+                    .zip(provenances)
+                    .map(|(args, provenance)| InstructionCall {
+                        instruction,
+                        args: args.iter().map(|arg| arg.expr.clone()).collect(),
+                        provenance,
+                    }),
+            );
         }
-        _ => record_issue(
-            &mut program.issues,
-            AngularRecoveryIssue {
-                kind: AngularRecoveryIssueKind::UnsupportedExpression,
-                instruction: None,
-                detail: Some(expression_kind(expression).to_string()),
-            },
+        _ => record_program_issue(
+            program,
+            issue(
+                AngularRecoveryIssueKind::UnsupportedExpression,
+                None,
+                Some(expression_kind(expression).to_string()),
+            ),
+            phase,
+            expression.span(),
+            None,
+            environment,
         ),
     }
 }
@@ -1843,15 +2088,26 @@ fn validated_single_call<'a>(
     Ok(argument_lists)
 }
 
+struct ViewRecoveryState<'a> {
+    active_templates: &'a mut HashSet<BindingKey>,
+    next_view_id: &'a mut usize,
+    ancestor_references: &'a [ReferenceScope],
+    depth: usize,
+}
+
 fn apply_create_instruction(
     call: &InstructionCall,
     tree: &mut TemplateTree,
     program: &mut TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
-    active_templates: &mut HashSet<BindingKey>,
-    ancestor_references: &[ReferenceScope],
-    depth: usize,
+    recovery: ViewRecoveryState<'_>,
 ) -> Result<()> {
+    let ViewRecoveryState {
+        active_templates,
+        next_view_id,
+        ancestor_references,
+        depth,
+    } = recovery;
     match call.instruction {
         IvyInstruction::ElementStart => {
             let Some(index) = numeric_arg(&call.args, 0) else {
@@ -2163,6 +2419,7 @@ fn apply_create_instruction(
                 ChildViewRecovery {
                     parent_tree: tree,
                     active_templates,
+                    next_view_id,
                     ancestor_references,
                     depth,
                 },
@@ -2199,6 +2456,7 @@ fn apply_create_instruction(
                         ChildViewRecovery {
                             parent_tree: tree,
                             active_templates,
+                            next_view_id,
                             ancestor_references,
                             depth,
                         },
@@ -2313,6 +2571,7 @@ fn apply_create_instruction(
                 environment,
                 false,
                 active_templates,
+                next_view_id,
                 &child_references,
                 depth + 1,
             );
@@ -2360,6 +2619,7 @@ fn child_reference_scopes(
 struct ChildViewRecovery<'a> {
     parent_tree: &'a TemplateTree,
     active_templates: &'a mut HashSet<BindingKey>,
+    next_view_id: &'a mut usize,
     ancestor_references: &'a [ReferenceScope],
     depth: usize,
 }
@@ -2375,6 +2635,7 @@ fn recover_child_template(
     let ChildViewRecovery {
         parent_tree,
         active_templates,
+        next_view_id,
         ancestor_references,
         depth,
     } = recovery;
@@ -2410,6 +2671,7 @@ fn recover_child_template(
         environment,
         false,
         active_templates,
+        next_view_id,
         &child_references,
         depth + 1,
     );
@@ -2941,11 +3203,14 @@ fn record_malformed_instruction(
     stats.malformed_instruction_calls += 1;
     record_issue(
         issues,
-        AngularRecoveryIssue {
-            kind: AngularRecoveryIssueKind::MalformedInstruction,
-            instruction: Some(call.instruction.canonical_export_name().to_string()),
-            detail: Some(detail.to_string()),
-        },
+        issue_at_operation(
+            issue(
+                AngularRecoveryIssueKind::MalformedInstruction,
+                Some(call.instruction.canonical_export_name().to_string()),
+                Some(detail.to_string()),
+            ),
+            &call.provenance,
+        ),
     );
 }
 
@@ -2958,11 +3223,14 @@ fn record_missing_target(
     stats.malformed_instruction_calls += 1;
     record_issue(
         issues,
-        AngularRecoveryIssue {
-            kind: AngularRecoveryIssueKind::MissingTargetNode,
-            instruction: Some(call.instruction.canonical_export_name().to_string()),
-            detail: Some(detail.to_string()),
-        },
+        issue_at_operation(
+            issue(
+                AngularRecoveryIssueKind::MissingTargetNode,
+                Some(call.instruction.canonical_export_name().to_string()),
+                Some(detail.to_string()),
+            ),
+            &call.provenance,
+        ),
     );
 }
 
@@ -2975,11 +3243,14 @@ fn record_unsupported_instruction(
     stats.unsupported_runtime_calls += 1;
     record_issue(
         issues,
-        AngularRecoveryIssue {
-            kind: AngularRecoveryIssueKind::UnsupportedInstruction,
-            instruction: Some(call.instruction.canonical_export_name().to_string()),
-            detail: Some(detail.to_string()),
-        },
+        issue_at_operation(
+            issue(
+                AngularRecoveryIssueKind::UnsupportedInstruction,
+                Some(call.instruction.canonical_export_name().to_string()),
+                Some(detail.to_string()),
+            ),
+            &call.provenance,
+        ),
     );
 }
 
@@ -3041,22 +3312,29 @@ fn recover_template_expression(
                 .filter(|instruction| is_pipe_binding(*instruction))
             {
                 program.stats.runtime_calls_observed += argument_lists.len();
+                let mut provenances = call_provenances(
+                    program,
+                    Some(2),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                );
                 if argument_lists.len() != 1 {
-                    let nested = InstructionCall {
-                        instruction,
-                        args: Vec::new(),
-                    };
                     program.stats.malformed_instruction_calls += argument_lists.len();
-                    record_issue(
-                        &mut program.issues,
-                        AngularRecoveryIssue {
-                            kind: AngularRecoveryIssueKind::MalformedInstruction,
-                            instruction: Some(
-                                nested.instruction.canonical_export_name().to_string(),
+                    for provenance in provenances {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::MalformedInstruction,
+                                    Some(instruction.canonical_export_name().to_string()),
+                                    Some("unexpected chained pipe binding".to_string()),
+                                ),
+                                &provenance,
                             ),
-                            detail: Some("unexpected chained pipe binding".to_string()),
-                        },
-                    );
+                        );
+                    }
                     return Err(anyhow!("unexpected chained Ivy pipe binding"));
                 }
                 let nested = InstructionCall {
@@ -3065,6 +3343,9 @@ fn recover_template_expression(
                         .iter()
                         .map(|argument| argument.expr.clone())
                         .collect(),
+                    provenance: provenances
+                        .pop()
+                        .expect("a call chain always contains one invocation"),
                 };
                 let Some(values) = pipe_binding_values(&nested) else {
                     record_malformed_instruction(
@@ -3124,14 +3405,26 @@ fn recover_template_expression(
             {
                 program.stats.runtime_calls_observed += argument_lists.len();
                 program.stats.unsupported_runtime_calls += argument_lists.len();
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnsupportedInstruction,
-                        instruction: Some(name),
-                        detail: Some("nested in a template expression".to_string()),
-                    },
-                );
+                for provenance in call_provenances(
+                    program,
+                    Some(2),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                ) {
+                    record_issue(
+                        &mut program.issues,
+                        issue_at_operation(
+                            issue(
+                                AngularRecoveryIssueKind::UnsupportedInstruction,
+                                Some(name.clone()),
+                                Some("nested in a template expression".to_string()),
+                            ),
+                            &provenance,
+                        ),
+                    );
+                }
                 return Err(anyhow!("unsupported nested Ivy instruction"));
             }
             if environment
@@ -3150,14 +3443,26 @@ fn recover_template_expression(
                     .or_default();
                 shape.0 += 1;
                 shape.1 += argument_lists.len();
-                record_issue(
-                    &mut program.issues,
-                    AngularRecoveryIssue {
-                        kind: AngularRecoveryIssueKind::UnknownRuntimeInstruction,
-                        instruction: None,
-                        detail: Some("nested in a template expression".to_string()),
-                    },
-                );
+                for provenance in call_provenances(
+                    program,
+                    Some(2),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                ) {
+                    record_issue(
+                        &mut program.issues,
+                        issue_at_operation(
+                            issue(
+                                AngularRecoveryIssueKind::UnknownRuntimeInstruction,
+                                None,
+                                Some("nested in a template expression".to_string()),
+                            ),
+                            &provenance,
+                        ),
+                    );
+                }
                 return Err(anyhow!("unknown nested Ivy instruction"));
             }
         }
