@@ -78,7 +78,9 @@ exports only `ɵɵdefineComponent` by canonical name. An otherwise anonymous
 control-flow runtime root keeps Angular's generic first-call/continuation
 template helper family observable. Wakaru must identify that family from
 template argument shape, the returned self-continuation, and shared
-parameter-forwarding behavior; the fixture does not expose its Ivy role name.
+parameter-forwarding behavior. It must also identify Closure-specialized
+conditional and property instructions from their runtime bodies and template
+uses; the fixture does not expose any of those Ivy role names.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
