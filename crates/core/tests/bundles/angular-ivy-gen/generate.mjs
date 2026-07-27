@@ -12,6 +12,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transform } from 'esbuild';
+import ts from 'typescript';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const buildDirectory = join(root, 'target', 'angular-build', 'browser');
@@ -36,6 +37,73 @@ function runNode(script, args) {
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout || `command exited ${result.status}`);
   }
+}
+
+function lowerTopLevelTemplateFunctionsToAssignments(source) {
+  const sourceFile = ts.createSourceFile(
+    'template-constructs.js',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const functions = sourceFile.statements.filter(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name && statement.body,
+  );
+  if (functions.length === 0) {
+    throw new Error('expected Angular to emit top-level template functions');
+  }
+
+  const declarations = ts.factory.createVariableStatement(
+    undefined,
+    ts.factory.createVariableDeclarationList(
+      functions.map((declaration) =>
+        ts.factory.createVariableDeclaration(declaration.name.text),
+      ),
+      ts.NodeFlags.None,
+    ),
+  );
+  const statements = [];
+  let insertedDeclarations = false;
+  for (const statement of sourceFile.statements) {
+    if (!insertedDeclarations && !ts.isImportDeclaration(statement)) {
+      statements.push(declarations);
+      insertedDeclarations = true;
+    }
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name &&
+      statement.body
+    ) {
+      const functionExpression = ts.factory.createFunctionExpression(
+        undefined,
+        statement.asteriskToken,
+        undefined,
+        statement.typeParameters,
+        statement.parameters,
+        statement.type,
+        statement.body,
+      );
+      statements.push(
+        ts.factory.createExpressionStatement(
+          ts.factory.createAssignment(
+            ts.factory.createIdentifier(statement.name.text),
+            functionExpression,
+          ),
+        ),
+      );
+    } else {
+      statements.push(statement);
+    }
+  }
+  if (!insertedDeclarations) {
+    statements.push(declarations);
+  }
+
+  return ts
+    .createPrinter({ newLine: ts.NewLineKind.LineFeed, removeComments: true })
+    .printFile(ts.factory.updateSourceFile(sourceFile, statements));
 }
 
 rmSync(join(root, 'target'), { recursive: true, force: true });
@@ -93,6 +161,10 @@ const constructsResult = await transform(constructsSource, {
   treeShaking: true,
 });
 writeFileSync(join(distDirectory, 'template-constructs.js'), constructsResult.code);
+writeFileSync(
+  join(distDirectory, 'template-constructs-assignment.js'),
+  lowerTopLevelTemplateFunctionsToAssignments(constructsResult.code),
+);
 
 const mainSource = readFileSync(join(distDirectory, 'main.js'), 'utf8');
 if (
