@@ -189,6 +189,16 @@ continuation has the expected eight-parameter family shape, and both functions
 forward their parameter dependencies in order to the same internal callee.
 Matching arity or a returned function alone is insufficient.
 
+Template-use evidence is semantic rather than tied to one minifier statement
+shape. A fluent property instruction may appear as either an effect or an
+initializer after Closure rewriting, and a conditional may select a fixed
+template index directly instead of using a ternary. Those forms can corroborate
+a role, but they do not replace runtime-body proof. Generic property helpers
+must forward the name, value, and sanitizer in order to the renderer path;
+specialized helpers must forward the name and value in order to a direct
+`setProperty` call. A direct renderer call with those operands reversed remains
+unknown.
+
 ### Performance and profiling
 
 `--profile` exposes these top-level Angular spans:
@@ -302,9 +312,10 @@ An assignment-backed derivative of that generated artifact proves the same
 nested views after their function declarations are mechanically lowered to
 stable predeclared assignments. Reassigning one of those bindings is a negative
 fixture and remains partial.
-The minimally rooted `ADVANCED` profile proves interpolation and chained
-embedded-template role inference from runtime behavior. Its nested view bodies
-are recovered even though conditional selection and property bindings remain
+The minimally rooted `ADVANCED` profile proves interpolation, chained
+embedded-template, conditional, and property role inference from runtime
+behavior. Its nested conditional bodies and property bindings are recovered;
+unproven pipe, projection, and optimized view-context operations remain
 explicit partial regions.
 Deferred-view instructions remain explicit partial regions, matching the scope
 above.

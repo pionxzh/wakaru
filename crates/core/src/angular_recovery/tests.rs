@@ -1091,6 +1091,16 @@ fn infers_text_interpolation_and_property_binding_relationships() {
             return runtime.style;
         };
 
+        function InitializerPropertyHost(renderFlags, context) {
+            if (renderFlags & 1) {
+                runtime.start(0, "div");
+                runtime.end();
+            }
+            if (renderFlags & 2) {
+                const chain = runtime.property("title", context.label);
+            }
+        }
+
         class BoundCard {
             label = "Bound";
             disabled = false;
@@ -1130,6 +1140,103 @@ fn infers_text_interpolation_and_property_binding_relationships() {
         .source
         .contains("<button [disabled]=\"disabled\"></button>"));
     assert!(!recovered[0].source.contains("[style.disabled]"));
+}
+
+#[test]
+fn infers_a_specialized_property_from_an_ordered_renderer_write() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+        };
+        runtime.property = function(name, value, sanitizer) {
+            const view = currentView();
+            const binding = nextBindingIndex();
+            if (bindingChanged(view, binding, value)) {
+                const renderer = getRenderer(view);
+                const node = getSelectedNode(view);
+                renderer.setProperty(
+                    node,
+                    name,
+                    sanitizer ? sanitizer(value) : value
+                );
+            }
+            return runtime.property;
+        };
+        runtime.lookalike = function(name, value, sanitizer) {
+            const view = currentView();
+            const binding = nextBindingIndex();
+            if (bindingChanged(view, binding, value)) {
+                const renderer = getRenderer(view);
+                const node = getSelectedNode(view);
+                renderer.setProperty(node, value, name);
+            }
+            return runtime.lookalike;
+        };
+
+        class PropertyComponent {
+            disabled = false;
+
+            static compiled = runtime.component({
+                type: PropertyComponent,
+                selectors: [["property-card"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "button");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.property("disabled", context.disabled);
+                    }
+                },
+            });
+        }
+
+        class PropertyLookalikeComponent {
+            disabled = false;
+
+            static compiled = runtime.component({
+                type: PropertyLookalikeComponent,
+                selectors: [["property-lookalike"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "button");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.lookalike("disabled", context.disabled);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("specialized property roles should be analyzed");
+    let property = report
+        .components
+        .iter()
+        .find(|component| component.selector == "property-card")
+        .expect("the property component should recover");
+    let lookalike = report
+        .components
+        .iter()
+        .find(|component| component.selector == "property-lookalike")
+        .expect("the lookalike component should remain visible");
+
+    assert_eq!(
+        property.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        property.issues,
+        property.source,
+    );
+    assert!(property.source.contains("[disabled]=\"disabled\""));
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
 }
 
 #[test]
@@ -1560,6 +1667,92 @@ fn infers_an_embedded_template_continuation_from_shared_forwarding() {
 
     let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
         .expect("template continuation roles should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (showDetails) {"));
+    assert!(component.source.contains("<p>Details</p>"));
+    assert!(component.source.contains("@else {"));
+    assert!(component.source.contains("<p>Empty</p>"));
+}
+
+#[test]
+fn infers_a_closure_specialized_one_parameter_conditional() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵtemplate": runtime.template,
+        };
+        runtime.conditional = function(selectedIndex) {
+            controlFlowMarker();
+            const previousIndex =
+                readBinding() !== noChange ? readBinding() : -1;
+            if (bindingChanged(selectedIndex)) {
+                destroyView(previousIndex);
+                createView(selectedIndex);
+                insertView(selectedIndex);
+                attachView(selectedIndex);
+            }
+        };
+
+        function StaticConditionalHost(rf) {
+            if (rf & 1) {
+                runtime.start(0, "div");
+                runtime.end();
+            }
+            if (rf & 2) {
+                runtime.conditional(0);
+            }
+        }
+
+        function DetailsTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Details");
+                runtime.end();
+            }
+        }
+
+        function EmptyTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Empty");
+                runtime.end();
+            }
+        }
+
+        class ConditionalComponent {
+            showDetails = true;
+
+            static compiled = runtime.component({
+                type: ConditionalComponent,
+                selectors: [["conditional-card"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "article");
+                        runtime.template(1, DetailsTemplate, 2, 0, "p");
+                        runtime.template(2, EmptyTemplate, 2, 0, "p");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.conditional(context.showDetails ? 1 : 2);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the specialized conditional should be analyzed");
     let component = &report.components[0];
 
     assert_eq!(
