@@ -3,15 +3,18 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, Result};
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, Expr, ExprOrSpread, FnDecl, Function,
-    Lit, Module, Pat, SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
+    AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
+    ExprOrSpread, FnDecl, Function, Lit, Module, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
+
+use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 
 use super::artifact::expression_references;
 use super::emitter::{handler_expression, print_template_expression};
 use super::roles::{IvyInstruction, IvyRoleTable};
-use super::syntax::{binding_key, string_lit, BindingKey};
+use super::syntax::{binding_key, member_prop_name, string_lit, BindingKey};
 use super::{
     AngularRecoveryIssue, AngularRecoveryIssueKind, AngularTemplatePhase,
     AngularTemplateRecoveryStats, AngularUnknownRuntimeCallShape,
@@ -138,6 +141,9 @@ struct TemplateProgram {
     stats: AngularTemplateRecoveryStats,
     unknown_runtime_call_shapes: HashMap<(AngularTemplatePhase, Vec<usize>), (usize, usize)>,
     component_contexts: HashSet<BindingKey>,
+    view_context: Option<BindingKey>,
+    saved_views: HashSet<BindingKey>,
+    repeater_item_name: Option<String>,
     reference_aliases: Vec<(BindingKey, InstructionCall)>,
     local_reference_names: HashMap<BindingKey, String>,
     pipes: HashMap<usize, String>,
@@ -168,6 +174,13 @@ enum TemplateNodeKind {
         tree: Box<TemplateTree>,
         attributes: Vec<TemplateAttribute>,
         branch: Option<ConditionalBranch>,
+    },
+    Repeater {
+        body: Box<TemplateTree>,
+        empty: Option<Box<TemplateTree>>,
+        item: String,
+        track: String,
+        collection: Option<String>,
     },
     Projection {
         selector: Option<String>,
@@ -323,8 +336,9 @@ fn recover_template_tree(
         );
         return Ok((TemplateTree::default(), program));
     };
-    if is_component_view {
-        if let Some(context) = function_param_binding(template, 1) {
+    if let Some(context) = function_param_binding(template, 1) {
+        program.view_context = Some(context.clone());
+        if is_component_view {
             program.component_contexts.insert(context);
         }
     }
@@ -412,11 +426,18 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::Element
                     | IvyInstruction::Text
                     | IvyInstruction::Template
+                    | IvyInstruction::RepeaterCreate
                     | IvyInstruction::Projection => 3,
                     IvyInstruction::ElementEnd
                     | IvyInstruction::Listener
                     | IvyInstruction::Conditional
+                    | IvyInstruction::Repeater
+                    | IvyInstruction::RepeaterTrackByIndex
+                    | IvyInstruction::RepeaterTrackByIdentity
                     | IvyInstruction::NextContext
+                    | IvyInstruction::GetCurrentView
+                    | IvyInstruction::RestoreView
+                    | IvyInstruction::ResetView
                     | IvyInstruction::ProjectionDef
                     | IvyInstruction::Reference
                     | IvyInstruction::Pipe
@@ -585,9 +606,16 @@ fn collect_variable_declaration(
     program: &mut TemplateProgram,
 ) {
     for declarator in &declaration.decls {
-        let supported_context_alias = match (&declarator.name, declarator.init.as_deref()) {
-            (Pat::Ident(binding), Some(Expr::Call(call))) if phase == Some(2) => {
-                collect_next_context_alias(
+        let supported_compiler_alias = match (&declarator.name, declarator.init.as_deref()) {
+            (Pat::Ident(binding), Some(Expr::Call(call))) => {
+                collect_current_view_alias(
+                    &binding.id,
+                    call,
+                    phase,
+                    roles,
+                    unresolved_ctxt,
+                    program,
+                ) || collect_next_context_alias(
                     &binding.id,
                     call,
                     phase,
@@ -603,9 +631,12 @@ fn collect_variable_declaration(
                     program,
                 )
             }
+            (Pat::Ident(binding), Some(initializer)) => {
+                collect_view_context_alias(&binding.id, initializer, phase, program)
+            }
             _ => false,
         };
-        if supported_context_alias {
+        if supported_compiler_alias {
             continue;
         }
 
@@ -627,6 +658,102 @@ fn collect_variable_declaration(
                 program,
             );
         }
+    }
+}
+
+fn collect_current_view_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    call: &CallExpr,
+    phase: Option<u8>,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(1) {
+        return false;
+    }
+    let Some((_, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        roles.instruction_for_expr(root, unresolved_ctxt) == Some(IvyInstruction::GetCurrentView)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    if argument_lists.len() == 1 && argument_lists[0].is_empty() {
+        program.stats.rendered_instruction_calls += 1;
+        program.saved_views.insert(binding_key(binding));
+    } else {
+        program.stats.malformed_instruction_calls += argument_lists.len();
+        record_issue(
+            &mut program.issues,
+            AngularRecoveryIssue {
+                kind: AngularRecoveryIssueKind::MalformedInstruction,
+                instruction: Some("ɵɵgetCurrentView".to_string()),
+                detail: Some("expected no arguments".to_string()),
+            },
+        );
+    }
+    true
+}
+
+fn collect_view_context_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    initializer: &Expr,
+    phase: Option<u8>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return false;
+    };
+    let Expr::Ident(context) = strip_parentheses(member.obj.as_ref()) else {
+        return false;
+    };
+    if program
+        .view_context
+        .as_ref()
+        .is_none_or(|view_context| binding_key(context) != *view_context)
+    {
+        return false;
+    }
+    let Some(property) = member_prop_name(&member.prop) else {
+        return false;
+    };
+    let property = property.to_string();
+    if property != "$implicit" && !property.starts_with('$') {
+        return false;
+    }
+
+    let fallback = if property == "$implicit" {
+        "item"
+    } else {
+        property.as_str()
+    };
+    let name = recovered_view_alias_name(binding.sym.as_ref(), fallback);
+    program
+        .local_reference_names
+        .insert(binding_key(binding), name.clone());
+    if property == "$implicit" {
+        program.repeater_item_name.get_or_insert(name);
+    }
+    true
+}
+
+fn recovered_view_alias_name(binding: &str, fallback: &str) -> String {
+    let authored = binding
+        .rsplit_once("_r")
+        .filter(|(prefix, suffix)| {
+            !prefix.is_empty()
+                && !suffix.is_empty()
+                && suffix.chars().all(|character| character.is_ascii_digit())
+        })
+        .map_or(binding, |(prefix, _)| prefix);
+    if is_likely_generated_alias(authored) {
+        fallback.to_string()
+    } else {
+        to_valid_identifier_name(authored)
     }
 }
 
@@ -967,6 +1094,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::Text
                 | IvyInstruction::Listener
                 | IvyInstruction::Template
+                | IvyInstruction::RepeaterCreate
                 | IvyInstruction::ProjectionDef
                 | IvyInstruction::Projection
                 | IvyInstruction::Pipe
@@ -988,6 +1116,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::ClassProp
                 | IvyInstruction::StyleProp
                 | IvyInstruction::Conditional
+                | IvyInstruction::Repeater
         ),
         _ => false,
     }
@@ -1101,6 +1230,235 @@ fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
             }
         }
     }
+}
+
+struct RecoveredViewHandler {
+    source: String,
+    runtime_calls: usize,
+    artifact_references: HashSet<BindingKey>,
+}
+
+fn recover_view_listener_handler(
+    handler: &Expr,
+    tree: &TemplateTree,
+    program: &TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<Option<RecoveredViewHandler>, String> {
+    let Some(block) = handler_block(handler) else {
+        return Ok(None);
+    };
+    if !block.stmts.iter().any(|statement| {
+        statement_restore_view_call(statement, environment)
+            .is_some_and(|call| is_instruction_call(call, IvyInstruction::RestoreView, environment))
+    }) {
+        return Ok(None);
+    }
+
+    let mut component_contexts = program.component_contexts.clone();
+    let mut local_names = program.local_reference_names.clone();
+    if let Some(event) = handler_event_binding(handler) {
+        local_names.insert(event, "$event".to_string());
+    }
+    let mut action = None;
+    let mut runtime_calls = 0;
+    for statement in &block.stmts {
+        match statement {
+            Stmt::Decl(Decl::Var(declaration)) => {
+                for declarator in &declaration.decls {
+                    let Pat::Ident(binding) = &declarator.name else {
+                        return Err("expected identifier aliases".to_string());
+                    };
+                    let Some(initializer) = declarator.init.as_deref() else {
+                        return Err("view alias has no initializer".to_string());
+                    };
+                    if let Some(call) = restored_view_call(initializer, environment) {
+                        let Some(property) = restored_view_property(initializer) else {
+                            return Err("restored view has no context property".to_string());
+                        };
+                        if property != "$implicit" {
+                            return Err(format!(
+                                "unsupported restored view context property {property}"
+                            ));
+                        }
+                        let argument_lists = validated_single_call(call, "ɵɵrestoreView")?;
+                        let [saved_view] = argument_lists[0] else {
+                            return Err("ɵɵrestoreView expected one saved view".to_string());
+                        };
+                        let Expr::Ident(saved_view) = strip_parentheses(saved_view.expr.as_ref())
+                        else {
+                            return Err("ɵɵrestoreView saved view is not an identifier".to_string());
+                        };
+                        if !program.saved_views.contains(&binding_key(saved_view)) {
+                            return Err(
+                                "ɵɵrestoreView does not reference a captured view".to_string()
+                            );
+                        }
+                        let item = program.repeater_item_name.clone().unwrap_or_else(|| {
+                            recovered_view_alias_name(binding.id.sym.as_ref(), "item")
+                        });
+                        local_names.insert(binding_key(&binding.id), item);
+                        runtime_calls += 1;
+                        continue;
+                    }
+
+                    let Expr::Call(call) = strip_parentheses(initializer) else {
+                        return Err("unsupported view-local alias initializer".to_string());
+                    };
+                    if is_instruction_call(call, IvyInstruction::Reference, environment) {
+                        let argument_lists = validated_single_call(call, "ɵɵreference")?;
+                        let [slot] = argument_lists[0] else {
+                            return Err("ɵɵreference expected one slot".to_string());
+                        };
+                        let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
+                            return Err("ɵɵreference slot is not numeric".to_string());
+                        };
+                        let Some(name) = tree.local_reference_slots.get(&slot) else {
+                            return Err(format!("no local reference at slot {slot}"));
+                        };
+                        local_names.insert(binding_key(&binding.id), name.clone());
+                        runtime_calls += 1;
+                        continue;
+                    }
+                    if is_instruction_call(call, IvyInstruction::NextContext, environment) {
+                        let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
+                        if argument_lists[0].len() > 1
+                            || argument_lists[0].first().is_some_and(|argument| {
+                                numeric_expr(argument.expr.as_ref()).is_none()
+                            })
+                        {
+                            return Err(
+                                "ɵɵnextContext has unexpected context-depth arguments".to_string()
+                            );
+                        }
+                        component_contexts.insert(binding_key(&binding.id));
+                        runtime_calls += 1;
+                        continue;
+                    }
+                    return Err("unsupported view-local runtime alias".to_string());
+                }
+            }
+            Stmt::Return(ReturnStmt {
+                arg: Some(returned),
+                ..
+            }) => {
+                if action.is_some() {
+                    return Err("multiple handler returns".to_string());
+                }
+                let Expr::Call(call) = strip_parentheses(returned.as_ref()) else {
+                    return Err("restored handler return is not ɵɵresetView".to_string());
+                };
+                if !is_instruction_call(call, IvyInstruction::ResetView, environment) {
+                    return Err("restored handler return is not ɵɵresetView".to_string());
+                }
+                let argument_lists = validated_single_call(call, "ɵɵresetView")?;
+                let [returned] = argument_lists[0] else {
+                    return Err("ɵɵresetView expected one return value".to_string());
+                };
+                action = Some(returned.expr.clone());
+                runtime_calls += 1;
+            }
+            Stmt::Empty(_) => {}
+            _ => return Err("unsupported restored handler statement".to_string()),
+        }
+    }
+    let Some(action) = action else {
+        return Err("restored handler has no ɵɵresetView return".to_string());
+    };
+    let source = print_template_expression(
+        action.as_ref(),
+        &component_contexts,
+        &local_names,
+        environment.cm.clone(),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some(RecoveredViewHandler {
+        source,
+        runtime_calls,
+        artifact_references: expression_references(action.as_ref()),
+    }))
+}
+
+fn handler_block(handler: &Expr) -> Option<&BlockStmt> {
+    match strip_parentheses(handler) {
+        Expr::Fn(function) => function.function.body.as_ref(),
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => Some(block),
+            BlockStmtOrExpr::Expr(_) => None,
+        },
+        _ => None,
+    }
+}
+
+fn handler_event_binding(handler: &Expr) -> Option<BindingKey> {
+    let parameter = match strip_parentheses(handler) {
+        Expr::Fn(function) => function.function.params.first().map(|param| &param.pat),
+        Expr::Arrow(arrow) => arrow.params.first(),
+        _ => None,
+    };
+    let Some(Pat::Ident(binding)) = parameter else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+fn statement_restore_view_call<'a>(
+    statement: &'a Stmt,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> Option<&'a CallExpr> {
+    let Stmt::Decl(Decl::Var(declaration)) = statement else {
+        return None;
+    };
+    declaration
+        .decls
+        .iter()
+        .filter_map(|declarator| declarator.init.as_deref())
+        .find_map(|initializer| restored_view_call(initializer, environment))
+}
+
+fn restored_view_call<'a>(
+    initializer: &'a Expr,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> Option<&'a CallExpr> {
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parentheses(member.obj.as_ref()) else {
+        return None;
+    };
+    is_instruction_call(call, IvyInstruction::RestoreView, environment).then_some(call)
+}
+
+fn restored_view_property(initializer: &Expr) -> Option<String> {
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return None;
+    };
+    member_prop_name(&member.prop).map(|property| property.to_string())
+}
+
+fn is_instruction_call(
+    call: &CallExpr,
+    instruction: IvyInstruction,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> bool {
+    call_chain(call).is_some_and(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(instruction)
+    })
+}
+
+fn validated_single_call<'a>(
+    call: &'a CallExpr,
+    name: &str,
+) -> std::result::Result<Vec<&'a [ExprOrSpread]>, String> {
+    let Some((_, argument_lists)) = call_chain(call) else {
+        return Err(format!("{name} has a non-expression call target"));
+    };
+    if argument_lists.len() != 1 {
+        return Err(format!("{name} has an unexpected chained invocation"));
+    }
+    Ok(argument_lists)
 }
 
 fn apply_create_instruction(
@@ -1219,23 +1577,46 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
-            let Ok(expression) = handler_expression(
-                handler.as_ref(),
-                &program.component_contexts,
-                &program.local_reference_names,
-                environment.cm.clone(),
-            ) else {
-                record_malformed_instruction(
-                    call,
-                    "event handler could not be printed",
-                    &mut program.issues,
-                    &mut program.stats,
-                );
-                return Ok(());
-            };
-            program
-                .artifact_references
-                .extend(expression_references(handler.as_ref()));
+            let expression =
+                match recover_view_listener_handler(handler.as_ref(), tree, program, environment) {
+                    Ok(Some(recovered)) => {
+                        program.stats.runtime_calls_observed += recovered.runtime_calls;
+                        program.stats.rendered_instruction_calls += recovered.runtime_calls;
+                        program
+                            .artifact_references
+                            .extend(recovered.artifact_references);
+                        recovered.source
+                    }
+                    Ok(None) => {
+                        let Ok(expression) = handler_expression(
+                            handler.as_ref(),
+                            &program.component_contexts,
+                            &program.local_reference_names,
+                            environment.cm.clone(),
+                        ) else {
+                            record_malformed_instruction(
+                                call,
+                                "event handler could not be printed",
+                                &mut program.issues,
+                                &mut program.stats,
+                            );
+                            return Ok(());
+                        };
+                        program
+                            .artifact_references
+                            .extend(expression_references(handler.as_ref()));
+                        expression
+                    }
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            call,
+                            &format!("event handler view restoration failed: {detail}"),
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                };
             tree.add_attribute(
                 node,
                 TemplateAttribute {
@@ -1348,6 +1729,131 @@ fn apply_create_instruction(
                 return Ok(());
             }
         }
+        IvyInstruction::RepeaterCreate => {
+            if !(8..=13).contains(&call.args.len()) {
+                record_malformed_instruction(
+                    call,
+                    "expected repeater metadata arguments",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric repeater index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            if numeric_arg(&call.args, 2).is_none() || numeric_arg(&call.args, 3).is_none() {
+                record_malformed_instruction(
+                    call,
+                    "missing repeater declaration or binding count",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(body_expression) = call.args.get(1) else {
+                record_malformed_instruction(
+                    call,
+                    "missing repeater body template",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some((body, body_program)) = recover_child_template(
+                call,
+                body_expression.as_ref(),
+                "repeater body",
+                program,
+                environment,
+                active_templates,
+                depth,
+            )?
+            else {
+                return Ok(());
+            };
+            let item = body_program
+                .repeater_item_name
+                .clone()
+                .unwrap_or_else(|| "item".to_string());
+            merge_template_program(program, body_program);
+
+            let empty = if let Some(empty_expression) = call.args.get(8) {
+                if is_nullish_expression(empty_expression.as_ref()) {
+                    None
+                } else {
+                    if numeric_arg(&call.args, 9).is_none() || numeric_arg(&call.args, 10).is_none()
+                    {
+                        record_malformed_instruction(
+                            call,
+                            "missing empty-view declaration or binding count",
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                    let Some((empty, empty_program)) = recover_child_template(
+                        call,
+                        empty_expression.as_ref(),
+                        "repeater empty view",
+                        program,
+                        environment,
+                        active_templates,
+                        depth,
+                    )?
+                    else {
+                        return Ok(());
+                    };
+                    merge_template_program(program, empty_program);
+                    Some(Box::new(empty))
+                }
+            } else {
+                None
+            };
+
+            let Some(track_expression) = call.args.get(6) else {
+                record_malformed_instruction(
+                    call,
+                    "missing repeater track expression",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let track = match recover_repeater_track_expression(
+                track_expression.as_ref(),
+                &item,
+                program,
+                environment,
+            ) {
+                Ok(track) => track,
+                Err(detail) => {
+                    record_malformed_instruction(
+                        call,
+                        &format!("repeater track expression could not be recovered: {detail}"),
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
+            tree.push_node(
+                index,
+                TemplateNodeKind::Repeater {
+                    body: Box::new(body),
+                    empty,
+                    item,
+                    track,
+                    collection: None,
+                },
+            );
+        }
         IvyInstruction::Template => {
             let Some(index) = numeric_arg(&call.args, 0) else {
                 record_malformed_instruction(
@@ -1441,6 +1947,160 @@ fn apply_create_instruction(
     }
     program.stats.rendered_instruction_calls += 1;
     Ok(())
+}
+
+fn recover_child_template(
+    call: &InstructionCall,
+    expression: &Expr,
+    description: &str,
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    active_templates: &mut HashSet<BindingKey>,
+    depth: usize,
+) -> Result<Option<(TemplateTree, TemplateProgram)>> {
+    let Some(resolved) = environment.template_functions.resolve(expression) else {
+        record_malformed_instruction(
+            call,
+            &format!("{description} function could not be resolved"),
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return Ok(None);
+    };
+    if depth >= 32
+        || resolved
+            .key
+            .as_ref()
+            .is_some_and(|key| active_templates.contains(key))
+    {
+        record_malformed_instruction(
+            call,
+            &format!("recursive {description} graph"),
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return Ok(None);
+    }
+    if let Some(key) = &resolved.key {
+        active_templates.insert(key.clone());
+    }
+    let child = recover_template_tree(
+        &resolved.function,
+        environment,
+        false,
+        active_templates,
+        depth + 1,
+    );
+    if let Some(key) = &resolved.key {
+        active_templates.remove(key);
+    }
+    child.map(Some)
+}
+
+fn recover_repeater_track_expression(
+    expression: &Expr,
+    item: &str,
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<String, String> {
+    if let Some(instruction) = environment
+        .roles
+        .instruction_for_expr(strip_parentheses(expression), environment.unresolved_ctxt)
+    {
+        return match instruction {
+            IvyInstruction::RepeaterTrackByIndex => Ok("$index".to_string()),
+            IvyInstruction::RepeaterTrackByIdentity => Ok(item.to_string()),
+            _ => Err(format!(
+                "unexpected runtime helper {}",
+                instruction.canonical_export_name()
+            )),
+        };
+    }
+
+    let resolved = environment
+        .template_functions
+        .resolve_expression(expression);
+    let (parameters, body) = match strip_parentheses(resolved.as_ref()) {
+        Expr::Arrow(arrow) => {
+            let body = match arrow.body.as_ref() {
+                BlockStmtOrExpr::Expr(expression) => expression.as_ref(),
+                BlockStmtOrExpr::BlockStmt(block) => single_return_value(block)
+                    .ok_or_else(|| "track function is not a single expression".to_string())?,
+            };
+            (arrow.params.as_slice(), body)
+        }
+        Expr::Fn(function) => {
+            let body = function
+                .function
+                .body
+                .as_ref()
+                .and_then(single_return_value)
+                .ok_or_else(|| "track function is not a single expression".to_string())?;
+            let parameters = function
+                .function
+                .params
+                .iter()
+                .map(|parameter| &parameter.pat)
+                .collect::<Vec<_>>();
+            return print_repeater_track_body(body, &parameters, item, program, environment);
+        }
+        _ => return Err("track value is not a resolvable function".to_string()),
+    };
+    let parameters = parameters.iter().collect::<Vec<_>>();
+    print_repeater_track_body(body, &parameters, item, program, environment)
+}
+
+fn print_repeater_track_body(
+    body: &Expr,
+    parameters: &[&Pat],
+    item: &str,
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<String, String> {
+    let [Pat::Ident(index_binding), Pat::Ident(item_binding)] = parameters else {
+        return Err("track function does not have two identifier parameters".to_string());
+    };
+    let mut local_names = HashMap::from([
+        (binding_key(&index_binding.id), "$index".to_string()),
+        (binding_key(&item_binding.id), item.to_string()),
+    ]);
+    local_names.extend(program.local_reference_names.clone());
+    let printed = print_template_expression(
+        body,
+        &program.component_contexts,
+        &local_names,
+        environment.cm.clone(),
+    )
+    .map_err(|error| error.to_string())?;
+    let parameter_keys = HashSet::from([
+        binding_key(&index_binding.id),
+        binding_key(&item_binding.id),
+    ]);
+    program.artifact_references.extend(
+        expression_references(body)
+            .into_iter()
+            .filter(|reference| !parameter_keys.contains(reference)),
+    );
+    Ok(printed)
+}
+
+fn single_return_value(block: &BlockStmt) -> Option<&Expr> {
+    let [Stmt::Return(ReturnStmt {
+        arg: Some(expression),
+        ..
+    })] = block.stmts.as_slice()
+    else {
+        return None;
+    };
+    Some(expression.as_ref())
+}
+
+fn is_nullish_expression(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Null(_)) => true,
+        Expr::Ident(identifier) => identifier.sym == "undefined",
+        _ => false,
+    }
 }
 
 fn attach_local_references(
@@ -1612,6 +2272,53 @@ fn apply_update_instruction(
             if !apply_conditional_instruction(call, tree, environment.cm.clone(), program) {
                 return Ok(());
             }
+        }
+        IvyInstruction::Repeater => {
+            if call.args.len() != 1 {
+                record_malformed_instruction(
+                    call,
+                    "expected one repeater collection",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let collection =
+                match recover_template_expression(call.args[0].as_ref(), program, environment) {
+                    Ok(collection) => collection,
+                    Err(_) => {
+                        record_malformed_instruction(
+                            call,
+                            "repeater collection could not be printed",
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                };
+            let Some(&node) = tree.index_to_node.get(&tree.cursor) else {
+                record_missing_target(
+                    call,
+                    &format!("no repeater at cursor {}", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let TemplateNodeKind::Repeater {
+                collection: current,
+                ..
+            } = &mut tree.nodes[node].kind
+            else {
+                record_missing_target(
+                    call,
+                    &format!("cursor {} does not reference a repeater", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            *current = Some(collection);
         }
         _ => {
             record_unsupported_instruction(
@@ -2082,7 +2789,11 @@ fn pipe_binding_values(call: &InstructionCall) -> Option<Vec<Box<Expr>>> {
 }
 
 fn numeric_arg(args: &[Box<Expr>], index: usize) -> Option<usize> {
-    let Expr::Lit(Lit::Num(number)) = args.get(index)?.as_ref() else {
+    numeric_expr(args.get(index)?.as_ref())
+}
+
+fn numeric_expr(expression: &Expr) -> Option<usize> {
+    let Expr::Lit(Lit::Num(number)) = strip_parentheses(expression) else {
         return None;
     };
     (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as usize)
@@ -2211,7 +2922,9 @@ impl TemplateTree {
         match &mut self.nodes[node].kind {
             TemplateNodeKind::Element { attributes, .. }
             | TemplateNodeKind::EmbeddedView { attributes, .. } => attributes.push(attribute),
-            TemplateNodeKind::Text { .. } | TemplateNodeKind::Projection { .. } => {}
+            TemplateNodeKind::Text { .. }
+            | TemplateNodeKind::Repeater { .. }
+            | TemplateNodeKind::Projection { .. } => {}
         }
     }
 }
@@ -2298,6 +3011,24 @@ fn render_node(tree: &TemplateTree, node: usize, depth: usize) -> String {
                     format!("{indent}<ng-template{attributes}>\n{body}\n{indent}</ng-template>")
                 }
             }
+        }
+        TemplateNodeKind::Repeater {
+            body,
+            empty,
+            item,
+            track,
+            collection,
+        } => {
+            let collection = collection.as_deref().unwrap_or("/* unknown collection */");
+            let body = render_tree_at_depth(body, depth + 1);
+            let mut rendered = format!(
+                "{indent}@for ({item} of {collection}; track {track}) {{\n{body}\n{indent}}}"
+            );
+            if let Some(empty) = empty {
+                let empty = render_tree_at_depth(empty, depth + 1);
+                rendered.push_str(&format!("\n{indent}@empty {{\n{empty}\n{indent}}}"));
+            }
+            rendered
         }
     }
 }
