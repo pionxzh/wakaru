@@ -1459,6 +1459,51 @@ fn malformed_instruction_arguments_make_recovery_partial() {
 }
 
 #[test]
+fn places_malformed_creation_regions_at_their_structural_location() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class LocatedIssueComponent {
+            static ɵcmp = define({
+                type: LocatedIssueComponent,
+                selectors: [["located-issue"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        element(0, "header");
+                        element("one", "section");
+                        element(2, "footer");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the malformed region should remain visible");
+    let component = &recovered[0];
+    let before = component
+        .source
+        .find("<header></header>")
+        .expect("the preceding sibling should render");
+    let issue = component
+        .source
+        .find("<!-- Malformed Ivy instruction: ɵɵelement")
+        .expect("the malformed call should render as an unsupported region");
+    let after = component
+        .source
+        .find("<footer></footer>")
+        .expect("the following sibling should render");
+
+    assert!(before < issue && issue < after, "{}", component.source);
+    assert!(!component
+        .source
+        .contains("placement unknown within this view"));
+}
+
+#[test]
 fn diagnostics_preserve_occurrences_and_view_local_provenance() {
     let source = r#"
         import * as core from "@angular/core";
@@ -1550,6 +1595,26 @@ fn diagnostics_preserve_occurrences_and_view_local_provenance() {
         1,
         "display comments should remain deduplicated"
     );
+    let child_start = component
+        .source
+        .find("<ng-template>")
+        .expect("the child view should render");
+    let issue = component
+        .source
+        .find("<!-- Unsupported Ivy instruction: unknown-runtime-instruction -->")
+        .expect("the unsupported child operation should remain visible");
+    let child_end = component
+        .source
+        .find("</ng-template>")
+        .expect("the child view should close");
+    assert!(
+        child_start < issue && issue < child_end,
+        "the deduplicated warning should stay inside the smallest affected view:\n{}",
+        component.source
+    );
+    assert!(component
+        .source
+        .contains("<!-- Wakaru: placement unknown within this view -->"));
 }
 
 #[test]
