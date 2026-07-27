@@ -10,6 +10,8 @@ const MAIN: &str = include_str!("bundles/angular-ivy-gen/dist/main.js");
 const LAZY: &str = include_str!("bundles/angular-ivy-gen/dist/lazy.js");
 const CLOSURE_SIMPLE: &str = include_str!("bundles/angular-ivy-gen/dist/closure-simple.js");
 const CLOSURE_ADVANCED: &str = include_str!("bundles/angular-ivy-gen/dist/closure-advanced.js");
+const CLOSURE_ADVANCED_STRUCTURAL: &str =
+    include_str!("bundles/angular-ivy-gen/dist/closure-advanced-structural.js");
 const TEMPLATE_CONSTRUCTS: &str =
     include_str!("bundles/angular-ivy-gen/dist/template-constructs.js");
 const TEMPLATE_CONSTRUCTS_ASSIGNMENT: &str =
@@ -152,6 +154,69 @@ fn recovers_components_after_rooted_closure_advanced() {
     assert!(by_selector["fixture-card"]
         .source
         .contains(r#"<ng-content select="[card-extra]" />"#));
+}
+
+#[test]
+fn infers_interpolation_roles_after_minimally_rooted_closure_advanced() {
+    assert_production_artifact(CLOSURE_ADVANCED_STRUCTURAL);
+    assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
+    for omitted_role in [
+        "ɵɵtext",
+        "ɵɵtextInterpolate",
+        "ɵɵtextInterpolate1",
+        "ɵɵtemplate",
+        "ɵɵconditional",
+        "ɵɵproperty",
+    ] {
+        assert!(
+            !CLOSURE_ADVANCED_STRUCTURAL.contains(omitted_role),
+            "structural fixture should not expose {omitted_role}"
+        );
+    }
+
+    let report = wakaru_core::analyze_angular_components_from_js(
+        CLOSURE_ADVANCED_STRUCTURAL,
+        AngularRecoveryOptions::default(),
+    )
+    .expect("minimally rooted Closure ADVANCED output should parse");
+    let by_selector = report
+        .components
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    assert_eq!(by_selector.len(), 3);
+    assert_eq!(
+        by_selector["app-root"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["app-root"].issues,
+        by_selector["app-root"].source,
+    );
+    assert!(by_selector["app-root"]
+        .source
+        .contains("<h1>{{ title }}</h1>"));
+    assert_eq!(
+        by_selector["fixture-lazy-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["fixture-lazy-card"].issues,
+        by_selector["fixture-lazy-card"].source,
+    );
+    assert!(by_selector["fixture-lazy-card"]
+        .source
+        .contains("<aside>Lazy {{ message }}</aside>"));
+    assert_eq!(
+        by_selector["fixture-card"].completeness,
+        AngularRecoveryCompleteness::Partial
+    );
+    assert!(by_selector["fixture-card"]
+        .source
+        .contains("<ng-template class=\"details\">"));
+    assert!(by_selector["fixture-card"]
+        .source
+        .contains("<p class=\"details\">Details hidden</p>"));
+    assert_eq!(report.stats.malformed_instruction_calls, 0);
 }
 
 #[test]

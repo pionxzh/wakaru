@@ -12,7 +12,11 @@ The pinned Angular CLI application produces:
 - `dist/closure-simple.js` — the same three chunks passed through Closure
   Compiler `SIMPLE`;
 - `dist/closure-advanced.js` — a separate producer entry passed through
-  Closure Compiler `ADVANCED` with explicit retained roots and externs.
+  Closure Compiler `ADVANCED` with explicit retained roots and externs;
+- `dist/closure-advanced-structural.js` — a minimally rooted `ADVANCED`
+  profile that preserves the component definition role by name but requires
+  template instruction roles to be inferred from renamed runtime bodies and
+  their use in compiled templates;
 - `dist/template-constructs.js` — direct full-AOT Angular compiler output for
   isolated flat bindings and nested template constructs;
 - `dist/template-constructs-assignment.js` — the same direct compiler output
@@ -67,6 +71,14 @@ contract exposes three things through properties declared in
 `closure-advanced.externs.js`: the component classes, their compiled `ɵcmp`
 definition values, and a narrow map from public Ivy instruction names to the
 runtime functions used by the templates. The compiler input is not rewritten.
+
+The structural `ADVANCED` fixture is built from
+`src/advanced-structural-main.ts`. It keeps the same component roots but
+exports only `ɵɵdefineComponent` by canonical name. An otherwise anonymous
+control-flow runtime root keeps Angular's generic first-call/continuation
+template helper family observable. Wakaru must identify that family from
+template argument shape, the returned self-continuation, and shared
+parameter-forwarding behavior; the fixture does not expose its Ivy role name.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
