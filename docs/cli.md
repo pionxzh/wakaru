@@ -214,35 +214,33 @@ follow-up targets.
 
 ```bash
 wakaru compiled.js --angular
-wakaru compiled.js --angular -o DemoCard.component.ts
+wakaru compiled.js --angular -o compiled.angular.ts
 wakaru compiled.js --angular -o readable.js
 wakaru bundle.js --unpack --angular -o out/
 wakaru dist/ --unpack --angular -o out/
 ```
 
-`--angular` is an experimental production-AOT recovery path. It emits readable
-TypeScript component artifacts with inline `template` and `styles`. It does
-not require development metadata or an original template literal.
+`--angular` is an experimental production-AOT recovery path. It emits one
+readable TypeScript module artifact per source module, with every recovered
+sibling component's `template` and `styles` inline. It does not require
+development metadata or an original template literal.
 
 In single-file mode without `-o`, Wakaru prints the recovered TypeScript when
-exactly one component is found and normal decompiled JavaScript when none is
-found. Multiple recovered components require either a JavaScript output path
-or unpack mode.
+the input module contains at least one recovered component, and normal
+decompiled JavaScript when none is found.
 
-With `-o`, `.ts` paths are component-only and require exactly one recovered
-component. Other paths are JavaScript-primary: Wakaru writes normal decompiled
-JavaScript to the requested path and writes every recovered component as a
-sibling `*.component.ts` sidecar.
+With `-o`, `.ts` paths are Angular-only and write the recovered module. Other
+paths are JavaScript-primary: Wakaru writes normal decompiled JavaScript to the
+requested path and writes one sibling `<module-stem>.angular.ts` sidecar.
 
 In unpack mode, recovery is additive. Every module still gets JavaScript
-output, and all recovered components are written as uniquely named
-`*.component.ts` artifacts. Directory input also processes ordinary
-JavaScript modules under `--angular`, which supports inspecting an unbundled
-production build. Default directory mode preserves ordinary production chunks
-as intact modules rather than heuristically splitting their internal
-scope-hoisted code. The Ivy analyzer consumes the same generic module
-workspace whether the modules came from a regular build or any supported
-unpacker.
+output, and each module containing recovered components gets one uniquely named
+`*.angular.ts` artifact. Directory input also processes ordinary JavaScript
+modules under `--angular`, which supports inspecting an unbundled production
+build. Default directory mode preserves ordinary production chunks as intact
+modules rather than heuristically splitting their internal scope-hoisted code.
+The Ivy analyzer consumes the same generic module workspace whether the modules
+came from a regular build or any supported unpacker.
 
 Complete artifacts contain only supported template regions. Partial artifacts
 preserve unsupported Ivy instructions explicitly instead of guessing.
@@ -297,14 +295,14 @@ echo 'var a=1;' | wakaru --json             # single-file JSON (includes code)
 `--json` writes structured JSON to stdout instead of human-readable summaries.
 Warnings and errors are included in the JSON object. Useful for CI pipelines
 and tooling integration. In unpack mode, each output includes an artifact
-`kind` such as `javascript`, `vue_sfc`, or `angular_component`. Angular status
-values are `recovered_angular_component`, `partial_angular_component`, and
-`angular_component_source_js` for paired JavaScript. Vue status values remain
+`kind` such as `javascript`, `vue_sfc`, or `angular_module`. Angular status
+values are `recovered_angular_module`, `partial_angular_module`, and
+`angular_module_source_js` for paired JavaScript. Vue status values remain
 `recovered_vue_sfc`, `vue_sfc_source_js`, and `vue_sfc_fallback_js`.
 
 For single-file JavaScript-primary Angular output, the JSON `artifacts` array
-lists every written TypeScript sidecar. Component-only output is described by
-the top-level `kind`, `status`, and `source_filename` fields.
+lists every written TypeScript sidecar. Angular-only output is described by the
+top-level `kind`, `status`, and `source_filename` fields.
 
 ## Diagnostics and profiling
 

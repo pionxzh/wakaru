@@ -1,4 +1,5 @@
-//! Best-effort recovery of production Angular Ivy component artifacts.
+//! Best-effort recovery of production Angular Ivy component and module
+//! inspection artifacts.
 //!
 //! The analyzer consumes ordinary resolved JavaScript modules. Bundle-format
 //! concerns stay in unpackers; this module knows only module ASTs and semantic
@@ -26,10 +27,14 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
+use crate::rules::rename_utils::BindingRename;
 use artifact::{class_references, dependency_binding, ArtifactSymbolTable};
-use emitter::{clean_component_class, emit_component_source, ComponentEmitInput};
+use emitter::{
+    clean_component_class, emit_angular_module_source, emit_component_source, ComponentEmitInput,
+    ModuleComponentEmitInput,
+};
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
-use syntax::{prop_name, string_lit};
+use syntax::{prop_name, string_lit, BindingKey};
 use template::{
     ivy_template_score, recover_template, TemplateFunctionTable, TemplateRecoveryContext,
 };
@@ -147,6 +152,18 @@ pub struct RecoveredAngularComponent {
     pub module_index: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecoveredAngularModule {
+    pub source: String,
+    pub completeness: AngularRecoveryCompleteness,
+    /// Indices into `AngularRecoveryReport::components`.
+    pub component_indices: Vec<usize>,
+    pub issues: Vec<AngularRecoveryIssue>,
+    /// Index into the analyzed `AngularModuleSource`/`AngularModuleView` slice.
+    pub module_index: usize,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AngularRecoveryStats {
@@ -166,6 +183,7 @@ pub struct AngularRecoveryStats {
 #[non_exhaustive]
 pub struct AngularRecoveryReport {
     pub components: Vec<RecoveredAngularComponent>,
+    pub modules: Vec<RecoveredAngularModule>,
     pub stats: AngularRecoveryStats,
     pub unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
 }
@@ -204,6 +222,7 @@ struct PreparedAngularModule {
 struct ComponentClass {
     name: Atom,
     class: Box<Class>,
+    identity: SymbolIdentity,
     portable_identity: PortableSymbolIdentity,
 }
 
@@ -225,11 +244,34 @@ struct ComponentDescriptor {
     constants: Option<Box<Expr>>,
 }
 
+struct RecoveredModuleComponentDraft {
+    component_index: usize,
+    name: String,
+    selector: String,
+    styles: Vec<String>,
+    class: Box<Class>,
+    template_source: String,
+    readable_class_roots: HashSet<BindingKey>,
+    template_roots: HashSet<BindingKey>,
+    dependencies: Vec<Box<Expr>>,
+    evidence_class_identity: SymbolIdentity,
+    readable_class_identity: SymbolIdentity,
+    completeness: AngularRecoveryCompleteness,
+    issues: Vec<AngularRecoveryIssue>,
+}
+
 pub fn recover_angular_components_from_js(
     source: &str,
     options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
     Ok(analyze_angular_components_from_js(source, options)?.components)
+}
+
+pub fn recover_angular_modules_from_js(
+    source: &str,
+    options: AngularRecoveryOptions,
+) -> Result<Vec<RecoveredAngularModule>> {
+    Ok(analyze_angular_components_from_js(source, options)?.modules)
 }
 
 pub fn analyze_angular_components_from_js(
@@ -250,6 +292,13 @@ pub fn recover_angular_components_from_modules(
     options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
     Ok(analyze_angular_components_from_modules(sources, options)?.components)
+}
+
+pub fn recover_angular_modules_from_modules(
+    sources: &[AngularModuleSource<'_>],
+    options: AngularRecoveryOptions,
+) -> Result<Vec<RecoveredAngularModule>> {
+    Ok(analyze_angular_components_from_modules(sources, options)?.modules)
 }
 
 pub fn analyze_angular_components_from_modules(
@@ -275,6 +324,13 @@ pub fn recover_angular_components_from_module_views(
     options: AngularRecoveryOptions,
 ) -> Result<Vec<RecoveredAngularComponent>> {
     Ok(analyze_angular_components_from_module_views(views, options)?.components)
+}
+
+pub fn recover_angular_modules_from_module_views(
+    views: &[AngularModuleView<'_>],
+    options: AngularRecoveryOptions,
+) -> Result<Vec<RecoveredAngularModule>> {
+    Ok(analyze_angular_components_from_module_views(views, options)?.modules)
 }
 
 pub fn analyze_angular_components_from_module_views(
@@ -361,6 +417,7 @@ fn recover_prepared_modules(
     };
 
     let mut recovered = Vec::new();
+    let mut recovered_modules = Vec::new();
     let mut stats = AngularRecoveryStats {
         modules_analyzed: evidence_modules.len(),
         ..AngularRecoveryStats::default()
@@ -371,6 +428,8 @@ fn recover_prepared_modules(
     let _component_enter = component_span.enter();
     for (module_index, prepared) in evidence_modules.iter().enumerate() {
         let emit_cm: Lrc<SourceMap> = Default::default();
+        let mut module_drafts = Vec::new();
+        let mut recovered_names = HashSet::new();
         let classes = collect_component_classes(&prepared.module, prepared.unresolved_ctxt);
         let template_functions = TemplateFunctionTable::collect(&prepared.module);
         let mut calls = roles::IvyCallCollector::new(&roles, prepared.unresolved_ctxt);
@@ -404,7 +463,10 @@ fn recover_prepared_modules(
             let readable_class = readable_classes[module_index]
                 .get(&descriptor.class.portable_identity)
                 .unwrap_or(&descriptor.class);
-            let name = recovered_component_name(readable_class.name.as_ref(), &descriptor.selector);
+            let name = unique_recovered_component_name(
+                recovered_component_name(readable_class.name.as_ref(), &descriptor.selector),
+                &mut recovered_names,
+            );
             for issue in &mut recovered_template.issues {
                 issue.module_index = Some(module_index);
                 issue.component = Some(name.clone());
@@ -472,17 +534,34 @@ fn recover_prepared_modules(
                 aggregate.0 += shape.occurrences;
                 aggregate.1 += shape.runtime_calls;
             }
+            let completeness = if recovered_template.issues.is_empty() {
+                stats.complete_components += 1;
+                AngularRecoveryCompleteness::Complete
+            } else {
+                stats.partial_components += 1;
+                AngularRecoveryCompleteness::Partial
+            };
+            let component_index = recovered.len();
+            module_drafts.push(RecoveredModuleComponentDraft {
+                component_index,
+                name: name.clone(),
+                selector: descriptor.selector.clone(),
+                styles: descriptor.styles.clone(),
+                class: class.clone(),
+                template_source: recovered_template.source.clone(),
+                readable_class_roots: class_roots,
+                template_roots: recovered_template.artifact_references.clone(),
+                dependencies: descriptor.dependencies.clone(),
+                evidence_class_identity: descriptor.class.identity.clone(),
+                readable_class_identity: readable_class.identity.clone(),
+                completeness,
+                issues: recovered_template.issues.clone(),
+            });
             recovered.push(RecoveredAngularComponent {
                 name,
                 selector: descriptor.selector,
                 source,
-                completeness: if recovered_template.issues.is_empty() {
-                    stats.complete_components += 1;
-                    AngularRecoveryCompleteness::Complete
-                } else {
-                    stats.partial_components += 1;
-                    AngularRecoveryCompleteness::Partial
-                },
+                completeness,
                 issues: recovered_template.issues,
                 stats: recovered_template.stats,
                 unknown_runtime_call_shapes: recovered_template.unknown_runtime_call_shapes,
@@ -494,6 +573,15 @@ fn recover_prepared_modules(
             stats.unsupported_runtime_calls += recovered_template.stats.unsupported_runtime_calls;
             stats.malformed_instruction_calls +=
                 recovered_template.stats.malformed_instruction_calls;
+        }
+        if !module_drafts.is_empty() {
+            recovered_modules.push(emit_recovered_angular_module(
+                module_index,
+                &module_drafts,
+                &evidence_artifact_symbols[module_index],
+                &readable_artifact_symbols[module_index],
+                emit_cm,
+            )?);
         }
     }
 
@@ -516,9 +604,148 @@ fn recover_prepared_modules(
 
     Ok(AngularRecoveryReport {
         components: recovered,
+        modules: recovered_modules,
         stats,
         unknown_runtime_call_shapes,
     })
+}
+
+fn emit_recovered_angular_module(
+    module_index: usize,
+    drafts: &[RecoveredModuleComponentDraft],
+    evidence_symbols: &ArtifactSymbolTable,
+    readable_symbols: &ArtifactSymbolTable,
+    cm: Lrc<SourceMap>,
+) -> Result<RecoveredAngularModule> {
+    let mut evidence_component_names = HashMap::<BindingKey, String>::new();
+    let mut readable_component_bindings = HashSet::new();
+    let mut evidence_component_bindings = HashSet::new();
+    let mut renames = Vec::new();
+    let mut renamed_bindings = HashSet::new();
+    let mut reserved_names = HashSet::from([Atom::from("Component")]);
+
+    for draft in drafts {
+        let recovered_name = Atom::from(draft.name.as_str());
+        reserved_names.insert(recovered_name.clone());
+        for identity in [
+            &draft.evidence_class_identity,
+            &draft.readable_class_identity,
+        ] {
+            let Some(binding) = local_identity_binding(identity) else {
+                continue;
+            };
+            reserved_names.insert(binding.0.clone());
+            if renamed_bindings.insert(binding.clone()) {
+                renames.push(BindingRename {
+                    old: binding.clone(),
+                    new: recovered_name.clone(),
+                });
+            }
+        }
+        if let Some(binding) = local_identity_binding(&draft.evidence_class_identity) {
+            evidence_component_bindings.insert(binding.clone());
+            evidence_component_names.insert(binding.clone(), draft.name.clone());
+        }
+        if let Some(binding) = local_identity_binding(&draft.readable_class_identity) {
+            readable_component_bindings.insert(binding.clone());
+        }
+    }
+
+    let readable_roots = drafts
+        .iter()
+        .flat_map(|draft| draft.readable_class_roots.iter().cloned())
+        .collect::<HashSet<_>>();
+    let template_roots = drafts
+        .iter()
+        .flat_map(|draft| draft.template_roots.iter().cloned())
+        .collect::<HashSet<_>>();
+    let dependency_roots = drafts
+        .iter()
+        .flat_map(|draft| {
+            draft
+                .dependencies
+                .iter()
+                .filter_map(|dependency| dependency_binding(dependency.as_ref()))
+        })
+        .collect::<HashSet<_>>();
+
+    let mut support = readable_symbols.recover_with_provided(
+        &readable_roots,
+        &reserved_names,
+        &readable_component_bindings,
+        true,
+    );
+    support.merge(evidence_symbols.recover_with_provided(
+        &template_roots,
+        &reserved_names,
+        &evidence_component_bindings,
+        true,
+    ));
+    let dependency_support = evidence_symbols.recover_with_provided(
+        &dependency_roots,
+        &reserved_names,
+        &evidence_component_bindings,
+        false,
+    );
+    let dependency_names = drafts
+        .iter()
+        .map(|draft| {
+            let mut seen = HashSet::new();
+            draft
+                .dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    let binding = dependency_binding(dependency.as_ref())?;
+                    evidence_component_names.get(&binding).cloned().or_else(|| {
+                        dependency_support
+                            .provides(&binding)
+                            .then(|| binding.0.to_string())
+                    })
+                })
+                .filter(|name| seen.insert(name.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    support.merge(dependency_support);
+
+    let components = drafts
+        .iter()
+        .zip(&dependency_names)
+        .map(|(draft, dependencies)| ModuleComponentEmitInput {
+            name: &draft.name,
+            selector: &draft.selector,
+            styles: &draft.styles,
+            class: &draft.class,
+            template_source: &draft.template_source,
+            dependencies,
+        })
+        .collect::<Vec<_>>();
+    let source = emit_angular_module_source(&components, &support, &renames, cm)?;
+    let completeness = if drafts
+        .iter()
+        .all(|draft| draft.completeness == AngularRecoveryCompleteness::Complete)
+    {
+        AngularRecoveryCompleteness::Complete
+    } else {
+        AngularRecoveryCompleteness::Partial
+    };
+    Ok(RecoveredAngularModule {
+        source,
+        completeness,
+        component_indices: drafts.iter().map(|draft| draft.component_index).collect(),
+        issues: drafts
+            .iter()
+            .flat_map(|draft| draft.issues.iter().cloned())
+            .collect(),
+        module_index,
+    })
+}
+
+fn local_identity_binding(identity: &SymbolIdentity) -> Option<&BindingKey> {
+    let SymbolIdentity::LocalBinding(binding) = identity else {
+        return None;
+    };
+    Some(binding)
 }
 
 fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularModule> {
@@ -619,10 +846,11 @@ impl ComponentClassCollector {
         let portable_identity = portable_symbol_identity(&identity);
         let name = Atom::from(to_valid_identifier_name(fallback_name));
         self.classes.insert(
-            identity,
+            identity.clone(),
             ComponentClass {
                 name,
                 class: Box::new(class.clone()),
+                identity,
                 portable_identity,
             },
         );
@@ -1139,6 +1367,23 @@ fn recovered_component_name(binding: &str, selector: &str) -> String {
     }
 
     selector_component_name(selector).unwrap_or_else(|| binding.to_string())
+}
+
+fn unique_recovered_component_name(
+    preferred: String,
+    recovered_names: &mut HashSet<String>,
+) -> String {
+    if recovered_names.insert(preferred.clone()) {
+        return preferred;
+    }
+
+    for suffix in 2usize.. {
+        let candidate = format!("{preferred}_{suffix}");
+        if recovered_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("the component-name suffix space is unbounded")
 }
 
 fn selector_component_name(selector: &str) -> Option<String> {

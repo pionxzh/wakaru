@@ -89,7 +89,7 @@ the primary JavaScript modules. See rustdoc for everything else.
 
 Vue does not establish a per-framework end-to-end composition pattern.
 Supported root workflows use `RecoveryOptions` on `decompile` and `unpack`,
-and return framework-neutral `ArtifactOutput` values. Angular component
+and return framework-neutral `ArtifactOutput` values. Angular module
 recovery is the first root workflow using this contract.
 
 The common artifact model supports multiple files rather than assuming every
@@ -108,16 +108,22 @@ Caller-supplied import resolution remains useful only for standalone namespace
 operations such as `vue::recover`.
 
 The low-level Angular namespace provides `analyze_angular_components_*`
-operations alongside the convenience `recover_angular_components_*` wrappers.
-Analysis returns the same recovered components plus typed, fail-closed recovery
-issues and aggregate accounting for candidate descriptors and render-phase
-runtime calls. Issue entries preserve occurrences and identify the source
-module index, recovered component, view, render phase, per-view operation
-ordinal, and module-relative source range. When known, they distinguish the
-canonical Ivy role from the concise callee spelling in the evidence source.
-Unknown runtime calls are also grouped by phase and argument-list shape at
-component and workspace scope. The root façade keeps those framework details
-out of `ArtifactOutput`; optional diagnostics expose only the aggregate report.
+operations alongside convenience `recover_angular_components_*` and
+`recover_angular_modules_*` wrappers. Analysis retains per-component sources
+and diagnostics for compatibility, and also returns one module artifact for
+each source module containing recovered components. A module result lists its
+indices into the component result vector; sibling component dependencies and
+binding renames are resolved inside that unit, and shared support declarations
+are emitted once.
+
+Issue entries preserve occurrences and identify the source module index,
+recovered component, view, render phase, per-view operation ordinal, and
+module-relative source range. When known, they distinguish the canonical Ivy
+role from the concise callee spelling in the evidence source. Unknown runtime
+calls are also grouped by phase and argument-list shape at component and
+workspace scope. The root façade emits `ArtifactKind::AngularModule` and keeps
+those framework details out of `ArtifactOutput`; optional diagnostics expose
+only the aggregate report.
 
 Private option fields and non-exhaustive result types allow that integrated
 surface to be added without a breaking change. Future framework namespaces may

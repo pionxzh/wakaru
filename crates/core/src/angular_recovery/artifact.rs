@@ -86,17 +86,27 @@ impl ArtifactSymbolTable {
         reserved_names: &HashSet<Atom>,
         report_unresolved: bool,
     ) -> ArtifactSupportPlan {
+        self.recover_with_provided(roots, reserved_names, &HashSet::new(), report_unresolved)
+    }
+
+    pub(super) fn recover_with_provided(
+        &self,
+        roots: &HashSet<BindingKey>,
+        reserved_names: &HashSet<Atom>,
+        provided_bindings: &HashSet<BindingKey>,
+        report_unresolved: bool,
+    ) -> ArtifactSupportPlan {
         let mut plan = ArtifactSupportPlan::default();
         let mut roots = roots
             .iter()
-            .filter(|root| self.entries.contains_key(*root))
+            .filter(|root| self.entries.contains_key(*root) && !provided_bindings.contains(*root))
             .cloned()
             .collect::<Vec<_>>();
         roots.sort_by(|left, right| left.0.cmp(&right.0));
 
         let mut selected = HashMap::<BindingKey, SupportUnit>::new();
         for root in roots {
-            let Some(units) = self.recover_root(&root, reserved_names) else {
+            let Some(units) = self.recover_root(&root, reserved_names, provided_bindings) else {
                 if report_unresolved {
                     plan.unresolved_symbols.insert(root.0.to_string());
                 }
@@ -124,6 +134,7 @@ impl ArtifactSymbolTable {
         &self,
         root: &BindingKey,
         reserved_names: &HashSet<Atom>,
+        provided_bindings: &HashSet<BindingKey>,
     ) -> Option<Vec<SupportUnit>> {
         let mut pending = VecDeque::from([root.clone()]);
         let mut visited = HashSet::new();
@@ -131,6 +142,9 @@ impl ArtifactSymbolTable {
 
         while let Some(binding) = pending.pop_front() {
             if !visited.insert(binding.clone()) {
+                continue;
+            }
+            if provided_bindings.contains(&binding) {
                 continue;
             }
             let Some(entry) = self.entries.get(&binding) else {
