@@ -298,7 +298,10 @@ byte range. A known Ivy operation records both its canonical role and the
 concise callee spelling observed in the compiled input. Ranges refer to the
 evidence source when the two-view API is used. Repeated HTML warning comments
 remain deduplicated for readability; that display choice never erases analysis
-locations or counts.
+locations or counts. The template IR places a warning at its proven
+creation/update anchor when one exists. Otherwise it emits the warning inside
+the smallest affected view with an explicit `placement unknown within this
+view` marker; nested-view failures are no longer appended to the root template.
 
 The same report includes instruction-call accounting plus workspace totals for
 component candidates, rejected descriptors, complete/partial artifacts,
@@ -436,6 +439,7 @@ Pause and re-check this boundary after each milestone:
 10. assignment-backed embedded-view functions and stable aliases.
 11. minimally rooted Closure `ADVANCED` role inference from runtime behavior.
 12. Closure view-state role families and optimizer-inlined view captures.
+13. module-oriented artifacts and view-local unsupported-region placement.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
