@@ -24,6 +24,49 @@ pub(super) struct WorkspaceSymbolAlias {
     pub(super) right: WorkspaceSymbol,
 }
 
+#[derive(Default)]
+pub(super) struct WorkspaceAliasIndex {
+    group_by_symbol: HashMap<WorkspaceSymbol, usize>,
+}
+
+impl WorkspaceAliasIndex {
+    pub(super) fn collect(modules: &[PreparedAngularModule]) -> Self {
+        let aliases = collect_esm_symbol_aliases(modules);
+        let mut adjacency = HashMap::<WorkspaceSymbol, Vec<WorkspaceSymbol>>::new();
+        for alias in aliases {
+            adjacency
+                .entry(alias.left.clone())
+                .or_default()
+                .push(alias.right.clone());
+            adjacency.entry(alias.right).or_default().push(alias.left);
+        }
+
+        let mut index = Self::default();
+        let mut visited = HashSet::new();
+        for start in adjacency.keys() {
+            if visited.contains(start) {
+                continue;
+            }
+            let group = index.group_by_symbol.len();
+            let mut stack = vec![start.clone()];
+            while let Some(symbol) = stack.pop() {
+                if !visited.insert(symbol.clone()) {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&symbol) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+                index.group_by_symbol.insert(symbol, group);
+            }
+        }
+        index
+    }
+
+    pub(super) fn group(&self, symbol: &WorkspaceSymbol) -> Option<usize> {
+        self.group_by_symbol.get(symbol).copied()
+    }
+}
+
 /// Collect symbol equivalences expressed by ordinary ESM imports and exports.
 ///
 /// This records module transport only: it does not assign framework meaning to

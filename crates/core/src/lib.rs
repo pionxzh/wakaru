@@ -43,6 +43,7 @@ pub use angular_recovery::{
     AngularRecoveryOptions, AngularRecoveryReport, AngularRecoverySourceRange,
     AngularRecoveryStats, AngularTemplatePhase, AngularTemplateRecoveryStats,
     AngularUnknownRuntimeCallShape, RecoveredAngularComponent, RecoveredAngularModule,
+    RecoveredAngularModuleDependency,
 };
 pub use driver::{
     decompile, deduplicate_path, explain_commonjs_exports, filename_case_key, format_trace_events,
