@@ -79,7 +79,7 @@ short because the input does not provide their original names.
 - **Bundles:** split webpack, esbuild/Bun, Browserify, and Metro output into readable modules.
 - **Transpiled code:** recover modern syntax from Babel, TypeScript, and SWC output.
 - **Minified code:** expand compact expressions and simplify control flow.
-- **Experimental components:** recover Angular Ivy inline-template TypeScript artifacts and Vue 3 SFC-like artifacts.
+- **Experimental framework artifacts:** recover Angular Ivy TypeScript modules with inline component templates and Vue 3 SFC-like artifacts.
 
 See [supported inputs](https://wakarujs.com/docs/reference/supported-inputs) for the full list and format-specific limits.
 
