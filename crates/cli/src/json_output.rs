@@ -46,8 +46,8 @@ pub enum JsonModuleKind {
     JavaScript,
     #[serde(rename = "vue_sfc")]
     VueSfc,
-    #[serde(rename = "angular_component")]
-    AngularComponent,
+    #[serde(rename = "angular_module")]
+    AngularModule,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -60,12 +60,12 @@ pub enum JsonModuleStatus {
     RecoveredVueSfc,
     #[serde(rename = "vue_sfc_fallback_js")]
     VueSfcFallbackJs,
-    #[serde(rename = "angular_component_source_js")]
-    AngularComponentSourceJs,
-    #[serde(rename = "recovered_angular_component")]
-    RecoveredAngularComponent,
-    #[serde(rename = "partial_angular_component")]
-    PartialAngularComponent,
+    #[serde(rename = "angular_module_source_js")]
+    AngularModuleSourceJs,
+    #[serde(rename = "recovered_angular_module")]
+    RecoveredAngularModule,
+    #[serde(rename = "partial_angular_module")]
+    PartialAngularModule,
 }
 
 #[derive(Serialize)]

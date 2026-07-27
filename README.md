@@ -82,9 +82,9 @@ Full flag reference: [docs/cli.md](./docs/cli.md).
   parameters, `for...of`, and more.
 - **Minifier recovery** — sequence expressions, flipped comparisons,
   `!0`/`void 0` literal tricks, IIFE flattening, alias inlining.
-- **Experimental component artifacts** — Angular Ivy definitions become
-  readable TypeScript components with inline templates and styles; compiled
-  Vue 3 render modules can become SFC-like `.vue` artifacts.
+- **Experimental framework artifacts** — Angular Ivy definitions become
+  readable TypeScript module artifacts with inline component templates and
+  styles; compiled Vue 3 render modules can become SFC-like `.vue` artifacts.
 - **Three rewrite levels** — `minimal` (highest-confidence,
   semantics-preserving transforms for auditing and diffing), `standard`
   (default), `aggressive` (maximum readability). The semantic contract per

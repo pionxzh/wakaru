@@ -149,7 +149,7 @@ struct Cli {
     #[arg(long, conflicts_with = "angular")]
     vue_sfc: bool,
 
-    /// Recover Angular Ivy definitions into inline-template .component.ts artifacts.
+    /// Recover Angular Ivy definitions into inline-template .angular.ts module artifacts.
     #[arg(long, alias = "angular-ivy", conflicts_with = "vue_sfc")]
     angular: bool,
 
@@ -424,7 +424,7 @@ fn run_unpack(cli: Cli) -> Result<()> {
                 status: if cli.vue_sfc {
                     vue_sfc_js_artifact_status(recovered_vue_sfc, likely_vue_sfc)
                 } else if cli.angular && angular_source_modules.contains(&filename) {
-                    JsonModuleStatus::AngularComponentSourceJs
+                    JsonModuleStatus::AngularModuleSourceJs
                 } else {
                     JsonModuleStatus::Decompiled
                 },
@@ -672,7 +672,7 @@ fn run_single(cli: Cli) -> Result<()> {
     let mut recovered_angular_artifacts = std::mem::take(&mut output.artifacts);
     if cli.angular && !js_primary_angular_output && recovered_angular_artifacts.len() > 1 {
         bail!(
-            "--angular recovered {} components; choose a JavaScript output path for sidecars or use --unpack with an output directory",
+            "--angular recovered {} modules; choose a JavaScript output path for sidecars or use --unpack with an output directory",
             recovered_angular_artifacts.len()
         );
     }
@@ -682,7 +682,7 @@ fn run_single(cli: Cli) -> Result<()> {
         None
     };
     if angular_file_output && selected_angular_artifact.is_none() {
-        bail!("--angular did not recover an Angular component; cannot write component-only output");
+        bail!("--angular did not recover an Angular module; cannot write Angular-only output");
     }
     if angular_file_output || (cli.angular && output_path.is_none()) {
         if let Some(artifact) = &selected_angular_artifact {
@@ -1595,13 +1595,13 @@ fn cli_artifact_from_public(
     module_filenames: &[String],
 ) -> Option<CliOutputArtifact> {
     let kind = match artifact.kind {
-        wakaru::ArtifactKind::AngularComponent => JsonModuleKind::AngularComponent,
+        wakaru::ArtifactKind::AngularModule => JsonModuleKind::AngularModule,
         _ => return None,
     };
     let status = match artifact.status {
-        wakaru::ArtifactStatus::Complete => JsonModuleStatus::RecoveredAngularComponent,
-        wakaru::ArtifactStatus::Partial => JsonModuleStatus::PartialAngularComponent,
-        _ => JsonModuleStatus::PartialAngularComponent,
+        wakaru::ArtifactStatus::Complete => JsonModuleStatus::RecoveredAngularModule,
+        wakaru::ArtifactStatus::Partial => JsonModuleStatus::PartialAngularModule,
+        _ => JsonModuleStatus::PartialAngularModule,
     };
     let source_filename = artifact
         .module_indices

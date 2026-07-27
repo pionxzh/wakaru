@@ -529,11 +529,11 @@ fn vue_sfc_single_file_js_primary_output_writes_source_map_only_for_js() {
 }
 
 #[test]
-fn angular_writes_recovered_single_file_component_with_inline_template() {
+fn angular_writes_recovered_single_file_module_with_inline_template() {
     let dir = temp_test_dir("angular-component-output");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input_path = dir.join("compiled.js");
-    let output_path = dir.join("DemoCard.component.ts");
+    let output_path = dir.join("compiled.angular.ts");
     fs::write(&input_path, angular_component_module_source())
         .expect("write Angular component input");
 
@@ -563,13 +563,12 @@ fn angular_writes_recovered_single_file_component_with_inline_template() {
 }
 
 #[test]
-fn angular_single_file_js_primary_output_writes_multiple_sidecars() {
+fn angular_single_file_js_primary_output_groups_components_in_one_sidecar() {
     let dir = temp_test_dir("angular-component-sidecars");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input_path = dir.join("compiled.js");
     let output_path = dir.join("readable.js");
-    let first_sidecar = dir.join("first-card.component.ts");
-    let second_sidecar = dir.join("second-card.component.ts");
+    let sidecar = dir.join("compiled.angular.ts");
     fs::write(&input_path, two_angular_components_module_source())
         .expect("write Angular component input");
 
@@ -586,23 +585,19 @@ fn angular_single_file_js_primary_output_writes_multiple_sidecars() {
 
     let javascript = fs::read_to_string(&output_path).expect("read JavaScript primary");
     assert!(javascript.contains("ɵɵdefineComponent"));
-    assert!(first_sidecar.exists());
-    assert!(second_sidecar.exists());
-    assert!(fs::read_to_string(&first_sidecar)
-        .expect("read first sidecar")
-        .contains("<section></section>"));
-    assert!(fs::read_to_string(&second_sidecar)
-        .expect("read second sidecar")
-        .contains("<aside></aside>"));
+    assert!(sidecar.exists());
+    let recovered_module = fs::read_to_string(&sidecar).expect("read Angular module sidecar");
+    assert!(recovered_module.contains("<section></section>"));
+    assert!(recovered_module.contains("<aside></aside>"));
+    assert_eq!(recovered_module.matches("@Component({").count(), 2);
     assert!(append_map_extension(&output_path).exists());
-    assert!(!append_map_extension(&first_sidecar).exists());
-    assert!(!append_map_extension(&second_sidecar).exists());
+    assert!(!append_map_extension(&sidecar).exists());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
 #[test]
-fn angular_component_only_output_rejects_multiple_components() {
+fn angular_only_output_groups_multiple_components_from_one_module() {
     let dir = temp_test_dir("angular-component-only-multiple");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input_path = dir.join("compiled.js");
@@ -618,20 +613,17 @@ fn angular_component_only_output_rejects_multiple_components() {
         output_path.to_str().expect("output path should be utf8"),
     ])
     .expect("Angular CLI should parse");
-    let error = run_default(cli).expect_err("multiple components need sidecars or unpack");
-    assert!(
-        error
-            .to_string()
-            .contains("--angular recovered 2 components"),
-        "unexpected error: {error}"
-    );
-    assert!(!output_path.exists());
+    run_default(cli).expect("one recovered module should support Angular-only output");
+    let recovered_module = fs::read_to_string(&output_path).expect("read Angular-only module");
+    assert_eq!(recovered_module.matches("@Component({").count(), 2);
+    assert!(recovered_module.contains("<section></section>"));
+    assert!(recovered_module.contains("<aside></aside>"));
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
 
 #[test]
-fn angular_component_only_output_errors_when_not_recovered() {
+fn angular_only_output_errors_when_no_module_is_recovered() {
     let dir = temp_test_dir("angular-component-only-miss");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input_path = dir.join("plain.js");
@@ -646,11 +638,11 @@ fn angular_component_only_output_errors_when_not_recovered() {
         output_path.to_str().expect("output path should be utf8"),
     ])
     .expect("Angular CLI should parse");
-    let error = run_default(cli).expect_err("component-only output should require recovery");
+    let error = run_default(cli).expect_err("Angular-only output should require recovery");
     assert!(
         error
             .to_string()
-            .contains("--angular did not recover an Angular component"),
+            .contains("--angular did not recover an Angular module"),
         "unexpected error: {error}"
     );
     assert!(!output_path.exists());
@@ -867,7 +859,7 @@ fn vue_sfc_unpack_writes_source_maps_only_for_js_artifacts() {
 }
 
 #[test]
-fn angular_unpack_writes_component_artifact_from_generic_module_workspace() {
+fn angular_unpack_writes_module_artifact_from_generic_module_workspace() {
     let dir = temp_test_dir("angular-closure-unpack");
     let out_dir = dir.join("out");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -888,7 +880,7 @@ fn angular_unpack_writes_component_artifact_from_generic_module_workspace() {
 
     assert!(out_dir.join("runtime.js").exists());
     assert!(out_dir.join("component.js").exists());
-    let artifact_path = out_dir.join("local-card.component.ts");
+    let artifact_path = out_dir.join("component.angular.ts");
     let artifact = fs::read_to_string(&artifact_path).expect("read Angular artifact");
     assert!(artifact.contains("template: `"));
     assert!(artifact.contains("<article></article>"));
@@ -951,15 +943,15 @@ fn json_modules_describe_framework_artifact_roles() {
             filename: "src/card.js".to_string(),
             code: "export {};".to_string(),
             kind: JsonModuleKind::JavaScript,
-            status: JsonModuleStatus::AngularComponentSourceJs,
+            status: JsonModuleStatus::AngularModuleSourceJs,
             source_filename: Some("src/card.js".to_string()),
             source_map_filename: Some("src/card.js".to_string()),
         }),
         json_module_for_artifact(&CliOutputArtifact {
-            filename: "src/demo-card.component.ts".to_string(),
+            filename: "src/card.angular.ts".to_string(),
             code: "@Component({}) class DemoCard {}".to_string(),
-            kind: JsonModuleKind::AngularComponent,
-            status: JsonModuleStatus::PartialAngularComponent,
+            kind: JsonModuleKind::AngularModule,
+            status: JsonModuleStatus::PartialAngularModule,
             source_filename: Some("src/card.js".to_string()),
             source_map_filename: None,
         }),
@@ -993,13 +985,13 @@ fn json_modules_describe_framework_artifact_roles() {
             {
                 "filename": "src/card.js",
                 "kind": "javascript",
-                "status": "angular_component_source_js",
+                "status": "angular_module_source_js",
                 "source_filename": "src/card.js"
             },
             {
-                "filename": "src/demo-card.component.ts",
-                "kind": "angular_component",
-                "status": "partial_angular_component",
+                "filename": "src/card.angular.ts",
+                "kind": "angular_module",
+                "status": "partial_angular_module",
                 "source_filename": "src/card.js"
             }
         ])
@@ -1009,29 +1001,26 @@ fn json_modules_describe_framework_artifact_roles() {
 #[test]
 fn single_file_angular_metadata_distinguishes_primary_and_sidecar_output() {
     let selected = CliOutputArtifact {
-        filename: "demo-card.component.ts".to_string(),
+        filename: "compiled.angular.ts".to_string(),
         code: "@Component({}) class DemoCard {}".to_string(),
-        kind: JsonModuleKind::AngularComponent,
-        status: JsonModuleStatus::RecoveredAngularComponent,
+        kind: JsonModuleKind::AngularModule,
+        status: JsonModuleStatus::RecoveredAngularModule,
         source_filename: Some("compiled.js".to_string()),
         source_map_filename: None,
     };
     let primary = single_file_angular_metadata(true, Some(&selected), &[], "compiled.js")
         .expect("Angular metadata should be present");
-    assert_eq!(primary.kind, JsonModuleKind::AngularComponent);
-    assert_eq!(primary.status, JsonModuleStatus::RecoveredAngularComponent);
+    assert_eq!(primary.kind, JsonModuleKind::AngularModule);
+    assert_eq!(primary.status, JsonModuleStatus::RecoveredAngularModule);
 
     let sidecars = vec![SingleFileArtifactSidecar {
-        path: PathBuf::from("demo-card.component.ts"),
+        path: PathBuf::from("compiled.angular.ts"),
         artifact: selected,
     }];
     let javascript = single_file_angular_metadata(true, None, &sidecars, "compiled.js")
         .expect("Angular metadata should be present");
     assert_eq!(javascript.kind, JsonModuleKind::JavaScript);
-    assert_eq!(
-        javascript.status,
-        JsonModuleStatus::AngularComponentSourceJs
-    );
+    assert_eq!(javascript.status, JsonModuleStatus::AngularModuleSourceJs);
     assert_eq!(javascript.source_filename.as_deref(), Some("compiled.js"));
 }
 
@@ -1144,7 +1133,7 @@ fn provenance_names_ignore_interleaved_vue_sfc_sidecars() {
 }
 
 #[test]
-fn angular_artifact_summary_counts_complete_and_partial_components() {
+fn angular_artifact_summary_counts_complete_and_partial_modules() {
     let artifact = |status| CliOutputArtifact {
         filename: "artifact.js".to_string(),
         code: String::new(),
@@ -1154,9 +1143,9 @@ fn angular_artifact_summary_counts_complete_and_partial_components() {
         source_map_filename: None,
     };
     let artifacts = vec![
-        artifact(JsonModuleStatus::AngularComponentSourceJs),
-        artifact(JsonModuleStatus::RecoveredAngularComponent),
-        artifact(JsonModuleStatus::PartialAngularComponent),
+        artifact(JsonModuleStatus::AngularModuleSourceJs),
+        artifact(JsonModuleStatus::RecoveredAngularModule),
+        artifact(JsonModuleStatus::PartialAngularModule),
         artifact(JsonModuleStatus::Decompiled),
     ];
 
@@ -1170,7 +1159,7 @@ fn angular_artifact_summary_counts_complete_and_partial_components() {
     );
     assert_eq!(
         format_angular_artifact_summary(summary.expect("summary")),
-        "angular: 1 complete, 1 partial"
+        "angular modules: 1 complete, 1 partial"
     );
 }
 
@@ -1399,7 +1388,7 @@ fn angular_unpack_directory_processes_plain_production_modules() {
 
     assert!(out_dir.join("compiled.js").exists());
     assert!(out_dir.join("plain.js").exists());
-    assert!(out_dir.join("demo-card.component.ts").exists());
+    assert!(out_dir.join("compiled.angular.ts").exists());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }

@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn decompile_recovers_an_inline_angular_component_artifact() {
+    fn decompile_recovers_an_inline_angular_module_artifact() {
         let source = r#"
             import * as core from "@angular/core";
 
@@ -190,8 +190,8 @@ mod tests {
 
         assert_eq!(output.artifacts.len(), 1);
         let artifact = &output.artifacts[0];
-        assert_eq!(artifact.filename, "demo-card.component.ts");
-        assert_eq!(artifact.kind, crate::ArtifactKind::AngularComponent);
+        assert_eq!(artifact.filename, "input.angular.ts");
+        assert_eq!(artifact.kind, crate::ArtifactKind::AngularModule);
         assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
         assert_eq!(artifact.module_indices, vec![0]);
         assert!(artifact.code.contains("@Component({"));
