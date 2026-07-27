@@ -23,6 +23,12 @@ const advancedBuildDirectory = join(
   'angular-advanced-build',
   'browser',
 );
+const advancedStructuralBuildDirectory = join(
+  root,
+  'target',
+  'angular-advanced-structural-build',
+  'browser',
+);
 const distDirectory = join(root, 'dist');
 
 function runNode(script, args) {
@@ -247,6 +253,70 @@ for (const contractName of [
   if (!advancedClosureSource.includes(contractName)) {
     throw new Error(
       `Rooted Closure ADVANCED output is missing ${contractName}`,
+    );
+  }
+}
+
+runNode(join(root, 'node_modules', '@angular', 'cli', 'bin', 'ng.js'), [
+  'build',
+  '--configuration=advanced-structural-producer',
+]);
+
+const advancedStructuralGenerated = readdirSync(
+  advancedStructuralBuildDirectory,
+)
+  .filter((filename) => filename.endsWith('.js'))
+  .sort();
+if (!advancedStructuralGenerated.includes('main.js')) {
+  throw new Error(
+    `expected structural ADVANCED main.js, found ${JSON.stringify(advancedStructuralGenerated)}`,
+  );
+}
+
+runNode(join(root, 'node_modules', 'google-closure-compiler', 'cli.js'), [
+  ...advancedStructuralGenerated.map((filename) =>
+    `--js=${join(advancedStructuralBuildDirectory, filename)}`),
+  `--externs=${join(root, 'closure-advanced.externs.js')}`,
+  '--js_output_file=dist/closure-advanced-structural.js',
+  '--compilation_level=ADVANCED',
+  '--language_in=ECMASCRIPT_NEXT',
+  '--language_out=ECMASCRIPT_2022',
+  '--module_resolution=NODE',
+  '--dependency_mode=PRUNE',
+  `--entry_point=${join(advancedStructuralBuildDirectory, 'main')}`,
+  '--warning_level=QUIET',
+  '--charset=UTF-8',
+]);
+
+const advancedStructuralSource = readFileSync(
+  join(distDirectory, 'closure-advanced-structural.js'),
+  'utf8',
+);
+for (const selector of ['app-root', 'fixture-card', 'fixture-lazy-card']) {
+  if (!advancedStructuralSource.includes(selector)) {
+    throw new Error(`Structural ADVANCED output is missing ${selector}`);
+  }
+}
+for (const contractName of [
+  '__wakaruAngularDefinitions',
+  '__wakaruAngularRoots',
+  '__wakaruIvyRuntime',
+  '__wakaruStructuralRuntime',
+  'ɵɵdefineComponent',
+]) {
+  if (!advancedStructuralSource.includes(contractName)) {
+    throw new Error(`Structural ADVANCED output is missing ${contractName}`);
+  }
+}
+for (const excludedRole of [
+  'ɵɵelementStart',
+  'ɵɵtext',
+  'ɵɵproperty',
+  'ɵɵconditional',
+]) {
+  if (advancedStructuralSource.includes(excludedRole)) {
+    throw new Error(
+      `Structural ADVANCED output unexpectedly retained ${excludedRole}`,
     );
   }
 }
