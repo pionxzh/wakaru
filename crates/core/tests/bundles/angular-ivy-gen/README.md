@@ -80,7 +80,13 @@ template helper family observable. Wakaru must identify that family from
 template argument shape, the returned self-continuation, and shared
 parameter-forwarding behavior. It must also identify Closure-specialized
 conditional and property instructions from their runtime bodies and template
-uses; the fixture does not expose any of those Ivy role names.
+uses; the fixture does not expose any of those Ivy role names. A fourth
+component adds a conditional embedded view with a captured listener and a
+parent-context property binding. Closure preserves structurally recognizable
+`nextContext`, `restoreView`, and `resetView` bodies but inlines
+`getCurrentView` into a member read. Their canonical role names are likewise
+absent, so recovery must prove the view-state family and validate the inlined
+capture from its use by the restore helper.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
