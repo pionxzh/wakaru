@@ -30,7 +30,9 @@ use artifact::{class_references, dependency_binding, ArtifactSymbolTable};
 use emitter::{clean_component_class, emit_component_source, ComponentEmitInput};
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use syntax::{prop_name, string_lit};
-use template::{ivy_template_score, recover_template, TemplateFunctionTable};
+use template::{
+    ivy_template_score, recover_template, TemplateFunctionTable, TemplateRecoveryContext,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -56,8 +58,52 @@ pub enum AngularRecoveryIssueKind {
 #[non_exhaustive]
 pub struct AngularRecoveryIssue {
     pub kind: AngularRecoveryIssueKind,
+    /// Index of the source module containing the affected component.
+    pub module_index: Option<usize>,
+    /// Recovered component identity, when component discovery succeeded.
+    pub component: Option<String>,
+    /// Deterministic depth-first view identity within the component.
+    pub view_id: Option<usize>,
+    /// Render phase containing the affected operation, when known.
+    pub phase: Option<AngularTemplatePhase>,
+    /// Zero-based operation ordinal within the affected view.
+    pub operation_index: Option<usize>,
+    /// Module-relative, end-exclusive byte range of the affected source.
+    pub source_range: Option<AngularRecoverySourceRange>,
+    /// Canonical Ivy role, when known.
     pub instruction: Option<String>,
+    /// Concise callee spelling observed in the compiled source, when known.
+    pub actual_callee: Option<String>,
+    /// Concise reason the operation could not be recovered.
     pub detail: Option<String>,
+}
+
+impl AngularRecoveryIssue {
+    fn new(
+        kind: AngularRecoveryIssueKind,
+        instruction: Option<String>,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            module_index: None,
+            component: None,
+            view_id: None,
+            phase: None,
+            operation_index: None,
+            source_range: None,
+            instruction,
+            actual_callee: None,
+            detail,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AngularRecoverySourceRange {
+    pub start: u32,
+    pub end: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -151,6 +197,7 @@ struct PreparedAngularModule {
     filename: String,
     module: Module,
     unresolved_ctxt: SyntaxContext,
+    source_start_pos: u32,
 }
 
 #[derive(Clone)]
@@ -342,19 +389,26 @@ fn recover_prepared_modules(
                 stats.rejected_component_candidates += 1;
                 continue;
             };
-            let recovered_template = recover_template(
+            let mut recovered_template = recover_template(
                 &descriptor.template,
                 descriptor.constants.as_deref(),
                 &descriptor.projection_selectors,
                 &roles,
                 &template_functions,
-                prepared.unresolved_ctxt,
-                emit_cm.clone(),
+                TemplateRecoveryContext {
+                    unresolved_ctxt: prepared.unresolved_ctxt,
+                    source_start_pos: prepared.source_start_pos,
+                    cm: emit_cm.clone(),
+                },
             )?;
             let readable_class = readable_classes[module_index]
                 .get(&descriptor.class.portable_identity)
                 .unwrap_or(&descriptor.class);
             let name = recovered_component_name(readable_class.name.as_ref(), &descriptor.selector);
+            for issue in &mut recovered_template.issues {
+                issue.module_index = Some(module_index);
+                issue.component = Some(name.clone());
+            }
             let class = clean_component_class(
                 &readable_class.class,
                 candidate.definition_field.as_ref(),
@@ -473,6 +527,7 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
         FileName::Custom(source.filename.to_string()).into(),
         source.source.to_string(),
     );
+    let source_start_pos = fm.start_pos.0;
     let lexer = Lexer::new(
         Syntax::Es(EsSyntax {
             jsx: true,
@@ -508,6 +563,7 @@ fn prepare_module(source: &AngularModuleSource<'_>) -> Result<PreparedAngularMod
         filename: source.filename.to_string(),
         module,
         unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+        source_start_pos,
     })
 }
 

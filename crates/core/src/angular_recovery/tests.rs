@@ -1435,10 +1435,121 @@ fn malformed_instruction_arguments_make_recovery_partial() {
     assert_eq!(recovered[0].stats.runtime_calls_observed, 1);
     assert_eq!(recovered[0].stats.rendered_instruction_calls, 0);
     assert_eq!(recovered[0].stats.malformed_instruction_calls, 1);
-    assert!(recovered[0].issues.iter().any(|issue| {
-        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
-            && issue.instruction.as_deref() == Some("ɵɵelement")
+    let issue = recovered[0]
+        .issues
+        .iter()
+        .find(|issue| {
+            issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+                && issue.instruction.as_deref() == Some("ɵɵelement")
+        })
+        .expect("the malformed element should have a structured issue");
+    assert_eq!(issue.module_index, Some(0));
+    assert_eq!(issue.component.as_deref(), Some("MalformedComponent"));
+    assert_eq!(issue.view_id, Some(0));
+    assert_eq!(issue.phase, Some(AngularTemplatePhase::Creation));
+    assert_eq!(issue.operation_index, Some(0));
+    assert_eq!(issue.actual_callee.as_deref(), Some("element"));
+    let range = issue
+        .source_range
+        .expect("the malformed call should retain its source range");
+    assert_eq!(
+        &source[range.start as usize..range.end as usize],
+        r#"element("zero", "section")"#
+    );
+}
+
+#[test]
+fn diagnostics_preserve_occurrences_and_view_local_provenance() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function ChildView(rf) {
+            if (rf & 1) {
+                core.unknownRuntime(0);
+                core.ɵɵelement(0, "span");
+            }
+        }
+
+        class DiagnosticComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: DiagnosticComponent,
+                selectors: [["diagnostic-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, ChildView, 1, 0, "span");
+                        core.unknownRuntime(1);
+                        core.unknownRuntime(2);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_modules(
+        &[AngularModuleSource {
+            filename: "diagnostic-card.js",
+            source,
+        }],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("the partial component should still be analyzed");
+    let component = &report.components[0];
+    let issues = component
+        .issues
+        .iter()
+        .filter(|issue| issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction)
+        .collect::<Vec<_>>();
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert_eq!(issues.len(), 3, "issues: {:#?}", component.issues);
+    assert!(issues.iter().all(|issue| {
+        issue.module_index == Some(0)
+            && issue.component.as_deref() == Some("DiagnosticComponent")
+            && issue.phase == Some(AngularTemplatePhase::Creation)
+            && issue.actual_callee.as_deref() == Some("core.unknownRuntime")
     }));
+    assert_eq!(
+        issues
+            .iter()
+            .filter(|issue| issue.view_id == Some(0))
+            .map(|issue| issue.operation_index)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_eq!(
+        issues
+            .iter()
+            .filter(|issue| issue.view_id == Some(1))
+            .map(|issue| issue.operation_index)
+            .collect::<Vec<_>>(),
+        vec![Some(0)]
+    );
+    let mut observed_calls = issues
+        .iter()
+        .map(|issue| {
+            let range = issue
+                .source_range
+                .expect("each parsed call should retain a source range");
+            source[range.start as usize..range.end as usize].to_string()
+        })
+        .collect::<Vec<_>>();
+    observed_calls.sort();
+    assert_eq!(
+        observed_calls,
+        vec![
+            "core.unknownRuntime(0)",
+            "core.unknownRuntime(1)",
+            "core.unknownRuntime(2)",
+        ]
+    );
+    assert_eq!(
+        component
+            .source
+            .matches("Unsupported Ivy instruction: unknown-runtime-instruction")
+            .count(),
+        1,
+        "display comments should remain deduplicated"
+    );
 }
 
 #[test]
