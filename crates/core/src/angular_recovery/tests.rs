@@ -2147,6 +2147,112 @@ fn recovers_repeater_views_with_local_bindings_and_restored_listeners() {
 }
 
 #[test]
+fn resolves_reference_aliases_at_their_view_context_depth() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function ChildView(rf) {
+            if (rf & 1) {
+                const savedView = core.ɵɵgetCurrentView();
+                core.ɵɵelementStart(0, "span");
+                core.ɵɵlistener("click", function() {
+                    core.ɵɵrestoreView(savedView);
+                    core.ɵɵnextContext();
+                    const parentButton = core.ɵɵreference(1);
+                    parentButton.focus();
+                    return core.ɵɵresetView();
+                });
+                core.ɵɵtext(1, "Child");
+                core.ɵɵelementEnd();
+            }
+            if (rf & 2) {
+                core.ɵɵnextContext();
+                const parentButton = core.ɵɵreference(1);
+                core.ɵɵproperty("title", parentButton.title);
+            }
+        }
+
+        function MissingAncestorView(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "span");
+            }
+            if (rf & 2) {
+                core.ɵɵnextContext(2);
+                const missing = core.ɵɵreference(1);
+                core.ɵɵproperty("title", missing.title);
+            }
+        }
+
+        class ParentReferenceComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ParentReferenceComponent,
+                selectors: [["parent-reference"]],
+                consts: [["parentButton", ""]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "button", null, 0);
+                        core.ɵɵtemplate(2, ChildView, 2, 1, "span");
+                    }
+                    if (rf & 2) {
+                        core.ɵɵconditional(context.show ? 2 : -1);
+                    }
+                },
+            });
+        }
+
+        class MissingAncestorComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: MissingAncestorComponent,
+                selectors: [["missing-ancestor"]],
+                consts: [["parentButton", ""]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "button", null, 0);
+                        core.ɵɵtemplate(2, MissingAncestorView, 1, 1, "span");
+                    }
+                    if (rf & 2) {
+                        core.ɵɵconditional(context.show ? 2 : -1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("view-scoped references should be analyzed");
+    let parent = report
+        .components
+        .iter()
+        .find(|component| component.selector == "parent-reference")
+        .expect("the parent-reference component should recover");
+    let missing = report
+        .components
+        .iter()
+        .find(|component| component.selector == "missing-ancestor")
+        .expect("the missing-ancestor component should remain visible");
+
+    assert_eq!(
+        parent.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        parent.issues,
+        parent.source,
+    );
+    assert!(parent.source.contains("<button #parentButton></button>"));
+    assert!(parent.source.contains(r#"(click)="parentButton.focus()""#));
+    assert!(parent.source.contains(r#"[title]="parentButton.title""#));
+    assert_eq!(missing.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(missing.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MissingTargetNode
+            && issue.instruction.as_deref() == Some("ɵɵreference")
+            && issue
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("context depth 2"))
+    }));
+}
+
+#[test]
 fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
     let source = r#"
         runtime.define = function(definition) { return definition; };
@@ -2178,6 +2284,13 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
         };
         runtime.reference = function(slot) {
             return runtime.state.context[27 + slot];
+        };
+        runtime.checkedReference = function(slot) {
+            slot = runtime.state.context[27 + slot];
+            if (slot === runtime.noChange) {
+                throw new Error("uninitialized local reference");
+            }
+            return slot;
         };
         runtime.next = function(depth = 1) {
             let view = runtime.state.context;
@@ -2212,25 +2325,28 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
                 const savedView = runtime.state.current;
                 const savedViewFromGetter = runtime.get();
                 runtime.start(0, "button", null, 0);
-                runtime.listener("click", function() {
+                runtime.listener("click", function(event) {
                     runtime.restore(savedView);
-                    const action = runtime.reference(1);
-                    const context = runtime.next();
-                    return runtime.reset(context.select(action));
+                    event.preventDefault();
+                    const action = runtime.checkedReference(1);
+                    const actions = runtime.next().actions;
+                    return runtime.reset(actions.select(action));
                 });
                 runtime.text(1, "Nested view");
                 runtime.end();
                 runtime.start(2, "button");
                 runtime.listener("click", function() {
                     runtime.restore(savedViewFromGetter);
+                    const action = runtime.checkedReference(1);
                     const context = runtime.next();
-                    return runtime.reset(context.select());
+                    context.select(action);
+                    return runtime.reset();
                 });
                 runtime.text(3, "Named capture");
                 runtime.end();
             }
             if (rf & 2) {
-                const action = runtime.reference(1);
+                const checkedAction = runtime.checkedReference(1);
                 const context = runtime.next();
                 runtime.property("disabled", context.disabled);
             }
@@ -2251,12 +2367,37 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
                 },
             });
         }
+
+        class ContextEffectComponent {
+            static compiled = runtime.define({
+                type: ContextEffectComponent,
+                selectors: [["context-effect"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.start(0, "div");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.next();
+                    }
+                },
+            });
+        }
         void runtime.public;
     "#;
 
     let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
         .expect("Closure view-state helpers should be analyzed");
-    let component = &report.components[0];
+    let component = report
+        .components
+        .iter()
+        .find(|component| component.selector == "closure-view-state")
+        .expect("the captured-view component should recover");
+    let effect = report
+        .components
+        .iter()
+        .find(|component| component.selector == "context-effect")
+        .expect("the effect-only context component should remain visible");
 
     assert_eq!(
         component.completeness,
@@ -2267,14 +2408,21 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
     );
     assert!(component.source.contains("@if (visible) {"));
     assert!(component.source.contains(
-        r#"<button #action (click)="select(action)" [disabled]="disabled">Nested view</button>"#
+        r#"<button #action (click)="$event.preventDefault(); actions.select(action)" [disabled]="disabled">Nested view</button>"#
     ));
     assert!(component
         .source
-        .contains(r#"<button (click)="select()">Named capture</button>"#));
+        .contains(r#"<button (click)="select(action)">Named capture</button>"#));
     assert!(!component.source.contains("runtime."));
     assert_eq!(component.stats.unsupported_runtime_calls, 0);
     assert_eq!(component.stats.malformed_instruction_calls, 0);
+    assert_eq!(
+        effect.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        effect.issues,
+        effect.source,
+    );
 }
 
 #[test]
@@ -2339,7 +2487,7 @@ fn rejects_unpaired_closure_view_state_lookalikes() {
 }
 
 #[test]
-fn rejects_a_closure_reference_helper_with_the_wrong_slot_offset() {
+fn rejects_unchecked_closure_slot_loads_as_references() {
     let source = r#"
         runtime.define = function(definition) { return definition; };
         runtime.start = function(index, name) {
@@ -2353,6 +2501,9 @@ fn rejects_a_closure_reference_helper_with_the_wrong_slot_offset() {
         runtime.property = function(name, value, sanitizer) {
             setProperty(name, value, sanitizer);
             return runtime.property;
+        };
+        runtime.slotLoad = function(slot) {
+            return runtime.state.context[27 + slot];
         };
         runtime.referenceLookalike = function(slot) {
             return runtime.state.context[28 + slot];
@@ -2374,6 +2525,7 @@ fn rejects_a_closure_reference_helper_with_the_wrong_slot_offset() {
                         runtime.end();
                     }
                     if (rf & 2) {
+                        const unchecked = runtime.slotLoad(1);
                         const target = runtime.referenceLookalike(1);
                         runtime.property("disabled", target.disabled);
                     }
@@ -2391,6 +2543,48 @@ fn rejects_a_closure_reference_helper_with_the_wrong_slot_offset() {
     assert!(component
         .source
         .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+    assert_eq!(component.stats.unsupported_runtime_calls, 2);
+}
+
+#[test]
+fn rejects_an_unknown_runtime_effect_inside_a_restored_listener() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class UnsafeRestoredListenerComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: UnsafeRestoredListenerComponent,
+                selectors: [["unsafe-restored-listener"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            core.ɵɵrestoreView(savedView);
+                            core.unknownRuntimeEffect();
+                            return core.ɵɵresetView(context.select());
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("an unsafe restored listener should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵlistener")
+            && issue
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("unsupported Ivy runtime call"))
+    }));
+    assert!(!component.source.contains("unknownRuntimeEffect"));
 }
 
 #[test]
