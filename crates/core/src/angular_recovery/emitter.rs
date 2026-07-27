@@ -26,35 +26,121 @@ pub(super) struct ComponentEmitInput<'a> {
     pub(super) dependencies: &'a [String],
 }
 
+pub(super) struct ModuleComponentEmitInput<'a> {
+    pub(super) name: &'a str,
+    pub(super) selector: &'a str,
+    pub(super) styles: &'a [String],
+    pub(super) class: &'a Class,
+    pub(super) template_source: &'a str,
+    pub(super) dependencies: &'a [String],
+}
+
 pub(super) fn emit_component_source(
     input: ComponentEmitInput<'_>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
-    let class_source =
-        print_component_class(input.name, Box::new(input.class.clone()), cm.clone())?;
-    let support_source = {
-        let items = input.support.module_items();
-        if items.is_empty() {
-            None
-        } else {
-            Some(print_module(
-                &Module {
-                    span: DUMMY_SP,
-                    body: items,
-                    shebang: None,
-                },
-                cm,
-            )?)
-        }
-    };
+    let support_source = print_support_source(input.support, &[], cm.clone())?;
 
+    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
+    if let Some(support_source) = support_source {
+        source.push_str(&support_source);
+        source.push('\n');
+    }
+    append_unresolved_symbols(&mut source, input.support);
+    source.push('\n');
+    source.push_str(&component_source_fragment(
+        ModuleComponentEmitInput {
+            name: input.name,
+            selector: input.selector,
+            styles: input.styles,
+            class: input.class,
+            template_source: &input.template.source,
+            dependencies: input.dependencies,
+        },
+        &[],
+        cm,
+    )?);
+    Ok(source)
+}
+
+pub(super) fn emit_angular_module_source(
+    components: &[ModuleComponentEmitInput<'_>],
+    support: &ArtifactSupportPlan,
+    renames: &[BindingRename],
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
+    if let Some(support_source) = print_support_source(support, renames, cm.clone())? {
+        source.push_str(&support_source);
+        source.push('\n');
+    }
+    append_unresolved_symbols(&mut source, support);
+    for component in components {
+        source.push('\n');
+        source.push_str(&component_source_fragment(
+            ModuleComponentEmitInput {
+                name: component.name,
+                selector: component.selector,
+                styles: component.styles,
+                class: component.class,
+                template_source: component.template_source,
+                dependencies: component.dependencies,
+            },
+            renames,
+            cm.clone(),
+        )?);
+        source.push('\n');
+    }
+    Ok(source.trim_end().to_string())
+}
+
+fn print_support_source(
+    support: &ArtifactSupportPlan,
+    renames: &[BindingRename],
+    cm: Lrc<SourceMap>,
+) -> Result<Option<String>> {
+    let items = support.module_items();
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let mut module = Module {
+        span: DUMMY_SP,
+        body: items,
+        shebang: None,
+    };
+    if !renames.is_empty() {
+        rename_bindings(&mut module, renames);
+    }
+    print_module(&module, cm).map(Some)
+}
+
+fn append_unresolved_symbols(source: &mut String, support: &ArtifactSupportPlan) {
+    let unresolved = support.unresolved_symbols();
+    if unresolved.is_empty() {
+        return;
+    }
+    source.push_str("\n// Unresolved artifact-local symbols: ");
+    source.push_str(&unresolved.join(", "));
+    source.push('\n');
+}
+
+fn component_source_fragment(
+    input: ModuleComponentEmitInput<'_>,
+    renames: &[BindingRename],
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    let mut class = Box::new(input.class.clone());
+    if !renames.is_empty() {
+        rename_bindings(class.as_mut(), renames);
+    }
+    let class_source = print_component_class(input.name, class, cm)?;
     let mut metadata = String::new();
     metadata.push_str("@Component({\n");
     metadata.push_str("  selector: ");
     metadata.push_str(&quoted_js_string(input.selector));
     metadata.push_str(",\n");
     metadata.push_str("  template: `\n");
-    metadata.push_str(&indent_template_literal(&input.template.source, 4));
+    metadata.push_str(&indent_template_literal(input.template_source, 4));
     metadata.push_str("\n  `,\n");
     if !input.styles.is_empty() {
         metadata.push_str("  styles: [\n");
@@ -72,21 +158,8 @@ pub(super) fn emit_component_source(
     }
     metadata.push_str("})\n");
 
-    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
-    if let Some(support_source) = support_source {
-        source.push_str(&support_source);
-        source.push('\n');
-    }
-    let unresolved = input.support.unresolved_symbols();
-    if !unresolved.is_empty() {
-        source.push_str("\n// Unresolved artifact-local symbols: ");
-        source.push_str(&unresolved.join(", "));
-        source.push('\n');
-    }
-    source.push('\n');
-    source.push_str(&metadata);
-    source.push_str(&class_source);
-    Ok(source)
+    metadata.push_str(&class_source);
+    Ok(metadata)
 }
 
 pub(super) fn clean_component_class(
