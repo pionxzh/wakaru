@@ -11,9 +11,11 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { transform } from 'esbuild';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const buildDirectory = join(root, 'target', 'angular-build', 'browser');
+const constructsBuildDirectory = join(root, 'target', 'angular-constructs');
 const advancedBuildDirectory = join(
   root,
   'target',
@@ -73,6 +75,24 @@ for (const { filename } of generated) {
   }
   writeFileSync(join(distDirectory, filenameMap.get(filename)), source);
 }
+
+runNode(
+  join(root, 'node_modules', '@angular', 'compiler-cli', 'bundles', 'src', 'bin', 'ngc.js'),
+  ['-p', 'tsconfig.constructs.json'],
+);
+const constructsSource = readFileSync(
+  join(constructsBuildDirectory, 'template-constructs.component.js'),
+  'utf8',
+);
+const constructsResult = await transform(constructsSource, {
+  define: { ngDevMode: 'false' },
+  format: 'esm',
+  legalComments: 'none',
+  minifySyntax: true,
+  target: 'es2022',
+  treeShaking: true,
+});
+writeFileSync(join(distDirectory, 'template-constructs.js'), constructsResult.code);
 
 const mainSource = readFileSync(join(distDirectory, 'main.js'), 'utf8');
 if (
