@@ -292,7 +292,12 @@ const advancedStructuralSource = readFileSync(
   join(distDirectory, 'closure-advanced-structural.js'),
   'utf8',
 );
-for (const selector of ['app-root', 'fixture-card', 'fixture-lazy-card']) {
+for (const selector of [
+  'app-root',
+  'fixture-card',
+  'fixture-lazy-card',
+  'structural-view-card',
+]) {
   if (!advancedStructuralSource.includes(selector)) {
     throw new Error(`Structural ADVANCED output is missing ${selector}`);
   }
@@ -313,6 +318,10 @@ for (const excludedRole of [
   'ɵɵtext',
   'ɵɵproperty',
   'ɵɵconditional',
+  'ɵɵgetCurrentView',
+  'ɵɵnextContext',
+  'ɵɵresetView',
+  'ɵɵrestoreView',
 ]) {
   if (advancedStructuralSource.includes(excludedRole)) {
     throw new Error(

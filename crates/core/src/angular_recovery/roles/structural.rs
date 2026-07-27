@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Expr, ExprOrSpread, FnDecl, Function, Lit, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp,
-    VarDeclarator,
+    Expr, ExprOrSpread, FnDecl, Function, Lit, MemberProp, Pat, ReturnStmt, SimpleAssignTarget,
+    Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -73,6 +73,7 @@ impl StructuralRoleEvidence {
             &function_index,
             &by_identity,
         ));
+        inferred.extend(infer_view_state_role_family(&self.functions, modules));
         for (identity, observations) in &by_identity {
             let Some(definition) = function_index.unique(identity) else {
                 continue;
@@ -575,6 +576,237 @@ fn infer_embedded_template_continuation_family(
     inferred
 }
 
+fn infer_view_state_role_family(
+    functions: &[RuntimeFunction],
+    modules: &[PreparedAngularModule],
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut restores_by_state: HashMap<SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut resets_by_state: HashMap<SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    for function in functions {
+        let Some(parameters) = plain_parameter_bindings(function) else {
+            continue;
+        };
+        let [parameter] = parameters.as_slice() else {
+            continue;
+        };
+        if returns_parameter_index(function, parameter, 8) {
+            if let Some(state) = single_assigned_member(function, AssignedValue::Binding(parameter))
+            {
+                restores_by_state.entry(state).or_default().push(function);
+            }
+        }
+        if exact_returned_identity(function)
+            == Some(SymbolIdentity::LocalBinding(parameter.clone()))
+        {
+            if let Some(state) = single_assigned_member(function, AssignedValue::Null) {
+                resets_by_state.entry(state).or_default().push(function);
+            }
+        }
+    }
+
+    let mut inferred = Vec::new();
+    for (state, restores) in restores_by_state {
+        let Some(resets) = resets_by_state.get(&state) else {
+            continue;
+        };
+        let ([restore], [reset]) = (restores.as_slice(), resets.as_slice()) else {
+            continue;
+        };
+        if restore.identity == reset.identity {
+            continue;
+        }
+        inferred.push((restore.identity.clone(), "ɵɵrestoreView"));
+        inferred.push((reset.identity.clone(), "ɵɵresetView"));
+
+        let getters = functions
+            .iter()
+            .filter(|function| {
+                function.params.is_empty()
+                    && exact_returned_identity(function)
+                        .is_some_and(|returned| same_member_object(&returned, &state))
+                    && uses_capture_restore_flow(modules, &function.identity, &restore.identity)
+            })
+            .collect::<Vec<_>>();
+        if let [getter] = getters.as_slice() {
+            inferred.push((getter.identity.clone(), "ɵɵgetCurrentView"));
+        }
+    }
+    inferred
+}
+
+fn same_member_object(left: &SymbolIdentity, right: &SymbolIdentity) -> bool {
+    match (left, right) {
+        (
+            SymbolIdentity::LocalMember {
+                object: left_object,
+                ..
+            },
+            SymbolIdentity::LocalMember {
+                object: right_object,
+                ..
+            },
+        ) => left_object == right_object,
+        (
+            SymbolIdentity::GlobalMember {
+                object: left_object,
+                ..
+            },
+            SymbolIdentity::GlobalMember {
+                object: right_object,
+                ..
+            },
+        ) => left_object == right_object,
+        _ => false,
+    }
+}
+
+fn uses_capture_restore_flow(
+    modules: &[PreparedAngularModule],
+    getter: &SymbolIdentity,
+    restore: &SymbolIdentity,
+) -> bool {
+    struct Collector<'a> {
+        getter: &'a SymbolIdentity,
+        restore: &'a SymbolIdentity,
+        unresolved_ctxt: SyntaxContext,
+        captures: HashSet<BindingKey>,
+        restored: HashSet<BindingKey>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(Expr::Call(call))) =
+                (&declarator.name, declarator.init.as_deref())
+            {
+                if call_chain(call).is_some_and(|(root, argument_lists)| {
+                    argument_lists.len() == 1
+                        && argument_lists[0].is_empty()
+                        && symbol_identity(root, self.unresolved_ctxt).as_ref() == Some(self.getter)
+                }) {
+                    self.captures.insert(binding_key(&binding.id));
+                }
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Some((root, argument_lists)) = call_chain(call) {
+                if symbol_identity(root, self.unresolved_ctxt).as_ref() == Some(self.restore)
+                    && argument_lists.len() == 1
+                    && argument_lists[0].len() == 1
+                {
+                    if let Expr::Ident(saved_view) =
+                        strip_parentheses(argument_lists[0][0].expr.as_ref())
+                    {
+                        self.restored.insert(binding_key(saved_view));
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    modules.iter().any(|prepared| {
+        let mut collector = Collector {
+            getter,
+            restore,
+            unresolved_ctxt: prepared.unresolved_ctxt,
+            captures: HashSet::new(),
+            restored: HashSet::new(),
+        };
+        prepared.module.visit_with(&mut collector);
+        collector
+            .captures
+            .iter()
+            .any(|capture| collector.restored.contains(capture))
+    })
+}
+
+#[derive(Clone, Copy)]
+enum AssignedValue<'a> {
+    Binding(&'a BindingKey),
+    Null,
+}
+
+fn single_assigned_member(
+    function: &RuntimeFunction,
+    value: AssignedValue<'_>,
+) -> Option<SymbolIdentity> {
+    struct Collector<'a> {
+        value: AssignedValue<'a>,
+        unresolved_ctxt: SyntaxContext,
+        targets: HashSet<SymbolIdentity>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op != swc_core::ecma::ast::AssignOp::Assign {
+                assignment.visit_children_with(self);
+                return;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+                assignment.visit_children_with(self);
+                return;
+            };
+            let matches_value = match self.value {
+                AssignedValue::Binding(binding) => matches!(
+                    strip_parentheses(assignment.right.as_ref()),
+                    Expr::Ident(identifier) if binding_key(identifier) == *binding
+                ),
+                AssignedValue::Null => matches!(
+                    strip_parentheses(assignment.right.as_ref()),
+                    Expr::Lit(Lit::Null(_))
+                ),
+            };
+            if matches_value {
+                if let Some(identity) =
+                    symbol_identity(&Expr::Member(member.clone()), self.unresolved_ctxt)
+                {
+                    self.targets.insert(identity);
+                }
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        value,
+        unresolved_ctxt: function.unresolved_ctxt,
+        targets: HashSet::new(),
+    };
+    function.body.visit_with(&mut collector);
+    let mut targets = collector.targets.into_iter();
+    let target = targets.next()?;
+    targets.next().is_none().then_some(target)
+}
+
+fn returns_parameter_index(
+    function: &RuntimeFunction,
+    parameter: &BindingKey,
+    expected_index: u64,
+) -> bool {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    returns.expressions.iter().any(|expression| {
+        let expression = match strip_parentheses(expression.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.last().map(|expression| expression.as_ref()),
+            expression => Some(expression),
+        };
+        let Some(Expr::Member(member)) = expression.map(strip_parentheses) else {
+            return false;
+        };
+        let Expr::Ident(object) = strip_parentheses(member.obj.as_ref()) else {
+            return false;
+        };
+        binding_key(object) == *parameter
+            && computed_member_index(&member.prop) == Some(expected_index)
+    })
+}
+
 fn exact_returned_identity(function: &RuntimeFunction) -> Option<SymbolIdentity> {
     let mut returns = ReturnExpressionCollector::default();
     function.body.visit_with(&mut returns);
@@ -809,15 +1041,19 @@ fn is_next_context_shape(
         return false;
     };
     let calls = direct_calls(definition);
-    let [call] = calls.as_slice() else {
-        return false;
-    };
-    call.arguments.as_slice().first().is_some_and(|argument| {
-        matches!(
-            argument.as_ref(),
-            Expr::Ident(identifier) if binding_key(identifier) == binding_key(&parameter.id)
-        )
-    })
+    let parameter = binding_key(&parameter.id);
+    if let [call] = calls.as_slice() {
+        return call.arguments.as_slice().first().is_some_and(|argument| {
+            matches!(
+                argument.as_ref(),
+                Expr::Ident(identifier) if binding_key(identifier) == parameter
+            )
+        });
+    }
+    calls.is_empty()
+        && decrements_binding(&definition.body, &parameter)
+        && contains_computed_member_index(&definition.body, 14)
+        && returns_computed_member_index(definition, 8)
 }
 
 fn is_projection_def_shape(
@@ -862,8 +1098,13 @@ fn is_reference_shape(
     definition: &RuntimeFunction,
     observations: &[TemplateCallObservation],
 ) -> bool {
-    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
-        && direct_calls(definition).len() >= 2
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    let [slot] = parameters.as_slice() else {
+        return false;
+    };
+    (direct_calls(definition).len() >= 2 || returns_parameter_offset_member(definition, slot, 27))
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Initializer
                 && observation.phase == 2
@@ -873,6 +1114,52 @@ fn is_reference_shape(
                     .first()
                     .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
         })
+}
+
+fn returns_parameter_offset_member(
+    function: &RuntimeFunction,
+    parameter: &BindingKey,
+    offset: u64,
+) -> bool {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    returns.expressions.iter().any(|expression| {
+        let expression = match strip_parentheses(expression.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.last().map(|expression| expression.as_ref()),
+            expression => Some(expression),
+        };
+        let Some(Expr::Member(member)) = expression.map(strip_parentheses) else {
+            return false;
+        };
+        if !matches!(strip_parentheses(member.obj.as_ref()), Expr::Member(_)) {
+            return false;
+        }
+        let MemberProp::Computed(computed) = &member.prop else {
+            return false;
+        };
+        let Expr::Bin(binary) = strip_parentheses(computed.expr.as_ref()) else {
+            return false;
+        };
+        if binary.op != BinaryOp::Add {
+            return false;
+        }
+        let operands_match = |left: &Expr, right: &Expr| {
+            computed_member_offset(left) == Some(offset)
+                && matches!(
+                    strip_parentheses(right),
+                    Expr::Ident(identifier) if binding_key(identifier) == *parameter
+                )
+        };
+        operands_match(binary.left.as_ref(), binary.right.as_ref())
+            || operands_match(binary.right.as_ref(), binary.left.as_ref())
+    })
+}
+
+fn computed_member_offset(expression: &Expr) -> Option<u64> {
+    let Expr::Lit(Lit::Num(number)) = strip_parentheses(expression) else {
+        return None;
+    };
+    (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as u64)
 }
 
 fn is_pipe_shape(definition: &RuntimeFunction, observations: &[TemplateCallObservation]) -> bool {
@@ -1071,6 +1358,92 @@ fn is_nonnegative_integer(expression: &Expr) -> bool {
         Expr::Lit(Lit::Num(number))
             if number.value >= 0.0 && number.value.fract() == 0.0
     )
+}
+
+fn computed_member_index(property: &MemberProp) -> Option<u64> {
+    let MemberProp::Computed(computed) = property else {
+        return None;
+    };
+    let Expr::Lit(Lit::Num(number)) = strip_parentheses(computed.expr.as_ref()) else {
+        return None;
+    };
+    (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as u64)
+}
+
+fn contains_computed_member_index(block: &BlockStmt, expected: u64) -> bool {
+    struct Finder {
+        expected: u64,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if computed_member_index(&member.prop) == Some(self.expected) {
+                self.found = true;
+                return;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+fn returns_computed_member_index(function: &RuntimeFunction, expected: u64) -> bool {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    returns.expressions.iter().any(|expression| {
+        let expression = match strip_parentheses(expression.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.last().map(|expression| expression.as_ref()),
+            expression => Some(expression),
+        };
+        matches!(
+            expression.map(strip_parentheses),
+            Some(Expr::Member(member)) if computed_member_index(&member.prop) == Some(expected)
+        )
+    })
+}
+
+fn decrements_binding(block: &BlockStmt, binding: &BindingKey) -> bool {
+    struct Finder<'a> {
+        binding: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+            if update.op == swc_core::ecma::ast::UpdateOp::MinusMinus
+                && matches!(
+                    strip_parentheses(update.arg.as_ref()),
+                    Expr::Ident(identifier) if binding_key(identifier) == *self.binding
+                )
+            {
+                self.found = true;
+                return;
+            }
+            update.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        binding,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
 }
 
 fn is_string_literal(expression: &Expr) -> bool {
