@@ -14,7 +14,11 @@ The pinned Angular CLI application produces:
 - `dist/closure-advanced.js` — a separate producer entry passed through
   Closure Compiler `ADVANCED` with explicit retained roots and externs.
 - `dist/template-constructs.js` — direct full-AOT Angular compiler output for
-  isolated flat bindings and nested template constructs.
+  isolated flat bindings and nested template constructs;
+- `dist/template-constructs-assignment.js` — the same direct compiler output
+  with its top-level embedded-view functions lowered to stable predeclared
+  assignments, matching the binding form used by Closure ModuleManager-style
+  packaging.
 
 The source deliberately exercises element structure, static attributes, text
 interpolation, a listener, a property binding, nested `@if` / `@else` embedded
@@ -37,6 +41,12 @@ The direct compiler fixture complements the chunk fixture: it pins exact
 instruction vocabulary without making the test depend on application bundler
 chunking or tree shaking.
 
+The assignment-backed derivative is produced mechanically from that compiler
+output with the pinned TypeScript AST factory. It contains no copied production
+code and changes only the declaration form of top-level embedded-view
+functions. This keeps the recovery regression tied to real Angular output while
+pinning the `var view; view = function (...) { ... }` module shape.
+
 Regenerate with:
 
 ```bash
@@ -49,7 +59,8 @@ For the ordinary Angular and Closure `SIMPLE` artifacts, the generator
 canonicalizes only output filenames and their relative import specifiers. For
 the isolated compiler fixture, esbuild removes development-only metadata and
 performs syntax-only minification; it does not bundle dependencies or mangle
-names.
+names. The assignment-backed derivative is then printed from the same generated
+AST as described above.
 
 The `ADVANCED` fixture is built from `src/advanced-main.ts`. Its producer
 contract exposes three things through properties declared in
