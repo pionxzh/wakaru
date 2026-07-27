@@ -89,6 +89,10 @@ impl ArtifactSymbolTable {
         self.recover_with_provided(roots, reserved_names, &HashSet::new(), report_unresolved)
     }
 
+    pub(super) fn bindings(&self) -> impl Iterator<Item = &BindingKey> {
+        self.entries.keys()
+    }
+
     pub(super) fn recover_with_provided(
         &self,
         roots: &HashSet<BindingKey>,
