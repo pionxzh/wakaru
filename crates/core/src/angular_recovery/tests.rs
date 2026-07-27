@@ -1532,6 +1532,175 @@ fn recovers_projection_local_references_and_pipe_bindings() {
 }
 
 #[test]
+fn recovers_repeater_views_with_local_bindings_and_restored_listeners() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const trackItem = ($index, $item) => $item.id;
+
+        function RowTemplate(rf, context) {
+            if (rf & 1) {
+                const savedView = core.ɵɵgetCurrentView();
+                core.ɵɵelementStart(0, "button", 2, 0);
+                core.ɵɵlistener("click", function() {
+                    const item_r1 = core.ɵɵrestoreView(savedView).$implicit;
+                    const row_r2 = core.ɵɵreference(1);
+                    const parent_r3 = core.ɵɵnextContext();
+                    return core.ɵɵresetView(parent_r3.select(row_r2, item_r1));
+                });
+                core.ɵɵtext(2);
+                core.ɵɵelementEnd();
+            }
+            if (rf & 2) {
+                const item_r1 = context.$implicit;
+                core.ɵɵadvance(2);
+                core.ɵɵtextInterpolate1(" ", item_r1.label, " ");
+            }
+        }
+
+        function EmptyTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p");
+                core.ɵɵtext(1, "No items");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class RepeaterComponent {
+            items = [];
+            select(row, item) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: RepeaterComponent,
+                selectors: [["repeater-card"]],
+                consts: [["row", ""], ["type", "button"], ["type", "button", 3, "click"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵrepeaterCreate(
+                            0,
+                            RowTemplate,
+                            3,
+                            1,
+                            "button",
+                            1,
+                            trackItem,
+                            false,
+                            EmptyTemplate,
+                            2,
+                            0,
+                            "p"
+                        );
+                    }
+                    if (rf & 2) {
+                        core.ɵɵrepeater(context.items);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("repeater views should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(component
+        .source
+        .contains(r#"<button type="button" #row (click)="select(row, item)">"#));
+    assert!(component.source.contains("{{ item.label }}"));
+    assert!(component.source.contains("@empty {"));
+    assert!(component.source.contains("<p>No items</p>"));
+    assert!(!component.source.contains("ɵɵ"));
+    assert_eq!(component.stats.runtime_calls_observed, 16);
+    assert_eq!(component.stats.rendered_instruction_calls, 16);
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_builtin_repeater_track_expressions() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function RowTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "span");
+            }
+        }
+
+        class IndexTrackComponent {
+            items = [];
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: IndexTrackComponent,
+                selectors: [["index-track"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵrepeaterCreate(
+                            0, RowTemplate, 1, 0, "span", null,
+                            core.ɵɵrepeaterTrackByIndex, false
+                        );
+                    }
+                    if (rf & 2) {
+                        core.ɵɵrepeater(context.items);
+                    }
+                },
+            });
+        }
+
+        class IdentityTrackComponent {
+            items = [];
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: IdentityTrackComponent,
+                selectors: [["identity-track"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵrepeaterCreate(
+                            0, RowTemplate, 1, 0, "span", null,
+                            core.ɵɵrepeaterTrackByIdentity, false
+                        );
+                    }
+                    if (rf & 2) {
+                        core.ɵɵrepeater(context.items);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("built-in repeater track functions should be analyzed");
+    let by_selector = report
+        .components
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    assert_eq!(
+        by_selector["index-track"].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(by_selector["index-track"]
+        .source
+        .contains("@for (item of items; track $index) {"));
+    assert_eq!(
+        by_selector["identity-track"].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(by_selector["identity-track"]
+        .source
+        .contains("@for (item of items; track item) {"));
+}
+
+#[test]
 fn recovers_a_structurally_renamed_projection_selector_field() {
     let source = r#"
         import * as core from "@angular/core";
