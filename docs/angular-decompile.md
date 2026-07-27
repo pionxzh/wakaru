@@ -214,11 +214,25 @@ unknown. When the getter call survives, its zero-argument function must return
 a member of the same state object and the captured result must flow to the
 proven restore helper before it receives the `ɵɵgetCurrentView` role.
 
-Closure can similarly reduce `ɵɵreference(slot)` to a direct view-slot read.
+Closure can similarly specialize `ɵɵreference(slot)` around a view-slot read.
 The specialized form is accepted only with proven update-phase initializer
-uses and the Angular `27 + slot` layout relation; a different offset remains an
-unknown runtime call. Resolving that slot to a template reference is still
-view-local and requires a matching creation-table declaration.
+uses, the Angular `27 + slot` layout relation, a returned checked slot, and the
+sentinel-error branch retained by the runtime helper. A bare
+`state[27 + slot]` loader is not enough: Angular uses the same primitive for
+non-reference slots, so it remains unknown without a stronger relationship.
+Resolving a proven reference slot to a template name is still view-local and
+requires a matching creation-table declaration.
+
+Each recovered render function owns its node cursor, reference slots, context
+depth, aliases, and listener operations. Entering an embedded view snapshots
+the already-proven ancestor reference scopes rather than flattening their
+numeric indexes into the child. An update- or listener-phase
+`ɵɵnextContext(depth)` advances only that view's context cursor; a following
+`ɵɵreference(slot)` resolves against the exact ancestor depth or produces a
+missing-target issue. This also lets restored listeners retain ordered ordinary
+effects, substitute proven context-member aliases, and treat a zero-argument
+`ɵɵresetView()` return as plumbing. Calls on an unresolved runtime namespace
+are never substituted into the event expression.
 
 ### Performance and profiling
 
