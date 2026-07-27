@@ -174,6 +174,13 @@ constant expected time. This avoids rescanning every runtime function for each
 template call while preserving the existing fail-closed behavior for duplicate
 or ambiguous definitions.
 
+Embedded-view function identity is likewise binding-based. Besides function
+declarations and initialized function variables, the module table accepts a
+predeclared local with exactly one direct assignment to a function, plus stable
+identifier aliases of that binding. This covers Closure ModuleManager-style
+`var view; view = function (...) { ... }` output without treating an arbitrary
+or reassigned runtime value as a template function.
+
 ### Performance and profiling
 
 `--profile` exposes these top-level Angular spans:
@@ -280,6 +287,10 @@ reference, and a pipe binding from both the Angular chunks and their Closure
 `SIMPLE` and rooted `ADVANCED` aggregates. The isolated direct-compiler fixture
 additionally recovers a modern `@for` / `@empty` repeater, its track expression,
 loop-local reference, and captured-view listener as a complete artifact.
+An assignment-backed derivative of that generated artifact proves the same
+nested views after their function declarations are mechanically lowered to
+stable predeclared assignments. Reassigning one of those bindings is a negative
+fixture and remains partial.
 Deferred-view instructions remain explicit partial regions, matching the scope
 above.
 
@@ -337,6 +348,7 @@ Pause and re-check this boundary after each milestone:
 7. artifact-local helpers, imports, and materializable dependencies.
 8. rooted Closure `ADVANCED` validation and representative-corpus profiling.
 9. repeaters, loop-local aliases, and captured-view listeners.
+10. assignment-backed embedded-view functions and stable aliases.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

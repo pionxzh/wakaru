@@ -12,6 +12,8 @@ const CLOSURE_SIMPLE: &str = include_str!("bundles/angular-ivy-gen/dist/closure-
 const CLOSURE_ADVANCED: &str = include_str!("bundles/angular-ivy-gen/dist/closure-advanced.js");
 const TEMPLATE_CONSTRUCTS: &str =
     include_str!("bundles/angular-ivy-gen/dist/template-constructs.js");
+const TEMPLATE_CONSTRUCTS_ASSIGNMENT: &str =
+    include_str!("bundles/angular-ivy-gen/dist/template-constructs-assignment.js");
 
 fn assert_production_artifact(source: &str) {
     assert!(!source.contains("ɵsetClassMetadata"));
@@ -236,6 +238,50 @@ fn recovers_view_local_angular_template_constructs() {
         .source
         .contains(r#"<ng-content select="[card-footer]" />"#));
     assert!(!component.source.contains("ɵɵ"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_assignment_lowered_angular_template_constructs() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS_ASSIGNMENT);
+    assert!(TEMPLATE_CONSTRUCTS_ASSIGNMENT
+        .contains("var FixtureStructuralConstructsComponent_Conditional_1_Template"));
+    assert!(TEMPLATE_CONSTRUCTS_ASSIGNMENT
+        .contains("FixtureStructuralConstructsComponent_Conditional_1_Template = function"));
+    assert!(!TEMPLATE_CONSTRUCTS_ASSIGNMENT
+        .contains("function FixtureStructuralConstructsComponent_Conditional_1_Template"));
+
+    let recovered = recover_angular_components_from_js(
+        TEMPLATE_CONSTRUCTS_ASSIGNMENT,
+        AngularRecoveryOptions::default(),
+    )
+    .expect("assignment-lowered Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-structural-constructs")
+        .expect("structural component identity should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (showDetails) {"));
+    assert!(component
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(component.source.contains("(click)=\"select(row, item)\""));
+    assert!(component.source.contains("@empty {"));
+    assert!(component
+        .source
+        .contains(r#"<ng-content select="[card-footer]" />"#));
     assert_eq!(
         component.stats.runtime_calls_observed,
         component.stats.rendered_instruction_calls
