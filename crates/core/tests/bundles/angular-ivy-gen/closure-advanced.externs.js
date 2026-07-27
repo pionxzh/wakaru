@@ -7,6 +7,9 @@ globalThis.__wakaruAngularDefinitions;
 /** @type {!Object<string, ?>} */
 globalThis.__wakaruIvyRuntime;
 
+/** @type {!Array<?>} */
+globalThis.__wakaruStructuralRuntime;
+
 /** @type {?} */
 Object.prototype.ɵcmp;
 
