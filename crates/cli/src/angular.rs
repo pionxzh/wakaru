@@ -52,7 +52,7 @@ pub(crate) fn single_file_angular_metadata(
         status: if sidecars.is_empty() {
             JsonModuleStatus::Decompiled
         } else {
-            JsonModuleStatus::AngularComponentSourceJs
+            JsonModuleStatus::AngularModuleSourceJs
         },
         source_filename: (!sidecars.is_empty()).then(|| output_filename.to_string()),
     })
@@ -71,8 +71,8 @@ pub(crate) fn angular_artifact_summary(
         AngularArtifactSummary::default(),
         |mut summary, artifact| {
             match artifact.status {
-                JsonModuleStatus::RecoveredAngularComponent => summary.complete += 1,
-                JsonModuleStatus::PartialAngularComponent => summary.partial += 1,
+                JsonModuleStatus::RecoveredAngularModule => summary.complete += 1,
+                JsonModuleStatus::PartialAngularModule => summary.partial += 1,
                 _ => {}
             }
             summary
@@ -84,7 +84,7 @@ pub(crate) fn angular_artifact_summary(
 
 pub(crate) fn format_angular_artifact_summary(summary: AngularArtifactSummary) -> String {
     format!(
-        "angular: {} complete, {} partial",
+        "angular modules: {} complete, {} partial",
         summary.complete, summary.partial
     )
 }
@@ -96,7 +96,7 @@ pub(crate) fn single_file_angular_sidecar_path(
     let sidecar_name = Path::new(artifact_filename)
         .file_name()
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| OsStr::new("component.component.ts"));
+        .unwrap_or_else(|| OsStr::new("module.angular.ts"));
     output_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

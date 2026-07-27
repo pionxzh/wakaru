@@ -3,8 +3,9 @@
 Status: **experimental design and implementation guide**.
 
 Wakaru recovers production Angular Ivy component definitions into readable
-TypeScript inspection artifacts. The first output shape is one `.ts` artifact
-per component with an inline `template` and inline `styles`:
+TypeScript inspection artifacts. The output unit is one `.angular.ts` artifact
+per recovered source module. Sibling components stay together, with each
+component retaining its inline `template` and inline `styles`:
 
 ```ts
 import { Component } from "@angular/core";
@@ -59,10 +60,12 @@ Initial recovery covers:
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Deferred views, legacy structural-directive syntax, cross-artifact dependency
+Deferred views, legacy structural-directive syntax, cross-module dependency
 linking, and original package provenance after bundling are incremental
-extensions. Unsupported instruction regions remain explicit in the recovery
-IR and must not be silently rendered as if recovery were complete.
+extensions. Dependencies between recovered siblings in the same module are
+linked by binding identity. Unsupported instruction regions remain explicit in
+the recovery IR and must not be silently rendered as if recovery were
+complete.
 
 ## Architecture boundary
 
@@ -78,7 +81,7 @@ bundled JavaScript → format-specific unpack → module workspace
                  readable JavaScript                  Ivy analyzer
                                                               │
                                                               ▼
-                                              TypeScript component artifacts
+                                                TypeScript module artifacts
 ```
 
 An unpacker owns only transport concerns: bundle detection, module boundaries,
@@ -264,13 +267,18 @@ analyzer.
 ## Artifact contract
 
 Root `decompile` and `unpack` operations use the framework-neutral artifact
-model from [public-api.md](public-api.md). An Angular component currently emits
-one TypeScript file, but the model remains multi-file so future source,
-template, or stylesheet separation does not require another API break.
+model from [public-api.md](public-api.md). All recovered components originating
+from one source module emit as one TypeScript inspection artifact. The
+low-level report still exposes per-component results and diagnostics for
+callers that need them, plus module results that link back to those component
+indices.
 
-Artifact filenames are derived from the recovered component name or selector,
-normalized as safe relative paths, and deduplicated across the complete module
-workspace. Each artifact records the source module index.
+Artifact filenames are derived from the source-module path as
+`<module-stem>.angular.ts`, normalized as safe relative paths, and deduplicated
+across the complete module workspace. Each artifact records the source module
+index. Recovered class names are also unique within an artifact: when distinct
+bindings infer the same readable name, later siblings receive a deterministic
+numeric suffix.
 
 Recovery confidence is structural, not a percentage:
 
@@ -319,18 +327,21 @@ closure is portable: function declarations, function or arrow initializers,
 literal constants, and direct aliases. If that closure reaches a class,
 eager call, or another unsupported initializer, the helper is omitted and the
 artifact contains an explicit unresolved-symbol comment. This prevents one
-component artifact from absorbing an arbitrary runtime graph.
+module artifact from absorbing an arbitrary runtime graph.
 
 When a compiled dependency root can be materialized, the emitter adds it to a
 reconstructed `imports` list. This is an inspection-oriented equivalent of
 the compiler dependency set, not a claim that the original decorator used the
 same spelling or module organization.
 
-Bundling can erase the package path that originally supplied a local
-component, directive, or pipe. Wakaru does not guess that provenance. Linking
-one recovered component artifact to another requires an artifact-graph phase
-after filenames have been assigned; it does not belong in an unpacker or the
-Ivy instruction classifier.
+When a dependency binding names another recovered component in the same source
+module, the module emitter links it directly to the sibling's recovered class
+name and renames sibling references consistently. Imports and portable helpers
+shared by multiple components are emitted once. Bundling can still erase the
+package path that originally supplied a component, directive, or pipe from a
+different source module; Wakaru does not guess that cross-module provenance.
+That future graph belongs after module recovery, not in an unpacker or the Ivy
+instruction classifier.
 
 ## Production feasibility validation
 
