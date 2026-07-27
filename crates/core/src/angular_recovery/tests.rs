@@ -3026,6 +3026,89 @@ fn groups_sibling_components_and_relationships_into_one_module_artifact() {
 }
 
 #[test]
+fn records_cross_module_component_relationships_from_esm_edges() {
+    let child = r#"
+        import * as core from "@angular/core";
+
+        export class a {
+            static compiled = core.ɵɵdefineComponent({
+                type: a,
+                selectors: [["child-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "span");
+                    }
+                },
+            });
+        }
+    "#;
+    let parent = r#"
+        import * as core from "@angular/core";
+        import { a as c } from "./child.js";
+
+        class d {
+            static compiled = core.ɵɵdefineComponent({
+                type: d,
+                selectors: [["child-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "aside");
+                    }
+                },
+            });
+        }
+
+        export class b {
+            childType = c;
+
+            static compiled = core.ɵɵdefineComponent({
+                type: b,
+                selectors: [["parent-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelement(0, "main");
+                    }
+                },
+                dependencies: [c],
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_modules(
+        &[
+            AngularModuleSource {
+                filename: "src/child.js",
+                source: child,
+            },
+            AngularModuleSource {
+                filename: "src/parent.js",
+                source: parent,
+            },
+        ],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("proven ESM component edges should be linked");
+
+    assert_eq!(report.modules.len(), 2);
+    let parent = &report.modules[1];
+    assert_eq!(
+        parent.dependencies,
+        [RecoveredAngularModuleDependency {
+            component_index: 2,
+            target_component_index: 0,
+            target_module_index: 0,
+            target_name: "ChildCardComponent".to_string(),
+            local_name: "ChildCardComponent_2".to_string(),
+        }]
+    );
+    assert!(parent.source.contains("export class ChildCardComponent {"));
+    assert!(parent.source.contains("imports: [ChildCardComponent_2]"));
+    assert!(parent.source.contains("childType = ChildCardComponent_2;"));
+    assert!(!parent.source.contains(r#"from "./child.js""#));
+    assert_typescript_parses(&parent.source);
+}
+
+#[test]
 fn disambiguates_inferred_sibling_component_names() {
     let source = r#"
         import * as core from "@angular/core";

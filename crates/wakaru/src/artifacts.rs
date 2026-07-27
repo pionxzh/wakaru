@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::output::{
@@ -119,7 +119,7 @@ fn recover_angular_modules(
         unknown_runtime_call_shapes,
         ..
     } = report;
-    let artifacts = recovered_modules
+    let pending = recovered_modules
         .into_iter()
         .map(|recovered_module| {
             let (module_index, module) = eligible
@@ -127,9 +127,25 @@ fn recover_angular_modules(
                 .copied()
                 .ok_or_else(|| anyhow::anyhow!("Angular source module index is out of bounds"))?;
             let filename = angular_module_artifact_filename(&module.filename, &mut seen);
-            Ok(ArtifactOutput {
+            Ok((module_index, filename, recovered_module))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let artifact_filenames = pending
+        .iter()
+        .map(|(_, filename, recovered)| (recovered.module_index, filename.clone()))
+        .collect::<HashMap<_, _>>();
+    let artifacts = pending
+        .into_iter()
+        .map(|(module_index, filename, recovered_module)| {
+            let code = link_angular_artifact_dependencies(
+                &recovered_module.source,
+                &filename,
+                &recovered_module.dependencies,
+                &artifact_filenames,
+            );
+            ArtifactOutput {
                 filename,
-                code: recovered_module.source,
+                code,
                 kind: ArtifactKind::AngularModule,
                 status: match recovered_module.completeness {
                     wakaru_core::AngularRecoveryCompleteness::Complete => ArtifactStatus::Complete,
@@ -137,10 +153,94 @@ fn recover_angular_modules(
                     _ => ArtifactStatus::Partial,
                 },
                 module_indices: vec![module_index],
-            })
+            }
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect();
     Ok((artifacts, stats, unknown_runtime_call_shapes))
+}
+
+fn link_angular_artifact_dependencies(
+    source: &str,
+    filename: &str,
+    dependencies: &[wakaru_core::RecoveredAngularModuleDependency],
+    artifact_filenames: &HashMap<usize, String>,
+) -> String {
+    let mut imports = BTreeMap::<String, BTreeSet<(String, String)>>::new();
+    for dependency in dependencies {
+        let Some(target_filename) = artifact_filenames.get(&dependency.target_module_index) else {
+            continue;
+        };
+        if target_filename == filename {
+            continue;
+        }
+        let target_module = target_filename
+            .strip_suffix(".ts")
+            .unwrap_or(target_filename);
+        let specifier = relative_artifact_specifier(filename, target_module);
+        imports.entry(specifier).or_default().insert((
+            dependency.target_name.clone(),
+            dependency.local_name.clone(),
+        ));
+    }
+    if imports.is_empty() {
+        return source.to_string();
+    }
+
+    let mut import_source = String::new();
+    for (specifier, bindings) in imports {
+        let bindings = bindings
+            .into_iter()
+            .map(|(target, local)| {
+                if target == local {
+                    target
+                } else {
+                    format!("{target} as {local}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        import_source.push_str(&format!("import {{ {bindings} }} from \"{specifier}\";\n"));
+    }
+    let insertion = source.find('\n').map_or(source.len(), |index| index + 1);
+    let mut linked = String::with_capacity(source.len() + import_source.len());
+    linked.push_str(&source[..insertion]);
+    linked.push_str(&import_source);
+    linked.push_str(&source[insertion..]);
+    linked
+}
+
+fn relative_artifact_specifier(from_filename: &str, target_filename: &str) -> String {
+    let from = from_filename.replace('\\', "/");
+    let target = target_filename.replace('\\', "/");
+    let from_dir = from
+        .rsplit_once('/')
+        .map(|(directory, _)| {
+            directory
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let target_parts = target
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let mut common = 0;
+    while common < from_dir.len()
+        && common < target_parts.len()
+        && from_dir[common] == target_parts[common]
+    {
+        common += 1;
+    }
+    let mut parts = Vec::new();
+    parts.extend(std::iter::repeat_n("..", from_dir.len() - common));
+    parts.extend(target_parts[common..].iter().copied());
+    let relative = parts.join("/");
+    if relative.starts_with("../") {
+        relative
+    } else {
+        format!("./{relative}")
+    }
 }
 
 fn format_unknown_runtime_call_shapes(
