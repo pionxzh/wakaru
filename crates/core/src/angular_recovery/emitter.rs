@@ -207,7 +207,29 @@ pub(super) fn print_template_expression(
     local_references: &HashMap<BindingKey, String>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
+    print_template_expression_with_aliases(
+        expression,
+        component_contexts,
+        local_references,
+        &HashMap::new(),
+        cm,
+    )
+}
+
+pub(super) fn print_template_expression_with_aliases(
+    expression: &Expr,
+    component_contexts: &HashSet<BindingKey>,
+    local_references: &HashMap<BindingKey, String>,
+    expression_aliases: &HashMap<BindingKey, Box<Expr>>,
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
     let mut expression = expression.clone();
+    if !expression_aliases.is_empty() {
+        expression.visit_mut_with(&mut TemplateExpressionAliasResolver {
+            aliases: expression_aliases,
+            active: HashSet::new(),
+        });
+    }
     if !component_contexts.is_empty() || !local_references.is_empty() {
         expression.visit_mut_with(&mut TemplateBindingCleaner {
             contexts: component_contexts,
@@ -215,6 +237,31 @@ pub(super) fn print_template_expression(
         });
     }
     print_expression(&expression, cm)
+}
+
+struct TemplateExpressionAliasResolver<'a> {
+    aliases: &'a HashMap<BindingKey, Box<Expr>>,
+    active: HashSet<BindingKey>,
+}
+
+impl VisitMut for TemplateExpressionAliasResolver<'_> {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        let Expr::Ident(identifier) = expression else {
+            expression.visit_mut_children_with(self);
+            return;
+        };
+        let key = binding_key(identifier);
+        let Some(alias) = self.aliases.get(&key) else {
+            return;
+        };
+        if !self.active.insert(key.clone()) {
+            return;
+        }
+        let mut alias = alias.as_ref().clone();
+        alias.visit_mut_with(self);
+        self.active.remove(&key);
+        *expression = alias;
+    }
 }
 
 fn print_expression(expression: &Expr, cm: Lrc<SourceMap>) -> Result<String> {
