@@ -3,12 +3,13 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, Result};
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
-    ExprOrSpread, FnDecl, Function, Lit, Module, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
-    UnaryOp, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
+    Decl, Expr, ExprOrSpread, FnDecl, Function, Lit, Module, Pat, ReturnStmt, SimpleAssignTarget,
+    Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 
 use super::artifact::expression_references;
@@ -36,7 +37,9 @@ pub(super) struct TemplateFunctionTable {
 
 impl TemplateFunctionTable {
     pub(super) fn collect(module: &Module) -> Self {
-        let mut collector = TemplateFunctionCollector::default();
+        let binding_uses = BindingUseIndex::collect(module);
+        let uninitialized_bindings = binding_uses.uninitialized_bindings();
+        let mut collector = TemplateFunctionCollector::new(&binding_uses, &uninitialized_bindings);
         module.visit_with(&mut collector);
         Self {
             functions: collector.functions,
@@ -45,23 +48,34 @@ impl TemplateFunctionTable {
     }
 
     fn resolve(&self, expression: &Expr) -> Option<ResolvedTemplateFunction> {
-        match strip_parentheses(expression) {
-            Expr::Ident(identifier) => {
-                let key = binding_key(identifier);
-                self.functions
-                    .get(&key)
-                    .cloned()
-                    .map(|function| ResolvedTemplateFunction {
-                        key: Some(key),
-                        function,
-                    })
+        let mut expression = strip_parentheses(expression);
+        let mut visited = HashSet::new();
+        for _ in 0..32 {
+            match expression {
+                Expr::Ident(identifier) => {
+                    let key = binding_key(identifier);
+                    if let Some(function) = self.functions.get(&key) {
+                        return Some(ResolvedTemplateFunction {
+                            key: Some(key),
+                            function: function.clone(),
+                        });
+                    }
+                    if !visited.insert(key.clone()) {
+                        return None;
+                    }
+                    let value = self.values.get(&key)?;
+                    expression = strip_parentheses(value.as_ref());
+                }
+                Expr::Fn(function) => {
+                    return Some(ResolvedTemplateFunction {
+                        key: None,
+                        function: function.function.as_ref().clone(),
+                    });
+                }
+                _ => return None,
             }
-            Expr::Fn(function) => Some(ResolvedTemplateFunction {
-                key: None,
-                function: function.function.as_ref().clone(),
-            }),
-            _ => None,
         }
+        None
     }
 
     pub(super) fn resolve_expression(&self, expression: &Expr) -> Box<Expr> {
@@ -84,32 +98,96 @@ impl TemplateFunctionTable {
     }
 }
 
-#[derive(Default)]
-struct TemplateFunctionCollector {
+struct TemplateFunctionCollector<'a> {
+    binding_uses: &'a BindingUseIndex,
+    uninitialized_bindings: &'a HashSet<BindingKey>,
     functions: HashMap<BindingKey, Function>,
     values: HashMap<BindingKey, Box<Expr>>,
+    definitions: HashSet<BindingKey>,
+    ambiguous: HashSet<BindingKey>,
 }
 
-impl Visit for TemplateFunctionCollector {
+impl<'a> TemplateFunctionCollector<'a> {
+    fn new(
+        binding_uses: &'a BindingUseIndex,
+        uninitialized_bindings: &'a HashSet<BindingKey>,
+    ) -> Self {
+        Self {
+            binding_uses,
+            uninitialized_bindings,
+            functions: HashMap::new(),
+            values: HashMap::new(),
+            definitions: HashSet::new(),
+            ambiguous: HashSet::new(),
+        }
+    }
+
+    fn begin_definition(&mut self, key: &BindingKey) -> bool {
+        if self.ambiguous.contains(key) {
+            return false;
+        }
+        if self.definitions.insert(key.clone()) {
+            return true;
+        }
+        self.functions.remove(key);
+        self.values.remove(key);
+        self.ambiguous.insert(key.clone());
+        false
+    }
+
+    fn record_function(&mut self, key: BindingKey, function: Function) {
+        if self.begin_definition(&key) {
+            self.functions.insert(key, function);
+        }
+    }
+
+    fn record_value(&mut self, key: BindingKey, value: Box<Expr>) {
+        if !self.begin_definition(&key) {
+            return;
+        }
+        if let Expr::Fn(function) = strip_parentheses(value.as_ref()) {
+            self.functions
+                .insert(key.clone(), function.function.as_ref().clone());
+        }
+        self.values.insert(key, value);
+    }
+}
+
+impl Visit for TemplateFunctionCollector<'_> {
     fn visit_fn_decl(&mut self, declaration: &FnDecl) {
-        self.functions.insert(
-            binding_key(&declaration.ident),
-            declaration.function.as_ref().clone(),
-        );
+        let key = binding_key(&declaration.ident);
+        if self.binding_uses.direct_write_count(&key) == 0 {
+            self.record_function(key, declaration.function.as_ref().clone());
+        }
         declaration.function.visit_children_with(self);
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if let (Pat::Ident(binding), Some(value)) = (&declarator.name, declarator.init.as_ref()) {
-            self.values.insert(binding_key(&binding.id), value.clone());
-        }
-        if let (Pat::Ident(binding), Some(Expr::Fn(function))) =
-            (&declarator.name, declarator.init.as_deref())
-        {
-            self.functions
-                .insert(binding_key(&binding.id), function.function.as_ref().clone());
+            let key = binding_key(&binding.id);
+            if self.binding_uses.direct_write_count(&key) == 0 {
+                self.record_value(key, value.clone());
+            }
         }
         declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if assignment.op == AssignOp::Assign {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
+                let key = binding_key(&binding.id);
+                let stable_assignment = self.uninitialized_bindings.contains(&key)
+                    && self.binding_uses.direct_write_count(&key) == 1;
+                let supported_value = matches!(
+                    strip_parentheses(assignment.right.as_ref()),
+                    Expr::Fn(_) | Expr::Ident(_)
+                );
+                if stable_assignment && supported_value {
+                    self.record_value(key, assignment.right.clone());
+                }
+            }
+        }
+        assignment.visit_children_with(self);
     }
 }
 

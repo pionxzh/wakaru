@@ -153,11 +153,19 @@ impl BindingUseIndex {
     }
 
     pub(crate) fn has_direct_write(&self, binding: &BindingId) -> bool {
-        self.bindings.get(binding).is_some_and(|info| {
-            info.uses
-                .iter()
-                .any(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
-        })
+        self.direct_write_count(binding) > 0
+    }
+
+    pub(crate) fn direct_write_count(&self, binding: &BindingId) -> usize {
+        self.bindings
+            .get(binding)
+            .map(|info| {
+                info.uses
+                    .iter()
+                    .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+                    .count()
+            })
+            .unwrap_or(0)
     }
 
     pub(crate) fn has_only_static_member_reads(&self, binding: &BindingId, property: &str) -> bool {
