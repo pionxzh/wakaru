@@ -140,7 +140,7 @@ LLM renamer like [humanify](https://github.com/jehna/humanify), or use
 ## Use it from an agent
 
 Coding agents hit unreadable minified JS constantly. Wakaru ships a
-[`SKILL.md`](./SKILL.md) — drop it into Claude Code, Codex, Grok, or any
+[`SKILL.md`](./skills/wakaru/SKILL.md) — drop it into Claude Code, Codex, Grok, or any
 agent that reads skills, and the agent knows when and how to unpack a bundle,
 read the recovered modules like ordinary source, and pick the right rewrite
 level.

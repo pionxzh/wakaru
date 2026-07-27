@@ -21,8 +21,8 @@ reading everything:
 | Vue SFC recovery (`--vue-sfc`) | `docs/vue-decompile.md` — the recovery path and CLI behavior; `docs/vue-sfc-recovery-status.md` — experimental status and known gaps |
 | Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |
 | Before proposing a redesign | `docs/learnings/` — approaches already built, measured, and reverted |
-| CLI flag or output changes | `docs/cli.md` — the user-facing CLI reference; `SKILL.md` — the agent skill (keep both in sync) |
-| Agent / tool integration | `SKILL.md` — CLI-based agent surface |
+| CLI flag or output changes | `docs/cli.md` — the user-facing CLI reference; `skills/wakaru/SKILL.md` — the agent skill (keep both in sync) |
+| Agent / tool integration | `skills/wakaru/SKILL.md` — CLI-based agent surface |
 | Cutting a release | `docs/releasing.md` |
 
 `docs/README.md` carries this same map for agents and tools that do not

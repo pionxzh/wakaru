@@ -22,8 +22,8 @@ the registry defines *what*.
 | Vue SFC recovery (`--vue-sfc`) | [vue-decompile.md](vue-decompile.md) — the recovery path and CLI behavior; [vue-sfc-recovery-status.md](vue-sfc-recovery-status.md) — experimental status and known gaps |
 | Correctness / semantics questions | [rewrite-assumptions.md](rewrite-assumptions.md); [test262-roundtrip.md](test262-roundtrip.md) — the semantic round-trip harness |
 | Before proposing a redesign | [learnings/](learnings/) — approaches already built, measured, and reverted |
-| CLI flag or output changes | [cli.md](cli.md) — the user-facing CLI reference; [../SKILL.md](../SKILL.md) — the agent skill (keep both in sync) |
-| Agent / tool integration | [../SKILL.md](../SKILL.md) — the CLI-based agent surface |
+| CLI flag or output changes | [cli.md](cli.md) — the user-facing CLI reference; [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the agent skill (keep both in sync) |
+| Agent / tool integration | [../skills/wakaru/SKILL.md](../skills/wakaru/SKILL.md) — the CLI-based agent surface |
 | Cutting a release | [releasing.md](releasing.md) |
 
 ## Data directories

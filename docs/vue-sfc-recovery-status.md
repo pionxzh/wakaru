@@ -131,5 +131,5 @@ neutral synthetic unit test that does not contain third-party project code.
 
 Update this file whenever the CLI output contract, recovery scope, public corpus
 harness, or experimental status changes. Keep `README.md`, `docs/cli.md`,
-`docs/vue-decompile.md`, and `SKILL.md` aligned with the same user-facing
+`docs/vue-decompile.md`, and `skills/wakaru/SKILL.md` aligned with the same user-facing
 expectations.
