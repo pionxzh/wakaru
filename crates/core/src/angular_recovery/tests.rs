@@ -1455,6 +1455,122 @@ fn recovers_nested_if_else_views_as_angular_control_flow() {
 }
 
 #[test]
+fn recovers_assignment_backed_nested_view_functions_through_a_stable_alias() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        (function() {
+            var AssignedDetailsTemplate, AssignedDetailsAlias;
+
+            AssignedDetailsTemplate = function(rf) {
+                if (rf & 1) {
+                    core.ɵɵelementStart(0, "p");
+                    core.ɵɵtext(1, "Assigned details");
+                    core.ɵɵelementEnd();
+                }
+            };
+            AssignedDetailsAlias = AssignedDetailsTemplate;
+
+            class AssignmentBackedComponent {
+                showDetails = true;
+
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: AssignmentBackedComponent,
+                    selectors: [["assignment-backed"]],
+                    template: function(rf, context) {
+                        if (rf & 1) {
+                            core.ɵɵtemplate(
+                                0,
+                                AssignedDetailsAlias,
+                                2,
+                                0,
+                                "p"
+                            );
+                        }
+                        if (rf & 2) {
+                            core.ɵɵconditional(context.showDetails ? 0 : -1);
+                        }
+                    },
+                });
+            }
+        })();
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("assignment-backed nested views should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (showDetails) {"));
+    assert!(component.source.contains("<p>Assigned details</p>"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn rejects_a_reassigned_assignment_backed_nested_view_function() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        (function() {
+            var ReassignedTemplate;
+
+            ReassignedTemplate = function(rf) {
+                if (rf & 1) {
+                    core.ɵɵelement(0, "p");
+                }
+            };
+            ReassignedTemplate = function(rf) {
+                if (rf & 1) {
+                    core.ɵɵelement(0, "section");
+                }
+            };
+
+            class ReassignedViewComponent {
+                static ɵcmp = core.ɵɵdefineComponent({
+                    type: ReassignedViewComponent,
+                    selectors: [["reassigned-view"]],
+                    template: function(rf) {
+                        if (rf & 1) {
+                            core.ɵɵtemplate(
+                                0,
+                                ReassignedTemplate,
+                                1,
+                                0,
+                                "section"
+                            );
+                        }
+                    },
+                });
+            }
+        })();
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the component should remain recoverable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵtemplate")
+            && issue.detail.as_deref() == Some("embedded template function could not be resolved")
+    }));
+    assert_eq!(component.stats.runtime_calls_observed, 1);
+    assert_eq!(component.stats.rendered_instruction_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 1);
+}
+
+#[test]
 fn recovers_projection_local_references_and_pipe_bindings() {
     let source = r#"
         import * as core from "@angular/core";
