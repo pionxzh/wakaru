@@ -283,13 +283,23 @@ Recovery confidence is structural, not a percentage:
 Recovery is fail-closed. Unsupported statements, expressions, instruction
 roles, malformed arguments, missing target nodes, and malformed element
 structure are typed issues rather than silent omissions. The core analysis API
-returns per-component issues and instruction-call accounting plus workspace
-totals for component candidates, rejected descriptors, complete/partial
-artifacts, rendered calls, unsupported calls, and malformed calls. Root
-operations surface the aggregate report when diagnostics are enabled. Unknown
-runtime calls are grouped by render phase and invocation arity; these
-privacy-safe shapes help prioritize compiler-pattern support without depending
-on Closure-renamed identifiers.
+returns every issue occurrence rather than deduplicating equal reasons. Each
+issue identifies its source-module index and component, deterministic
+depth-first view, render phase, per-view operation ordinal, and module-relative
+byte range. A known Ivy operation records both its canonical role and the
+concise callee spelling observed in the compiled input. Ranges refer to the
+evidence source when the two-view API is used. Repeated HTML warning comments
+remain deduplicated for readability; that display choice never erases analysis
+locations or counts.
+
+The same report includes instruction-call accounting plus workspace totals for
+component candidates, rejected descriptors, complete/partial artifacts,
+rendered calls, unsupported calls, and malformed calls. Root operations surface
+the aggregate report when diagnostics are enabled. Unknown runtime calls are
+grouped by render phase and invocation arity; these privacy-safe shapes help
+prioritize compiler-pattern support without depending on Closure-renamed
+identifiers. Diagnostics retain only callee spellings, arities, indexes,
+reasons, and source coordinates; they never copy raw argument source.
 
 No artifact is emitted when component identity itself is ambiguous.
 
