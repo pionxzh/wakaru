@@ -69,6 +69,10 @@ impl StructuralRoleEvidence {
             &function_index,
             &by_identity,
         ));
+        inferred.extend(infer_embedded_template_continuation_family(
+            &function_index,
+            &by_identity,
+        ));
         for (identity, observations) in &by_identity {
             let Some(definition) = function_index.unique(identity) else {
                 continue;
@@ -507,6 +511,91 @@ fn single_identity<'a>(
     identities.next().is_none().then_some(identity)
 }
 
+fn infer_embedded_template_continuation_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut inferred = Vec::new();
+    for (identity, calls_in_templates) in observations {
+        if !calls_in_templates.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && is_embedded_template_arguments(&observation.arguments)
+        }) {
+            continue;
+        }
+
+        let Some(wrapper) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(wrapper_parameters) = plain_parameter_bindings(wrapper) else {
+            continue;
+        };
+        if !matches!(wrapper_parameters.len(), 4..=8) {
+            continue;
+        }
+        let Some(continuation_identity) = exact_returned_identity(wrapper) else {
+            continue;
+        };
+        if continuation_identity == wrapper.identity {
+            continue;
+        }
+        let Some(continuation) = function_index.unique(&continuation_identity) else {
+            continue;
+        };
+        let Some(continuation_parameters) = plain_parameter_bindings(continuation) else {
+            continue;
+        };
+        if continuation_parameters.len() != 8
+            || !returns_identity(continuation, &continuation.identity)
+        {
+            continue;
+        }
+
+        let forwarding_targets = direct_calls(continuation)
+            .into_iter()
+            .filter(|call| {
+                call.arguments.len() >= continuation_parameters.len()
+                    && forwards_parameter_dependencies_in_order(call, &continuation_parameters)
+            })
+            .map(|call| call.callee)
+            .collect::<HashSet<_>>();
+        if forwarding_targets.is_empty()
+            || !direct_calls(wrapper).iter().any(|call| {
+                forwarding_targets.contains(&call.callee)
+                    && forwards_parameter_dependencies_in_order(call, &wrapper_parameters)
+            })
+        {
+            continue;
+        }
+
+        inferred.push((wrapper.identity.clone(), "ɵɵtemplate"));
+        inferred.push((continuation.identity.clone(), "ɵɵtemplate"));
+    }
+    inferred
+}
+
+fn exact_returned_identity(function: &RuntimeFunction) -> Option<SymbolIdentity> {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    let mut identity = None;
+    for expression in returns.expressions {
+        let expression = match strip_parentheses(expression.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
+            expression => expression,
+        };
+        let current = symbol_identity(expression, function.unresolved_ctxt)?;
+        if identity
+            .as_ref()
+            .is_some_and(|existing| existing != &current)
+        {
+            return None;
+        }
+        identity = Some(current);
+    }
+    identity
+}
+
 fn is_specialized_element_start_shape(
     definition: &RuntimeFunction,
     observations: &[impl std::borrow::Borrow<TemplateCallObservation>],
@@ -640,33 +729,34 @@ fn is_embedded_template_shape(
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 1
-                && matches!(observation.arguments.len(), 4..=8)
-                && observation
-                    .arguments
-                    .first()
-                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
-                && observation.arguments.get(1).is_some_and(|argument| {
-                    matches!(
-                        argument.as_ref(),
-                        Expr::Ident(_) | Expr::Fn(_) | Expr::Arrow(_)
-                    )
-                })
-                && observation
-                    .arguments
-                    .get(2)
-                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
-                && observation
-                    .arguments
-                    .get(3)
-                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
-                && observation.arguments.get(4).is_none_or(|argument| {
-                    is_string_literal(argument.as_ref())
-                        || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
-                })
-                && observation.arguments.get(5).is_none_or(|argument| {
-                    is_nonnegative_integer(argument.as_ref())
-                        || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
-                })
+                && is_embedded_template_arguments(&observation.arguments)
+        })
+}
+
+fn is_embedded_template_arguments(arguments: &[Box<Expr>]) -> bool {
+    matches!(arguments.len(), 4..=8)
+        && arguments
+            .first()
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments.get(1).is_some_and(|argument| {
+            matches!(
+                argument.as_ref(),
+                Expr::Ident(_) | Expr::Fn(_) | Expr::Arrow(_)
+            )
+        })
+        && arguments
+            .get(2)
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments
+            .get(3)
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments.get(4).is_none_or(|argument| {
+            is_string_literal(argument.as_ref())
+                || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
+        })
+        && arguments.get(5).is_none_or(|argument| {
+            is_nonnegative_integer(argument.as_ref())
+                || matches!(argument.as_ref(), Expr::Lit(Lit::Null(_)))
         })
 }
 
@@ -934,9 +1024,14 @@ fn infer_text_interpolation_family(
         let Some(target_parameters) = plain_parameter_bindings(target) else {
             continue;
         };
+        let target_calls = direct_calls(target);
         if target_parameters.len() != 3
             || !returns_identity(target, &target.identity)
-            || direct_calls(target).len() < 3
+            || target_calls.len() < 2
+            || !target_calls.iter().any(|call| {
+                call.arguments.len() >= target_parameters.len()
+                    && forwards_parameters_in_order(call, &target_parameters)
+            })
         {
             continue;
         }
@@ -1365,6 +1460,46 @@ fn forwards_parameters_in_order(call: &DirectCall, parameters: &[BindingKey]) ->
             Expr::Ident(identifier)
                 if binding_key(identifier) == parameters[next_parameter]
         ) {
+            next_parameter += 1;
+        }
+    }
+    next_parameter == parameters.len()
+}
+
+fn forwards_parameter_dependencies_in_order(call: &DirectCall, parameters: &[BindingKey]) -> bool {
+    struct BindingFinder<'a> {
+        binding: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for BindingFinder<'_> {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if matches!(
+                expression,
+                Expr::Ident(identifier) if binding_key(identifier) == *self.binding
+            ) {
+                self.found = true;
+                return;
+            }
+            expression.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut next_parameter = 0;
+    for argument in &call.arguments {
+        if next_parameter == parameters.len() {
+            break;
+        }
+        let mut finder = BindingFinder {
+            binding: &parameters[next_parameter],
+            found: false,
+        };
+        argument.visit_with(&mut finder);
+        if finder.found {
             next_parameter += 1;
         }
     }
