@@ -701,8 +701,10 @@ fn is_property_shape(
     if parameters.len() != 3
         || !returns_identity(definition, &definition.identity)
         || !observations.iter().all(|observation| {
-            observation.usage == TemplateCallUsage::Effect
-                && observation.phase == 2
+            matches!(
+                observation.usage,
+                TemplateCallUsage::Effect | TemplateCallUsage::Initializer
+            ) && observation.phase == 2
                 && matches!(observation.arguments.len(), 2 | 3)
                 && observation
                     .arguments
@@ -715,9 +717,12 @@ fn is_property_shape(
 
     let calls = direct_calls(definition);
     calls.len() >= 4
-        && calls.iter().any(|call| {
+        && (calls.iter().any(|call| {
             call.arguments.len() >= 6 && forwards_parameters_in_order(call, &parameters)
-        })
+        }) || calls.iter().any(|call| {
+            is_member_call_named(call, "setProperty")
+                && forwards_parameter_dependencies_in_order(call, &parameters[..2])
+        }))
 }
 
 fn is_embedded_template_shape(
@@ -764,17 +769,16 @@ fn is_conditional_shape(
     definition: &RuntimeFunction,
     observations: &[TemplateCallObservation],
 ) -> bool {
-    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 2)
+    plain_parameter_bindings(definition).is_some_and(|parameters| matches!(parameters.len(), 1 | 2))
         && direct_calls(definition).len() >= 6
         && contains_negative_one(&definition.body)
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 2
                 && matches!(observation.arguments.len(), 1 | 2)
-                && observation
-                    .arguments
-                    .first()
-                    .is_some_and(|argument| is_template_selection(argument.as_ref()))
+                && observation.arguments.first().is_some_and(|argument| {
+                    is_template_selection(argument.as_ref()) || is_template_index(argument.as_ref())
+                })
         })
 }
 
@@ -1397,6 +1401,15 @@ impl Visit for IdentityFinder<'_> {
 struct DirectCall {
     callee: SymbolIdentity,
     arguments: Vec<Box<Expr>>,
+}
+
+fn is_member_call_named(call: &DirectCall, expected: &str) -> bool {
+    matches!(
+        &call.callee,
+        SymbolIdentity::LocalMember { property, .. }
+            | SymbolIdentity::GlobalMember { property, .. }
+            if property == expected
+    )
 }
 
 fn direct_calls(function: &RuntimeFunction) -> Vec<DirectCall> {
