@@ -4,8 +4,8 @@ use anyhow::{anyhow, Result};
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Decl, Expr, ExprOrSpread, FnDecl, Function, Lit, Module, Pat, ReturnStmt, SimpleAssignTarget,
-    Stmt, UnaryOp, VarDeclarator,
+    Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, Lit, MemberProp, Module, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -13,7 +13,9 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 
 use super::artifact::expression_references;
-use super::emitter::{handler_expression, print_template_expression};
+use super::emitter::{
+    handler_expression, print_template_expression, print_template_expression_with_aliases,
+};
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, member_prop_name, string_lit, BindingKey};
 use super::{
@@ -221,12 +223,15 @@ struct TemplateProgram {
     component_contexts: HashSet<BindingKey>,
     view_context: Option<BindingKey>,
     saved_views: HashSet<BindingKey>,
+    update_context_depth: usize,
     repeater_item_name: Option<String>,
-    reference_aliases: Vec<(BindingKey, InstructionCall)>,
+    reference_aliases: Vec<(BindingKey, InstructionCall, usize)>,
     local_reference_names: HashMap<BindingKey, String>,
     pipes: HashMap<usize, String>,
     artifact_references: HashSet<BindingKey>,
 }
+
+type ReferenceScope = HashMap<usize, String>;
 
 #[derive(Default)]
 struct TemplateConstants {
@@ -349,7 +354,7 @@ pub(super) fn recover_template(
     };
     let mut active_templates = HashSet::new();
     let (tree, program) =
-        recover_template_tree(template, &environment, true, &mut active_templates, 0)?;
+        recover_template_tree(template, &environment, true, &mut active_templates, &[], 0)?;
 
     let mut source = render_tree(&tree);
     let mut rendered_issue_comments = HashSet::new();
@@ -400,6 +405,7 @@ fn recover_template_tree(
     environment: &TemplateRecoveryEnvironment<'_>,
     is_component_view: bool,
     active_templates: &mut HashSet<BindingKey>,
+    ancestor_references: &[ReferenceScope],
     depth: usize,
 ) -> Result<(TemplateTree, TemplateProgram)> {
     let mut program = TemplateProgram::default();
@@ -444,10 +450,11 @@ fn recover_template_tree(
             &mut program,
             environment,
             active_templates,
+            ancestor_references,
             depth,
         )?;
     }
-    resolve_reference_aliases(&mut program, &tree);
+    resolve_reference_aliases(&mut program, &tree, ancestor_references);
     for instruction in program.update.clone() {
         apply_update_instruction(&instruction, &mut tree, &mut program, environment)?;
     }
@@ -464,8 +471,12 @@ fn recover_template_tree(
     Ok((tree, program))
 }
 
-fn resolve_reference_aliases(program: &mut TemplateProgram, tree: &TemplateTree) {
-    for (binding, call) in std::mem::take(&mut program.reference_aliases) {
+fn resolve_reference_aliases(
+    program: &mut TemplateProgram,
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+) {
+    for (binding, call, context_depth) in std::mem::take(&mut program.reference_aliases) {
         let Some(slot) = numeric_arg(&call.args, 0).filter(|_| call.args.len() == 1) else {
             record_malformed_instruction(
                 &call,
@@ -475,18 +486,33 @@ fn resolve_reference_aliases(program: &mut TemplateProgram, tree: &TemplateTree)
             );
             continue;
         };
-        let Some(name) = tree.local_reference_slots.get(&slot) else {
+        let Some(name) = reference_name_at_depth(tree, ancestor_references, context_depth, slot)
+        else {
             record_missing_target(
                 &call,
-                &format!("no local reference at slot {slot}"),
+                &format!("no local reference at slot {slot} in context depth {context_depth}"),
                 &mut program.issues,
                 &mut program.stats,
             );
             continue;
         };
-        program.local_reference_names.insert(binding, name.clone());
+        program.local_reference_names.insert(binding, name);
         program.stats.rendered_instruction_calls += 1;
     }
+}
+
+fn reference_name_at_depth(
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+    context_depth: usize,
+    slot: usize,
+) -> Option<String> {
+    let scope = if context_depth == 0 {
+        &tree.local_reference_slots
+    } else {
+        ancestor_references.get(context_depth - 1)?
+    };
+    scope.get(&slot).cloned()
 }
 
 pub(super) fn ivy_template_score(
@@ -926,18 +952,10 @@ fn collect_next_context_alias(
     };
 
     program.stats.runtime_calls_observed += argument_lists.len();
-    let valid = argument_lists.len() == 1
-        && argument_lists[0].len() <= 1
-        && argument_lists[0].first().is_none_or(|argument| {
-            matches!(
-                argument.expr.as_ref(),
-                Expr::Lit(Lit::Num(number))
-                    if number.value >= 0.0 && number.value.fract() == 0.0
-            )
-        });
-    if valid {
+    if let Some(context_hop) = context_hop(&argument_lists) {
         program.stats.rendered_instruction_calls += 1;
         program.component_contexts.insert(binding_key(binding));
+        program.update_context_depth = program.update_context_depth.saturating_add(context_hop);
     } else {
         program.stats.malformed_instruction_calls += argument_lists.len();
         record_issue(
@@ -950,6 +968,17 @@ fn collect_next_context_alias(
         );
     }
     true
+}
+
+fn context_hop(argument_lists: &[&[ExprOrSpread]]) -> Option<usize> {
+    let [arguments] = argument_lists else {
+        return None;
+    };
+    match *arguments {
+        [] => Some(1),
+        [argument] => numeric_expr(argument.expr.as_ref()),
+        _ => None,
+    }
 }
 
 fn collect_reference_alias(
@@ -991,6 +1020,7 @@ fn collect_reference_alias(
                 .map(|argument| argument.expr.clone())
                 .collect(),
         },
+        program.update_context_depth,
     ));
     true
 }
@@ -1200,6 +1230,25 @@ fn collect_expression(
                 );
                 return;
             };
+            if instruction == IvyInstruction::NextContext && phase == 2 {
+                program.stats.runtime_calls_observed += argument_lists.len();
+                if let Some(context_hop) = context_hop(&argument_lists) {
+                    program.stats.rendered_instruction_calls += argument_lists.len();
+                    program.update_context_depth =
+                        program.update_context_depth.saturating_add(context_hop);
+                } else {
+                    program.stats.malformed_instruction_calls += argument_lists.len();
+                    record_issue(
+                        &mut program.issues,
+                        AngularRecoveryIssue {
+                            kind: AngularRecoveryIssueKind::MalformedInstruction,
+                            instruction: Some("ɵɵnextContext".to_string()),
+                            detail: Some("unexpected context-depth arguments".to_string()),
+                        },
+                    );
+                }
+                return;
+            }
             if !instruction_supported_in_phase(instruction, phase) {
                 program.stats.runtime_calls_observed += argument_lists.len();
                 program.stats.unsupported_runtime_calls += argument_lists.len();
@@ -1392,6 +1441,7 @@ struct RecoveredViewHandler {
 fn recover_view_listener_handler(
     handler: &Expr,
     tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
     program: &TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) -> std::result::Result<Option<RecoveredViewHandler>, String> {
@@ -1407,11 +1457,15 @@ fn recover_view_listener_handler(
 
     let mut component_contexts = program.component_contexts.clone();
     let mut local_names = program.local_reference_names.clone();
+    let mut expression_aliases = HashMap::new();
+    let mut effects = Vec::new();
     if let Some(event) = handler_event_binding(handler) {
         local_names.insert(event, "$event".to_string());
     }
     let mut action = None;
+    let mut saw_reset_return = false;
     let mut runtime_calls = 0;
+    let mut context_depth = 0usize;
     for statement in &block.stmts {
         match statement {
             Stmt::Decl(Decl::Var(declaration)) => {
@@ -1449,6 +1503,16 @@ fn recover_view_listener_handler(
                         });
                         local_names.insert(binding_key(&binding.id), item);
                         runtime_calls += 1;
+                        context_depth = 0;
+                        continue;
+                    }
+
+                    if let Some((alias, context_hop)) =
+                        next_context_member_alias(initializer, environment)?
+                    {
+                        expression_aliases.insert(binding_key(&binding.id), alias);
+                        runtime_calls += 1;
+                        context_depth = context_depth.saturating_add(context_hop);
                         continue;
                     }
 
@@ -1459,6 +1523,7 @@ fn recover_view_listener_handler(
                         validate_restore_view_call(call, program)?;
                         component_contexts.insert(binding_key(&binding.id));
                         runtime_calls += 1;
+                        context_depth = 0;
                         continue;
                     }
                     if is_instruction_call(call, IvyInstruction::Reference, environment) {
@@ -1469,46 +1534,64 @@ fn recover_view_listener_handler(
                         let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
                             return Err("ɵɵreference slot is not numeric".to_string());
                         };
-                        let Some(name) = tree.local_reference_slots.get(&slot) else {
-                            return Err(format!("no local reference at slot {slot}"));
+                        let Some(name) =
+                            reference_name_at_depth(tree, ancestor_references, context_depth, slot)
+                        else {
+                            return Err(format!(
+                                "no local reference at slot {slot} in context depth {context_depth}"
+                            ));
                         };
-                        local_names.insert(binding_key(&binding.id), name.clone());
+                        local_names.insert(binding_key(&binding.id), name);
                         runtime_calls += 1;
                         continue;
                     }
                     if is_instruction_call(call, IvyInstruction::NextContext, environment) {
                         let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
-                        if argument_lists[0].len() > 1
-                            || argument_lists[0].first().is_some_and(|argument| {
-                                numeric_expr(argument.expr.as_ref()).is_none()
-                            })
-                        {
+                        let Some(context_hop) = context_hop(&argument_lists) else {
                             return Err(
                                 "ɵɵnextContext has unexpected context-depth arguments".to_string()
                             );
-                        }
+                        };
                         component_contexts.insert(binding_key(&binding.id));
                         runtime_calls += 1;
+                        context_depth = context_depth.saturating_add(context_hop);
                         continue;
                     }
                     return Err("unsupported view-local runtime alias".to_string());
                 }
             }
             Stmt::Expr(expression) => {
-                let Expr::Call(call) = strip_parentheses(expression.expr.as_ref()) else {
-                    return Err("unsupported restored handler expression".to_string());
-                };
-                if !is_instruction_call(call, IvyInstruction::RestoreView, environment) {
-                    return Err("restored handler expression is not ɵɵrestoreView".to_string());
+                if let Expr::Call(call) = strip_parentheses(expression.expr.as_ref()) {
+                    if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+                        validate_restore_view_call(call, program)?;
+                        runtime_calls += 1;
+                        context_depth = 0;
+                        continue;
+                    }
+                    if is_instruction_call(call, IvyInstruction::NextContext, environment) {
+                        let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
+                        let Some(context_hop) = context_hop(&argument_lists) else {
+                            return Err(
+                                "ɵɵnextContext has unexpected context-depth arguments".to_string()
+                            );
+                        };
+                        runtime_calls += 1;
+                        context_depth = context_depth.saturating_add(context_hop);
+                        continue;
+                    }
                 }
-                validate_restore_view_call(call, program)?;
-                runtime_calls += 1;
+                if contains_runtime_call(expression.expr.as_ref(), environment) {
+                    return Err(
+                        "unsupported Ivy runtime call in restored handler expression".to_string(),
+                    );
+                }
+                effects.push(expression.expr.clone());
             }
             Stmt::Return(ReturnStmt {
                 arg: Some(returned),
                 ..
             }) => {
-                if action.is_some() {
+                if saw_reset_return {
                     return Err("multiple handler returns".to_string());
                 }
                 let Expr::Call(call) = strip_parentheses(returned.as_ref()) else {
@@ -1518,31 +1601,132 @@ fn recover_view_listener_handler(
                     return Err("restored handler return is not ɵɵresetView".to_string());
                 }
                 let argument_lists = validated_single_call(call, "ɵɵresetView")?;
-                let [returned] = argument_lists[0] else {
-                    return Err("ɵɵresetView expected one return value".to_string());
+                action = match argument_lists[0] {
+                    [] => None,
+                    [returned] => Some(returned.expr.clone()),
+                    _ => return Err("ɵɵresetView expected at most one return value".to_string()),
                 };
-                action = Some(returned.expr.clone());
+                saw_reset_return = true;
                 runtime_calls += 1;
             }
             Stmt::Empty(_) => {}
             _ => return Err("unsupported restored handler statement".to_string()),
         }
     }
-    let Some(action) = action else {
+    if !saw_reset_return {
         return Err("restored handler has no ɵɵresetView return".to_string());
-    };
-    let source = print_template_expression(
-        action.as_ref(),
-        &component_contexts,
-        &local_names,
-        environment.cm.clone(),
-    )
-    .map_err(|error| error.to_string())?;
+    }
+    let mut sources = Vec::with_capacity(effects.len() + usize::from(action.is_some()));
+    for effect in &effects {
+        sources.push(
+            print_template_expression_with_aliases(
+                effect.as_ref(),
+                &component_contexts,
+                &local_names,
+                &expression_aliases,
+                environment.cm.clone(),
+            )
+            .map_err(|error| error.to_string())?,
+        );
+    }
+    if let Some(action) = &action {
+        sources.push(
+            print_template_expression_with_aliases(
+                action.as_ref(),
+                &component_contexts,
+                &local_names,
+                &expression_aliases,
+                environment.cm.clone(),
+            )
+            .map_err(|error| error.to_string())?,
+        );
+    }
+    if sources.is_empty() {
+        sources.push("undefined".to_string());
+    }
+    let source = sources.join("; ");
+    let mut artifact_references = action
+        .as_deref()
+        .map(expression_references)
+        .unwrap_or_default();
+    for effect in &effects {
+        artifact_references.extend(expression_references(effect.as_ref()));
+    }
+    for alias in expression_aliases.values() {
+        artifact_references.extend(expression_references(alias.as_ref()));
+    }
     Ok(Some(RecoveredViewHandler {
         source,
         runtime_calls,
-        artifact_references: expression_references(action.as_ref()),
+        artifact_references,
     }))
+}
+
+fn next_context_member_alias(
+    initializer: &Expr,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<Option<(Box<Expr>, usize)>, String> {
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return Ok(None);
+    };
+    let Expr::Call(call) = strip_parentheses(member.obj.as_ref()) else {
+        return Ok(None);
+    };
+    if !is_instruction_call(call, IvyInstruction::NextContext, environment) {
+        return Ok(None);
+    }
+    let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
+    let Some(context_hop) = context_hop(&argument_lists) else {
+        return Err("ɵɵnextContext has unexpected context-depth arguments".to_string());
+    };
+    let MemberProp::Ident(property) = &member.prop else {
+        return Err("ɵɵnextContext result has a computed context property".to_string());
+    };
+    Ok(Some((
+        Box::new(Expr::Ident(Ident::new(
+            property.sym.clone(),
+            property.span,
+            SyntaxContext::empty(),
+        ))),
+        context_hop,
+    )))
+}
+
+fn contains_runtime_call(expression: &Expr, environment: &TemplateRecoveryEnvironment<'_>) -> bool {
+    struct Finder<'a> {
+        environment: &'a TemplateRecoveryEnvironment<'a>,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            let Some((root, _)) = call_chain(call) else {
+                self.found = true;
+                return;
+            };
+            if self
+                .environment
+                .roles
+                .ivy_name_for_expr(root, self.environment.unresolved_ctxt)
+                .is_some()
+                || self
+                    .environment
+                    .roles
+                    .is_known_runtime_member(root, self.environment.unresolved_ctxt)
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        environment,
+        found: false,
+    };
+    expression.visit_with(&mut finder);
+    finder.found
 }
 
 fn handler_block(handler: &Expr) -> Option<&BlockStmt> {
@@ -1665,6 +1849,7 @@ fn apply_create_instruction(
     program: &mut TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
     active_templates: &mut HashSet<BindingKey>,
+    ancestor_references: &[ReferenceScope],
     depth: usize,
 ) -> Result<()> {
     match call.instruction {
@@ -1775,46 +1960,51 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
-            let expression =
-                match recover_view_listener_handler(handler.as_ref(), tree, program, environment) {
-                    Ok(Some(recovered)) => {
-                        program.stats.runtime_calls_observed += recovered.runtime_calls;
-                        program.stats.rendered_instruction_calls += recovered.runtime_calls;
-                        program
-                            .artifact_references
-                            .extend(recovered.artifact_references);
-                        recovered.source
-                    }
-                    Ok(None) => {
-                        let Ok(expression) = handler_expression(
-                            handler.as_ref(),
-                            &program.component_contexts,
-                            &program.local_reference_names,
-                            environment.cm.clone(),
-                        ) else {
-                            record_malformed_instruction(
-                                call,
-                                "event handler could not be printed",
-                                &mut program.issues,
-                                &mut program.stats,
-                            );
-                            return Ok(());
-                        };
-                        program
-                            .artifact_references
-                            .extend(expression_references(handler.as_ref()));
-                        expression
-                    }
-                    Err(detail) => {
+            let expression = match recover_view_listener_handler(
+                handler.as_ref(),
+                tree,
+                ancestor_references,
+                program,
+                environment,
+            ) {
+                Ok(Some(recovered)) => {
+                    program.stats.runtime_calls_observed += recovered.runtime_calls;
+                    program.stats.rendered_instruction_calls += recovered.runtime_calls;
+                    program
+                        .artifact_references
+                        .extend(recovered.artifact_references);
+                    recovered.source
+                }
+                Ok(None) => {
+                    let Ok(expression) = handler_expression(
+                        handler.as_ref(),
+                        &program.component_contexts,
+                        &program.local_reference_names,
+                        environment.cm.clone(),
+                    ) else {
                         record_malformed_instruction(
                             call,
-                            &format!("event handler view restoration failed: {detail}"),
+                            "event handler could not be printed",
                             &mut program.issues,
                             &mut program.stats,
                         );
                         return Ok(());
-                    }
-                };
+                    };
+                    program
+                        .artifact_references
+                        .extend(expression_references(handler.as_ref()));
+                    expression
+                }
+                Err(detail) => {
+                    record_malformed_instruction(
+                        call,
+                        &format!("event handler view restoration failed: {detail}"),
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
             tree.add_attribute(
                 node,
                 TemplateAttribute {
@@ -1970,8 +2160,12 @@ fn apply_create_instruction(
                 "repeater body",
                 program,
                 environment,
-                active_templates,
-                depth,
+                ChildViewRecovery {
+                    parent_tree: tree,
+                    active_templates,
+                    ancestor_references,
+                    depth,
+                },
             )?
             else {
                 return Ok(());
@@ -2002,8 +2196,12 @@ fn apply_create_instruction(
                         "repeater empty view",
                         program,
                         environment,
-                        active_templates,
-                        depth,
+                        ChildViewRecovery {
+                            parent_tree: tree,
+                            active_templates,
+                            ancestor_references,
+                            depth,
+                        },
                     )?
                     else {
                         return Ok(());
@@ -2109,11 +2307,13 @@ fn apply_create_instruction(
             if let Some(key) = &resolved.key {
                 active_templates.insert(key.clone());
             }
+            let child_references = child_reference_scopes(tree, ancestor_references);
             let child = recover_template_tree(
                 &resolved.function,
                 environment,
                 false,
                 active_templates,
+                &child_references,
                 depth + 1,
             );
             if let Some(key) = &resolved.key {
@@ -2147,15 +2347,37 @@ fn apply_create_instruction(
     Ok(())
 }
 
+fn child_reference_scopes(
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+) -> Vec<ReferenceScope> {
+    let mut scopes = Vec::with_capacity(ancestor_references.len() + 1);
+    scopes.push(tree.local_reference_slots.clone());
+    scopes.extend_from_slice(ancestor_references);
+    scopes
+}
+
+struct ChildViewRecovery<'a> {
+    parent_tree: &'a TemplateTree,
+    active_templates: &'a mut HashSet<BindingKey>,
+    ancestor_references: &'a [ReferenceScope],
+    depth: usize,
+}
+
 fn recover_child_template(
     call: &InstructionCall,
     expression: &Expr,
     description: &str,
     program: &mut TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
-    active_templates: &mut HashSet<BindingKey>,
-    depth: usize,
+    recovery: ChildViewRecovery<'_>,
 ) -> Result<Option<(TemplateTree, TemplateProgram)>> {
+    let ChildViewRecovery {
+        parent_tree,
+        active_templates,
+        ancestor_references,
+        depth,
+    } = recovery;
     let Some(resolved) = environment.template_functions.resolve(expression) else {
         record_malformed_instruction(
             call,
@@ -2182,11 +2404,13 @@ fn recover_child_template(
     if let Some(key) = &resolved.key {
         active_templates.insert(key.clone());
     }
+    let child_references = child_reference_scopes(parent_tree, ancestor_references);
     let child = recover_template_tree(
         &resolved.function,
         environment,
         false,
         active_templates,
+        &child_references,
         depth + 1,
     );
     if let Some(key) = &resolved.key {
