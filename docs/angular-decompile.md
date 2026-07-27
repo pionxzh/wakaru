@@ -60,12 +60,12 @@ Initial recovery covers:
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Deferred views, legacy structural-directive syntax, cross-module dependency
-linking, and original package provenance after bundling are incremental
-extensions. Dependencies between recovered siblings in the same module are
-linked by binding identity. Unsupported instruction regions remain explicit in
-the recovery IR and must not be silently rendered as if recovery were
-complete.
+Deferred views, legacy structural-directive syntax, and original package
+provenance after bundling are incremental extensions. Dependencies between
+recovered siblings in the same module are linked by binding identity; ordinary
+ESM edges can also link recovered components in different artifacts.
+Unsupported instruction regions remain explicit in the recovery IR and must
+not be silently rendered as if recovery were complete.
 
 ## Architecture boundary
 
@@ -245,18 +245,21 @@ are never substituted into the event expression.
 - `angular: recover prepared modules`;
 - `angular: infer Ivy roles`;
 - `angular: index artifact symbols`;
-- `angular: recover components`.
+- `angular: recover components`;
+- `angular: link module artifacts`.
 
 The nested spans distinguish unavoidable parsing from semantic analysis and
-artifact rendering. A local reference run on a 12.4 MB, 259-module production
+artifact rendering. A local reference run on a 12.3 MB, 239-module production
 corpus used the `dev-release` CLI, one warmup, and five measured runs. Normal
-unpack averaged 5.33 seconds and Angular unpack averaged 6.72 seconds. The
-Angular trace itself spent about 281 ms preparing the two views and 635 ms in
-prepared-module recovery, including 189 ms for role inference, 32 ms for
-artifact-symbol indexing, and 384 ms for component recovery. Writing hundreds
-of additional sidecars accounts for part of the remaining CLI difference.
-These figures validate the current implementation; they are not a performance
-contract across machines or corpora.
+unpack averaged 6.22 seconds (5.82–7.10 seconds) and Angular unpack averaged
+7.61 seconds (7.52–7.79 seconds). A release trace spent about 259 ms preparing
+the two views and 1.10 seconds in prepared-module recovery, including 265 ms
+for role inference, 36 ms for artifact-symbol indexing, 704 ms for component
+recovery, and 49 ms linking recovered modules. The final 132 module-oriented
+sidecars account for part of the remaining CLI difference. The link step is
+small relative to component recovery, so a specialized graph optimization is
+not currently justified. These figures validate the current implementation;
+they are not a performance contract across machines or corpora.
 
 The workspace may canonicalize a stable namespace argument passed into an
 immediately invoked function when the corresponding parameter is never
@@ -340,10 +343,23 @@ same spelling or module organization.
 When a dependency binding names another recovered component in the same source
 module, the module emitter links it directly to the sibling's recovered class
 name and renames sibling references consistently. Imports and portable helpers
-shared by multiple components are emitted once. Bundling can still erase the
-package path that originally supplied a component, directive, or pipe from a
-different source module; Wakaru does not guess that cross-module provenance.
-That future graph belongs after module recovery, not in an unpacker or the Ivy
+shared by multiple components are emitted once.
+
+For different source modules, Wakaru links only a local identifier connected to
+an exported recovered component by an ordinary, unambiguous ESM import/export
+edge. Low-level module results record the source/target component indices and
+collision-free local name. The root artifact graph uses the final deduplicated
+filenames to add relative imports such as
+`import { ChildComponent } from "./child.angular"`. If that dependency binding
+also appears in a template expression whose printed identifier cannot yet be
+renamed safely, the edge stays unresolved instead of producing inconsistent
+source.
+
+Closure ModuleManager loader dependencies are deliberately not fabricated as
+ESM edges. Bundling can also erase the package path that originally supplied a
+component, directive, or pipe. Wakaru does not guess either form of provenance;
+those relationships remain absent unless a generic module edge proves them.
+This graph remains after module recovery, not in an unpacker or the Ivy
 instruction classifier.
 
 ## Production feasibility validation
@@ -440,6 +456,7 @@ Pause and re-check this boundary after each milestone:
 11. minimally rooted Closure `ADVANCED` role inference from runtime behavior.
 12. Closure view-state role families and optimizer-inlined view captures.
 13. module-oriented artifacts and view-local unsupported-region placement.
+14. cross-artifact component relationships from proven ESM symbol edges.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

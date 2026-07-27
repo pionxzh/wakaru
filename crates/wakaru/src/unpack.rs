@@ -817,6 +817,61 @@ mod tests {
     }
 
     #[test]
+    fn angular_artifacts_link_components_across_proven_esm_edges() {
+        let child = r#"
+            import * as core from "@angular/core";
+            export class a {
+                static compiled = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["child-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "span");
+                    },
+                });
+            }
+        "#;
+        let parent = r#"
+            import * as core from "@angular/core";
+            import { a as c } from "./child.js";
+            export class b {
+                childType = c;
+                static compiled = core.ɵɵdefineComponent({
+                    type: b,
+                    selectors: [["parent-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "main");
+                    },
+                    dependencies: [c],
+                });
+            }
+        "#;
+        let output = unpack(
+            vec![
+                Source::new("src/child.js", child),
+                Source::new("src/parent.js", parent),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("ordinary ESM modules should recover linked Angular artifacts");
+
+        assert_eq!(output.artifacts.len(), 2);
+        let parent = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"parent-card\""))
+            .expect("the parent artifact should be recovered");
+        assert!(parent
+            .code
+            .contains(r#"import { ChildCardComponent } from "./child.angular";"#));
+        assert!(parent.code.contains("imports: [ChildCardComponent]"));
+        assert!(parent.code.contains("childType = ChildCardComponent;"));
+        assert!(!parent.code.contains(r#"from "./child.js""#));
+    }
+
+    #[test]
     fn reports_metro_detection() {
         let mut job = UnpackJob::new(UnpackOptions::default().with_modules(ModuleMode::Raw))
             .expect("options should be valid");

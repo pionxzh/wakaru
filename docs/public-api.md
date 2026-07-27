@@ -117,7 +117,12 @@ and diagnostics for compatibility, and also returns one module artifact for
 each source module containing recovered components. A module result lists its
 indices into the component result vector; sibling component dependencies and
 binding renames are resolved inside that unit, and shared support declarations
-are emitted once.
+are emitted once. Proven cross-module ESM component edges are returned as
+`RecoveredAngularModuleDependency` records containing source/target component
+indices, the target module, exported target name, and collision-free local
+name. The root façade resolves those records against final artifact filenames
+and injects relative `.angular` imports; low-level callers can apply their own
+filename policy.
 
 Issue entries preserve occurrences and identify the source module index,
 recovered component, view, render phase, per-view operation ordinal, and
