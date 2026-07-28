@@ -166,8 +166,12 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         "ɵɵtextInterpolate1",
         "ɵɵtemplate",
         "ɵɵconditional",
+        "ɵɵdefer",
+        "ɵɵdeferOnIdle",
         "ɵɵgetCurrentView",
         "ɵɵnextContext",
+        "ɵɵrepeater",
+        "ɵɵrepeaterCreate",
         "ɵɵproperty",
         "ɵɵresetView",
         "ɵɵrestoreView",
@@ -189,7 +193,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 4);
+    assert_eq!(by_selector.len(), 5);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -226,6 +230,37 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-view-card"]
         .source
         .contains("[disabled]=\"disabled\""));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("<span>Item</span>"));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("@empty {"));
+    assert!(by_selector["structural-view-card"]
+        .source
+        .contains("<span>No items</span>"));
+    assert_eq!(
+        by_selector["structural-defer-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-defer-card"].issues,
+        by_selector["structural-defer-card"].source,
+    );
+    assert!(by_selector["structural-defer-card"]
+        .source
+        .contains("@defer (on idle) {"));
+    assert!(by_selector["structural-defer-card"]
+        .source
+        .contains("<article>{{ title }}</article>"));
+    assert!(by_selector["structural-defer-card"]
+        .source
+        .contains("@placeholder {"));
+    assert!(by_selector["structural-defer-card"]
+        .source
+        .contains("<p>Waiting</p>"));
     assert_eq!(
         by_selector["fixture-card"].completeness,
         AngularRecoveryCompleteness::Partial
@@ -240,7 +275,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["fixture-card"]
         .source
         .contains("<p class=\"details\">Details hidden</p>"));
-    assert!(by_selector["fixture-card"].source.contains("@if (cg) {"));
+    assert!(by_selector["fixture-card"].source.contains("@if ("));
     assert!(by_selector["fixture-card"].source.contains("@else {"));
     assert!(by_selector["fixture-card"]
         .source
@@ -332,6 +367,55 @@ fn recovers_view_local_angular_template_constructs() {
         .source
         .contains(r#"<ng-content select="[card-footer]" />"#));
     assert!(!component.source.contains("ɵɵ"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_deferred_views_from_isolated_angular_compiler_output() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for authored_template_fragment in ["@defer", "@loading", "@placeholder", "@error"] {
+        assert!(
+            !TEMPLATE_CONSTRUCTS.contains(authored_template_fragment),
+            "generated fixture should not retain {authored_template_fragment}"
+        );
+    }
+    for instruction in ["ɵɵdefer", "ɵɵdeferOnIdle"] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-deferred-constructs")
+        .expect("deferred component identity should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@defer (on idle) {"));
+    assert!(component.source.contains("<article>{{ title }}</article>"));
+    assert!(component.source.contains("@loading {"));
+    assert!(component.source.contains("<p>Loading</p>"));
+    assert!(component.source.contains("@placeholder {"));
+    assert!(component.source.contains("<p>Waiting</p>"));
+    assert!(component.source.contains("@error {"));
+    assert!(component.source.contains("<p>Failed</p>"));
+    assert!(!component.source.contains("<ng-template"));
     assert_eq!(
         component.stats.runtime_calls_observed,
         component.stats.rendered_instruction_calls

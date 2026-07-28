@@ -1859,6 +1859,449 @@ fn infers_an_embedded_template_continuation_from_shared_forwarding() {
 }
 
 #[test]
+fn recovers_canonical_defer_views_and_idle_trigger() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function PrimaryTemplate(rf, context) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "article");
+                core.ɵɵtext(1);
+                core.ɵɵelementEnd();
+            }
+            if (rf & 2) {
+                const parent = core.ɵɵnextContext();
+                core.ɵɵadvance();
+                core.ɵɵtextInterpolate(parent.title);
+            }
+        }
+
+        function LoadingTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p");
+                core.ɵɵtext(1, "Loading");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        function PlaceholderTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p");
+                core.ɵɵtext(1, "Waiting");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        function ErrorTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p");
+                core.ɵɵtext(1, "Failed");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class DeferredComponent {
+            title = "Deferred";
+
+            static compiled = core.ɵɵdefineComponent({
+                type: DeferredComponent,
+                selectors: [["deferred-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, PrimaryTemplate, 2, 1);
+                        core.ɵɵtemplate(1, LoadingTemplate, 2, 0);
+                        core.ɵɵtemplate(2, PlaceholderTemplate, 2, 0);
+                        core.ɵɵtemplate(3, ErrorTemplate, 2, 0);
+                        core.ɵɵdefer(4, 0, null, 1, 2, 3);
+                        core.ɵɵdeferOnIdle();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("canonical deferred views should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@defer (on idle) {"));
+    assert!(component.source.contains("<article>{{ title }}</article>"));
+    assert!(component.source.contains("@loading {"));
+    assert!(component.source.contains("<p>Loading</p>"));
+    assert!(component.source.contains("@placeholder {"));
+    assert!(component.source.contains("<p>Waiting</p>"));
+    assert!(component.source.contains("@error {"));
+    assert!(component.source.contains("<p>Failed</p>"));
+    assert!(!component.source.contains("<ng-template"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+}
+
+#[test]
+fn infers_closure_renamed_defer_and_self_returning_template_roles() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵnextContext": runtime.nextContext,
+            "ɵɵadvance": runtime.advance,
+            "ɵɵtextInterpolate": runtime.interpolate,
+        };
+        runtime.template = function(
+            index,
+            template,
+            declarations,
+            bindings,
+            tag,
+            attributes,
+            references,
+            extractor
+        ) {
+            createTemplate(
+                index,
+                template,
+                declarations,
+                bindings,
+                tag,
+                attributes,
+                references,
+                extractor
+            );
+            return runtime.template;
+        };
+        runtime.defer = function(
+            index,
+            primary,
+            dependencies,
+            loading,
+            placeholder,
+            error,
+            loadingConfig,
+            placeholderConfig,
+            timers,
+            flags
+        ) {
+            markFeature("NgDefer");
+            createDefer(
+                index,
+                primary,
+                dependencies,
+                loading,
+                placeholder,
+                error,
+                loadingConfig,
+                placeholderConfig,
+                timers,
+                flags
+            );
+        };
+        runtime.idle = function(timeout) {
+            scheduleIdle({ timeout });
+        };
+
+        function PrimaryTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "article");
+                runtime.text(1, "Deferred");
+                runtime.end();
+            }
+        }
+
+        function PlaceholderTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "p");
+                runtime.text(1, "Waiting");
+                runtime.end();
+            }
+        }
+
+        class RenamedDeferredComponent {
+            static compiled = runtime.component({
+                type: RenamedDeferredComponent,
+                selectors: [["renamed-deferred-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.template(0, PrimaryTemplate, 2, 0)(
+                            1,
+                            PlaceholderTemplate,
+                            2,
+                            0
+                        );
+                        runtime.defer(2, 0, null, null, 1);
+                        runtime.idle();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("renamed deferred-view roles should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@defer (on idle) {"));
+    assert!(component.source.contains("<article>Deferred</article>"));
+    assert!(component.source.contains("@placeholder {"));
+    assert!(component.source.contains("<p>Waiting</p>"));
+    assert!(!component.source.contains("<ng-template"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+}
+
+#[test]
+fn infers_closure_renamed_repeater_role_family() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵadvance": runtime.advance,
+            "ɵɵtextInterpolate": runtime.interpolate,
+        };
+        runtime.createRepeater = function(
+            index,
+            template,
+            declarations,
+            bindings,
+            tag,
+            attributes,
+            track,
+            usesComponent,
+            emptyTemplate,
+            emptyDeclarations,
+            emptyBindings,
+            emptyTag,
+            emptyAttributes
+        ) {
+            markFeature("NgControlFlow");
+            declareTemplate(index + 1, template, declarations, bindings);
+            if (emptyTemplate !== undefined) {
+                declareTemplate(
+                    index + 2,
+                    emptyTemplate,
+                    emptyDeclarations,
+                    emptyBindings
+                );
+            }
+        };
+        runtime.updateRepeater = function(collection) {
+            const previous = setActiveConsumer(null);
+            const selected = runtimeState.selectedIndex;
+            try {
+                const view = readView(selected);
+                const live = readLiveCollection(view);
+                reconcile(live, collection);
+                updateIndexes(live);
+                updateEmptyBlock(view);
+            } finally {
+                setActiveConsumer(previous);
+            }
+        };
+        runtime.trackIdentity = function(index, item) {
+            return item;
+        };
+
+        function RowTemplate(rf, context) {
+            if (rf & 1) {
+                runtime.start(0, "span");
+                runtime.text(1);
+                runtime.end();
+            }
+            if (rf & 2) {
+                rf = context.$implicit;
+                runtime.advance(1);
+                runtime.interpolate(rf.label);
+            }
+        }
+
+        class RenamedRepeaterComponent {
+            items = [];
+
+            static compiled = runtime.component({
+                type: RenamedRepeaterComponent,
+                selectors: [["renamed-repeater-card"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.createRepeater(
+                            0,
+                            RowTemplate,
+                            2,
+                            0,
+                            "span",
+                            null,
+                            runtime.trackIdentity
+                        );
+                    }
+                    if (rf & 2) {
+                        runtime.updateRepeater(context.items);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("renamed repeater roles should be analyzed");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("@for (item of items; track item) {"));
+    assert!(component.source.contains("<span>{{ item.label }}</span>"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+}
+
+#[test]
+fn rejects_a_repeater_create_lookalike_without_runtime_marker() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+        };
+        runtime.lookalike = function(
+            index,
+            template,
+            declarations,
+            bindings,
+            tag,
+            attributes,
+            track,
+            usesComponent,
+            emptyTemplate,
+            emptyDeclarations,
+            emptyBindings,
+            emptyTag,
+            emptyAttributes
+        ) {
+            unrelatedFeature("NotAngularControlFlow");
+            declareSomething(index, template, declarations, bindings);
+        };
+        runtime.trackIdentity = function(index, item) {
+            return item;
+        };
+
+        function RowTemplate(rf) {
+            if (rf & 1) {
+                runtime.start(0, "span");
+                runtime.text(1, "Item");
+                runtime.end();
+            }
+        }
+
+        class RepeaterLookalikeComponent {
+            static compiled = runtime.component({
+                type: RepeaterLookalikeComponent,
+                selectors: [["repeater-lookalike"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        runtime.start(0, "section");
+                        runtime.lookalike(
+                            1,
+                            RowTemplate,
+                            2,
+                            0,
+                            "span",
+                            null,
+                            runtime.trackIdentity
+                        );
+                        runtime.end();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the repeater lookalike should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction));
+    assert!(!component.source.contains("@for"));
+}
+
+#[test]
+fn rejects_defer_views_that_are_not_trailing_siblings() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function PrimaryTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "article");
+            }
+        }
+
+        class MalformedDeferredComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: MalformedDeferredComponent,
+                selectors: [["malformed-deferred-card"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, PrimaryTemplate, 1, 0);
+                        core.ɵɵelement(1, "aside");
+                        core.ɵɵdefer(2, 0, null);
+                        core.ɵɵdeferOnIdle();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("malformed deferred-view ordering should remain recoverable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MissingTargetNode
+            && issue.instruction.as_deref() == Some("ɵɵdefer")
+            && issue
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("trailing siblings"))
+    }));
+    assert!(!component.source.contains("@defer"));
+    assert!(component.source.contains("<ng-template>"));
+    assert!(component.source.contains("<aside></aside>"));
+}
+
+#[test]
 fn infers_a_closure_specialized_one_parameter_conditional() {
     let source = r#"
         runtime.public = {
