@@ -318,8 +318,12 @@ for (const excludedRole of [
   'ɵɵtext',
   'ɵɵproperty',
   'ɵɵconditional',
+  'ɵɵdefer',
+  'ɵɵdeferOnIdle',
   'ɵɵgetCurrentView',
   'ɵɵnextContext',
+  'ɵɵrepeater',
+  'ɵɵrepeaterCreate',
   'ɵɵresetView',
   'ɵɵrestoreView',
 ]) {
