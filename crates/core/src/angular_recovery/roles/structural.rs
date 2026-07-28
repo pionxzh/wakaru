@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Expr, ExprOrSpread, FnDecl, Function, Lit, MemberProp, Pat, ReturnStmt, SimpleAssignTarget,
-    Stmt, UnaryOp, VarDeclarator,
+    Expr, ExprOrSpread, FnDecl, Function, Lit, MemberProp, Pat, Prop, PropName, ReturnStmt,
+    SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -73,6 +73,8 @@ impl StructuralRoleEvidence {
             &function_index,
             &by_identity,
         ));
+        inferred.extend(infer_defer_role_family(&function_index, &by_identity));
+        inferred.extend(infer_repeater_role_family(&function_index, &by_identity));
         inferred.extend(infer_view_state_role_family(&self.functions, modules));
         for (identity, observations) in &by_identity {
             let Some(definition) = function_index.unique(identity) else {
@@ -233,6 +235,8 @@ impl Visit for TemplateFunctionCollector<'_> {
         }
         if observer.saw_creation_anchor
             || has_unclassified_element_anchor(&observer.observations, self.function_index)
+            || has_unclassified_defer_anchor(&observer.observations, self.function_index)
+            || has_unclassified_repeater_anchor(&observer.observations, self.function_index)
         {
             self.observations.extend(observer.observations);
         }
@@ -450,6 +454,38 @@ fn has_unclassified_element_anchor(
     has_start && has_end
 }
 
+fn has_unclassified_defer_anchor(
+    observations: &[TemplateCallObservation],
+    function_index: &RuntimeFunctionIndex<'_>,
+) -> bool {
+    let has_template = observations.iter().any(|observation| {
+        observation.phase == 1 && is_embedded_template_arguments(&observation.arguments)
+    });
+    has_template
+        && observations.iter().any(|observation| {
+            observation.phase == 1
+                && function_index
+                    .unique(&observation.identity)
+                    .is_some_and(|definition| {
+                        (6..=10).contains(&definition.params.len())
+                            && contains_string_literal(&definition.body, "NgDefer")
+                    })
+        })
+}
+
+fn has_unclassified_repeater_anchor(
+    observations: &[TemplateCallObservation],
+    function_index: &RuntimeFunctionIndex<'_>,
+) -> bool {
+    observations.iter().any(|observation| {
+        observation.phase == 1
+            && is_repeater_create_arguments(&observation.arguments)
+            && function_index
+                .unique(&observation.identity)
+                .is_some_and(is_repeater_create_definition)
+    })
+}
+
 fn infer_specialized_element_pair(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
@@ -574,6 +610,438 @@ fn infer_embedded_template_continuation_family(
         inferred.push((continuation.identity.clone(), "ɵɵtemplate"));
     }
     inferred
+}
+
+fn infer_defer_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut template_slots_by_view = HashMap::<usize, HashSet<usize>>::new();
+    for calls in observations.values() {
+        for call in calls {
+            if is_embedded_template_arguments(&call.arguments) {
+                if let Some(index) = nonnegative_integer_value(call.arguments[0].as_ref()) {
+                    template_slots_by_view
+                        .entry(call.view_id)
+                        .or_default()
+                        .insert(index);
+                }
+            }
+        }
+    }
+
+    let mut inferred = Vec::new();
+    let mut defer_views = HashSet::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        if !(6..=10).contains(&definition.params.len())
+            || !contains_string_literal(&definition.body, "NgDefer")
+            || !calls.iter().all(|call| {
+                call.usage == TemplateCallUsage::Effect
+                    && call.phase == 1
+                    && template_slots_by_view
+                        .get(&call.view_id)
+                        .is_some_and(|slots| is_defer_arguments(&call.arguments, slots))
+            })
+        {
+            continue;
+        }
+        defer_views.extend(calls.iter().map(|call| call.view_id));
+        inferred.push((identity.clone(), "ɵɵdefer"));
+    }
+
+    if inferred.is_empty() {
+        return inferred;
+    }
+    for (identity, calls) in observations {
+        if inferred
+            .iter()
+            .any(|(defer_identity, _)| defer_identity == identity)
+        {
+            continue;
+        }
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        let [parameter] = parameters.as_slice() else {
+            continue;
+        };
+        if contains_timeout_parameter_object(definition, parameter)
+            && calls.iter().all(|call| {
+                defer_views.contains(&call.view_id)
+                    && call.usage == TemplateCallUsage::Effect
+                    && call.phase == 1
+                    && matches!(call.arguments.len(), 0 | 1)
+                    && call
+                        .arguments
+                        .first()
+                        .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
+            })
+        {
+            inferred.push((identity.clone(), "ɵɵdeferOnIdle"));
+        }
+    }
+    inferred
+}
+
+fn is_defer_arguments(arguments: &[Box<Expr>], template_slots: &HashSet<usize>) -> bool {
+    if !(3..=10).contains(&arguments.len()) {
+        return false;
+    }
+    let Some(defer_index) = nonnegative_integer_value(arguments[0].as_ref()) else {
+        return false;
+    };
+    let Some(primary_index) = nonnegative_integer_value(arguments[1].as_ref()) else {
+        return false;
+    };
+    if defer_index == primary_index || !template_slots.contains(&primary_index) {
+        return false;
+    }
+    if !is_nullish_or_callable(arguments[2].as_ref()) {
+        return false;
+    }
+
+    let mut referenced = HashSet::from([primary_index]);
+    for argument in arguments.iter().take(6).skip(3) {
+        if is_nullish(argument.as_ref()) {
+            continue;
+        }
+        let Some(index) = nonnegative_integer_value(argument.as_ref()) else {
+            return false;
+        };
+        if !template_slots.contains(&index) || !referenced.insert(index) {
+            return false;
+        }
+    }
+    arguments.get(6).is_none_or(|argument| {
+        is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+    }) && arguments.get(7).is_none_or(|argument| {
+        is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+    }) && arguments
+        .get(8)
+        .is_none_or(|argument| is_nullish_or_callable(argument.as_ref()))
+        && arguments.get(9).is_none_or(|argument| {
+            is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+        })
+}
+
+fn nonnegative_integer_value(expression: &Expr) -> Option<usize> {
+    let Expr::Lit(Lit::Num(number)) = strip_parentheses(expression) else {
+        return None;
+    };
+    (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as usize)
+}
+
+fn is_nullish(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Null(_)) => true,
+        Expr::Ident(identifier) => identifier.sym == "undefined",
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => true,
+        _ => false,
+    }
+}
+
+fn is_nullish_or_callable(expression: &Expr) -> bool {
+    is_nullish(expression)
+        || matches!(
+            strip_parentheses(expression),
+            Expr::Ident(_) | Expr::Member(_) | Expr::Fn(_) | Expr::Arrow(_)
+        )
+}
+
+fn contains_string_literal(block: &BlockStmt, expected: &str) -> bool {
+    struct Finder<'a> {
+        expected: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if matches!(
+                expression,
+                Expr::Lit(Lit::Str(string)) if string.value == self.expected
+            ) {
+                self.found = true;
+                return;
+            }
+            expression.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+fn contains_timeout_parameter_object(function: &RuntimeFunction, parameter: &BindingKey) -> bool {
+    struct Finder<'a> {
+        parameter: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_prop(&mut self, property: &Prop) {
+            let matches = match property {
+                Prop::Shorthand(identifier) => {
+                    identifier.sym == "timeout" && binding_key(identifier) == *self.parameter
+                }
+                Prop::KeyValue(key_value) if prop_name_is(&key_value.key, "timeout") => matches!(
+                    strip_parentheses(key_value.value.as_ref()),
+                    Expr::Ident(identifier) if binding_key(identifier) == *self.parameter
+                ),
+                _ => false,
+            };
+            if matches {
+                self.found = true;
+                return;
+            }
+            property.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        parameter,
+        found: false,
+    };
+    function.body.visit_with(&mut finder);
+    finder.found
+}
+
+fn prop_name_is(name: &PropName, expected: &str) -> bool {
+    match name {
+        PropName::Ident(identifier) => identifier.sym == expected,
+        PropName::Str(string) => string.value == expected,
+        _ => false,
+    }
+}
+
+fn infer_repeater_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut inferred = Vec::new();
+    let mut repeater_views = HashSet::new();
+    let mut track_candidates = HashSet::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        if !is_repeater_create_definition(definition)
+            || !calls.iter().all(|call| {
+                call.usage == TemplateCallUsage::Effect
+                    && call.phase == 1
+                    && is_repeater_create_arguments(&call.arguments)
+            })
+        {
+            continue;
+        }
+        repeater_views.extend(calls.iter().map(|call| call.view_id));
+        track_candidates.extend(calls.iter().filter_map(|call| {
+            symbol_identity(call.arguments.get(6)?.as_ref(), definition.unresolved_ctxt)
+        }));
+        inferred.push((identity.clone(), "ɵɵrepeaterCreate"));
+    }
+    if inferred.is_empty() {
+        return inferred;
+    }
+
+    let mut updates_by_view = HashMap::<usize, HashSet<SymbolIdentity>>::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        if definition.params.len() == 1
+            && contains_try_finally(&definition.body)
+            && contains_member_property(&definition.body, "selectedIndex")
+            && direct_calls(definition).len() >= 5
+            && calls.iter().all(|call| {
+                call.usage == TemplateCallUsage::Effect
+                    && call.phase == 2
+                    && call.arguments.len() == 1
+            })
+        {
+            for view_id in calls
+                .iter()
+                .map(|call| call.view_id)
+                .filter(|view_id| repeater_views.contains(view_id))
+            {
+                updates_by_view
+                    .entry(view_id)
+                    .or_default()
+                    .insert(identity.clone());
+            }
+        }
+    }
+    let mut proven_updates = HashSet::new();
+    for candidates in updates_by_view.values() {
+        if let Some(candidate) = single_identity(candidates.iter()) {
+            proven_updates.insert(candidate.clone());
+        }
+    }
+    inferred.extend(
+        proven_updates
+            .into_iter()
+            .map(|identity| (identity, "ɵɵrepeater")),
+    );
+
+    for identity in track_candidates {
+        let Some(definition) = function_index.unique(&identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        let role = if parameters.len() == 1
+            && exact_returned_identity(definition)
+                == Some(SymbolIdentity::LocalBinding(parameters[0].clone()))
+        {
+            Some("ɵɵrepeaterTrackByIndex")
+        } else if parameters.len() == 2
+            && exact_returned_identity(definition)
+                == Some(SymbolIdentity::LocalBinding(parameters[1].clone()))
+        {
+            Some("ɵɵrepeaterTrackByIdentity")
+        } else {
+            None
+        };
+        if let Some(role) = role {
+            inferred.push((identity, role));
+        }
+    }
+    inferred
+}
+
+fn is_repeater_create_definition(definition: &RuntimeFunction) -> bool {
+    definition.params.len() == 13 && contains_string_literal(&definition.body, "NgControlFlow")
+}
+
+fn is_repeater_create_arguments(arguments: &[Box<Expr>]) -> bool {
+    matches!(arguments.len(), 7..=13)
+        && arguments
+            .first()
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments
+            .get(1)
+            .is_some_and(|argument| is_callable(argument.as_ref()))
+        && arguments
+            .get(2)
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments
+            .get(3)
+            .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        && arguments.get(4).is_some_and(|argument| {
+            is_nullish(argument.as_ref()) || is_string_literal(argument.as_ref())
+        })
+        && arguments.get(5).is_some_and(|argument| {
+            is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+        })
+        && arguments
+            .get(6)
+            .is_some_and(|argument| is_callable(argument.as_ref()))
+        && arguments
+            .get(7)
+            .is_none_or(|argument| is_boolean_literal(argument.as_ref()))
+        && arguments
+            .get(8)
+            .is_none_or(|argument| is_nullish_or_callable(argument.as_ref()))
+        && arguments.get(9).is_none_or(|argument| {
+            is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+        })
+        && arguments.get(10).is_none_or(|argument| {
+            is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+        })
+        && arguments.get(11).is_none_or(|argument| {
+            is_nullish(argument.as_ref()) || is_string_literal(argument.as_ref())
+        })
+        && arguments.get(12).is_none_or(|argument| {
+            is_nullish(argument.as_ref()) || is_nonnegative_integer(argument.as_ref())
+        })
+}
+
+fn is_callable(expression: &Expr) -> bool {
+    matches!(
+        strip_parentheses(expression),
+        Expr::Ident(_) | Expr::Member(_) | Expr::Fn(_) | Expr::Arrow(_)
+    )
+}
+
+fn is_boolean_literal(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Bool(_)) => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => matches!(
+            strip_parentheses(unary.arg.as_ref()),
+            Expr::Lit(Lit::Num(number)) if number.value == 0.0 || number.value == 1.0
+        ),
+        _ => false,
+    }
+}
+
+fn contains_try_finally(block: &BlockStmt) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_try_stmt(&mut self, statement: &swc_core::ecma::ast::TryStmt) {
+            if statement.finalizer.is_some() {
+                self.found = true;
+                return;
+            }
+            statement.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder { found: false };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+fn contains_member_property(block: &BlockStmt, expected: &str) -> bool {
+    struct Finder<'a> {
+        expected: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if member_prop_name(&member.prop).as_deref() == Some(self.expected) {
+                self.found = true;
+                return;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
 }
 
 fn infer_view_state_role_family(
@@ -962,7 +1430,11 @@ fn is_embedded_template_shape(
     observations: &[TemplateCallObservation],
 ) -> bool {
     definition.params.len() == 8
-        && direct_calls(definition).len() >= 3
+        && {
+            let direct_calls = direct_calls(definition);
+            direct_calls.len() >= 3
+                || (!direct_calls.is_empty() && returns_identity(definition, &definition.identity))
+        }
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 1

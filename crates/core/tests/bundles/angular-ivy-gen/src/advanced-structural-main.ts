@@ -2,9 +2,13 @@ import { bootstrapApplication } from '@angular/platform-browser';
 import {
   Component,
   ɵɵconditionalCreate,
+  ɵɵdefer,
+  ɵɵdeferOnIdle,
   ɵɵdefineComponent,
   ɵɵgetCurrentView,
   ɵɵnextContext,
+  ɵɵrepeater,
+  ɵɵrepeaterCreate,
   ɵɵresetView,
   ɵɵrestoreView,
 } from '@angular/core';
@@ -28,15 +32,36 @@ const producerGlobal = globalThis as typeof globalThis & {
         Nested view
       </button>
     }
+    @for (item of items; track item.id) {
+      <span>Item</span>
+    } @empty {
+      <span>No items</span>
+    }
   `,
 })
 class StructuralViewCardComponent {
   visible = true;
   disabled = false;
+  items = [{ id: 1, label: 'First' }];
 
   select(): void {
     this.disabled = true;
   }
+}
+
+@Component({
+  selector: 'structural-defer-card',
+  standalone: true,
+  template: `
+    @defer (on idle) {
+      <article>{{ title }}</article>
+    } @placeholder {
+      <p>Waiting</p>
+    }
+  `,
+})
+class StructuralDeferCardComponent {
+  title = 'Deferred content';
 }
 
 producerGlobal.__wakaruAngularRoots = [
@@ -44,6 +69,7 @@ producerGlobal.__wakaruAngularRoots = [
   FixtureCardComponent,
   LazyCardComponent,
   StructuralViewCardComponent,
+  StructuralDeferCardComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
   (AppComponent as typeof AppComponent & { ɵcmp: unknown }).ɵcmp,
@@ -54,14 +80,23 @@ producerGlobal.__wakaruAngularDefinitions = [
       ɵcmp: unknown;
     }
   ).ɵcmp,
+  (
+    StructuralDeferCardComponent as typeof StructuralDeferCardComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
 ];
 producerGlobal.__wakaruIvyRuntime = {
   'ɵɵdefineComponent': ɵɵdefineComponent,
 };
 producerGlobal.__wakaruStructuralRuntime = [
   ɵɵconditionalCreate,
+  ɵɵdefer,
+  ɵɵdeferOnIdle,
   ɵɵgetCurrentView,
   ɵɵnextContext,
+  ɵɵrepeater,
+  ɵɵrepeaterCreate,
   ɵɵresetView,
   ɵɵrestoreView,
 ];
