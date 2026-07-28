@@ -28,6 +28,10 @@ Before publishing:
 5. Check `git tag -l vX.Y.Z` is empty before creating the tag.
 6. Inspect `CHANGELOG.md` against `git log --no-merges vPREV..HEAD`.
 
+Before tagging, review `npm/README.md` against the release: its claims must
+match what the tagged version actually ships (e.g. a bundler format merged
+after the previous tag needs adding; an unreleased one must not appear).
+
 The bare `wakaru` npm package (`npm/alias/`) is a thin shim around
 `@wakaru/cli`, pinned to the exact release version. The release workflow
 publishes it automatically after the main package: it regenerates

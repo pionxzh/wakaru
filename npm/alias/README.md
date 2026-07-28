@@ -2,7 +2,8 @@
 
 > `wakaru` is the bare-name alias for [`@wakaru/cli`](https://www.npmjs.com/package/@wakaru/cli): the same CLI under a shorter name.
 
-Fast JavaScript decompiler and bundle splitter for modern frontend code.
+Turn production JavaScript — bundled, transpiled, minified — back into
+readable modules.
 
 ## Quick Start
 
@@ -27,6 +28,8 @@ wakaru input.js -o output.js
 - Recovers readable JavaScript from transpiler and minifier output.
 - Supports source maps for name recovery and output mappings.
 - Offers `minimal`, `standard`, and `aggressive` rewrite levels.
+- Deliberately not a deobfuscator — obfuscated input should have the
+  obfuscation stripped with a dedicated tool first.
 
 ## CLI Reference
 
@@ -119,6 +122,8 @@ Wakaru refuses to overwrite existing files unless `--force` is passed.
 
 ## Links
 
+- Website: https://wakarujs.com
+- Playground (runs in your browser): https://wakarujs.com/playground
 - Repository: https://github.com/pionxzh/wakaru
 - Documentation: https://github.com/pionxzh/wakaru#readme
 - Releases: https://github.com/pionxzh/wakaru/releases
