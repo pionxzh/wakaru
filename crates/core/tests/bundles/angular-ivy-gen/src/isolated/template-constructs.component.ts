@@ -58,3 +58,23 @@ export class FixtureStructuralConstructsComponent {
 
   select(_row: HTMLButtonElement, _item: { id: number; label: string }) {}
 }
+
+@Component({
+  selector: 'fixture-deferred-constructs',
+  template: `
+    <section>
+      @defer (on idle) {
+        <article>{{ title }}</article>
+      } @loading {
+        <p>Loading</p>
+      } @placeholder {
+        <p>Waiting</p>
+      } @error {
+        <p>Failed</p>
+      }
+    </section>
+  `,
+})
+export class FixtureDeferredConstructsComponent {
+  title = 'Deferred content';
+}
