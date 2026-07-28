@@ -57,10 +57,10 @@ unless the source map includes original names.)
 ## Quick start
 
 ```bash
-npx @wakaru/cli input.js -o output.js               # decompile a file
-npx @wakaru/cli bundle.js --unpack -o out/          # unpack and decompile a bundle
-npx @wakaru/cli dist/ --unpack -o out/              # scan a bundle output directory
-npx @wakaru/cli ./compiled-app --unpack -o out/     # extract a Bun standalone executable
+npx wakaru input.js -o output.js               # decompile a file
+npx wakaru bundle.js --unpack -o out/          # unpack and decompile a bundle
+npx wakaru dist/ --unpack -o out/              # scan a bundle output directory
+npx wakaru ./compiled-app --unpack -o out/     # extract a Bun standalone executable
 ```
 
 Full flag reference: [docs/cli.md](./docs/cli.md).
@@ -113,7 +113,7 @@ readable modules:
 
 ```bash
 npx webcrack --no-unpack --no-unminify obfuscated.js > deobfuscated.js  # 1. strip the obfuscation
-npx @wakaru/cli deobfuscated.js --unpack -o out/                        # 2. recover readable modules
+npx wakaru deobfuscated.js --unpack -o out/                             # 2. recover readable modules
 ```
 
 **Want better names?** Pair Wakaru's deterministic structure recovery with an
@@ -154,7 +154,7 @@ npx skills add pionxzh/wakaru
 ## Install
 
 ```bash
-npm install -g @wakaru/cli@latest
+npm install -g wakaru@latest
 ```
 
 Or pre-built binaries from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).

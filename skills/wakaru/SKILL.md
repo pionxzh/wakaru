@@ -38,11 +38,11 @@ mangled locals stay short unless a source map is provided.
 Requires the CLI. Prefer running via `npx` (no global install):
 
 ```bash
-npx @wakaru/cli --version
+npx wakaru --version
 ```
 
-If invoked repeatedly, install once: `npm install -g @wakaru/cli@latest`.
-In this document `wakaru` means `npx @wakaru/cli` unless installed globally.
+If invoked repeatedly, install once: `npm install -g wakaru@latest`.
+In this document `wakaru` means `npx wakaru` unless installed globally.
 
 ## Core workflows
 
@@ -139,7 +139,7 @@ the obfuscation. Leave unpacking and unminifying to Wakaru:
 npx webcrack --no-unpack --no-unminify obfuscated.js > deobfuscated.js
 
 # 2. Recover readable modules.
-npx @wakaru/cli deobfuscated.js --unpack -o out/
+npx wakaru deobfuscated.js --unpack -o out/
 ```
 
 ## Rewrite levels — pick by intent
