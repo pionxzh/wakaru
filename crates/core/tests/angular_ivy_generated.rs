@@ -425,6 +425,50 @@ fn recovers_deferred_views_from_isolated_angular_compiler_output() {
 }
 
 #[test]
+fn preserves_legacy_structural_directives_as_neutral_templates() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for authored_template_fragment in ["*ngIf", "*ngFor"] {
+        assert!(
+            !TEMPLATE_CONSTRUCTS.contains(authored_template_fragment),
+            "generated fixture should not retain {authored_template_fragment}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-legacy-structural-constructs")
+        .expect("legacy structural component identity should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("<ng-template [ngIf]=\"visible\">"));
+    assert!(component
+        .source
+        .contains("<ng-template [ngForOf]=\"items\">"));
+    assert!(component.source.contains("<span>{{ item }}</span>"));
+    assert!(!component.source.contains("*ngIf"));
+    assert!(!component.source.contains("*ngFor"));
+    assert!(!component.source.contains("@if"));
+    assert!(!component.source.contains("@for"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
 fn recovers_assignment_lowered_angular_template_constructs() {
     assert_production_artifact(TEMPLATE_CONSTRUCTS_ASSIGNMENT);
     assert!(TEMPLATE_CONSTRUCTS_ASSIGNMENT
