@@ -52,6 +52,8 @@ Initial recovery covers:
   listeners that use `ɵɵrestoreView` / `ɵɵresetView`;
 - bounded `@defer` blocks with primary, loading, placeholder, and error views,
   plus an immediately following `on idle` trigger;
+- legacy structural-directive templates in neutral `<ng-template>` form when
+  their ordinary template and property operations are recoverable;
 - content projection, including selector-bearing `<ng-content>` slots;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
@@ -411,7 +413,9 @@ reference, and a pipe binding from both the Angular chunks and their Closure
 additionally recovers a modern `@for` / `@empty` repeater, its track expression,
 loop-local reference, and captured-view listener as a complete artifact.
 It also recovers a complete `@defer (on idle)` block with primary, loading,
-placeholder, and error views.
+placeholder, and error views. A generated legacy fixture recovers complete
+`<ng-template [ngIf]>` and `<ng-template [ngForOf]>` forms while proving that
+the authored `*ngIf` / `*ngFor` shorthand is absent.
 An assignment-backed derivative of that generated artifact proves the same
 nested views after their function declarations are mechanically lowered to
 stable predeclared assignments. Reassigning one of those bindings is a negative
@@ -465,11 +469,11 @@ vocabulary or success baseline.
 
 Legacy `*ngIf` / `*ngFor` spelling is not reconstructed from a bare embedded
 view. That spelling is erased by compilation, and the same low-level template
-shape can be driven by a custom structural directive. When its ordinary
-template and property operations are recoverable, Wakaru keeps the honest
-`<ng-template>` form. Re-sugaring requires proven directive/input metadata and
-is intentionally lower priority than the optimized control-flow families
-observed in current production measurements.
+shape can be driven by a custom structural directive. The generated Angular 22
+fixture proves that ordinary template/property recovery keeps a complete,
+readable `<ng-template>` form. Re-sugaring requires proven directive/input
+metadata and is intentionally lower priority than the optimized control-flow
+families observed in current production measurements.
 
 ## Tests and local corpus policy
 

@@ -1,4 +1,4 @@
-import { UpperCasePipe } from "@angular/common";
+import { NgFor, NgIf, UpperCasePipe } from "@angular/common";
 import "@angular/core";
 import * as i0 from "@angular/core";
 const _c0 = [[["", "card-footer", ""]]], _c1 = ["[card-footer]"], _forTrack0 = ($index, $item) => $item.id;
@@ -42,6 +42,15 @@ function FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template(rf, ctx)
 function FixtureDeferredConstructsComponent_DeferError_4_Template(rf, ctx) {
   rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Failed"), i0.\u0275\u0275domElementEnd());
 }
+function FixtureLegacyStructuralConstructsComponent_p_1_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275elementStart(0, "p"), i0.\u0275\u0275text(1, "Legacy visible"), i0.\u0275\u0275elementEnd());
+}
+function FixtureLegacyStructuralConstructsComponent_span_2_Template(rf, ctx) {
+  if (rf & 1 && (i0.\u0275\u0275elementStart(0, "span"), i0.\u0275\u0275text(1), i0.\u0275\u0275elementEnd()), rf & 2) {
+    const item_r1 = ctx.$implicit;
+    i0.\u0275\u0275advance(), i0.\u0275\u0275textInterpolate(item_r1);
+  }
+}
 class FixtureFlatBindingsComponent {
   label = "Generated label";
   prefix = "Status:";
@@ -82,8 +91,19 @@ class FixtureDeferredConstructsComponent {
     rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureDeferredConstructsComponent_Defer_1_Template, 2, 1)(2, FixtureDeferredConstructsComponent_DeferLoading_2_Template, 2, 0)(3, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, 2, 0)(4, FixtureDeferredConstructsComponent_DeferError_4_Template, 2, 0), i0.\u0275\u0275defer(5, 1, null, 2, 3, 4), i0.\u0275\u0275deferOnIdle(), i0.\u0275\u0275domElementEnd());
   }, encapsulation: 2 });
 }
+class FixtureLegacyStructuralConstructsComponent {
+  visible = !0;
+  items = ["First", "Second"];
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureLegacyStructuralConstructsComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureLegacyStructuralConstructsComponent, selectors: [["fixture-legacy-structural-constructs"]], decls: 3, vars: 2, consts: [[4, "ngIf"], [4, "ngFor", "ngForOf"]], template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275elementStart(0, "section"), i0.\u0275\u0275template(1, FixtureLegacyStructuralConstructsComponent_p_1_Template, 2, 0, "p", 0)(2, FixtureLegacyStructuralConstructsComponent_span_2_Template, 2, 1, "span", 1), i0.\u0275\u0275elementEnd()), rf & 2 && (i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngIf", ctx.visible), i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngForOf", ctx.items));
+  }, dependencies: [NgIf, NgFor], encapsulation: 2 });
+}
 export {
   FixtureDeferredConstructsComponent,
   FixtureFlatBindingsComponent,
+  FixtureLegacyStructuralConstructsComponent,
   FixtureStructuralConstructsComponent
 };
