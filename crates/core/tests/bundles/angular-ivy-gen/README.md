@@ -39,7 +39,8 @@ minification with `ngDevMode=false`. It isolates:
   bindings;
 - `@if`, `@for` / `@empty`, projection, a loop-local reference, and a pipe,
   including the view restoration and `$implicit` aliases emitted for a loop
-  listener.
+  listener;
+- `@defer` with primary, loading, placeholder, and error views.
 
 The direct compiler fixture complements the chunk fixture: it pins exact
 instruction vocabulary without making the test depend on application bundler
@@ -86,7 +87,11 @@ parent-context property binding. Closure preserves structurally recognizable
 `nextContext`, `restoreView`, and `resetView` bodies but inlines
 `getCurrentView` into a member read. Their canonical role names are likewise
 absent, so recovery must prove the view-state family and validate the inlined
-capture from its use by the restore helper.
+capture from its use by the restore helper. A fifth component keeps a deferred
+primary and placeholder view observable while requiring the defer instruction
+role to be inferred without its canonical name. The structural component also
+contains `@for` / `@empty`, so the repeater creation/update roles and track
+expression must be recovered after the instruction names are removed.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component

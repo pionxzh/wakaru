@@ -50,6 +50,8 @@ Initial recovery covers:
 - modern `@for` / `@empty` repeaters when the creation/update pair and track
   function are proven, including `$implicit` loop bindings and captured-view
   listeners that use `ɵɵrestoreView` / `ɵɵresetView`;
+- bounded `@defer` blocks with primary, loading, placeholder, and error views,
+  plus an immediately following `on idle` trigger;
 - content projection, including selector-bearing `<ng-content>` slots;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
@@ -60,12 +62,13 @@ Initial recovery covers:
 - inline component styles;
 - the component class body after Ivy definition fields are removed.
 
-Deferred views, legacy structural-directive syntax, and original package
-provenance after bundling are incremental extensions. Dependencies between
-recovered siblings in the same module are linked by binding identity; ordinary
-ESM edges can also link recovered components in different artifacts.
-Unsupported instruction regions remain explicit in the recovery IR and must
-not be silently rendered as if recovery were complete.
+Other defer triggers, defer timing/hydration metadata, legacy
+structural-directive re-sugaring, and original package provenance after
+bundling remain incremental extensions. Dependencies between recovered
+siblings in the same module are linked by binding identity; ordinary ESM edges
+can also link recovered components in different artifacts. Unsupported
+instruction regions remain explicit in the recovery IR and must not be
+silently rendered as if recovery were complete.
 
 ## Architecture boundary
 
@@ -192,6 +195,29 @@ continuation has the expected eight-parameter family shape, and both functions
 forward their parameter dependencies in order to the same internal callee.
 Matching arity or a returned function alone is insufficient.
 
+Optimized control-flow roles use related runtime and template-use evidence:
+
+- a Closure-renamed repeater creator must have Angular's thirteen-parameter
+  runtime family, retain the `NgControlFlow` marker, and be called in creation
+  blocks with a valid seven-to-thirteen-argument template shape;
+- its update helper must be uniquely paired in those same views, take the
+  collection in update phase, retain the `try`/`finally` consumer guard and
+  selected-index state access, and retain a nontrivial direct-call body;
+- identity/index track helpers are accepted only when their complete body
+  returns the corresponding parameter;
+- a Closure-renamed defer creator must retain the `NgDefer` runtime marker and
+  reference child-template slots already declared in the same view;
+- the idle-trigger role is inferred only inside a proven defer view from its
+  timeout-object runtime behavior.
+
+Rendering remains stricter than role classification. A defer block consumes
+only unattributed, unbranched child templates that are the immediate trailing
+siblings in declaration order. Timing/hydration arguments and non-idle
+triggers remain explicit partial regions. Repeater context aliases are restored
+from canonical `$implicit`/`$...` members in either declaration or assignment
+form. If Closure renamed those context properties, Wakaru does not guess
+whether a field meant `$implicit`, `$index`, or another contextual value.
+
 Template-use evidence is semantic rather than tied to one minifier statement
 shape. A fluent property instruction may appear as either an effect or an
 initializer after Closure rewriting, and a conditional may select a fixed
@@ -250,16 +276,17 @@ are never substituted into the event expression.
 
 The nested spans distinguish unavoidable parsing from semantic analysis and
 artifact rendering. A local reference run on a 12.3 MB, 239-module production
-corpus used the `dev-release` CLI, one warmup, and five measured runs. Normal
-unpack averaged 6.22 seconds (5.82–7.10 seconds) and Angular unpack averaged
-7.61 seconds (7.52–7.79 seconds). A release trace spent about 259 ms preparing
-the two views and 1.10 seconds in prepared-module recovery, including 265 ms
-for role inference, 36 ms for artifact-symbol indexing, 704 ms for component
-recovery, and 49 ms linking recovered modules. The final 132 module-oriented
-sidecars account for part of the remaining CLI difference. The link step is
-small relative to component recovery, so a specialized graph optimization is
-not currently justified. These figures validate the current implementation;
-they are not a performance contract across machines or corpora.
+corpus used a release CLI, one warmup, and five measured runs. Normal unpack
+averaged 6.22 seconds (5.82–7.10 seconds). After optimized repeater/defer role
+inference was added, Angular unpack averaged 7.20 seconds (6.94–7.45 seconds).
+An earlier release trace spent about 259 ms preparing the two views and
+1.10 seconds in prepared-module recovery, including 265 ms for role inference,
+36 ms for artifact-symbol indexing, 704 ms for component recovery, and 49 ms
+linking recovered modules. The final 132 module-oriented sidecars account for
+part of the remaining CLI difference. Neither the link step nor the new
+structural scans currently justify a specialized optimization. These figures
+validate the current implementation; they are not a performance contract
+across machines or corpora.
 
 The workspace may canonicalize a stable namespace argument passed into an
 immediately invoked function when the corresponding parameter is never
@@ -383,20 +410,35 @@ reference, and a pipe binding from both the Angular chunks and their Closure
 `SIMPLE` and rooted `ADVANCED` aggregates. The isolated direct-compiler fixture
 additionally recovers a modern `@for` / `@empty` repeater, its track expression,
 loop-local reference, and captured-view listener as a complete artifact.
+It also recovers a complete `@defer (on idle)` block with primary, loading,
+placeholder, and error views.
 An assignment-backed derivative of that generated artifact proves the same
 nested views after their function declarations are mechanically lowered to
 stable predeclared assignments. Reassigning one of those bindings is a negative
 fixture and remains partial.
 The minimally rooted `ADVANCED` profile proves interpolation, chained
-embedded-template, conditional, and property role inference from runtime
-behavior. It also proves parent-context traversal and the paired
-restore/reset view-state helpers without retaining their public role names.
-One generated conditional component exercises Closure's inlined
-current-view capture, a restored listener, and a nested property binding as a
-complete artifact. Unproven pipe and projection operations remain explicit
-partial regions.
-Deferred-view instructions remain explicit partial regions, matching the scope
-above.
+embedded-template, conditional, property, optimized repeater, defer, and idle
+trigger role inference from runtime behavior. It also proves parent-context
+traversal and the paired restore/reset view-state helpers without retaining
+their public role names. One generated conditional component exercises
+Closure's inlined current-view capture, a restored listener, and a nested
+property binding as a complete artifact. A separate generated component
+recovers a complete deferred primary/placeholder pair, and the structural
+component recovers `@for` / `@empty`. Unproven pipe and projection operations
+remain explicit partial regions.
+
+A supplementary private production corpus is reported only in aggregate. The
+current pass emitted 691 of 700 component candidates: 81 complete, 610 partial,
+and 9 rejected. It rendered 52,669 of 60,812 observed runtime calls, with 6,463
+unsupported and 1,680 malformed calls kept explicit. Repeater inference exposed
+394 `@for` blocks across 66 of 132 module artifacts; all 132 artifacts parsed
+as TypeScript, 12 loop collections remained unknown, and no track expression
+was guessed. Compared with the preceding milestone, rendered-call coverage
+rose from 44,096/51,402 (85.79%) to 52,669/60,812 (86.61%). The larger absolute
+issue counts reflect roughly 9,400 newly traversed calls in child views that
+were previously unreachable. This corpus contained no proven defer block, so
+defer correctness remains established by the generated fixtures rather than
+claimed from private data.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -420,6 +462,14 @@ instructions, their semantic role can still be recovered.
 Local `WHITESPACE_ONLY` experiments and complete public application bundles
 remain supplementary stress tests. They do not define the committed Angular
 vocabulary or success baseline.
+
+Legacy `*ngIf` / `*ngFor` spelling is not reconstructed from a bare embedded
+view. That spelling is erased by compilation, and the same low-level template
+shape can be driven by a custom structural directive. When its ordinary
+template and property operations are recoverable, Wakaru keeps the honest
+`<ng-template>` form. Re-sugaring requires proven directive/input metadata and
+is intentionally lower priority than the optimized control-flow families
+observed in current production measurements.
 
 ## Tests and local corpus policy
 
@@ -457,6 +507,7 @@ Pause and re-check this boundary after each milestone:
 12. Closure view-state role families and optimizer-inlined view captures.
 13. module-oriented artifacts and view-local unsupported-region placement.
 14. cross-artifact component relationships from proven ESM symbol edges.
+15. generated and Closure-renamed defer/repeater control-flow families.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

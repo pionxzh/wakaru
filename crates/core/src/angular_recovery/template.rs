@@ -304,6 +304,13 @@ enum TemplateNodeKind {
         attributes: Vec<TemplateAttribute>,
         branch: Option<ConditionalBranch>,
     },
+    Defer {
+        primary: Box<TemplateTree>,
+        loading: Option<Box<TemplateTree>>,
+        placeholder: Option<Box<TemplateTree>>,
+        error: Option<Box<TemplateTree>>,
+        triggers: Vec<String>,
+    },
     Repeater {
         body: Box<TemplateTree>,
         empty: Option<Box<TemplateTree>>,
@@ -318,6 +325,7 @@ enum TemplateNodeKind {
         comment: String,
         placement_unknown: bool,
     },
+    Consumed,
 }
 
 enum ConditionalBranch {
@@ -340,6 +348,7 @@ struct TemplateTree {
     local_reference_slots: HashMap<usize, String>,
     placed_issue_operations: HashSet<(AngularTemplatePhase, usize)>,
     cursor: usize,
+    pending_defer: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -769,10 +778,12 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::Element
                     | IvyInstruction::Text
                     | IvyInstruction::Template
+                    | IvyInstruction::Defer
                     | IvyInstruction::RepeaterCreate
                     | IvyInstruction::Projection => 3,
                     IvyInstruction::ElementEnd
                     | IvyInstruction::Listener
+                    | IvyInstruction::DeferOnIdle
                     | IvyInstruction::Conditional
                     | IvyInstruction::Repeater
                     | IvyInstruction::RepeaterTrackByIndex
@@ -1355,11 +1366,28 @@ fn collect_expression(
         }
         Expr::Assign(assignment) => {
             let supported_context_alias = match (&assignment.left, assignment.right.as_ref()) {
-                (AssignTarget::Simple(SimpleAssignTarget::Ident(binding)), Expr::Call(call))
+                (AssignTarget::Simple(SimpleAssignTarget::Ident(binding)), right)
                     if assignment.op == AssignOp::Assign =>
                 {
-                    collect_next_context_alias(&binding.id, call, phase, environment, program)
-                        || collect_reference_alias(&binding.id, call, phase, environment, program)
+                    collect_view_context_alias(&binding.id, right, phase, program)
+                        || match right {
+                            Expr::Call(call) => {
+                                collect_next_context_alias(
+                                    &binding.id,
+                                    call,
+                                    phase,
+                                    environment,
+                                    program,
+                                ) || collect_reference_alias(
+                                    &binding.id,
+                                    call,
+                                    phase,
+                                    environment,
+                                    program,
+                                )
+                            }
+                            _ => false,
+                        }
                 }
                 _ => false,
             };
@@ -1617,6 +1645,8 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::Text
                 | IvyInstruction::Listener
                 | IvyInstruction::Template
+                | IvyInstruction::Defer
+                | IvyInstruction::DeferOnIdle
                 | IvyInstruction::RepeaterCreate
                 | IvyInstruction::ProjectionDef
                 | IvyInstruction::Projection
@@ -2186,6 +2216,12 @@ fn apply_create_instruction(
         ancestor_references,
         depth,
     } = recovery;
+    if !matches!(
+        call.instruction,
+        IvyInstruction::Defer | IvyInstruction::DeferOnIdle
+    ) {
+        tree.pending_defer = None;
+    }
     match call.instruction {
         IvyInstruction::ElementStart => {
             let Some(index) = numeric_arg(&call.args, 0) else {
@@ -2452,7 +2488,7 @@ fn apply_create_instruction(
             }
         }
         IvyInstruction::RepeaterCreate => {
-            if !(8..=13).contains(&call.args.len()) {
+            if !(7..=13).contains(&call.args.len()) {
                 record_malformed_instruction(
                     call,
                     "expected repeater metadata arguments",
@@ -2670,6 +2706,155 @@ fn apply_create_instruction(
                 },
             );
         }
+        IvyInstruction::Defer => {
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric defer index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(primary_index) = numeric_arg(&call.args, 1) else {
+                record_malformed_instruction(
+                    call,
+                    "missing primary defer-template index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let loading_index = match optional_defer_template_index(&call.args, 3) {
+                Ok(index) => index,
+                Err(detail) => {
+                    record_malformed_instruction(
+                        call,
+                        detail,
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
+            let placeholder_index = match optional_defer_template_index(&call.args, 4) {
+                Ok(index) => index,
+                Err(detail) => {
+                    record_malformed_instruction(
+                        call,
+                        detail,
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
+            let error_index = match optional_defer_template_index(&call.args, 5) {
+                Ok(index) => index,
+                Err(detail) => {
+                    record_malformed_instruction(
+                        call,
+                        detail,
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
+            let view_indices = [
+                Some(primary_index),
+                loading_index,
+                placeholder_index,
+                error_index,
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            let trees = match tree.consume_trailing_embedded_views(&view_indices) {
+                Ok(trees) => trees,
+                Err(detail) => {
+                    record_missing_target(call, &detail, &mut program.issues, &mut program.stats);
+                    return Ok(());
+                }
+            };
+            let mut trees = trees.into_iter();
+            let primary = trees
+                .next()
+                .expect("the validated primary defer view is present");
+            let loading = loading_index.map(|_| {
+                trees
+                    .next()
+                    .expect("the validated loading defer view is present")
+            });
+            let placeholder = placeholder_index.map(|_| {
+                trees
+                    .next()
+                    .expect("the validated placeholder defer view is present")
+            });
+            let error = error_index.map(|_| {
+                trees
+                    .next()
+                    .expect("the validated error defer view is present")
+            });
+            let node = tree.push_node(
+                index,
+                TemplateNodeKind::Defer {
+                    primary: Box::new(primary),
+                    loading: loading.map(Box::new),
+                    placeholder: placeholder.map(Box::new),
+                    error: error.map(Box::new),
+                    triggers: Vec::new(),
+                },
+            );
+            tree.pending_defer = Some(node);
+
+            if call
+                .args
+                .iter()
+                .skip(6)
+                .any(|argument| !is_nullish_expression(argument.as_ref()))
+            {
+                record_unsupported_instruction(
+                    call,
+                    "defer timing or hydration metadata is not yet rendered",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+        }
+        IvyInstruction::DeferOnIdle => {
+            if !call.args.is_empty() {
+                record_unsupported_instruction(
+                    call,
+                    "idle trigger metadata is not yet rendered",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(node) = tree.pending_defer else {
+                record_missing_target(
+                    call,
+                    "no immediately preceding defer block",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let TemplateNodeKind::Defer { triggers, .. } = &mut tree.nodes[node].kind else {
+                record_missing_target(
+                    call,
+                    "the pending node is not a defer block",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            if !triggers.iter().any(|trigger| trigger == "on idle") {
+                triggers.push("on idle".to_string());
+            }
+        }
         _ => {
             record_unsupported_instruction(
                 call,
@@ -2863,6 +3048,21 @@ fn is_nullish_expression(expression: &Expr) -> bool {
         Expr::Ident(identifier) => identifier.sym == "undefined",
         _ => false,
     }
+}
+
+fn optional_defer_template_index(
+    arguments: &[Box<Expr>],
+    index: usize,
+) -> std::result::Result<Option<usize>, &'static str> {
+    let Some(argument) = arguments.get(index) else {
+        return Ok(None);
+    };
+    if is_nullish_expression(argument.as_ref()) {
+        return Ok(None);
+    }
+    numeric_expr(argument.as_ref())
+        .map(Some)
+        .ok_or("defer child-template index is not numeric or null")
 }
 
 fn attach_local_references(
@@ -3728,10 +3928,73 @@ impl TemplateTree {
             TemplateNodeKind::Element { attributes, .. }
             | TemplateNodeKind::EmbeddedView { attributes, .. } => attributes.push(attribute),
             TemplateNodeKind::Text { .. }
+            | TemplateNodeKind::Defer { .. }
             | TemplateNodeKind::Repeater { .. }
             | TemplateNodeKind::Projection { .. }
-            | TemplateNodeKind::UnsupportedRegion { .. } => {}
+            | TemplateNodeKind::UnsupportedRegion { .. }
+            | TemplateNodeKind::Consumed => {}
         }
+    }
+
+    fn consume_trailing_embedded_views(
+        &mut self,
+        indices: &[usize],
+    ) -> std::result::Result<Vec<TemplateTree>, String> {
+        if indices.is_empty() {
+            return Err("defer block has no primary embedded view".to_string());
+        }
+        let nodes = indices
+            .iter()
+            .map(|index| {
+                self.index_to_node
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| format!("no embedded template at defer index {index}"))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let siblings = match self.stack.last().copied() {
+            Some(parent) => &self.nodes[parent].children,
+            None => &self.roots,
+        };
+        if siblings.len() < nodes.len() || siblings[siblings.len() - nodes.len()..] != nodes {
+            return Err(
+                "defer child templates are not the trailing siblings in declaration order"
+                    .to_string(),
+            );
+        }
+        for node in &nodes {
+            match &self.nodes[*node].kind {
+                TemplateNodeKind::EmbeddedView {
+                    attributes,
+                    branch: None,
+                    ..
+                } if attributes.is_empty() => {}
+                TemplateNodeKind::EmbeddedView { .. } => {
+                    return Err(
+                        "defer child template has attributes or a control-flow branch".to_string(),
+                    );
+                }
+                _ => return Err("defer index does not reference an embedded template".to_string()),
+            }
+        }
+
+        match self.stack.last().copied() {
+            Some(parent) => {
+                let new_len = self.nodes[parent].children.len() - nodes.len();
+                self.nodes[parent].children.truncate(new_len);
+            }
+            None => self.roots.truncate(self.roots.len() - nodes.len()),
+        }
+        let mut trees = Vec::with_capacity(nodes.len());
+        for (index, node) in indices.iter().zip(nodes) {
+            self.index_to_node.remove(index);
+            let kind = std::mem::replace(&mut self.nodes[node].kind, TemplateNodeKind::Consumed);
+            let TemplateNodeKind::EmbeddedView { tree, .. } = kind else {
+                unreachable!("defer child kinds were validated before mutation")
+            };
+            trees.push(*tree);
+        }
+        Ok(trees)
     }
 
     fn next_insertion_point(&self) -> TreeInsertionPoint {
@@ -3916,6 +4179,32 @@ fn render_node(
                 }
             }
         }
+        TemplateNodeKind::Defer {
+            primary,
+            loading,
+            placeholder,
+            error,
+            triggers,
+        } => {
+            let trigger = if triggers.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", triggers.join("; "))
+            };
+            let primary = render_tree_at_depth(primary, depth + 1, rendered_issue_comments);
+            let mut rendered = format!("{indent}@defer{trigger} {{\n{primary}\n{indent}}}");
+            for (name, tree) in [
+                ("loading", loading.as_deref()),
+                ("placeholder", placeholder.as_deref()),
+                ("error", error.as_deref()),
+            ] {
+                if let Some(tree) = tree {
+                    let body = render_tree_at_depth(tree, depth + 1, rendered_issue_comments);
+                    rendered.push_str(&format!("\n{indent}@{name} {{\n{body}\n{indent}}}"));
+                }
+            }
+            rendered
+        }
         TemplateNodeKind::Repeater {
             body,
             empty,
@@ -3949,6 +4238,7 @@ fn render_node(
             }
             rendered
         }
+        TemplateNodeKind::Consumed => String::new(),
     }
 }
 
