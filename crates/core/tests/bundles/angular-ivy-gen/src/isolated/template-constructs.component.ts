@@ -1,4 +1,4 @@
-import { UpperCasePipe } from '@angular/common';
+import { NgFor, NgIf, UpperCasePipe } from '@angular/common';
 import { Component } from '@angular/core';
 
 @Component({
@@ -77,4 +77,19 @@ export class FixtureStructuralConstructsComponent {
 })
 export class FixtureDeferredConstructsComponent {
   title = 'Deferred content';
+}
+
+@Component({
+  selector: 'fixture-legacy-structural-constructs',
+  imports: [NgIf, NgFor],
+  template: `
+    <section>
+      <p *ngIf="visible">Legacy visible</p>
+      <span *ngFor="let item of items">{{ item }}</span>
+    </section>
+  `,
+})
+export class FixtureLegacyStructuralConstructsComponent {
+  visible = true;
+  items = ['First', 'Second'];
 }
