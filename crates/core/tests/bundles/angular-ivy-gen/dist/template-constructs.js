@@ -27,6 +27,21 @@ function FixtureStructuralConstructsComponent_For_4_Template(rf, ctx) {
 function FixtureStructuralConstructsComponent_ForEmpty_5_Template(rf, ctx) {
   rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "No items"), i0.\u0275\u0275domElementEnd());
 }
+function FixtureDeferredConstructsComponent_Defer_1_Template(rf, ctx) {
+  if (rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1), i0.\u0275\u0275domElementEnd()), rf & 2) {
+    const ctx_r0 = i0.\u0275\u0275nextContext();
+    i0.\u0275\u0275advance(), i0.\u0275\u0275textInterpolate(ctx_r0.title);
+  }
+}
+function FixtureDeferredConstructsComponent_DeferLoading_2_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Loading"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Waiting"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureDeferredConstructsComponent_DeferError_4_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Failed"), i0.\u0275\u0275domElementEnd());
+}
 class FixtureFlatBindingsComponent {
   label = "Generated label";
   prefix = "Status:";
@@ -58,7 +73,17 @@ class FixtureStructuralConstructsComponent {
     rf & 1 && (i0.\u0275\u0275projectionDef(_c0), i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275conditionalCreate(1, FixtureStructuralConstructsComponent_Conditional_1_Template, 3, 3, "h2")(2, FixtureStructuralConstructsComponent_Conditional_2_Template, 2, 0, "p"), i0.\u0275\u0275repeaterCreate(3, FixtureStructuralConstructsComponent_For_4_Template, 3, 1, "button", 1, _forTrack0, !1, FixtureStructuralConstructsComponent_ForEmpty_5_Template, 2, 0, "p"), i0.\u0275\u0275projection(6), i0.\u0275\u0275domElementEnd()), rf & 2 && (i0.\u0275\u0275advance(), i0.\u0275\u0275conditional(ctx.showDetails ? 1 : 2), i0.\u0275\u0275advance(2), i0.\u0275\u0275repeater(ctx.items));
   }, dependencies: [UpperCasePipe], encapsulation: 2 });
 }
+class FixtureDeferredConstructsComponent {
+  title = "Deferred content";
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureDeferredConstructsComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureDeferredConstructsComponent, selectors: [["fixture-deferred-constructs"]], decls: 7, vars: 0, template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureDeferredConstructsComponent_Defer_1_Template, 2, 1)(2, FixtureDeferredConstructsComponent_DeferLoading_2_Template, 2, 0)(3, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, 2, 0)(4, FixtureDeferredConstructsComponent_DeferError_4_Template, 2, 0), i0.\u0275\u0275defer(5, 1, null, 2, 3, 4), i0.\u0275\u0275deferOnIdle(), i0.\u0275\u0275domElementEnd());
+  }, encapsulation: 2 });
+}
 export {
+  FixtureDeferredConstructsComponent,
   FixtureFlatBindingsComponent,
   FixtureStructuralConstructsComponent
 };
