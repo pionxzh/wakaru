@@ -23,6 +23,8 @@ pub(super) enum IvyInstruction {
     Text,
     Listener,
     Template,
+    Defer,
+    DeferOnIdle,
     Conditional,
     RepeaterCreate,
     Repeater,
@@ -70,6 +72,8 @@ impl IvyInstruction {
             | "ɵɵdomTemplate"
             | "ɵɵconditionalCreate"
             | "ɵɵconditionalBranchCreate" => Self::Template,
+            "ɵɵdefer" => Self::Defer,
+            "ɵɵdeferOnIdle" => Self::DeferOnIdle,
             "ɵɵconditional" => Self::Conditional,
             "ɵɵrepeaterCreate" => Self::RepeaterCreate,
             "ɵɵrepeater" => Self::Repeater,
@@ -115,6 +119,8 @@ impl IvyInstruction {
             Self::Text => "ɵɵtext",
             Self::Listener => "ɵɵlistener",
             Self::Template => "ɵɵtemplate",
+            Self::Defer => "ɵɵdefer",
+            Self::DeferOnIdle => "ɵɵdeferOnIdle",
             Self::Conditional => "ɵɵconditional",
             Self::RepeaterCreate => "ɵɵrepeaterCreate",
             Self::Repeater => "ɵɵrepeater",
