@@ -40,7 +40,9 @@ minification with `ngDevMode=false`. It isolates:
 - `@if`, `@for` / `@empty`, projection, a loop-local reference, and a pipe,
   including the view restoration and `$implicit` aliases emitted for a loop
   listener;
-- `@defer` with primary, loading, placeholder, and error views.
+- `@defer` with primary, loading, placeholder, and error views;
+- legacy `*ngIf` and `*ngFor`, whose authored shorthand is absent from the
+  output and must remain an honest neutral `<ng-template>` representation.
 
 The direct compiler fixture complements the chunk fixture: it pins exact
 instruction vocabulary without making the test depend on application bundler
