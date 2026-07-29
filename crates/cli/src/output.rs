@@ -131,6 +131,11 @@ fn ensure_path_inside_output_dir(out_dir: &Path, path: &Path, filename: &str) ->
 
 /// Write `content` to `path`, replacing any existing file.
 pub fn write_file(path: &Path, content: &str) -> Result<()> {
+    write_bytes(path, content.as_bytes())
+}
+
+/// Write arbitrary bytes to `path`, replacing any existing file.
+pub fn write_bytes(path: &Path, content: &[u8]) -> Result<()> {
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
 }
 
@@ -140,15 +145,21 @@ pub fn write_file(path: &Path, content: &str) -> Result<()> {
 /// bytes, avoiding redundant writes (and touch timestamps) when re-running
 /// against an existing output directory.
 pub fn write_if_changed(path: &Path, content: &str) -> Result<()> {
+    write_bytes_if_changed(path, content.as_bytes())
+}
+
+/// Write arbitrary bytes to `path` only when they differ from the existing
+/// file.
+pub fn write_bytes_if_changed(path: &Path, content: &[u8]) -> Result<()> {
     if let Ok(metadata) = fs::metadata(path) {
         if metadata.len() == content.len() as u64
-            && fs::read(path).is_ok_and(|existing| existing == content.as_bytes())
+            && fs::read(path).is_ok_and(|existing| existing == content)
         {
             return Ok(());
         }
     }
 
-    write_file(path, content)
+    write_bytes(path, content)
 }
 
 #[cfg(test)]
@@ -371,6 +382,19 @@ mod tests {
         write_file(&path, "second").expect("overwrite file");
         assert_eq!(fs::read_to_string(&path).expect("read"), "second");
 
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn write_bytes_preserves_non_utf8_and_nul_bytes() {
+        let dir = temp_test_dir("write-bytes");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("asset.bin");
+        let bytes = [0, 0xff, b'B', b'U', b'N', 0];
+
+        write_bytes_if_changed(&path, &bytes).expect("write binary asset");
+
+        assert_eq!(fs::read(&path).expect("read binary asset"), bytes);
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 }

@@ -123,6 +123,7 @@ pub struct BunStandalone<'a> {
     pub files: Vec<BunEmbeddedFile<'a>>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'a [u8],
+    pub compile_exec_argv_range: Option<Range<usize>>,
     pub flags: u32,
     pub executable_range: Range<usize>,
 }
@@ -130,22 +131,46 @@ pub struct BunStandalone<'a> {
 pub struct BunEmbeddedFile<'a> {
     pub index: u32,
     pub name: String,
+    pub name_bytes: &'a [u8],
     pub contents: &'a [u8],
     pub source_map: &'a [u8],
+    pub source_map_range: Option<Range<usize>>,
+    pub bytecode: &'a [u8],
+    pub bytecode_range: Option<Range<usize>>,
+    pub module_info: &'a [u8],
+    pub module_info_range: Option<Range<usize>>,
+    pub bytecode_origin_path: &'a [u8],
+    pub bytecode_origin_path_range: Option<Range<usize>>,
     pub loader: u8,
     pub is_entry: bool,
     pub executable_range: Range<usize>,
-    // Encoding, module format, side, and metadata sizes are also exposed.
+    // Encoding, module format, side, origin range, and metadata sizes are also exposed.
+}
+
+pub enum BunLoader {
+    Jsx, Js, Ts, Tsx, Css, File, Json, Jsonc, Toml, Wasm, Napi,
+    Base64, DataUrl, Text, BunShell, Sqlite, SqliteEmbedded, Html,
+    Yaml, Json5, Markdown,
+    Unknown(u8),
 }
 ```
 
 `Ok(None)` means the Bun trailer was absent. A present but invalid graph is an
 error rather than a partial extraction. All returned byte slices borrow the
-caller-owned executable, and every pointer is range-checked before a result is
-returned. `BunEmbeddedFile::is_javascript_like()` recognizes Bun's JSX, JS, TS,
-and TSX loaders. Callers choose whether to decode those bytes as UTF-8 and pass
-them to `Source`; the CLI does exactly that. The `source_map` field is Bun's
-internal serialized representation, not a v3 JSON source map.
+caller-owned executable, and all six pointers in each current Bun record are
+range-checked before a result is returned. `name_bytes` preserves the exact
+embedded path; `name` is a convenience UTF-8 representation and replaces
+invalid sequences lossily.
+
+`BunEmbeddedFile::loader_kind()` maps the raw append-only loader discriminant
+to `BunLoader` while retaining unknown future values.
+`BunEmbeddedFile::is_javascript_like()` recognizes Bun's JSX, JS, TS, and TSX
+loaders. Callers choose whether to decode those bytes as UTF-8 and pass them to
+`Source`; the `--unpack` CLI path does exactly that. The separate
+`wakaru bun extract` command writes every `contents` slice byte-for-byte. The
+`source_map`, `bytecode`, and `module_info` fields are opaque Bun/JavaScriptCore
+runtime formats, not ordinary source files; in particular, `source_map` is not
+a v3 JSON source map.
 
 ## Input
 

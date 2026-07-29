@@ -36,13 +36,43 @@ fallback behavior when no bundle format is detected.
 An explicit PE, Mach-O, or ELF file can be a Bun standalone executable. Wakaru
 validates Bun's embedded module graph, selects its JS/JSX/TS/TSX entries, and
 then sends those entries through the same unpack pipeline as ordinary bundle
-files. It never runs the executable. Binary assets are not written, and Bun's
+files. It never runs the executable. This `--unpack` path does not write binary
+assets; use `wakaru bun extract` when every embedded file is needed. Bun's
 internal source-map blobs are not accepted as v3 input maps. Executable
 discovery is limited to explicit file paths: directory scans still consider
 only `.js`, `.mjs`, and `.cjs` candidates, and stdin remains text input. Use
 `--raw` to preserve the exact embedded JavaScript before readability rewrites.
 See [bun-standalone.md](bun-standalone.md) for the container format, safety
 properties, and current limits.
+
+## Extract every file from a Bun standalone
+
+```bash
+wakaru bun extract ./compiled-app -o extracted/
+wakaru bun extract ./compiled-app -o extracted/ --json
+wakaru bun extract ./compiled-app -o extracted/ --include-internals
+```
+
+This is a byte-exact container operation, separate from `--unpack`. It writes
+every validated Bun file record below `extracted/files/`, including JavaScript,
+CSS, file-loader assets, WebAssembly, native add-ons, embedded SQLite databases,
+and records using loader IDs unknown to this Wakaru version. It does not parse,
+format, decompile, or execute their contents.
+
+`extracted/manifest.json` records each original Bun path, safe output path,
+loader ID and known name, encoding, module format, server/client side, entry
+status, byte length, and executable byte range. `--json` also prints that
+manifest to stdout. Unsafe path components and non-UTF-8 path bytes are
+percent-encoded, and case-insensitive filename collisions receive stable
+numeric suffixes. Wakaru never writes outside the selected output directory.
+
+`--include-internals` additionally writes Bun's associated opaque source-map,
+JavaScriptCore bytecode, and module-info regions below `extracted/internals/`.
+These are runtime data, not ordinary project assets. In particular,
+`source-map.bunmap` is not a v3 JSON source map.
+
+As with other directory-producing commands, Wakaru requires an empty or new
+output directory unless `--force` is passed.
 
 Structural unpacking supports webpack 4/5 (including Vercel ncc CommonJS output
 with an IIFE webpack bootstrap), Browserify, Metro, Closure ModuleManager,

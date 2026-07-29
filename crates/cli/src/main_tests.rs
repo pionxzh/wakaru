@@ -53,6 +53,33 @@ fn parses_extract_without_js_input() {
 }
 
 #[test]
+fn parses_bun_extract_with_binary_asset_options() {
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "bun",
+        "extract",
+        "compiled-app",
+        "-o",
+        "extracted",
+        "--include-internals",
+        "--json",
+    ])
+    .expect("Bun extraction command should parse");
+
+    match cli.command {
+        Some(Command::Bun(bun_extract::BunArgs {
+            command: bun_extract::BunCommand::Extract(args),
+        })) => {
+            assert_eq!(args.input, PathBuf::from("compiled-app"));
+            assert_eq!(args.output, PathBuf::from("extracted"));
+            assert!(args.include_internals);
+            assert!(args.json);
+        }
+        other => panic!("expected Bun extraction command, got {other:?}"),
+    }
+}
+
+#[test]
 fn rejects_legacy_extract_flag() {
     assert!(Cli::try_parse_from([
         "wakaru",

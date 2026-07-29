@@ -18,6 +18,7 @@ use wakaru_core::{
     DecompileOptions, RewriteLevel, RuleTraceOptions, VueSfcRecoveryOptions,
 };
 
+mod bun_extract;
 mod color;
 mod discovery;
 mod formatter;
@@ -166,6 +167,9 @@ enum Command {
     /// Extract original source files embedded in a source map's sourcesContent.
     Extract(ExtractArgs),
 
+    /// Inspect and extract Bun standalone executable containers.
+    Bun(bun_extract::BunArgs),
+
     /// Internal debugging commands.
     #[command(hide = true)]
     Debug(DebugArgs),
@@ -257,6 +261,7 @@ fn main() -> Result<()> {
 
     match cli.command.clone() {
         Some(Command::Extract(args)) => run_extract(args, cli.force),
+        Some(Command::Bun(args)) => bun_extract::run(args, cli.force),
         Some(Command::Debug(args)) => run_debug(args, cli.force),
         None => run_default(cli),
     }

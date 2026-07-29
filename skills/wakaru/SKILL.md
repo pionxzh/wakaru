@@ -28,6 +28,8 @@ mangled locals stay short unless a source map is provided.
   modules.
 - You have a Bun standalone PE, Mach-O, or ELF executable and need its embedded
   JavaScript without running it.
+- You need every file stored in a Bun standalone, including binary assets,
+  WebAssembly, native add-ons, or embedded databases.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`
   artifact for inspection.
 - A stack trace points into vendored/minified code you can't read.
@@ -85,12 +87,20 @@ Variants:
 wakaru dist/ --unpack --json -o out/          # scan a build-output directory
 wakaru entry.js chunk.js --unpack -o out/     # explicit entry + chunk files
 wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun standalone safely
+wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file byte-for-byte
 ```
 
 Bun standalone extraction accepts an explicit executable path. It validates
-the embedded module graph and ignores binary assets; directory scans and stdin
-remain JavaScript-only inputs. Prefer `--raw` when comparing releases so the
-normal rewrite pipeline does not obscure the shipped representation.
+the embedded module graph; directory scans and stdin remain JavaScript-only
+inputs. `--unpack` selects the JavaScript-like records and sends them through
+bundle splitting. Prefer `--raw` when comparing their shipped representation.
+
+Use `wakaru bun extract` instead when the task needs the container itself. It
+writes every validated file record below `raw/files/` without decoding or
+transforming it and records loader metadata and byte ranges in
+`raw/manifest.json`. Add `--json` for the same manifest on stdout.
+`--include-internals` also emits opaque Bun source-map, JavaScriptCore bytecode,
+and module-info regions; do not treat `source-map.bunmap` as a v3 JSON map.
 
 Ordinary Browserify bundles use unambiguous dependency-map request paths for
 readable module filenames. Conflicting or missing hints retain
