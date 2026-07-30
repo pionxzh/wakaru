@@ -126,6 +126,637 @@ fn accepts_named_ivy_instruction_imports() {
 }
 
 #[test]
+fn restores_named_angular_class_api_imports() {
+    let source = r#"
+        import {
+            computed as a,
+            inject as b,
+            input as c,
+            model as d,
+            output as e,
+            signal as f,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class ApiCardComponent {
+            value = c("reader");
+            requiredValue = c.required();
+            count = f(0);
+            label = a(() => this.value());
+            service = b(Service);
+            selection = d("");
+            changed = e();
+
+            static ɵcmp = define({
+                type: ApiCardComponent,
+                selectors: [["api-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Angular class API imports should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let source = &recovered[0].source;
+    assert!(source.contains(
+        "import { Component, computed, inject, input, model, output, signal } from \"@angular/core\";"
+    ));
+    for expected in [
+        "value = input(\"reader\")",
+        "requiredValue = input.required()",
+        "count = signal(0)",
+        "label = computed(()=>this.value())",
+        "service = inject(Service)",
+        "selection = model(\"\")",
+        "changed = output()",
+    ] {
+        assert!(source.contains(expected), "missing {expected:?}:\n{source}");
+    }
+}
+
+#[test]
+fn does_not_introduce_an_angular_api_import_that_would_be_shadowed() {
+    let source = r#"
+        import {
+            input as a,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class ApiCollisionComponent {
+            read(input) {
+                return a(input);
+            }
+
+            static ɵcmp = define({
+                type: ApiCollisionComponent,
+                selectors: [["api-collision"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("shadowed Angular API imports should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let source = &recovered[0].source;
+    assert!(!source.contains("Component, input"));
+    assert!(source.contains("import { input as a } from \"@angular/core\";"));
+    assert!(source.contains("return a(input)"));
+}
+
+#[test]
+fn infers_closure_renamed_angular_class_api_families() {
+    let source = r#"
+        this.shared = this.shared || {};
+        (function(runtime) {
+            function makeComputed(computation, equal) {
+                const node = Object.create(computedNode);
+                node.computation = computation;
+                if (equal !== undefined) {
+                    node.equal = equal;
+                }
+                let read = () => {
+                    updateProducer(node);
+                    trackProducer(node);
+                    if (node.value === errored) {
+                        throw node.error;
+                    }
+                    return node.value;
+                };
+                read[nodeKey] = node;
+                return read;
+            }
+
+            function makeSignal(initial, equal) {
+                const node = Object.create(signalNode);
+                node.value = initial;
+                if (equal !== undefined) {
+                    node.equal = equal;
+                }
+                const read = () => {
+                    trackProducer(node);
+                    return node.value;
+                };
+                read[nodeKey] = node;
+                return [
+                    read,
+                    (value) => setSignal(node, value),
+                    (update) => setSignal(node, update(node.value)),
+                ];
+            }
+            function makeZeroSignal() {
+                const node = Object.create(signalNode);
+                node.value = 0;
+                const read = () => {
+                    trackProducer(node);
+                    return node.value;
+                };
+                return read[nodeKey] = node, [
+                    read,
+                    (value) => setSignal(node, value),
+                    (update) => setSignal(node, update(node.value)),
+                ];
+            }
+            class OutputRef {
+                subscribe(listener) {
+                    if (this.destroyed) {
+                        throw new RuntimeError(953, false);
+                    }
+                    this.listeners.push(listener);
+                    return {
+                        unsubscribe: () => removeListener(this.listeners, listener),
+                    };
+                }
+                emit(value) {
+                    if (this.destroyed) {
+                        warnAboutDestroyedOutput(953);
+                    }
+                    notifyListeners(this.listeners, value);
+                }
+            }
+
+            function injectFlags(options) {
+                if (typeof options > "u" || typeof options === "number") {
+                    return options;
+                }
+                return 0
+                    | (options.optional && 8)
+                    | (options.host && 1)
+                    | (options.self && 2)
+                    | (options.skipSelf && 4);
+            }
+
+            function injectImpl(token, flags) {
+                return currentInjector(token, flags);
+            }
+
+            runtime.a = (initial, options) => {
+                const [read, set, update] = makeSignal(initial, options?.equal);
+                read.set = set;
+                read.update = update;
+                read.asReadonly = asReadonly.bind(read);
+                return read;
+            };
+            runtime.a0 = () => {
+                const [read, set, update] = makeZeroSignal();
+                read.set = set;
+                read.update = update;
+                read.renamedReadonly = asReadonly.bind(read);
+                return read;
+            };
+            const zeroSignalAlias = runtime.a0;
+            runtime.b = (computation, options) =>
+                makeComputed(computation, options?.equal);
+            runtime.b2 = function(computation) {
+                const node = Object.create(computedNode);
+                node.computation = computation;
+                computation = () => {
+                    updateProducer(node);
+                    trackProducer(node);
+                    if (node.value === errored) {
+                        throw node.error;
+                    }
+                    return node.value;
+                };
+                return computation[nodeKey] = node, computation;
+            };
+            runtime.c = (token, options) =>
+                injectImpl(token, injectFlags(options));
+            runtime.d = (initial, options) => {
+                function read() {
+                    trackProducer(node);
+                    if (node.value === requiredUnset) {
+                        throw new RuntimeError(-950, null);
+                    }
+                    return node.value;
+                }
+                const node = Object.create(inputNode);
+                node.value = initial;
+                node.transform = options?.transform;
+                return read[nodeKey] = node, read;
+            };
+            runtime.e = (initial, options) => runtime.d(initial, options);
+            runtime.f = (initial) => {
+                function read() {
+                    trackProducer(node);
+                    if (node.value === requiredUnset) {
+                        throw new RuntimeError(952, false);
+                    }
+                    return node.value;
+                }
+                const node = Object.create(inputNode);
+                const emitter = createEmitter();
+                node.value = initial;
+                read.asReadonly = asReadonly.bind(read);
+                read.set = (value) => setSignal(node, value);
+                read.update = (update) => read.set(update(node.value));
+                read.subscribe = emitter.subscribe.bind(emitter);
+                return read[nodeKey] = node, read;
+            };
+            runtime.g = (initial) => runtime.f(initial);
+            runtime.o = () => new OutputRef();
+            const modelAlias = (
+                runtime.g.required = () => runtime.f(requiredUnset),
+                runtime.g
+            );
+
+            runtime.define = function(definition) {
+                return definition;
+            };
+            runtime.element = function() {
+                return runtime.element;
+            };
+            const publicRuntime = {
+                "ɵɵdefineComponent": runtime.define,
+                "ɵɵelement": runtime.element,
+            };
+
+            runtime.ApiCard = class {
+                count = runtime.a(0);
+                zeroCount = runtime.a0();
+                aliasedZeroCount = zeroSignalAlias();
+                label = runtime.b(() => this.count());
+                specializedLabel = runtime.b2(() => this.count());
+                service = runtime.c(Service, { optional: true });
+                value = runtime.d("direct");
+                otherValue = runtime.e("wrapped");
+                requiredValue = runtime.e.required();
+                selection = runtime.f("");
+                requiredSelection = runtime.g.required();
+                aliasedSelection = modelAlias("aliased");
+                changed = runtime.o();
+                opaque = runtime.unknown();
+            };
+            runtime.ApiCard.compiled = runtime.define({
+                type: runtime.ApiCard,
+                selectors: [["closure-api-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "section");
+                    }
+                },
+            });
+            void publicRuntime;
+        }).call(this, this.shared);
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed Angular class APIs should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let source = &recovered[0].source;
+    assert!(
+        source.contains(
+            "import { Component, computed, inject, input, model, output, signal } from \"@angular/core\";"
+        ),
+        "{source}"
+    );
+    for expected in [
+        "count = signal(0)",
+        "zeroCount = signal(0)",
+        "aliasedZeroCount = signal(0)",
+        "label = computed(()=>this.count())",
+        "specializedLabel = computed(()=>this.count())",
+        "service = inject(Service, {",
+        "value = input(\"direct\")",
+        "otherValue = input(\"wrapped\")",
+        "requiredValue = input.required()",
+        "selection = model(\"\")",
+        "requiredSelection = model.required()",
+        "aliasedSelection = model(\"aliased\")",
+        "changed = output()",
+        "opaque = globalThis.shared.unknown()",
+    ] {
+        assert!(source.contains(expected), "missing {expected:?}:\n{source}");
+    }
+    assert!(!source.contains("this.shared"));
+}
+
+#[test]
+fn propagates_specialized_signal_arguments_across_an_esm_alias() {
+    let runtime = r#"
+        function makeZeroSignal() {
+            const node = Object.create(signalNode);
+            node.value = 0;
+            const read = () => {
+                trackProducer(node);
+                return node.value;
+            };
+            return read[nodeKey] = node, [
+                read,
+                (value) => setSignal(node, value),
+                (update) => setSignal(node, update(node.value)),
+            ];
+        }
+
+        export const specializedSignal = () => {
+            const [read, set, update] = makeZeroSignal();
+            read.set = set;
+            read.update = update;
+            read.renamedReadonly = asReadonly.bind(read);
+            return read;
+        };
+    "#;
+    let component = r#"
+        import { specializedSignal as state } from "./runtime.js";
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class SpecializedSignalComponent {
+            count = state();
+
+            static compiled = define({
+                type: SpecializedSignalComponent,
+                selectors: [["specialized-signal"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_modules(
+        &[
+            AngularModuleSource {
+                filename: "runtime.js",
+                source: runtime,
+            },
+            AngularModuleSource {
+                filename: "component.js",
+                source: component,
+            },
+        ],
+        AngularRecoveryOptions::default(),
+    )
+    .expect("the ESM-aliased specialized signal should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert!(
+        recovered[0].source.contains("count = signal(0)"),
+        "{}",
+        recovered[0].source
+    );
+}
+
+#[test]
+fn rejects_incomplete_angular_class_api_lookalikes() {
+    let source = r#"
+        const runtime = {};
+
+        function makeComputed(computation, equal) {
+            const node = Object.create(computedNode);
+            node.computation = computation;
+            node.equal = equal;
+            const read = () => node.value;
+            read[nodeKey] = node;
+            return read;
+        }
+        function injectFlags(options) {
+            if (typeof options === "undefined" || typeof options === "number") {
+                return options;
+            }
+            return 0 | (options.optional && 8) | (options.self && 2);
+        }
+
+        runtime.signalish = (initial, options) => {
+            const [read, set, update] = makeSignal(initial, options?.equal);
+            read.set = set;
+            read.update = update;
+            return read;
+        };
+        runtime.computedish = (computation, options) =>
+            makeComputed(computation, options?.equal);
+        runtime.injectish = (token, options) =>
+            injectImpl(token, injectFlags(options));
+        runtime.inputish = (initial, options) => {
+            function read() {
+                if (node.value === requiredUnset) {
+                    throw new RuntimeError(-951, null);
+                }
+                return node.value;
+            }
+            const node = Object.create(inputNode);
+            node.value = initial;
+            node.transform = options?.transform;
+            read[nodeKey] = node;
+            return read;
+        };
+        runtime.modelish = (initial) => {
+            function read() {
+                if (node.value === requiredUnset) {
+                    throw new RuntimeError(952, false);
+                }
+                return node.value;
+            }
+            const node = Object.create(inputNode);
+            node.value = initial;
+            read[nodeKey] = node;
+            read.asReadonly = asReadonly.bind(read);
+            read.set = (value) => setSignal(node, value);
+            read.update = (update) => read.set(update(node.value));
+            return read;
+        };
+        class OutputLookalike {
+            subscribe(listener) {
+                if (this.destroyed) {
+                    throw new RuntimeError(954, false);
+                }
+                return {
+                    unsubscribe: () => removeListener(listener),
+                };
+            }
+            emit(value) {
+                warnAboutDestroyedOutput(953);
+                notifyListeners(value);
+            }
+        }
+        runtime.outputish = () => new OutputLookalike();
+
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.element = function() {
+            return runtime.element;
+        };
+        const publicRuntime = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelement": runtime.element,
+        };
+
+        class LookalikeCardComponent {
+            count = runtime.signalish(0);
+            label = runtime.computedish(() => this.count());
+            service = runtime.injectish(Service);
+            value = runtime.inputish("reader");
+            selection = runtime.modelish("");
+            changed = runtime.outputish();
+        }
+        LookalikeCardComponent.compiled = runtime.define({
+            type: LookalikeCardComponent,
+            selectors: [["lookalike-card"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    runtime.element(0, "section");
+                }
+            },
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("class API lookalikes should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let source = &recovered[0].source;
+    assert!(source.starts_with("import { Component } from \"@angular/core\";"));
+    for expected in [
+        "runtime.signalish(0)",
+        "runtime.computedish(()=>this.count())",
+        "runtime.injectish(Service)",
+        "runtime.inputish(\"reader\")",
+        "runtime.modelish(\"\")",
+        "runtime.outputish()",
+    ] {
+        assert!(source.contains(expected), "missing {expected:?}:\n{source}");
+    }
+}
+
+#[test]
+fn infers_closure_renamed_multi_value_text_interpolation() {
+    let source = r#"
+        const runtime = {};
+        const noChange = {};
+
+        function currentView() {
+            return activeView;
+        }
+        function selectedNode(view) {
+            return view.selected;
+        }
+        function stringify(value) {
+            return String(value);
+        }
+        function interpolateOne(view, prefix, value, suffix = "") {
+            return bindingUpdated(view, value)
+                ? prefix + stringify(value) + suffix
+                : noChange;
+        }
+        function interpolateTwo(view, prefix, first, infix, second, suffix = "") {
+            const changed =
+                bindingUpdated(view, first) | bindingUpdated(view, second);
+            return changed
+                ? prefix + stringify(first) + infix + stringify(second) + suffix
+                : noChange;
+        }
+
+        runtime.t1 = function(prefix, value, suffix) {
+            const view = currentView();
+            const rendered = interpolateOne(view, prefix, value, suffix);
+            if (rendered !== noChange) {
+                selectedNode(view).nodeValue = rendered;
+            }
+            return runtime.t1;
+        };
+        runtime.t0 = function(value) {
+            runtime.t1("", value);
+            return runtime.t0;
+        };
+        runtime.t2 = function(prefix, first, infix, second, suffix) {
+            const view = currentView();
+            const rendered = interpolateTwo(
+                view,
+                prefix,
+                first,
+                infix,
+                second,
+                suffix
+            );
+            if (rendered !== noChange) {
+                selectedNode(view).nodeValue = rendered;
+            }
+            return runtime.t2;
+        };
+
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.text = function() {
+            return runtime.text;
+        };
+        runtime.advance = function() {
+            return runtime.advance;
+        };
+        const publicRuntime = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵtext": runtime.text,
+            "ɵɵadvance": runtime.advance,
+        };
+
+        class InterpolationCardComponent {
+            single = "Title";
+            first = "Left";
+            second = "Right";
+
+            static compiled = runtime.define({
+                type: InterpolationCardComponent,
+                selectors: [["interpolation-card"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.text(0);
+                        runtime.text(1);
+                    }
+                    if (renderFlags & 2) {
+                        runtime.t0(context.single);
+                        runtime.advance(1);
+                        runtime.t2(
+                            " ",
+                            context.first,
+                            ": ",
+                            context.second,
+                            " "
+                        );
+                    }
+                },
+            });
+        }
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed text interpolation should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let component = &recovered[0];
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("{{ single }}"));
+    assert!(component.source.contains("{{ first }}: {{ second }}"));
+    assert!(!component.source.contains("runtime.t2"));
+}
+
+#[test]
 fn derives_a_readable_component_name_from_the_selector() {
     let source = r#"
         import {
@@ -4618,7 +5249,7 @@ fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
     );
     assert!(component
         .source
-        .contains(r#"import { signal as state } from "@angular/core";"#));
+        .contains(r#"import { Component, signal } from "@angular/core";"#));
     assert!(component
         .source
         .contains(r#"import { UpperCasePipe as Upper } from "@angular/common";"#));
@@ -4630,6 +5261,9 @@ fn recovers_artifact_imports_local_helpers_and_compiled_dependencies() {
         .contains(r#"import { formatTitle } from "./format.js";"#));
     assert!(component.source.contains(r#"const suffix = "!";"#));
     assert!(component.source.contains("function decorate(value)"));
+    assert!(component
+        .source
+        .contains(r#"title = signal(decorate("ready"))"#));
     assert!(component.source.contains("imports: [Upper]"));
     assert!(component.source.contains("{{ formatTitle(title) }}"));
     assert!(!component.source.contains("not part of the artifact"));
