@@ -40,11 +40,14 @@ copy of the original template are deliberately not inputs to recovery.
 
 Initial recovery covers:
 
-- component identity and selector;
-- element, text, and static-attribute creation instructions;
+- component identity and element/attribute selector matrices;
+- element, text, `<ng-container>`, and static-attribute creation instructions,
+  including HTML, SVG, and MathML namespace transitions;
 - text interpolation;
-- property, attribute, class, and style bindings;
+- property, attribute, class, and style bindings, including expression
+  interpolation and compiler-hoisted pure object/array literals;
 - event listeners;
+- `@let` declarations and reads across nested views;
 - nested embedded views selected by modern `@if` / `@else if` / `@else`
   control flow, including component-context reads through `ɵɵnextContext`;
 - modern `@for` / `@empty` repeaters when the creation/update pair and track
@@ -57,6 +60,7 @@ Initial recovery covers:
 - content projection, including selector-bearing `<ng-content>` slots;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
+- bounded static and interpolated i18n messages;
 - exact ESM imports referenced by the recovered class or rendered template,
   plus dependency-closed portable local helpers;
 - compiled component dependencies when their bindings can be materialized as
@@ -254,6 +258,41 @@ non-reference slots, so it remains unknown without a stronger relationship.
 Resolving a proven reference slot to a template name is still view-local and
 requires a matching creation-table declaration.
 
+Constant-table recovery accepts either a direct component-local array or a
+unique factory whose complete return behavior proves that it produces the
+array. Entries are resolved independently, so one opaque value does not discard
+otherwise proven static attributes or local-reference declarations. The
+special case `"a;b".split(";")` is decoded only when both operands are exact
+string literals with one nonempty ASCII delimiter. Arbitrary calls are never
+evaluated. Reference declarations are collected for the complete view before
+child-view and update recovery, allowing an embedded view to use a reference
+declared later in its parent creation block without flattening slot scopes.
+
+The `@let` family is recovered only when declaration, store, and context-read
+roles satisfy their respective runtime and template-use contracts. A
+Closure-renamed store helper must forward one value into a multi-argument view
+write, return that same value, and be used in update phase; call count or arity
+alone is insufficient. Read slots remain view-local. When compilation or
+minification preserves a readable local binding, the artifact uses it. When
+Closure has erased the authored name, Wakaru emits a deterministic neutral name
+such as `value` rather than claiming to know the original spelling.
+
+Namespace helpers are inferred as a family: zero-argument creation helpers must
+write `svg`, `math`/`mathml`, and/or `null` to the same proven runtime state
+member. A surviving HTML helper or Closure-inlined `state.namespace = null`
+assignment is consumed only against that exact target. Namespace operations do
+not produce standalone template syntax; their effect is represented by the
+recovered `<svg>`, `<math>`, and following HTML elements.
+
+Expression interpolation roles are paired with the already-proven text
+interpolation family and their exact parameter-forwarding behavior. Pure
+function bindings are expanded only when the callback and value arity are
+proven and the callback body can be substituted safely. Otherwise the runtime
+operation remains explicit unsupported output. Basic i18n recovery is
+similarly bounded to a uniquely resolved static/interpolated message and a
+valid containing element; structural ICU regions and ambiguous message
+factories remain partial.
+
 Each recovered render function owns its node cursor, reference slots, context
 depth, aliases, and listener operations. Entering an embedded view snapshots
 the already-proven ancestor reference scopes rather than flattening their
@@ -425,7 +464,9 @@ fixture and remains partial.
 The minimally rooted `ADVANCED` profile proves interpolation, chained
 embedded-template, conditional, property, optimized repeater, defer, and idle
 trigger role inference from runtime behavior. It also proves parent-context
-traversal and the paired restore/reset view-state helpers without retaining
+traversal, the paired restore/reset view-state helpers, selector matrices,
+attribute/class/style bindings, `<ng-container>`, bounded i18n, pure literal
+bindings, `@let`, and HTML/SVG/MathML namespace transitions without retaining
 their public role names. One generated conditional component exercises
 Closure's inlined current-view capture, a restored listener, and a nested
 property binding as a complete artifact. A separate generated component
@@ -447,6 +488,24 @@ issue counts reflect roughly 9,400 newly traversed calls in child views that
 were previously unreachable. This corpus contained no proven defer block, so
 defer correctness remains established by the generated fixtures rather than
 claimed from private data.
+
+A second, smaller four-script local production corpus now emits all 120
+component candidates: 63 complete, 57 partial, and none rejected. It renders
+7,861 of 7,981 observed runtime calls, with 96 unsupported and 25 malformed
+calls reported, and all four module-oriented artifacts parse as TypeScript.
+The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
+with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are
+not treated as a strict coverage comparison across those milestones because
+newly reachable child views and corrected failed-view accounting changed what
+the analyzer observes.
+
+Remaining partial regions in that smaller corpus are concentrated in
+structural i18n, multi-statement restored listeners and unresolved view aliases,
+ambiguous projection fallback/selector metadata, newer signal-form runtime
+hooks without an authored-template equivalent, and ordinary application
+declarations or calls. None of those operations is consumed based on a
+corpus-specific minified callee name. They remain typed diagnostics until a
+generic runtime contract and generated producer fixture justify recovery.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -516,6 +575,8 @@ Pause and re-check this boundary after each milestone:
 13. module-oriented artifacts and view-local unsupported-region placement.
 14. cross-artifact component relationships from proven ESM symbol edges.
 15. generated and Closure-renamed defer/repeater control-flow families.
+16. selector/constant-table families, expression interpolation, pure literals,
+    bounded i18n, `@let`, and HTML/SVG/MathML namespace transitions.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
