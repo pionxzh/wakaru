@@ -1,19 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
+use swc_core::common::{sync::Lrc, SourceMap, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl,
-    Expr, Ident, IdentName, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget,
-    Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Class, ClassDecl,
+    ClassMember, Decl, Expr, ExprOrSpread, Ident, IdentName, Module, ModuleDecl, ModuleItem, Pat,
+    ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::artifact::ArtifactSupportPlan;
-use super::roles::{IvyInstruction, IvyRoleTable};
-use super::syntax::{binding_key, prop_name, BindingKey};
+use super::roles::{AngularClassApi, IvyInstruction, IvyRoleTable};
+use super::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
 use super::template::RecoveredTemplate;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
@@ -25,6 +25,7 @@ pub(super) struct ComponentEmitInput<'a> {
     pub(super) template: &'a RecoveredTemplate,
     pub(super) support: &'a ArtifactSupportPlan,
     pub(super) dependencies: &'a [String],
+    pub(super) angular_imports: &'a [AngularClassApi],
 }
 
 pub(super) struct ModuleComponentEmitInput<'a> {
@@ -34,6 +35,7 @@ pub(super) struct ModuleComponentEmitInput<'a> {
     pub(super) class: &'a Class,
     pub(super) template_source: &'a str,
     pub(super) dependencies: &'a [String],
+    pub(super) angular_imports: &'a [AngularClassApi],
 }
 
 pub(super) fn emit_component_source(
@@ -42,7 +44,8 @@ pub(super) fn emit_component_source(
 ) -> Result<String> {
     let support_source = print_support_source(input.support, &[], cm.clone())?;
 
-    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
+    let mut source = angular_core_import(input.angular_imports);
+    source.push('\n');
     if let Some(support_source) = support_source {
         source.push_str(&support_source);
         source.push('\n');
@@ -57,6 +60,7 @@ pub(super) fn emit_component_source(
             class: input.class,
             template_source: &input.template.source,
             dependencies: input.dependencies,
+            angular_imports: input.angular_imports,
         },
         &[],
         cm,
@@ -70,7 +74,14 @@ pub(super) fn emit_angular_module_source(
     renames: &[BindingRename],
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
-    let mut source = "import { Component } from \"@angular/core\";\n".to_string();
+    let angular_imports = components
+        .iter()
+        .flat_map(|component| component.angular_imports.iter().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut source = angular_core_import(&angular_imports);
+    source.push('\n');
     if let Some(support_source) = print_support_source(support, renames, cm.clone())? {
         source.push_str(&support_source);
         source.push('\n');
@@ -86,6 +97,7 @@ pub(super) fn emit_angular_module_source(
                 class: component.class,
                 template_source: component.template_source,
                 dependencies: component.dependencies,
+                angular_imports: component.angular_imports,
             },
             renames,
             cm.clone(),
@@ -93,6 +105,15 @@ pub(super) fn emit_angular_module_source(
         source.push('\n');
     }
     Ok(source.trim_end().to_string())
+}
+
+fn angular_core_import(imports: &[AngularClassApi]) -> String {
+    let mut names = BTreeSet::from(["Component"]);
+    names.extend(imports.iter().map(|api| api.canonical_export_name()));
+    format!(
+        "import {{ {} }} from \"@angular/core\";",
+        names.into_iter().collect::<Vec<_>>().join(", ")
+    )
 }
 
 fn print_support_source(
@@ -189,6 +210,137 @@ pub(super) fn clean_component_class(
         _ => true,
     });
     class
+}
+
+pub(super) fn recover_component_class_apis(
+    class: &Class,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> (Box<Class>, Vec<AngularClassApi>) {
+    let mut occupied_names = IdentifierNameCollector::default();
+    class.visit_with(&mut occupied_names);
+
+    let mut class = Box::new(class.clone());
+    let mut rewriter = ClassApiRewriter {
+        roles,
+        unresolved_ctxt,
+        occupied_names: &occupied_names.names,
+        imports: BTreeSet::new(),
+    };
+    class.visit_mut_with(&mut rewriter);
+    (class, rewriter.imports.into_iter().collect())
+}
+
+#[derive(Default)]
+struct IdentifierNameCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for IdentifierNameCollector {
+    fn visit_ident(&mut self, identifier: &Ident) {
+        self.names.insert(identifier.sym.clone());
+    }
+}
+
+struct ClassApiRewriter<'a> {
+    roles: &'a IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    occupied_names: &'a HashSet<Atom>,
+    imports: BTreeSet<AngularClassApi>,
+}
+
+impl VisitMut for ClassApiRewriter<'_> {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        expression.visit_mut_children_with(self);
+        let Expr::New(created) = expression else {
+            return;
+        };
+        if self
+            .roles
+            .class_api_for_expr(created.callee.as_ref(), self.unresolved_ctxt)
+            != Some(AngularClassApi::Output)
+            || created
+                .args
+                .as_ref()
+                .is_some_and(|arguments| !arguments.is_empty())
+            || created.type_args.is_some()
+        {
+            return;
+        }
+        let Some(identifier) =
+            self.imported_identifier(AngularClassApi::Output, created.callee.span())
+        else {
+            return;
+        };
+        *expression = Expr::Call(CallExpr {
+            span: created.span,
+            ctxt: created.ctxt,
+            callee: swc_core::ecma::ast::Callee::Expr(Box::new(Expr::Ident(identifier))),
+            args: Vec::new(),
+            type_args: None,
+        });
+    }
+
+    fn visit_mut_call_expr(&mut self, call: &mut swc_core::ecma::ast::CallExpr) {
+        call.visit_mut_children_with(self);
+        let specialized_arguments = self
+            .roles
+            .specialized_class_api_arguments_for_callee(&call.callee, self.unresolved_ctxt);
+        if let Some(api) = self
+            .roles
+            .class_api_for_callee(&call.callee, self.unresolved_ctxt)
+        {
+            let swc_core::ecma::ast::Callee::Expr(callee) = &mut call.callee else {
+                return;
+            };
+            if let Some(identifier) = self.imported_identifier(api, callee.span()) {
+                **callee = Expr::Ident(identifier);
+                if call.args.is_empty() {
+                    if let Some(arguments) = specialized_arguments {
+                        call.args = arguments
+                            .into_iter()
+                            .map(|expr| ExprOrSpread { spread: None, expr })
+                            .collect();
+                    }
+                }
+            }
+            return;
+        }
+
+        let swc_core::ecma::ast::Callee::Expr(callee) = &mut call.callee else {
+            return;
+        };
+        let Expr::Member(member) = callee.as_mut() else {
+            return;
+        };
+        if member_prop_name(&member.prop).as_deref() != Some("required") {
+            return;
+        }
+        let Some(api @ (AngularClassApi::Input | AngularClassApi::Model)) = self
+            .roles
+            .class_api_for_expr(member.obj.as_ref(), self.unresolved_ctxt)
+        else {
+            return;
+        };
+        if let Some(identifier) = self.imported_identifier(api, member.obj.span()) {
+            *member.obj = Expr::Ident(identifier);
+        }
+    }
+}
+
+impl ClassApiRewriter<'_> {
+    fn imported_identifier(
+        &mut self,
+        api: AngularClassApi,
+        span: swc_core::common::Span,
+    ) -> Option<Ident> {
+        let name = Atom::from(api.canonical_export_name());
+        if self.occupied_names.contains(&name) {
+            return None;
+        }
+        self.imports.insert(api);
+        Some(Ident::new(name, span, SyntaxContext::empty()))
+    }
 }
 
 fn print_component_class(name: &str, class: Box<Class>, cm: Lrc<SourceMap>) -> Result<String> {
