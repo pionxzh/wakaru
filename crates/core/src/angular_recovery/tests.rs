@@ -2661,13 +2661,15 @@ fn infers_a_closure_specialized_one_parameter_conditional() {
             }
         };
 
-        function StaticConditionalHost(rf) {
+        function StaticConditionalHost(rf, context) {
             if (rf & 1) {
                 runtime.start(0, "div");
                 runtime.end();
             }
             if (rf & 2) {
-                runtime.conditional(0);
+                runtime.conditional(
+                    context.primary ? (context.secondary ? 0 : 1) : -1
+                );
             }
         }
 
@@ -2878,6 +2880,139 @@ fn recovers_assignment_backed_nested_view_functions_through_a_stable_alias() {
 }
 
 #[test]
+fn recovers_inverted_single_branch_conditional_selection() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function EmptyState(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "p");
+                core.ɵɵtext(1, "No results");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class InvertedConditionalComponent {
+            hasResults = true;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: InvertedConditionalComponent,
+                selectors: [["inverted-conditional"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, EmptyState, 2, 0, "p");
+                    }
+                    if (rf & 2) {
+                        core.ɵɵconditional(context.hasResults ? -1 : 0);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("inverted conditional fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (!(hasResults)) {"));
+    assert!(component.source.contains("<p>No results</p>"));
+}
+
+#[test]
+fn recovers_nested_conditional_selection_in_logical_branch_order() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function DefaultView(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "p");
+            }
+        }
+        function FirstView(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "h1");
+            }
+        }
+        function SecondView(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "h2");
+            }
+        }
+        function ThirdView(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "h3");
+            }
+        }
+
+        class NestedConditionalComponent {
+            outer = true;
+            first = false;
+            second = true;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: NestedConditionalComponent,
+                selectors: [["nested-conditional"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, DefaultView, 1, 0, "p");
+                        core.ɵɵtemplate(1, FirstView, 1, 0, "h1");
+                        core.ɵɵtemplate(2, SecondView, 1, 0, "h2");
+                        core.ɵɵtemplate(3, ThirdView, 1, 0, "h3");
+                    }
+                    if (rf & 2) {
+                        core.ɵɵconditional(
+                            context.outer
+                                ? context.first
+                                    ? 1
+                                    : context.second
+                                      ? 2
+                                      : 3
+                                : 0
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("nested conditional fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    let first = component
+        .source
+        .find("@if ((outer) && (first))")
+        .expect("the first logical branch should render");
+    let second = component
+        .source
+        .find("@else if ((outer) && !(first) && (second))")
+        .expect("the second logical branch should render");
+    let third = component
+        .source
+        .find("@else if ((outer) && !(first) && !(second))")
+        .expect("the third logical branch should render");
+    let fallback = component
+        .source
+        .find("@else {")
+        .expect("the outer fallback should render");
+    assert!(first < second && second < third && third < fallback);
+}
+
+#[test]
 fn rejects_a_reassigned_assignment_backed_nested_view_function() {
     let source = r#"
         import * as core from "@angular/core";
@@ -3009,27 +3144,28 @@ fn recovers_projection_local_references_and_pipe_bindings() {
 }
 
 #[test]
-fn recovers_repeater_views_with_local_bindings_and_restored_listeners() {
+fn recovers_repeater_views_with_assignment_backed_track_and_restored_listeners() {
     let source = r#"
         import * as core from "@angular/core";
 
-        const trackItem = ($index, $item) => $item.id;
+        let trackItem;
+        trackItem = ($index, $item) => $item.id;
 
         function RowTemplate(rf, context) {
             if (rf & 1) {
                 const savedView = core.ɵɵgetCurrentView();
                 core.ɵɵelementStart(0, "button", 2, 0);
                 core.ɵɵlistener("click", function() {
-                    const item_r1 = core.ɵɵrestoreView(savedView).$implicit;
+                    const item_r1 = core.ɵɵrestoreView(savedView).V;
                     const row_r2 = core.ɵɵreference(1);
-                    const parent_r3 = core.ɵɵnextContext();
-                    return core.ɵɵresetView(parent_r3.select(row_r2, item_r1));
+                    core.ɵɵnextContext().select(row_r2, item_r1);
+                    return core.ɵɵresetView();
                 });
                 core.ɵɵtext(2);
                 core.ɵɵelementEnd();
             }
             if (rf & 2) {
-                const item_r1 = context.$implicit;
+                const item_r1 = context.V;
                 core.ɵɵadvance(2);
                 core.ɵɵtextInterpolate1(" ", item_r1.label, " ");
             }
@@ -3210,6 +3346,176 @@ fn resolves_reference_aliases_at_their_view_context_depth() {
 }
 
 #[test]
+fn resolves_later_parent_references_from_an_embedded_view() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function EarlyChildView(rf) {
+            if (rf & 1) {
+                const savedView = core.ɵɵgetCurrentView();
+                core.ɵɵelementStart(0, "button");
+                core.ɵɵlistener("click", function() {
+                    core.ɵɵrestoreView(savedView);
+                    const parent = core.ɵɵnextContext();
+                    const laterInput = core.ɵɵreference(2);
+                    return core.ɵɵresetView(parent.focusInput(laterInput));
+                });
+                core.ɵɵtext(1, "Focus later input");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class ForwardReferenceComponent {
+            show = true;
+            focusInput(input) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ForwardReferenceComponent,
+                selectors: [["forward-reference"]],
+                constantPoolFactory: () => [
+                    ["laterInput", ""],
+                    ["class", "later"],
+                ],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, EarlyChildView, 2, 0, "button");
+                        core.ɵɵelement(1, "input", 1, 0);
+                    }
+                    if (rf & 2) {
+                        core.ɵɵconditional(context.show ? 0 : -1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a later parent reference should remain visible to an earlier child view");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (show) {"));
+    assert!(component
+        .source
+        .contains(r#"(click)="focusInput(laterInput)""#));
+    assert!(component
+        .source
+        .contains(r#"<input class="later" #laterInput />"#));
+}
+
+#[test]
+fn decodes_a_mixed_direct_constant_table_with_opaque_entries() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class MixedConstantTableComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: MixedConstantTableComponent,
+                selectors: [["mixed-constant-table"]],
+                constantPool: [
+                    ["trigger", ""],
+                    "viewBox;0 0 24 24".split(";"),
+                    [1, "panel", 3, "click"],
+                ],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelement(0, "button", 2, 0);
+                        core.ɵɵelement(2, "svg", 1);
+                    }
+                    if (renderFlags & 2) {
+                        const trigger = core.ɵɵreference(1);
+                        core.ɵɵproperty("aria-label", trigger.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("mixed direct constant tables should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"<button class="panel" #trigger [aria-label]="trigger.label"></button>"#));
+    assert!(component
+        .source
+        .contains(r#"<svg viewBox="0 0 24 24"></svg>"#));
+}
+
+#[test]
+fn infers_closure_renamed_namespace_switches() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        _.svg = function() {
+            _.state.namespace = "svg";
+        };
+        _.math = function() {
+            _.state.namespace = "math";
+        };
+        _.html = function() {
+            _.state.namespace = null;
+        };
+
+        class NamespaceComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: NamespaceComponent,
+                selectors: [["namespace-fixture"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        _.svg();
+                        core.ɵɵelementStart(0, "svg");
+                        core.ɵɵelement(1, "circle");
+                        core.ɵɵelementEnd();
+                        _.math();
+                        core.ɵɵelementStart(2, "math");
+                        core.ɵɵelementStart(3, "mi");
+                        core.ɵɵtext(4, "x");
+                        core.ɵɵelementEnd();
+                        core.ɵɵelementEnd();
+                        _.html();
+                        core.ɵɵelementStart(5, "p");
+                        core.ɵɵtext(6, "HTML");
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed namespace helpers should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<svg>"));
+    assert!(component.source.contains("<circle></circle>"));
+    assert!(component.source.contains("<math>"));
+    assert!(component.source.contains("<mi>x</mi>"));
+    assert!(component.source.contains("<p>HTML</p>"));
+}
+
+#[test]
 fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
     let source = r#"
         runtime.define = function(definition) { return definition; };
@@ -3294,7 +3600,7 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
                 runtime.start(2, "button");
                 runtime.listener("click", function() {
                     runtime.restore(savedViewFromGetter);
-                    const action = runtime.checkedReference(1);
+                    const action = runtime.reference(1);
                     const context = runtime.next();
                     context.select(action);
                     return runtime.reset();
@@ -3304,7 +3610,9 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
             }
             if (rf & 2) {
                 const checkedAction = runtime.checkedReference(1);
+                const directAction = runtime.reference(1);
                 const context = runtime.next();
+                runtime.property("title", directAction.title);
                 runtime.property("disabled", context.disabled);
             }
         }
@@ -3365,7 +3673,7 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
     );
     assert!(component.source.contains("@if (visible) {"));
     assert!(component.source.contains(
-        r#"<button #action (click)="$event.preventDefault(); actions.select(action)" [disabled]="disabled">Nested view</button>"#
+        r#"<button #action (click)="$event.preventDefault(); actions.select(action)" [title]="action.title" [disabled]="disabled">Nested view</button>"#
     ));
     assert!(component
         .source
@@ -4095,6 +4403,897 @@ fn escapes_template_and_style_literals_without_creating_interpolation() {
         .source
         .contains(r"\\\${globalThis.styleInjected = true}\`"));
     assert_typescript_parses(&component.source);
+}
+
+#[test]
+fn reconstructs_structurally_named_angular_selector_matrices() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class SelectorMatrixComponent {
+            static compiled = define({
+                type: SelectorMatrixComponent,
+                H: [
+                    ["button", "fixtureAction", ""],
+                    ["a", "fixtureAction", ""],
+                ],
+                A: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "span");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("selector matrix fixture should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].selector,
+        "button[fixtureAction],a[fixtureAction]"
+    );
+    assert!(recovered[0]
+        .source
+        .contains("selector: \"button[fixtureAction],a[fixtureAction]\""));
+}
+
+#[test]
+fn reconstructs_selector_flags_and_rejects_incomplete_rows() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class FlagSelectorComponent {
+            static compiled = define({
+                type: FlagSelectorComponent,
+                selectors: [[
+                    "button",
+                    "role", "action",
+                    8, "primary",
+                    3, "disabled", "",
+                ]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "span");
+                    }
+                },
+            });
+        }
+
+        class IncompleteSelectorComponent {
+            static compiled = define({
+                type: IncompleteSelectorComponent,
+                H: [["title", "value"]],
+                A: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "span");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("selector flag fixture should parse");
+
+    assert_eq!(report.components.len(), 1);
+    assert_eq!(
+        report.components[0].selector,
+        "button[role=\"action\"].primary:not([disabled])"
+    );
+    assert_eq!(report.stats.rejected_component_candidates, 1);
+}
+
+#[test]
+fn infers_container_i18n_and_binding_families_from_renamed_runtime_shapes() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.elementStart = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.elementStart;
+        };
+        runtime.elementEnd = function() {
+            closeElement();
+            return runtime.elementEnd;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.advance = function(delta = 1) {
+            selectIndex(delta);
+        };
+        runtime.interpolate = function(value) {
+            updateText(value);
+        };
+
+        runtime.containerStart = function(index, attrs, refs) {
+            createContainer(index, "ng-container", attrs, refs);
+            return runtime.containerStart;
+        };
+        runtime.containerEnd = function() {
+            closeContainer();
+            return runtime.containerEnd;
+        };
+        runtime.container = function(index, attrs, refs) {
+            runtime.containerStart(index, attrs, refs);
+            runtime.containerEnd();
+            return runtime.container;
+        };
+
+        runtime.i18nStart = function(index, message, subTemplate = -1) {
+            startMessage(index, message, subTemplate);
+        };
+        runtime.i18nEnd = function() {
+            finishMessage();
+        };
+        runtime.i18n = function(index, message, subTemplate) {
+            runtime.i18nStart(index, message, subTemplate);
+            runtime.i18nEnd();
+        };
+        runtime.i18nExp = function(value) {
+            bindMessage(value);
+            return runtime.i18nExp;
+        };
+        runtime.i18nApply = function(index) {
+            try {
+                applyMessage(index);
+            } finally {
+                finishBindings();
+            }
+        };
+
+        runtime.styleCore = function(name, value, suffix, isClass) {};
+        runtime.style = function(name, value, suffix) {
+            runtime.styleCore(name, value, suffix, false);
+            return runtime.style;
+        };
+        runtime.className = function(name, value) {
+            runtime.styleCore(name, value, null, true);
+            return runtime.className;
+        };
+        runtime.attribute = function(name, value, sanitizer, namespace) {
+            const view = currentView();
+            const binding = nextBinding();
+            const node = selectedNode();
+            writeAttribute(view, node, namespace, name, value, sanitizer);
+            return runtime.attribute;
+        };
+        runtime.property = function(name, value, sanitizer) {
+            const view = currentView();
+            if (bindingChanged(view, value)) {
+                writeProperty(view.node, view, name, value, view[0], sanitizer);
+            }
+            return runtime.property;
+        };
+
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.elementStart,
+            "ɵɵelementEnd": runtime.elementEnd,
+            "ɵɵtext": runtime.text,
+            "ɵɵadvance": runtime.advance,
+            "ɵɵtextInterpolate": runtime.interpolate,
+        };
+
+        class StructuralFamiliesComponent {
+            label = "Reader";
+            active = true;
+            width = 120;
+            disabled = false;
+
+            static compiled = runtime.component({
+                type: StructuralFamiliesComponent,
+                selectors: [["structural-families"]],
+                B: () => {
+                    const plain = $localize`Hello, localized world!`;
+                    const bound = $localize`Hello, ${"\uFFFD0\uFFFD"}:INTERPOLATION:!`;
+                    return [plain, bound];
+                },
+                A: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.elementStart(0, "button");
+                        runtime.text(1, "Bound");
+                        runtime.elementEnd();
+                        runtime.containerStart(2);
+                        runtime.elementStart(3, "span");
+                        runtime.text(4, "Grouped");
+                        runtime.elementEnd();
+                        runtime.containerEnd();
+                        runtime.elementStart(5, "p");
+                        runtime.i18n(6, 0);
+                        runtime.elementEnd();
+                        runtime.elementStart(7, "p");
+                        runtime.i18n(8, 1);
+                        runtime.elementEnd();
+                    }
+                    if (renderFlags & 2) {
+                        runtime.style("width", context.width, "px");
+                        runtime.className("active", context.active);
+                        runtime.attribute("aria-label", context.label);
+                        runtime.property("disabled", context.disabled);
+                        runtime.advance(8);
+                        runtime.i18nExp(context.label);
+                        runtime.i18nApply(8);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("renamed Angular runtime families should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("[style.width.px]=\"width\""));
+    assert!(component.source.contains("[class.active]=\"active\""));
+    assert!(component.source.contains("[attr.aria-label]=\"label\""));
+    assert!(component.source.contains("[disabled]=\"disabled\""));
+    assert!(component.source.contains("<ng-container>"));
+    assert!(component
+        .source
+        .contains("<p i18n>Hello, localized world!</p>"));
+    assert!(component.source.contains("<p i18n>Hello, {{ label }}!</p>"));
+}
+
+#[test]
+fn selects_a_unique_direct_expression_i18n_constant_factory() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelementStart as elementStart,
+            ɵɵelementEnd as elementEnd,
+            ɵɵi18n as i18n,
+        } from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        class DirectI18nFactoryComponent {
+            static compiled = define({
+                type: DirectI18nFactoryComponent,
+                selectors: [["direct-i18n-factory"]],
+                constantsFactory: () => [localize("A readable message")],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        elementStart(0, "p");
+                        i18n(1, 0);
+                        elementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("direct i18n constant factory fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<p i18n>A readable message</p>"));
+}
+
+#[test]
+fn resolves_closure_assigned_component_and_parent_context_aliases() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class ContextAliasComponent {
+            value = "current";
+            title = "parent";
+
+            static compiled = core.ɵɵdefineComponent({
+                type: ContextAliasComponent,
+                selectors: [["context-alias"]],
+                template: function(renderFlags, context) {
+                    var cachedValue;
+                    if (renderFlags & 1) {
+                        core.ɵɵelement(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        cachedValue = context.value;
+                        renderFlags = core.ɵɵnextContext().title;
+                        core.ɵɵproperty(
+                            "aria-label",
+                            cachedValue + " / " + renderFlags
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-style context aliases should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(
+        component
+            .source
+            .contains(r#"<button [aria-label]="value + &quot; / &quot; + title"></button>"#),
+        "{}",
+        component.source
+    );
+}
+
+#[test]
+fn infers_closure_renamed_let_runtime_family() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const sentinel = {};
+        const state = { view: [] };
+
+        _.d = function(slot) {
+            marker("NgLet");
+            const view = currentView();
+            slot += 27;
+            const node = allocate(view, slot, 128, null, null);
+            attach(node, false);
+            write(view, selectedIndex(), slot, sentinel);
+            return _.d;
+        };
+
+        _.s = function(value) {
+            write(currentView(), selectedIndex(), value);
+            return value;
+        };
+
+        _.r = function(slot) {
+            slot = state.view[27 + slot];
+            if (slot === sentinel) {
+                throw new Error(314);
+            }
+            return slot;
+        };
+
+        function LetView(renderFlags) {
+            if (renderFlags & 1) {
+                core.ɵɵelementStart(0, "span");
+                core.ɵɵtext(1);
+                core.ɵɵelementEnd();
+            }
+            if (renderFlags & 2) {
+                const a = _.r(0);
+                core.ɵɵadvance();
+                core.ɵɵtextInterpolate(a);
+            }
+        }
+
+        class ClosureLetComponent {
+            prefix = "Status: ";
+            label = "ready";
+            active = true;
+
+            static compiled = core.ɵɵdefineComponent({
+                type: ClosureLetComponent,
+                selectors: [["closure-let"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        _.d(0);
+                        core.ɵɵelementStart(1, "p");
+                        core.ɵɵtext(2);
+                        core.ɵɵelementEnd();
+                        core.ɵɵtemplate(3, LetView, 2, 1, "span");
+                    }
+                    if (renderFlags & 2) {
+                        _.s(context.prefix + context.label);
+                        const a = _.r(0);
+                        core.ɵɵadvance(2);
+                        core.ɵɵtextInterpolate(a);
+                        core.ɵɵadvance();
+                        core.ɵɵconditional(context.active ? 3 : -1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed @let helpers should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@let value = prefix + label;"));
+    assert!(
+        component.source.contains("{{ value }}"),
+        "{}",
+        component.source
+    );
+    assert!(component.source.contains("@if (active) {"));
+}
+
+#[test]
+fn shares_proven_implicit_context_properties_across_embedded_views() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function ObjectItemView(renderFlags, context) {
+            if (renderFlags & 1) {
+                core.ɵɵelement(0, "article");
+            }
+            if (renderFlags & 2) {
+                const item = context.V;
+                core.ɵɵproperty("title", item.name);
+            }
+        }
+
+        function PrimitiveItemView(renderFlags, context) {
+            if (renderFlags & 1) {
+                core.ɵɵtext(0);
+            }
+            if (renderFlags & 2) {
+                const value = context.V;
+                core.ɵɵtextInterpolate(value);
+            }
+        }
+
+        class SharedImplicitContextComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: SharedImplicitContextComponent,
+                selectors: [["shared-implicit-context"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        core.ɵɵtemplate(0, ObjectItemView, 1, 1);
+                        core.ɵɵtemplate(1, PrimitiveItemView, 1, 1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("shared implicit-context fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[title]="item.name""#));
+    assert!(component.source.contains("{{ value }}"));
+}
+
+#[test]
+fn recovers_a_closure_inlined_local_reference_slot() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class InlinedReferenceComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: InlinedReferenceComponent,
+                selectors: [["inlined-reference"]],
+                consts: [["action", ""]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "button", null, 0);
+                        core.ɵɵtext(2, "Action");
+                        core.ɵɵelementEnd();
+                        core.ɵɵelementStart(3, "span");
+                        core.ɵɵtext(4);
+                        core.ɵɵelementEnd();
+                    }
+                    if (renderFlags & 2) {
+                        renderFlags = runtimeState.currentView[28];
+                        core.ɵɵadvance(4);
+                        core.ɵɵtextInterpolate(renderFlags.disabled);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("inlined local reference fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<button #action>Action</button>"));
+    assert!(component
+        .source
+        .contains("<span>{{ action.disabled }}</span>"));
+}
+
+#[test]
+fn infers_an_optimized_three_call_pipe_binding() {
+    let source = r#"
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createElement(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            closeElement();
+            return runtime.end;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.pipe = function(index, name) {
+            createPipe(index, name);
+        };
+        runtime.advance = function(delta = 1) {
+            selectIndex(delta);
+        };
+        runtime.interpolate = function(value) {
+            updateText(value);
+        };
+        runtime.bind = function(slot, binding, value) {
+            const view = currentView();
+            const pipe = loadPipe(view, slot);
+            return invokePipe(pipe, binding, value);
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵpipe": runtime.pipe,
+            "ɵɵadvance": runtime.advance,
+            "ɵɵtextInterpolate": runtime.interpolate,
+        };
+
+        class OptimizedPipeComponent {
+            label = "reader";
+
+            static compiled = runtime.define({
+                type: OptimizedPipeComponent,
+                selectors: [["optimized-pipe"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "p");
+                        runtime.text(1);
+                        runtime.pipe(2, "uppercase");
+                        runtime.end();
+                    }
+                    if (renderFlags & 2) {
+                        runtime.advance();
+                        runtime.interpolate(
+                            runtime.bind(2, 1, context.label)
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("optimized pipe binding fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<p>{{ label | uppercase }}</p>"));
+}
+
+#[test]
+fn infers_and_expands_closure_renamed_pure_function_bindings_in_container_only_views() {
+    let source = r#"
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.container = function(index) {
+            createContainer(index);
+        };
+        runtime.property = function(name, value, sanitizer) {
+            writeProperty(name, value, sanitizer);
+            return runtime.property;
+        };
+        runtime.pure0 = function(slot, callback) {
+            return cacheValue(
+                getCurrentView(),
+                getBindingRoot(),
+                slot,
+                callback()
+            );
+        };
+        runtime.pure1 = function(slot, callback, value) {
+            return cacheValue(
+                getCurrentView(),
+                getBindingRoot(),
+                slot,
+                callback(value)
+            );
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementContainer": runtime.container,
+            "ɵɵproperty": runtime.property,
+        };
+
+        const staticOptions = () => ({ fixed: true });
+        const dynamicOptions = (input) => ({ value: input });
+
+        class PureBindingComponent {
+            value = "reader";
+
+            static compiled = runtime.define({
+                type: PureBindingComponent,
+                selectors: [["pure-binding"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.container(0);
+                    }
+                    if (renderFlags & 2) {
+                        runtime.property(
+                            "staticOptions",
+                            runtime.pure0(0, staticOptions)
+                        );
+                        runtime.property(
+                            "dynamicOptions",
+                            runtime.pure1(1, dynamicOptions, context.value)
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed pure-function fixtures should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("[staticOptions]="));
+    assert!(component.source.contains("fixed: true"));
+    assert!(component.source.contains("[dynamicOptions]="));
+    assert!(component.source.contains("value: value"));
+    assert!(!component.source.contains("runtime.pure"));
+}
+
+#[test]
+fn infers_closure_renamed_expression_interpolation_from_text_family_evidence() {
+    let source = r#"
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.start = function(index, name) {
+            createElement(index, name);
+        };
+        runtime.end = function() {
+            closeElement();
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.property = function(name, value) {
+            writeProperty(name, value);
+            return runtime.property;
+        };
+        runtime.attribute = function(name, value) {
+            writeAttribute(name, value);
+            return runtime.attribute;
+        };
+        runtime.advance = function(delta = 1) {
+            selectNode(delta);
+        };
+        runtime.interpolateLow = function(view, prefix, value, suffix) {
+            return runtime.changed(view, runtime.nextBinding(), value)
+                ? prefix + runtime.stringify(value) + suffix
+                : runtime.noChange;
+        };
+        runtime.textOne = function(prefix, value, suffix) {
+            const rendered = runtime.interpolateLow(
+                runtime.getView(),
+                prefix,
+                value,
+                suffix
+            );
+            writeText(runtime.getView(), rendered);
+            return runtime.textOne;
+        };
+        runtime.textValue = function(value) {
+            runtime.textOne("", value);
+            return runtime.textValue;
+        };
+        runtime.interpolateValue = function(value) {
+            return runtime.changed(
+                runtime.getView(),
+                runtime.nextBinding(),
+                value
+            ) ? runtime.stringify(value) : runtime.noChange;
+        };
+        runtime.interpolateOne = function(prefix, value, suffix = "") {
+            return runtime.interpolateLow(
+                runtime.getView(),
+                prefix,
+                value,
+                suffix
+            );
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵtext": runtime.text,
+            "ɵɵproperty": runtime.property,
+            "ɵɵattribute": runtime.attribute,
+            "ɵɵadvance": runtime.advance,
+        };
+
+        class InterpolationComponent {
+            label = "reader";
+
+            static compiled = runtime.define({
+                type: InterpolationComponent,
+                selectors: [["interpolation-card"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.text(1);
+                        runtime.end();
+                    }
+                    if (renderFlags & 2) {
+                        runtime.property(
+                            "title",
+                            runtime.interpolateValue(context.label)
+                        );
+                        runtime.attribute(
+                            "aria-label",
+                            runtime.interpolateOne(
+                                "Hello ",
+                                context.label,
+                                "!"
+                            )
+                        );
+                        runtime.advance();
+                        runtime.textValue(context.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed expression-interpolation fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[title]="\`\${label}\`""#));
+    assert!(component
+        .source
+        .contains(r#"[attr.aria-label]="\`Hello \${label}!\`""#));
+    assert!(component.source.contains(">{{ label }}</button>"));
+    assert!(!component.source.contains("runtime.interpolate"));
+}
+
+#[test]
+fn preserves_closure_namespace_application_helpers_in_bindings_and_listeners() {
+    let source = r#"
+        runtime.define = function(definition) {
+            return definition;
+        };
+        runtime.start = function(index, name) {
+            createElement(index, name);
+        };
+        runtime.end = function() {
+            closeElement();
+        };
+        runtime.listener = function(name, handler) {
+            listen(name, handler);
+            return runtime.listener;
+        };
+        runtime.property = function(name, value) {
+            writeProperty(name, value);
+            return runtime.property;
+        };
+        runtime.applicationHelper = function(value, event) {
+            return event ? value + event.type : value.trim();
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+            "ɵɵproperty": runtime.property,
+        };
+
+        class ApplicationHelperComponent {
+            value = "reader";
+
+            static compiled = runtime.define({
+                type: ApplicationHelperComponent,
+                selectors: [["application-helper-card"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.listener("click", function($event) {
+                            return runtime.applicationHelper(
+                                context.value,
+                                $event
+                            );
+                        });
+                        runtime.end();
+                    }
+                    if (renderFlags & 2) {
+                        runtime.property(
+                            "value",
+                            runtime.applicationHelper(context.value)
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure application-helper fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"(click)="runtime.applicationHelper(value, $event)""#));
+    assert!(component
+        .source
+        .contains(r#"[value]="runtime.applicationHelper(value)""#));
 }
 
 fn assert_typescript_parses(source: &str) {
