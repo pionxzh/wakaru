@@ -1,18 +1,40 @@
 import { bootstrapApplication } from '@angular/platform-browser';
 import {
   Component,
+  Directive,
+  ɵɵattribute,
+  ɵɵclassProp,
   ɵɵconditionalCreate,
+  ɵɵdeclareLet,
   ɵɵdefer,
   ɵɵdeferHydrateOnIdle,
   ɵɵdeferOnIdle,
   ɵɵdeferPrefetchOnIdle,
+  ɵɵelementContainer,
+  ɵɵelementContainerEnd,
+  ɵɵelementContainerStart,
   ɵɵdefineComponent,
   ɵɵgetCurrentView,
+  ɵɵi18n,
+  ɵɵi18nApply,
+  ɵɵi18nEnd,
+  ɵɵi18nExp,
+  ɵɵi18nStart,
+  ɵɵinterpolate,
+  ɵɵinterpolate1,
+  ɵɵnamespaceHTML,
+  ɵɵnamespaceMathML,
+  ɵɵnamespaceSVG,
   ɵɵnextContext,
+  ɵɵpureFunction0,
+  ɵɵpureFunction1,
+  ɵɵreadContextLet,
   ɵɵrepeater,
   ɵɵrepeaterCreate,
   ɵɵresetView,
   ɵɵrestoreView,
+  ɵɵstoreLet,
+  ɵɵstyleProp,
 } from '@angular/core';
 import { AppComponent } from './app/app.component';
 import { FixtureCardComponent } from './app/fixture-card.component';
@@ -92,6 +114,123 @@ class StructuralPrefetchIdleCardComponent {}
 })
 class StructuralHydrateIdleCardComponent {}
 
+@Component({
+  selector: 'structural-binding-card',
+  standalone: true,
+  template: `
+    <button
+      #action
+      type="button"
+      [attr.aria-label]="label"
+      [class.active]="active"
+      [style.width.px]="width"
+    >
+      Bound content
+    </button>
+    <span>{{ action.disabled }}</span>
+  `,
+})
+class StructuralBindingCardComponent {
+  label = 'Bound label';
+  active = true;
+  width = 120;
+}
+
+@Component({
+  selector: 'structural-container-i18n-card',
+  standalone: true,
+  template: `
+    <ng-container>
+      <span>Grouped content</span>
+    </ng-container>
+    <p i18n>Hello, localized world!</p>
+    <p i18n>Hello, {{ name }}!</p>
+  `,
+})
+class StructuralContainerI18nCardComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'button[fixtureAction],a[fixtureAction]',
+  standalone: true,
+  template: `<span>Selector matrix</span>`,
+})
+class StructuralSelectorMatrixComponent {}
+
+@Component({
+  selector: 'dialog[fixtureDialog]',
+  standalone: true,
+  template: `<span>Element selector</span>`,
+})
+class StructuralElementSelectorComponent {}
+
+@Directive({
+  selector: 'structural-pure-target',
+  inputs: ['config', 'items'],
+})
+class StructuralPureTargetDirective {
+  config: unknown;
+  items: unknown;
+}
+
+@Component({
+  selector: 'structural-pure-bindings',
+  standalone: true,
+  imports: [StructuralPureTargetDirective],
+  template: `
+    <structural-pure-target [config]="{ fixed: true }" />
+    <structural-pure-target
+      [config]="{ label: label }"
+      [items]="[label]"
+    />
+    <button title="{{ label }}" attr.data-label="Hello {{ label }}!">
+      Interpolate
+    </button>
+  `,
+})
+class StructuralPureBindingsComponent {
+  label = 'reader';
+}
+
+@Component({
+  selector: 'structural-let-bindings',
+  standalone: true,
+  template: `
+    @let displayLabel = prefix + label;
+    <p>{{ displayLabel }}</p>
+    @if (active) {
+      <button type="button" (click)="activate(displayLabel)">
+        {{ displayLabel }}
+      </button>
+    }
+  `,
+})
+class StructuralLetBindingsComponent {
+  prefix = 'Status: ';
+  label = 'ready';
+  active = true;
+
+  activate(label: string): void {
+    console.log(label);
+  }
+}
+
+@Component({
+  selector: 'structural-namespaces',
+  standalone: true,
+  template: `
+    <svg viewBox="0 0 10 10">
+      <circle cx="5" cy="5" r="4" />
+    </svg>
+    <math>
+      <mi>x</mi><mo>=</mo><mn>1</mn>
+    </math>
+    <p>HTML</p>
+  `,
+})
+class StructuralNamespacesComponent {}
+
 producerGlobal.__wakaruAngularRoots = [
   AppComponent,
   FixtureCardComponent,
@@ -100,6 +239,13 @@ producerGlobal.__wakaruAngularRoots = [
   StructuralDeferCardComponent,
   StructuralPrefetchIdleCardComponent,
   StructuralHydrateIdleCardComponent,
+  StructuralBindingCardComponent,
+  StructuralContainerI18nCardComponent,
+  StructuralSelectorMatrixComponent,
+  StructuralElementSelectorComponent,
+  StructuralPureBindingsComponent,
+  StructuralLetBindingsComponent,
+  StructuralNamespacesComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
   (AppComponent as typeof AppComponent & { ɵcmp: unknown }).ɵcmp,
@@ -125,22 +271,78 @@ producerGlobal.__wakaruAngularDefinitions = [
       ɵcmp: unknown;
     }
   ).ɵcmp,
+  (
+    StructuralBindingCardComponent as typeof StructuralBindingCardComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralContainerI18nCardComponent as typeof StructuralContainerI18nCardComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralSelectorMatrixComponent as typeof StructuralSelectorMatrixComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralElementSelectorComponent as typeof StructuralElementSelectorComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralPureBindingsComponent as typeof StructuralPureBindingsComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralLetBindingsComponent as typeof StructuralLetBindingsComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralNamespacesComponent as typeof StructuralNamespacesComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
 ];
 producerGlobal.__wakaruIvyRuntime = {
   'ɵɵdefineComponent': ɵɵdefineComponent,
 };
 producerGlobal.__wakaruStructuralRuntime = [
+  ɵɵattribute,
+  ɵɵclassProp,
   ɵɵconditionalCreate,
+  ɵɵdeclareLet,
   ɵɵdefer,
   ɵɵdeferHydrateOnIdle,
   ɵɵdeferOnIdle,
   ɵɵdeferPrefetchOnIdle,
+  ɵɵelementContainer,
+  ɵɵelementContainerEnd,
+  ɵɵelementContainerStart,
   ɵɵgetCurrentView,
+  ɵɵi18n,
+  ɵɵi18nApply,
+  ɵɵi18nEnd,
+  ɵɵi18nExp,
+  ɵɵi18nStart,
+  ɵɵinterpolate,
+  ɵɵinterpolate1,
+  ɵɵnamespaceHTML,
+  ɵɵnamespaceMathML,
+  ɵɵnamespaceSVG,
   ɵɵnextContext,
+  ɵɵpureFunction0,
+  ɵɵpureFunction1,
+  ɵɵreadContextLet,
   ɵɵrepeater,
   ɵɵrepeaterCreate,
   ɵɵresetView,
   ɵɵrestoreView,
+  ɵɵstoreLet,
+  ɵɵstyleProp,
 ];
 
 bootstrapApplication(AppComponent).catch((error) => console.error(error));

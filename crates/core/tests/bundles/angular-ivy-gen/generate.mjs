@@ -297,6 +297,9 @@ for (const selector of [
   'fixture-card',
   'fixture-lazy-card',
   'structural-view-card',
+  'structural-pure-bindings',
+  'structural-let-bindings',
+  'structural-namespaces',
 ]) {
   if (!advancedStructuralSource.includes(selector)) {
     throw new Error(`Structural ADVANCED output is missing ${selector}`);
@@ -318,14 +321,24 @@ for (const excludedRole of [
   'ɵɵtext',
   'ɵɵproperty',
   'ɵɵconditional',
+  'ɵɵdeclareLet',
   'ɵɵdefer',
   'ɵɵdeferOnIdle',
   'ɵɵgetCurrentView',
+  'ɵɵinterpolate',
+  'ɵɵinterpolate1',
+  'ɵɵnamespaceHTML',
+  'ɵɵnamespaceMathML',
+  'ɵɵnamespaceSVG',
   'ɵɵnextContext',
+  'ɵɵpureFunction0',
+  'ɵɵpureFunction1',
+  'ɵɵreadContextLet',
   'ɵɵrepeater',
   'ɵɵrepeaterCreate',
   'ɵɵresetView',
   'ɵɵrestoreView',
+  'ɵɵstoreLet',
 ]) {
   if (advancedStructuralSource.includes(excludedRole)) {
     throw new Error(
