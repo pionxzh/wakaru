@@ -771,47 +771,62 @@ mod tests {
     }
 
     #[test]
-    fn extracts_asset_from_real_bun_generated_graph() {
-        let dir = temp_test_dir("real-bun");
-        fs::create_dir_all(&dir).expect("create temp root");
-        let input = dir.join("standalone.bin");
-        let output = dir.join("out");
-        fs::write(
-            &input,
-            include_bytes!("../tests/fixtures/bun-standalone-assets/standalone.bin"),
-        )
-        .expect("write real Bun graph");
+    fn extracts_assets_from_both_real_bun_record_layouts() {
+        let fixtures: [(&str, &[u8]); 3] = [
+            (
+                "1.3.3",
+                include_bytes!("../tests/fixtures/bun-standalone-assets/standalone-v1.3.3.bin"),
+            ),
+            (
+                "1.3.8",
+                include_bytes!("../tests/fixtures/bun-standalone-assets/standalone-v1.3.8.bin"),
+            ),
+            (
+                "1.3.13",
+                include_bytes!("../tests/fixtures/bun-standalone-assets/standalone.bin"),
+            ),
+        ];
 
-        run_extract(
-            BunExtractArgs {
-                input,
-                output: output.clone(),
-                include_internals: false,
-                json: false,
-            },
-            false,
-        )
-        .expect("extract real Bun graph");
+        for (version, graph) in fixtures {
+            let dir = temp_test_dir(&format!("real-bun-{version}"));
+            fs::create_dir_all(&dir).expect("create temp root");
+            let input = dir.join("standalone.bin");
+            let output = dir.join("out");
+            fs::write(&input, graph).expect("write real Bun graph");
 
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(output.join("manifest.json")).expect("read manifest"))
-                .expect("parse manifest");
-        let files = manifest["files"].as_array().expect("manifest file array");
-        let asset = files
-            .iter()
-            .find(|file| file["loader"] == "file")
-            .expect("real graph should contain its file-loader asset");
-        let asset_path = asset["output_path"]
-            .as_str()
-            .expect("asset output path should be text");
-        assert_eq!(
-            fs::read(output.join(asset_path)).expect("read extracted asset"),
-            include_bytes!("../tests/fixtures/bun-standalone-assets/asset.bin")
-        );
-        assert_eq!(manifest["file_count"], 2);
-        assert_eq!(manifest["javascript_file_count"], 1);
-        assert_eq!(manifest["asset_file_count"], 1);
+            run_extract(
+                BunExtractArgs {
+                    input,
+                    output: output.clone(),
+                    include_internals: false,
+                    json: false,
+                },
+                false,
+            )
+            .unwrap_or_else(|error| panic!("extract Bun {version} graph: {error:#}"));
 
-        fs::remove_dir_all(&dir).expect("remove temp root");
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &fs::read(output.join("manifest.json")).expect("read manifest"),
+            )
+            .expect("parse manifest");
+            let files = manifest["files"].as_array().expect("manifest file array");
+            let asset = files
+                .iter()
+                .find(|file| file["loader"] == "file")
+                .expect("real graph should contain its file-loader asset");
+            let asset_path = asset["output_path"]
+                .as_str()
+                .expect("asset output path should be text");
+            assert_eq!(
+                fs::read(output.join(asset_path)).expect("read extracted asset"),
+                include_bytes!("../tests/fixtures/bun-standalone-assets/asset.bin"),
+                "Bun {version} asset bytes"
+            );
+            assert_eq!(manifest["file_count"], 2, "Bun {version}");
+            assert_eq!(manifest["javascript_file_count"], 1, "Bun {version}");
+            assert_eq!(manifest["asset_file_count"], 1, "Bun {version}");
+
+            fs::remove_dir_all(&dir).expect("remove temp root");
+        }
     }
 }

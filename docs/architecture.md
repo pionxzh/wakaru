@@ -46,7 +46,8 @@ A Bun standalone executable is a native PE, Mach-O, or ELF host followed by a
 serialized module graph. It is a container around compiled outputs, not itself
 a JavaScript bundle format. The parser finds Bun's
 `\n---- Bun! ----\n` trailer, reads the preceding offsets record, validates the
-52-byte module table and every data pointer, and returns exact borrowed slices.
+36-byte record layout used by Bun 1.3.3–1.3.8 or the 52-byte layout introduced
+in Bun 1.3.9, validates every data pointer, and returns exact borrowed slices.
 
 For explicit executable inputs, the normal `--unpack` path hands JS/JSX/TS/TSX
 entries to one `UnpackJob`; the entry point is pushed first. Compiled Bun

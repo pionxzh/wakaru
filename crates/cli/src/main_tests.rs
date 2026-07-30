@@ -1459,6 +1459,29 @@ fn explicit_bun_standalone_extracts_javascript_entries() {
 }
 
 #[test]
+fn explicit_legacy_bun_standalone_extracts_javascript_entries() {
+    let dir = temp_test_dir("legacy-bun-standalone");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let executable = dir.join("app");
+    let mut bytes = b"\x7fELF".to_vec();
+    bytes.extend_from_slice(include_bytes!(
+        "../tests/fixtures/bun-standalone-assets/standalone-v1.3.3.bin"
+    ));
+    fs::write(&executable, bytes).expect("write legacy Bun executable");
+
+    let sources = read_explicit_unpack_sources(&executable).expect("extract legacy Bun sources");
+
+    assert_eq!(sources.len(), 1, "non-JavaScript assets must be ignored");
+    assert!(
+        sources[0].code().contains("console.log"),
+        "unexpected embedded JavaScript: {}",
+        sources[0].code()
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn executable_without_bun_graph_is_rejected_clearly() {
     let dir = temp_test_dir("non-bun-executable");
     fs::create_dir_all(&dir).expect("create temp dir");

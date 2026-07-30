@@ -57,7 +57,7 @@ This is a byte-exact container operation, separate from `--unpack`. It writes
 every validated Bun file record below `extracted/files/`, including JavaScript,
 CSS, file-loader assets, WebAssembly, native add-ons, embedded SQLite databases,
 and records using loader IDs unknown to this Wakaru version. It does not parse,
-format, decompile, or execute their contents.
+format, decompile, or execute their contents. Bun 1.3.3+ is supported.
 
 `extracted/manifest.json` records each original Bun path, safe output path,
 loader ID and known name, encoding, module format, server/client side, entry

@@ -9,7 +9,33 @@ use std::ops::Range;
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 const OFFSETS_SIZE: usize = 32;
-const MODULE_RECORD_SIZE: usize = 52;
+const CURRENT_MODULE_RECORD_SIZE: usize = 52;
+const LEGACY_MODULE_RECORD_SIZE: usize = 36;
+
+#[derive(Debug, Clone, Copy)]
+struct ModuleRecordLayout {
+    label: &'static str,
+    size: usize,
+    module_info_offset: Option<usize>,
+    bytecode_origin_offset: Option<usize>,
+    metadata_offset: usize,
+}
+
+const CURRENT_MODULE_LAYOUT: ModuleRecordLayout = ModuleRecordLayout {
+    label: "Bun 1.3.9+ 52-byte",
+    size: CURRENT_MODULE_RECORD_SIZE,
+    module_info_offset: Some(32),
+    bytecode_origin_offset: Some(40),
+    metadata_offset: 48,
+};
+
+const LEGACY_MODULE_LAYOUT: ModuleRecordLayout = ModuleRecordLayout {
+    label: "Bun 1.3.3-1.3.8 36-byte",
+    size: LEGACY_MODULE_RECORD_SIZE,
+    module_info_offset: None,
+    bytecode_origin_offset: None,
+    metadata_offset: 32,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StringPointer {
@@ -291,31 +317,105 @@ fn parse_candidate(
     let data = &executable[data_start..offsets_start];
 
     let module_bytes = pointer_slice(data, modules_ptr, "module table")?;
-    if module_bytes.is_empty() || module_bytes.len() % MODULE_RECORD_SIZE != 0 {
+    let compile_exec_argv = pointer_slice(data, compile_exec_argv_ptr, "compile argv")?;
+    validate_nul_terminated(data, compile_exec_argv_ptr, "compile argv")?;
+    let files = parse_module_table(data, data_start, module_bytes, entry_point_id)?;
+
+    Ok(BunStandalone {
+        files,
+        entry_point_id,
+        compile_exec_argv,
+        compile_exec_argv_range: absolute_nonempty_range(data_start, compile_exec_argv_ptr),
+        flags,
+        executable_range: data_start..trailer_start + TRAILER.len(),
+    })
+}
+
+fn parse_module_table<'a>(
+    data: &'a [u8],
+    data_start: usize,
+    module_bytes: &'a [u8],
+    entry_point_id: u32,
+) -> Result<Vec<BunEmbeddedFile<'a>>, BunStandaloneError> {
+    if module_bytes.is_empty() {
+        return Err(BunStandaloneError::new(
+            "unsupported empty Bun module table",
+        ));
+    }
+
+    let mut parsed = None;
+    let mut errors = Vec::new();
+    let mut attempted_layout = false;
+    for layout in [CURRENT_MODULE_LAYOUT, LEGACY_MODULE_LAYOUT] {
+        if !module_bytes.len().is_multiple_of(layout.size) {
+            continue;
+        }
+        attempted_layout = true;
+        match parse_module_table_with_layout(data, data_start, module_bytes, entry_point_id, layout)
+        {
+            Ok(_) if parsed.is_some() => {
+                return Err(BunStandaloneError::new(format!(
+                    "ambiguous Bun module table length {} matches both supported record layouts",
+                    module_bytes.len()
+                )));
+            }
+            Ok(files) => parsed = Some(files),
+            Err(error) => errors.push(format!("{} records: {error}", layout.label)),
+        }
+    }
+
+    if let Some(files) = parsed {
+        return Ok(files);
+    }
+    if !attempted_layout {
         return Err(BunStandaloneError::new(format!(
-            "unsupported Bun module table length {} (expected 52-byte records)",
+            "unsupported Bun module table length {} (expected 36- or 52-byte records)",
             module_bytes.len()
         )));
     }
-    let module_count = module_bytes.len() / MODULE_RECORD_SIZE;
+
+    Err(BunStandaloneError::new(format!(
+        "invalid Bun module table ({})",
+        errors.join("; ")
+    )))
+}
+
+fn parse_module_table_with_layout<'a>(
+    data: &'a [u8],
+    data_start: usize,
+    module_bytes: &'a [u8],
+    entry_point_id: u32,
+    layout: ModuleRecordLayout,
+) -> Result<Vec<BunEmbeddedFile<'a>>, BunStandaloneError> {
+    let module_count = module_bytes.len() / layout.size;
     if entry_point_id as usize >= module_count {
         return Err(BunStandaloneError::new(format!(
             "Bun entry point {entry_point_id} is outside {module_count} module records"
         )));
     }
-    let compile_exec_argv = pointer_slice(data, compile_exec_argv_ptr, "compile argv")?;
-    validate_nul_terminated(data, compile_exec_argv_ptr, "compile argv")?;
 
     let mut files = Vec::with_capacity(module_count);
     for index in 0..module_count {
-        let record = &module_bytes[index * MODULE_RECORD_SIZE..(index + 1) * MODULE_RECORD_SIZE];
+        let record = &module_bytes[index * layout.size..(index + 1) * layout.size];
         let name_ptr = read_pointer(record, 0)?;
         let contents_ptr = read_pointer(record, 8)?;
         let source_map_ptr = read_pointer(record, 16)?;
         let bytecode_ptr = read_pointer(record, 24)?;
-        let module_info_ptr = read_pointer(record, 32)?;
-        let bytecode_origin_ptr = read_pointer(record, 40)?;
-        let encoding = match record[48] {
+        let module_info_ptr = match layout.module_info_offset {
+            Some(offset) => read_pointer(record, offset)?,
+            None => StringPointer {
+                offset: 0,
+                length: 0,
+            },
+        };
+        let bytecode_origin_ptr = match layout.bytecode_origin_offset {
+            Some(offset) => read_pointer(record, offset)?,
+            None => StringPointer {
+                offset: 0,
+                length: 0,
+            },
+        };
+        let encoding = match record[layout.metadata_offset] {
             0 => BunEncoding::Binary,
             1 => BunEncoding::Latin1,
             2 => BunEncoding::Utf8,
@@ -325,8 +425,8 @@ fn parse_candidate(
                 )))
             }
         };
-        let loader = record[49];
-        let module_format = match record[50] {
+        let loader = record[layout.metadata_offset + 1];
+        let module_format = match record[layout.metadata_offset + 2] {
             0 => BunModuleFormat::None,
             1 => BunModuleFormat::Esm,
             2 => BunModuleFormat::Cjs,
@@ -336,7 +436,7 @@ fn parse_candidate(
                 )))
             }
         };
-        let side = match record[51] {
+        let side = match record[layout.metadata_offset + 3] {
             0 => BunFileSide::Server,
             1 => BunFileSide::Client,
             value => {
@@ -386,14 +486,7 @@ fn parse_candidate(
         });
     }
 
-    Ok(BunStandalone {
-        files,
-        entry_point_id,
-        compile_exec_argv,
-        compile_exec_argv_range: absolute_nonempty_range(data_start, compile_exec_argv_ptr),
-        flags,
-        executable_range: data_start..trailer_start + TRAILER.len(),
-    })
+    Ok(files)
 }
 
 fn validate_nul_terminated(
@@ -508,7 +601,7 @@ mod tests {
         let argv = append(&mut data, b"--smol", true);
 
         let modules_offset = data.len() as u32;
-        let mut first = [0u8; MODULE_RECORD_SIZE];
+        let mut first = [0u8; CURRENT_MODULE_RECORD_SIZE];
         put_pointer(&mut first, 0, first_name);
         put_pointer(&mut first, 8, first_contents);
         put_pointer(&mut first, 16, first_map);
@@ -521,7 +614,7 @@ mod tests {
         first[51] = 0;
         data.extend_from_slice(&first);
 
-        let mut second = [0u8; MODULE_RECORD_SIZE];
+        let mut second = [0u8; CURRENT_MODULE_RECORD_SIZE];
         put_pointer(&mut second, 0, second_name);
         put_pointer(&mut second, 8, second_contents);
         second[48] = 0;
@@ -533,7 +626,7 @@ mod tests {
         let byte_count = data.len() as u64;
         let modules = TestPointer {
             offset: modules_offset,
-            length: (MODULE_RECORD_SIZE * 2) as u32,
+            length: (CURRENT_MODULE_RECORD_SIZE * 2) as u32,
         };
         let mut executable = prefix.to_vec();
         executable.extend_from_slice(&data);
@@ -546,6 +639,96 @@ mod tests {
         executable.extend_from_slice(&3u32.to_le_bytes());
         executable.extend_from_slice(TRAILER);
         executable.extend_from_slice(b"signature suffix");
+        executable
+    }
+
+    fn legacy_fixture() -> Vec<u8> {
+        const LEGACY_RECORD_SIZE: usize = 36;
+
+        let prefix = b"synthetic legacy executable prefix\xff";
+        let mut data = Vec::new();
+        let entry_name = append(&mut data, b"/$bunfs/root/legacy-entry.js", true);
+        let entry_contents = append(&mut data, b"console.log('legacy');", true);
+        let entry_map = append(&mut data, b"legacy-map", false);
+        let entry_bytecode = append(&mut data, b"legacy-bytecode", false);
+        let asset_name = append(&mut data, b"/$bunfs/root/legacy-asset.bin", true);
+        let asset_contents = append(&mut data, b"\0\xfflegacy-asset", true);
+        let argv = append(&mut data, b"--legacy", true);
+
+        let modules_offset = data.len() as u32;
+        let mut entry = [0u8; LEGACY_RECORD_SIZE];
+        put_pointer(&mut entry, 0, entry_name);
+        put_pointer(&mut entry, 8, entry_contents);
+        put_pointer(&mut entry, 16, entry_map);
+        put_pointer(&mut entry, 24, entry_bytecode);
+        entry[32] = 1;
+        entry[33] = 1;
+        entry[34] = 1;
+        entry[35] = 0;
+        data.extend_from_slice(&entry);
+
+        let mut asset = [0u8; LEGACY_RECORD_SIZE];
+        put_pointer(&mut asset, 0, asset_name);
+        put_pointer(&mut asset, 8, asset_contents);
+        asset[32] = 0;
+        asset[33] = 5;
+        asset[34] = 0;
+        asset[35] = 1;
+        data.extend_from_slice(&asset);
+
+        let byte_count = data.len() as u64;
+        let modules = TestPointer {
+            offset: modules_offset,
+            length: (LEGACY_RECORD_SIZE * 2) as u32,
+        };
+        let mut executable = prefix.to_vec();
+        executable.extend_from_slice(&data);
+        executable.extend_from_slice(&byte_count.to_le_bytes());
+        executable.extend_from_slice(&modules.offset.to_le_bytes());
+        executable.extend_from_slice(&modules.length.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&argv.offset.to_le_bytes());
+        executable.extend_from_slice(&argv.length.to_le_bytes());
+        executable.extend_from_slice(&3u32.to_le_bytes());
+        executable.extend_from_slice(TRAILER);
+        executable
+    }
+
+    fn layout_count_fixture(layout: ModuleRecordLayout, module_count: usize) -> Vec<u8> {
+        let mut data = Vec::new();
+        let pointers = (0..module_count)
+            .map(|index| {
+                let name = append(
+                    &mut data,
+                    format!("/$bunfs/root/module-{index}.js").as_bytes(),
+                    true,
+                );
+                let contents = append(&mut data, format!("console.log({index});").as_bytes(), true);
+                (name, contents)
+            })
+            .collect::<Vec<_>>();
+
+        let modules_offset = data.len() as u32;
+        for (name, contents) in pointers {
+            let mut record = vec![0u8; layout.size];
+            put_pointer(&mut record, 0, name);
+            put_pointer(&mut record, 8, contents);
+            record[layout.metadata_offset] = 1;
+            record[layout.metadata_offset + 1] = 1;
+            record[layout.metadata_offset + 2] = 1;
+            data.extend_from_slice(&record);
+        }
+
+        let byte_count = data.len() as u64;
+        let mut executable = data;
+        executable.extend_from_slice(&byte_count.to_le_bytes());
+        executable.extend_from_slice(&modules_offset.to_le_bytes());
+        executable.extend_from_slice(&((layout.size * module_count) as u32).to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(TRAILER);
         executable
     }
 
@@ -602,6 +785,37 @@ mod tests {
                 .unwrap()],
             standalone.entry_point().bytecode_origin_path
         );
+    }
+
+    #[test]
+    fn extracts_bun_1_3_3_through_1_3_8_module_records() {
+        let executable = legacy_fixture();
+        let standalone = extract_standalone(&executable)
+            .expect("legacy fixture should parse")
+            .expect("legacy fixture should be detected");
+
+        assert_eq!(standalone.files.len(), 2);
+        assert_eq!(
+            standalone.entry_point().name,
+            "/$bunfs/root/legacy-entry.js"
+        );
+        assert_eq!(standalone.entry_point().contents, b"console.log('legacy');");
+        assert_eq!(standalone.entry_point().source_map, b"legacy-map");
+        assert_eq!(standalone.entry_point().bytecode, b"legacy-bytecode");
+        assert!(standalone.entry_point().module_info.is_empty());
+        assert!(standalone.entry_point().module_info_range.is_none());
+        assert!(standalone.entry_point().bytecode_origin_path.is_empty());
+        assert!(standalone
+            .entry_point()
+            .bytecode_origin_path_range
+            .is_none());
+        assert_eq!(standalone.entry_point().loader_kind(), BunLoader::Js);
+        assert_eq!(standalone.entry_point().module_format, BunModuleFormat::Esm);
+        assert_eq!(standalone.entry_point().side, BunFileSide::Server);
+        assert_eq!(standalone.files[1].loader_kind(), BunLoader::File);
+        assert_eq!(standalone.files[1].side, BunFileSide::Client);
+        assert_eq!(standalone.compile_exec_argv, b"--legacy");
+        assert_eq!(standalone.flags, 3);
     }
 
     #[test]
@@ -707,6 +921,49 @@ mod tests {
         assert!(error
             .to_string()
             .contains("module 0 contents is not NUL-terminated"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_module_record_layout() {
+        let modules = vec![0u8; CURRENT_MODULE_RECORD_SIZE * 9];
+        assert_eq!(
+            modules.len(),
+            LEGACY_MODULE_RECORD_SIZE * 13,
+            "fixture must be divisible by both supported record sizes"
+        );
+
+        let byte_count = modules.len() as u64;
+        let mut executable = modules;
+        executable.extend_from_slice(&byte_count.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&(byte_count as u32).to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(&0u32.to_le_bytes());
+        executable.extend_from_slice(TRAILER);
+
+        let error = extract_standalone(&executable).expect_err("ambiguous layout should fail");
+        assert!(error
+            .to_string()
+            .contains("matches both supported record layouts"));
+    }
+
+    #[test]
+    fn distinguishes_realistic_layouts_with_the_same_table_length() {
+        let current_fixture = layout_count_fixture(CURRENT_MODULE_LAYOUT, 9);
+        let current = extract_standalone(&current_fixture)
+            .expect("current layout should parse")
+            .expect("current fixture should be detected");
+        assert_eq!(current.files.len(), 9);
+        assert_eq!(current.files[8].name, "/$bunfs/root/module-8.js");
+
+        let legacy_fixture = layout_count_fixture(LEGACY_MODULE_LAYOUT, 13);
+        let legacy = extract_standalone(&legacy_fixture)
+            .expect("legacy layout should parse")
+            .expect("legacy fixture should be detected");
+        assert_eq!(legacy.files.len(), 13);
+        assert_eq!(legacy.files[12].name, "/$bunfs/root/module-12.js");
     }
 
     #[test]

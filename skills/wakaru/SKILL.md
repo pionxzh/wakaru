@@ -101,6 +101,7 @@ transforming it and records loader metadata and byte ranges in
 `raw/manifest.json`. Add `--json` for the same manifest on stdout.
 `--include-internals` also emits opaque Bun source-map, JavaScriptCore bytecode,
 and module-info regions; do not treat `source-map.bunmap` as a v3 JSON map.
+The extractor supports Bun 1.3.3+.
 
 Ordinary Browserify bundles use unambiguous dependency-map request paths for
 readable module filenames. Conflicting or missing hints retain

@@ -18,9 +18,10 @@ wakaru bun extract ./compiled-app -o extracted/
 
 Bun writes a serialized module graph immediately before a fixed trailer.
 Wakaru works backward from that trailer, validates the offsets record, the
-current 52-byte file records, and every referenced byte range. This avoids
-scanning for printable JavaScript and does not require a separate native-section
-parser for each operating system.
+36-byte file records used by Bun 1.3.3–1.3.8 or the 52-byte records introduced
+in Bun 1.3.9, and every referenced byte range. This avoids scanning for
+printable JavaScript and does not require a separate native-section parser for
+each operating system.
 
 The normal `--unpack` CLI path extracts JS, JSX, TS, and TSX records. Bun may
 already have combined many source modules into each record. Wakaru recognizes
@@ -36,12 +37,13 @@ YAML, Markdown, or an unknown future loader. A deterministic `manifest.json`
 preserves the record metadata and maps Bun's original virtual path to the safe
 on-disk path.
 
-The loader mapping and record layout follow Bun's `Loader` enum and
+The loader mapping and both record layouts follow Bun's `Loader` enum and
 `CompiledModuleGraphFile` serializer. Bun declares the loader discriminants
 append-only, so Wakaru keeps the raw numeric loader ID and extracts unknown IDs
-instead of discarding their contents. A changed record layout still fails
-closed because the container has no independent version field with which to
-select an unverified decoder.
+instead of discarding their contents. The older layout has no module-info or
+bytecode-origin fields, so those public slices and manifest regions are empty.
+A changed or ambiguous record layout fails closed because the container has no
+independent version field with which to select an unverified decoder.
 
 ## Safety and validation
 
@@ -73,8 +75,9 @@ written as `source-map.bunmap`, not `.map`, because it is not v3 JSON.
 
 - Bun's embedded source-map field uses an internal binary representation, not a
   v3 JSON source map, and is not used for name recovery.
-- The parser intentionally rejects unknown record layouts. A future Bun layout
-  change may require a new validated parser branch.
+- The parser supports the known Bun 1.3.3–1.3.8 and Bun 1.3.9-era record
+  layouts. It intentionally rejects unknown or ambiguous layouts; another Bun
+  layout change requires a new validated parser branch.
 - Bun records do not preserve original filesystem permissions or symlink
   identities; extracted records are ordinary files.
 - Some tightly connected scope-hoisted regions can remain coarser than the

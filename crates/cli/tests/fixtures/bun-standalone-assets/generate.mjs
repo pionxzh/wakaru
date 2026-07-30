@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 const directory = dirname(fileURLToPath(import.meta.url));
 const asset = join(directory, "asset.bin");
 const executable = join(directory, "fixture-app");
+const outputName = process.argv[2] ?? "standalone.bin";
+if (outputName.includes("/") || outputName.includes("\\")) {
+  throw new Error("fixture output must be a filename in this directory");
+}
 writeFileSync(
   asset,
   Buffer.from([0x00, 0xff, 0x42, 0x75, 0x6e, 0x0a, 0x80, 0x41, 0x53, 0x53, 0x45, 0x54]),
@@ -36,7 +40,7 @@ if (trailerStart < 32) {
 const byteCount = Number(bytes.readBigUInt64LE(trailerStart - 32));
 const dataStart = trailerStart - 32 - byteCount;
 writeFileSync(
-  join(directory, "standalone.bin"),
+  join(directory, outputName),
   bytes.subarray(dataStart, trailerStart + trailer.length),
 );
 rmSync(executable);

@@ -157,10 +157,11 @@ pub enum BunLoader {
 
 `Ok(None)` means the Bun trailer was absent. A present but invalid graph is an
 error rather than a partial extraction. All returned byte slices borrow the
-caller-owned executable, and all six pointers in each current Bun record are
-range-checked before a result is returned. `name_bytes` preserves the exact
-embedded path; `name` is a convenience UTF-8 representation and replaces
-invalid sequences lossily.
+caller-owned executable. All four pointers in Bun's 1.3.3–1.3.8 records and all
+six pointers in the layout introduced by Bun 1.3.9 are range-checked before a
+result is returned. The two newer metadata regions are returned empty for an
+older record. `name_bytes` preserves the exact embedded path; `name` is a
+convenience UTF-8 representation and replaces invalid sequences lossily.
 
 `BunEmbeddedFile::loader_kind()` maps the raw append-only loader discriminant
 to `BunLoader` while retaining unknown future values.
