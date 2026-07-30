@@ -217,7 +217,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 19);
+    assert_eq!(by_selector.len(), 20);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -474,18 +474,16 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         by_selector["structural-animation-bindings"].issues,
         by_selector["structural-animation-bindings"].source,
     );
-    assert!(by_selector["structural-animation-bindings"]
-        .source
-        .contains(r#"[animate.leave]="Uh""#));
-    assert!(by_selector["structural-animation-bindings"]
-        .source
-        .contains(r#"animate.enter="fade-in""#));
-    assert!(by_selector["structural-animation-bindings"]
-        .source
-        .contains(r#"(animate.enter)="console.log($event)""#));
-    assert!(!by_selector["structural-animation-bindings"]
-        .source
-        .contains("ɵɵanimate"));
+    let animation_bindings = &by_selector["structural-animation-bindings"].source;
+    let leave_binding = animation_bindings
+        .split_once(r#"[animate.leave]=""#)
+        .and_then(|(_, source)| source.split_once('"'))
+        .map(|(binding, _)| binding)
+        .expect("animate.leave should retain its component-field binding");
+    assert!(animation_bindings.contains(&format!("{leave_binding} = \"fade-out\";")));
+    assert!(animation_bindings.contains(r#"animate.enter="fade-in""#));
+    assert!(animation_bindings.contains(r#"(animate.enter)="console.log($event)""#));
+    assert!(!animation_bindings.contains("ɵɵanimate"));
     assert_eq!(
         by_selector["structural-namespaces"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -508,6 +506,30 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-namespaces"]
         .source
         .contains("<p>HTML</p>"));
+    assert_eq!(
+        by_selector["structural-class-apis"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-class-apis"].issues,
+        by_selector["structural-class-apis"].source,
+    );
+    let class_apis = &by_selector["structural-class-apis"].source;
+    assert!(class_apis.contains(
+        "import { Component, computed, inject, input, model, output, signal } from \"@angular/core\";"
+    ));
+    for expected in [
+        "input(\"reader\")",
+        "signal(0)",
+        "computed(",
+        "inject(",
+        "model(\"\")",
+        "output()",
+    ] {
+        assert!(
+            class_apis.contains(expected),
+            "missing {expected:?}:\n{class_apis}"
+        );
+    }
     assert_eq!(report.stats.malformed_instruction_calls, 0);
 }
 

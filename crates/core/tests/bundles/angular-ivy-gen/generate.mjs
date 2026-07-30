@@ -300,6 +300,7 @@ for (const selector of [
   'structural-pure-bindings',
   'structural-let-bindings',
   'structural-namespaces',
+  'structural-class-apis',
 ]) {
   if (!advancedStructuralSource.includes(selector)) {
     throw new Error(`Structural ADVANCED output is missing ${selector}`);
