@@ -1,16 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
-use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext};
+use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, Lit, MemberProp, Module, Pat, ReturnStmt,
-    SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
+    Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, Ident, Lit, MemberProp, Module,
+    ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
+use crate::rules::{RewriteLevel, UnOptionalChaining};
 
 use super::artifact::expression_references;
 use super::emitter::{handler_expression, print_template_expression_with_aliases};
@@ -2764,15 +2765,23 @@ fn recover_view_listener_handler(
     program: &TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) -> std::result::Result<Option<RecoveredViewHandler>, String> {
-    let Some(block) = handler_block(handler) else {
+    let Some(original_block) = handler_block(handler) else {
         return Ok(None);
     };
-    if !block.stmts.iter().any(|statement| {
+    if !original_block.stmts.iter().any(|statement| {
         statement_restore_view_call(statement, environment)
             .is_some_and(|call| is_instruction_call(call, IvyInstruction::RestoreView, environment))
     }) {
         return Ok(None);
     }
+
+    // Work on a clone: the original handler remains available as Ivy evidence,
+    // while the listener interpreter sees source-like optional chains without
+    // Closure's uninitialized scratch declarations.
+    let handler = normalize_listener_optional_chaining(handler, environment.unresolved_ctxt);
+    let Some(block) = handler_block(handler.as_ref()) else {
+        return Ok(None);
+    };
 
     let mut component_contexts = program.component_contexts.clone();
     let mut local_names = program.local_reference_names.clone();
@@ -2781,7 +2790,7 @@ fn recover_view_listener_handler(
     let mut let_alias_hints = Vec::new();
     let mut effects = Vec::new();
     let mut effect_references = Vec::new();
-    if let Some(event) = handler_event_binding(handler) {
+    if let Some(event) = handler_event_binding(handler.as_ref()) {
         local_names.insert(event, "$event".to_string());
     }
     let mut action = None;
@@ -3192,6 +3201,28 @@ fn rewrite_next_context_members(
         return Err(error);
     }
     Ok((expression, rewriter.runtime_calls, rewriter.context_hops))
+}
+
+fn normalize_listener_optional_chaining(
+    handler: &Expr,
+    unresolved_ctxt: SyntaxContext,
+) -> Box<Expr> {
+    let mut module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(handler.clone()),
+        }))],
+        shebang: None,
+    };
+    module.visit_mut_with(&mut UnOptionalChaining::new(
+        unresolved_ctxt.outer(),
+        RewriteLevel::Standard,
+    ));
+    let Some(ModuleItem::Stmt(Stmt::Expr(statement))) = module.body.pop() else {
+        return Box::new(handler.clone());
+    };
+    statement.expr
 }
 
 fn next_context_member_alias(
