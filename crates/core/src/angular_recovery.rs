@@ -17,10 +17,12 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Globals, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, FileName, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function, Module, ObjectLit, Pat,
-    Prop, PropOrSpread, SimpleAssignTarget, VarDeclarator,
+    AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function, Lit, Module, ObjectLit,
+    Pat, Prop, PropOrSpread, SimpleAssignTarget, Str, VarDeclarator,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -33,10 +35,14 @@ use emitter::{
     clean_component_class, emit_angular_module_source, emit_component_source,
     recover_component_class_apis, ComponentEmitInput, ModuleComponentEmitInput,
 };
-use roles::{symbol_identity, AngularClassApi, IvyInstruction, IvyRoleTable, SymbolIdentity};
-use syntax::{prop_name, string_lit, wtf8_to_string, BindingKey};
+use roles::{
+    symbol_identity, AngularClassApi, AngularQueryOwner, IvyInstruction, IvyRoleTable,
+    SymbolIdentity,
+};
+use syntax::{binding_key, member_prop_name, prop_name, string_lit, wtf8_to_string, BindingKey};
 use template::{
-    ivy_template_score, recover_template, TemplateFunctionTable, TemplateRecoveryContext,
+    call_chain, ivy_template_score, recover_template, TemplateFunctionTable,
+    TemplateRecoveryContext,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +264,16 @@ struct ComponentDescriptor {
     dependencies: Vec<Box<Expr>>,
     template: Function,
     constants: Option<Box<Expr>>,
+    queries: Vec<ComponentQueryMetadata>,
+}
+
+#[derive(Clone)]
+pub(super) struct ComponentQueryMetadata {
+    field: Atom,
+    owner: AngularQueryOwner,
+    locator: Box<Expr>,
+    descendants: bool,
+    read: Option<Box<Expr>>,
 }
 
 struct RecoveredModuleComponentDraft {
@@ -512,9 +528,12 @@ fn recover_prepared_modules(
                 &roles,
                 prepared.unresolved_ctxt,
             );
-            let (class, angular_imports) = recover_component_class_apis(
+            let (class, angular_imports, query_roots) = recover_component_class_apis(
                 &class,
+                &descriptor.class.class,
+                &descriptor.queries,
                 &roles,
+                prepared.unresolved_ctxt,
                 readable_modules[module_index].unresolved_ctxt,
             );
             let mut reserved_names = HashSet::from([
@@ -536,6 +555,11 @@ fn recover_prepared_modules(
             );
             support.merge(evidence_artifact_symbols[module_index].recover(
                 &recovered_template.artifact_references,
+                &reserved_names,
+                true,
+            ));
+            support.merge(evidence_artifact_symbols[module_index].recover(
+                &query_roots,
                 &reserved_names,
                 true,
             ));
@@ -588,6 +612,8 @@ fn recover_prepared_modules(
                 AngularRecoveryCompleteness::Partial
             };
             let component_index = recovered.len();
+            let mut template_roots = recovered_template.artifact_references.clone();
+            template_roots.extend(query_roots);
             module_drafts.push(RecoveredModuleComponentDraft {
                 component_index,
                 name: name.clone(),
@@ -596,7 +622,7 @@ fn recover_prepared_modules(
                 class: class.clone(),
                 template_source: recovered_template.source.clone(),
                 readable_class_roots: class_roots,
-                template_roots: recovered_template.artifact_references.clone(),
+                template_roots,
                 dependencies: descriptor.dependencies.clone(),
                 angular_imports,
                 evidence_class_identity: descriptor.class.identity.clone(),
@@ -1238,6 +1264,13 @@ fn parse_component_descriptor(
     );
     let dependencies = descriptor_dependencies(object, template_functions);
     let constants = descriptor_constants(object, template_functions, contains_i18n);
+    let queries = descriptor_signal_queries(
+        object,
+        &template,
+        roles,
+        template_functions,
+        unresolved_ctxt,
+    );
 
     Some(ComponentDescriptor {
         class,
@@ -1247,6 +1280,7 @@ fn parse_component_descriptor(
         dependencies,
         template,
         constants,
+        queries,
     })
 }
 
@@ -1372,6 +1406,313 @@ fn descriptor_function_property(prop: &PropOrSpread) -> Option<(Option<String>, 
         Prop::Method(method) => Some((prop_name(&method.key), method.function.as_ref().clone())),
         _ => None,
     }
+}
+
+fn descriptor_signal_queries(
+    object: &ObjectLit,
+    template: &Function,
+    roles: &IvyRoleTable,
+    template_functions: &TemplateFunctionTable,
+    unresolved_ctxt: SyntaxContext,
+) -> Vec<ComponentQueryMetadata> {
+    let functions = object
+        .props
+        .iter()
+        .filter_map(descriptor_function_property)
+        .filter(|(_, function)| function.span != template.span)
+        .collect::<Vec<_>>();
+    let mut recovered = Vec::new();
+
+    for (owner, canonical_name) in [
+        (AngularQueryOwner::View, "viewQuery"),
+        (AngularQueryOwner::Content, "contentQueries"),
+    ] {
+        let named = functions
+            .iter()
+            .filter(|(name, _)| name.as_deref() == Some(canonical_name))
+            .collect::<Vec<_>>();
+        let queries = match named.as_slice() {
+            [(_, function)] => parse_signal_query_function(
+                function,
+                owner,
+                roles,
+                template_functions,
+                unresolved_ctxt,
+            ),
+            [] => {
+                let candidates = functions
+                    .iter()
+                    .filter_map(|(_, function)| {
+                        parse_signal_query_function(
+                            function,
+                            owner,
+                            roles,
+                            template_functions,
+                            unresolved_ctxt,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let [queries] = candidates.as_slice() else {
+                    continue;
+                };
+                Some(queries.clone())
+            }
+            _ => None,
+        };
+        if let Some(queries) = queries {
+            recovered.extend(queries);
+        }
+    }
+
+    let mut counts = HashMap::<Atom, usize>::new();
+    for query in &recovered {
+        *counts.entry(query.field.clone()).or_default() += 1;
+    }
+    recovered.retain(|query| counts.get(&query.field) == Some(&1));
+    recovered
+}
+
+fn parse_signal_query_function(
+    function: &Function,
+    owner: AngularQueryOwner,
+    roles: &IvyRoleTable,
+    template_functions: &TemplateFunctionTable,
+    unresolved_ctxt: SyntaxContext,
+) -> Option<Vec<ComponentQueryMetadata>> {
+    let expected_parameters = match owner {
+        AngularQueryOwner::View => 2,
+        AngularQueryOwner::Content => 3,
+    };
+    if function.params.len() != expected_parameters {
+        return None;
+    }
+    let Pat::Ident(render_flags) = &function.params[0].pat else {
+        return None;
+    };
+    let Pat::Ident(context) = &function.params[1].pat else {
+        return None;
+    };
+    let directive_index = match owner {
+        AngularQueryOwner::View => None,
+        AngularQueryOwner::Content => {
+            let Pat::Ident(directive_index) = &function.params[2].pat else {
+                return None;
+            };
+            Some(binding_key(&directive_index.id))
+        }
+    };
+    let render_flags = binding_key(&render_flags.id);
+    if !function_contains_render_flag(&function.body, &render_flags, 1) {
+        return None;
+    }
+
+    struct Collector<'a> {
+        owner: AngularQueryOwner,
+        context: BindingKey,
+        directive_index: Option<BindingKey>,
+        roles: &'a IvyRoleTable,
+        template_functions: &'a TemplateFunctionTable,
+        unresolved_ctxt: SyntaxContext,
+        queries: Vec<ComponentQueryMetadata>,
+        malformed: bool,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            let Some((root, argument_lists)) = call_chain(call) else {
+                call.visit_children_with(self);
+                return;
+            };
+            let known_owner = match self.roles.instruction_for_expr(root, self.unresolved_ctxt) {
+                Some(IvyInstruction::ViewQuerySignal) => Some(AngularQueryOwner::View),
+                Some(IvyInstruction::ContentQuerySignal) => Some(AngularQueryOwner::Content),
+                Some(_) => {
+                    call.visit_children_with(self);
+                    return;
+                }
+                None => None,
+            };
+            if known_owner.is_some_and(|known| known != self.owner) {
+                self.malformed = true;
+                return;
+            }
+
+            let parsed = argument_lists
+                .iter()
+                .map(|arguments| {
+                    parse_signal_query_arguments(
+                        arguments,
+                        self.owner,
+                        &self.context,
+                        self.directive_index.as_ref(),
+                        self.template_functions,
+                    )
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(parsed) = parsed else {
+                call.visit_children_with(self);
+                return;
+            };
+            self.queries.extend(parsed);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+    }
+
+    let mut collector = Collector {
+        owner,
+        context: binding_key(&context.id),
+        directive_index,
+        roles,
+        template_functions,
+        unresolved_ctxt,
+        queries: Vec::new(),
+        malformed: false,
+    };
+    if let Some(body) = &function.body {
+        body.visit_with(&mut collector);
+    }
+    if collector.malformed || collector.queries.is_empty() {
+        return None;
+    }
+    let unique_fields = collector
+        .queries
+        .iter()
+        .map(|query| query.field.clone())
+        .collect::<HashSet<_>>();
+    (unique_fields.len() == collector.queries.len()).then_some(collector.queries)
+}
+
+fn parse_signal_query_arguments(
+    arguments: &[swc_core::ecma::ast::ExprOrSpread],
+    owner: AngularQueryOwner,
+    context: &BindingKey,
+    directive_index: Option<&BindingKey>,
+    template_functions: &TemplateFunctionTable,
+) -> Option<ComponentQueryMetadata> {
+    if arguments.iter().any(|argument| argument.spread.is_some()) {
+        return None;
+    }
+    let offset = match owner {
+        AngularQueryOwner::View => 0,
+        AngularQueryOwner::Content => {
+            let Expr::Ident(argument) = arguments.first()?.expr.as_ref() else {
+                return None;
+            };
+            (binding_key(argument) == *directive_index?).then_some(1)?
+        }
+    };
+    if !matches!(arguments.len() - offset, 3 | 4) {
+        return None;
+    }
+    let Expr::Member(target) = arguments.get(offset)?.expr.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(target_context) = target.obj.as_ref() else {
+        return None;
+    };
+    if binding_key(target_context) != *context {
+        return None;
+    }
+    let field = member_prop_name(&target.prop)?;
+    let locator = query_locator(arguments.get(offset + 1)?.expr.as_ref(), template_functions)?;
+    let Expr::Lit(Lit::Num(flags)) = arguments.get(offset + 2)?.expr.as_ref() else {
+        return None;
+    };
+    if flags.value.fract() != 0.0 || !(0.0..=255.0).contains(&flags.value) {
+        return None;
+    }
+    let flags = flags.value as u8;
+    if flags & !5 != 0 || flags & 4 == 0 {
+        return None;
+    }
+    let descendants = flags & 1 != 0;
+    if owner == AngularQueryOwner::View && !descendants {
+        return None;
+    }
+    let read = arguments
+        .get(offset + 3)
+        .map(|argument| argument.expr.clone());
+    Some(ComponentQueryMetadata {
+        field,
+        owner,
+        locator,
+        descendants,
+        read,
+    })
+}
+
+fn query_locator(
+    expression: &Expr,
+    template_functions: &TemplateFunctionTable,
+) -> Option<Box<Expr>> {
+    let resolved = template_functions.resolve_expression(expression);
+    let Expr::Array(array) = resolved.as_ref() else {
+        return matches!(expression, Expr::Ident(_) | Expr::Member(_) | Expr::Call(_))
+            .then(|| Box::new(expression.clone()));
+    };
+    let selectors = array
+        .elems
+        .iter()
+        .map(|element| {
+            let element = element.as_ref()?;
+            element
+                .spread
+                .is_none()
+                .then(|| string_lit(element.expr.as_ref()))
+                .flatten()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if selectors.is_empty() {
+        return None;
+    }
+    Some(Box::new(Expr::Lit(Lit::Str(Str {
+        span: DUMMY_SP,
+        value: selectors.join(", ").into(),
+        raw: None,
+    }))))
+}
+
+fn function_contains_render_flag(
+    body: &Option<swc_core::ecma::ast::BlockStmt>,
+    render_flags: &BindingKey,
+    expected: u8,
+) -> bool {
+    struct Finder<'a> {
+        render_flags: &'a BindingKey,
+        expected: u8,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_bin_expr(&mut self, binary: &swc_core::ecma::ast::BinExpr) {
+            if binary.op == swc_core::ecma::ast::BinaryOp::BitAnd
+                && matches!(
+                    (binary.left.as_ref(), binary.right.as_ref()),
+                    (Expr::Ident(identifier), Expr::Lit(Lit::Num(mask)))
+                        if binding_key(identifier) == *self.render_flags
+                            && mask.value == f64::from(self.expected)
+                )
+            {
+                self.found = true;
+                return;
+            }
+            binary.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+    }
+
+    let Some(body) = body else {
+        return false;
+    };
+    let mut finder = Finder {
+        render_flags,
+        expected,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 fn descriptor_selector(object: &ObjectLit) -> Option<String> {
