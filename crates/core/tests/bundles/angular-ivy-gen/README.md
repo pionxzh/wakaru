@@ -49,6 +49,12 @@ minification with `ngDevMode=false`. It isolates:
 - `@if`, `@for` / `@empty`, projection, a loop-local reference, and a pipe,
   including the view restoration and `$implicit` aliases emitted for a loop
   listener;
+- a multi-level `@let` / `@for` / `@if` listener that combines a local
+  reference, loop context, parent let value, and multiple ordered effects;
+- structural i18n element markers and interpolation, plus selected and default
+  `<ng-content>` fallback views;
+- signal-backed two-way binding and Angular's static/dynamic
+  `animate.enter` / `animate.leave` bindings and animation listener;
 - `@defer` with primary, loading, placeholder, and error views;
 - negative `prefetch on idle` and `hydrate on idle` defer variants, which
   must remain partial rather than being mislabeled as ordinary `on idle`;
@@ -97,16 +103,17 @@ parameter-forwarding behavior.
 The structural components require Closure-renamed roles to be recovered from
 runtime contracts and template use. They cover conditional and property
 instructions; attribute/class/style families; `<ng-container>` and bounded
-i18n; pure literal expressions; `@let`; HTML/SVG/MathML namespace switches; and
-optimized repeater and defer families. One conditional view has a captured
-listener and parent-context property binding. Closure preserves structurally
-recognizable `nextContext`, `restoreView`, and `resetView` bodies but inlines
-`getCurrentView` into a member read, so recovery must prove the view-state
-family and validate that use. Separate components retain `prefetch on idle` and
-`hydrate on idle` helpers as negative evidence: those helpers must not be
-conflated with the ordinary idle trigger. Selector-only components also prove
-that selector matrices are reconstructed independently of readable descriptor
-property names.
+i18n; pure literal expressions; `@let`; HTML/SVG/MathML namespace switches;
+optimized repeater and defer families; view-local listener aliases; structural
+i18n; projection fallbacks; and two-way/animation binding families. One
+conditional view has a captured listener and parent-context property binding.
+Closure preserves structurally recognizable `nextContext`, `restoreView`, and
+`resetView` bodies but inlines `getCurrentView` into a member read, so recovery
+must prove the view-state family and validate that use. Separate components
+retain `prefetch on idle` and `hydrate on idle` helpers as negative evidence:
+those helpers must not be conflated with the ordinary idle trigger.
+Selector-only components also prove that selector matrices are reconstructed
+independently of readable descriptor property names.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
