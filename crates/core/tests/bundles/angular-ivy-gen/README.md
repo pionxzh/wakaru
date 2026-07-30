@@ -41,6 +41,8 @@ minification with `ngDevMode=false`. It isolates:
   including the view restoration and `$implicit` aliases emitted for a loop
   listener;
 - `@defer` with primary, loading, placeholder, and error views;
+- negative `prefetch on idle` and `hydrate on idle` defer variants, which
+  must remain partial rather than being mislabeled as ordinary `on idle`;
 - legacy `*ngIf` and `*ngFor`, whose authored shorthand is absent from the
   output and must remain an honest neutral `<ng-template>` representation.
 
@@ -91,9 +93,12 @@ parent-context property binding. Closure preserves structurally recognizable
 absent, so recovery must prove the view-state family and validate the inlined
 capture from its use by the restore helper. A fifth component keeps a deferred
 primary and placeholder view observable while requiring the defer instruction
-role to be inferred without its canonical name. The structural component also
-contains `@for` / `@empty`, so the repeater creation/update roles and track
-expression must be recovered after the instruction names are removed.
+role to be inferred without its canonical name. Sixth and seventh components
+retain `prefetch on idle` and `hydrate on idle` helpers as negative evidence:
+those helpers must not be conflated with the ordinary idle trigger. The
+structural component also contains `@for` / `@empty`, so the repeater
+creation/update roles and track expression must be recovered after the
+instruction names are removed.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
