@@ -123,6 +123,15 @@ impl StructuralRoleEvidence {
         inferred.extend(infer_namespace_family(&function_index, &by_identity));
         inferred.extend(infer_styling_property_family(&function_index, &by_identity));
         inferred.extend(infer_i18n_role_family(&function_index, &by_identity));
+        let two_way_roles = infer_two_way_role_family(&function_index, &by_identity);
+        let animation_roles = infer_animation_role_family(&function_index, &by_identity);
+        let specialized_identities = two_way_roles
+            .iter()
+            .chain(&animation_roles)
+            .map(|(identity, _)| identity.clone())
+            .collect::<HashSet<_>>();
+        inferred.extend(two_way_roles);
+        inferred.extend(animation_roles);
         inferred.extend(infer_text_interpolation_family(
             &function_index,
             &by_identity,
@@ -140,6 +149,9 @@ impl StructuralRoleEvidence {
         inferred.extend(infer_view_state_role_family(&self.functions, modules));
         inferred.extend(infer_pure_function_family(&function_index, &by_identity));
         for (identity, observations) in &by_identity {
+            if specialized_identities.contains(identity) {
+                continue;
+            }
             let Some(definition) = function_index.unique(identity) else {
                 continue;
             };
@@ -364,6 +376,7 @@ struct TemplateCallObservation {
     usage: TemplateCallUsage,
     view_id: usize,
     call_order: usize,
+    unresolved_ctxt: SyntaxContext,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -537,6 +550,7 @@ impl TemplateCallObserver<'_> {
                     usage,
                     view_id: self.view_id,
                     call_order,
+                    unresolved_ctxt: self.unresolved_ctxt,
                 }
             }));
     }
@@ -1106,6 +1120,369 @@ fn infer_i18n_role_family(
     }
 
     inferred
+}
+
+fn infer_two_way_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let listener_candidates = observations
+        .iter()
+        .filter(|(identity, calls)| {
+            function_index
+                .unique(identity)
+                .is_some_and(|definition| is_two_way_listener_shape(definition, calls))
+        })
+        .collect::<Vec<_>>();
+    let property_candidates = observations
+        .iter()
+        .filter(|(identity, calls)| {
+            function_index
+                .unique(identity)
+                .is_some_and(|definition| is_two_way_property_shape(definition, calls))
+        })
+        .collect::<Vec<_>>();
+
+    let pairs = listener_candidates
+        .iter()
+        .flat_map(|(listener, listener_calls)| {
+            property_candidates
+                .iter()
+                .filter(move |(_, property_calls)| {
+                    two_way_observations_pair(listener_calls, property_calls)
+                })
+                .map(move |(property, _)| ((*listener).clone(), (*property).clone()))
+        })
+        .collect::<Vec<_>>();
+    let mut listener_pair_counts = HashMap::<SymbolIdentity, usize>::new();
+    let mut property_pair_counts = HashMap::<SymbolIdentity, usize>::new();
+    for (listener, property) in &pairs {
+        *listener_pair_counts.entry(listener.clone()).or_default() += 1;
+        *property_pair_counts.entry(property.clone()).or_default() += 1;
+    }
+
+    let mut inferred = Vec::new();
+    let mut inferred_binding_sets = HashSet::new();
+    for (listener, property) in pairs {
+        if listener_pair_counts.get(&listener) != Some(&1)
+            || property_pair_counts.get(&property) != Some(&1)
+        {
+            continue;
+        }
+        inferred.push((listener.clone(), "ɵɵtwoWayListener"));
+        inferred.push((property, "ɵɵtwoWayProperty"));
+        let Some(listener_calls) = observations.get(&listener) else {
+            continue;
+        };
+        if let Some(binding_set) = infer_two_way_binding_set(function_index, listener_calls)
+            .filter(|identity| inferred_binding_sets.insert(identity.clone()))
+        {
+            inferred.push((binding_set, "ɵɵtwoWayBindingSet"));
+        }
+    }
+    inferred
+}
+
+fn is_two_way_listener_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 2)
+        && returns_identity(definition, &definition.identity)
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && observation.arguments.len() == 2
+                && string_literal_value(observation.arguments[0].as_ref()).is_some_and(|event| {
+                    event
+                        .strip_suffix("Change")
+                        .is_some_and(|property| !property.is_empty())
+                })
+                && matches!(
+                    strip_parentheses(observation.arguments[1].as_ref()),
+                    Expr::Fn(_) | Expr::Arrow(_)
+                )
+        })
+}
+
+fn is_two_way_property_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    is_property_shape(definition, observations)
+        && contains_member_property(&definition.body, "set")
+        && contains_string_literal(&definition.body, "function")
+}
+
+fn two_way_observations_pair(
+    listener_calls: &[TemplateCallObservation],
+    property_calls: &[TemplateCallObservation],
+) -> bool {
+    listener_calls.iter().all(|listener| {
+        property_calls.iter().any(|property| {
+            listener.view_id == property.view_id && two_way_names_pair(listener, property)
+        })
+    }) && property_calls.iter().all(|property| {
+        listener_calls.iter().any(|listener| {
+            listener.view_id == property.view_id && two_way_names_pair(listener, property)
+        })
+    })
+}
+
+fn two_way_names_pair(
+    listener: &TemplateCallObservation,
+    property: &TemplateCallObservation,
+) -> bool {
+    let Some(event) = listener
+        .arguments
+        .first()
+        .and_then(|argument| string_literal_value(argument.as_ref()))
+    else {
+        return false;
+    };
+    let Some(property) = property
+        .arguments
+        .first()
+        .and_then(|argument| string_literal_value(argument.as_ref()))
+    else {
+        return false;
+    };
+    event.strip_suffix("Change") == Some(property)
+}
+
+fn infer_two_way_binding_set(
+    function_index: &RuntimeFunctionIndex<'_>,
+    listener_calls: &[TemplateCallObservation],
+) -> Option<SymbolIdentity> {
+    let mut common_candidates = None::<HashSet<SymbolIdentity>>;
+    for observation in listener_calls {
+        let handler = observation.arguments.get(1)?;
+        let candidates =
+            nested_runtime_call_identities(handler.as_ref(), observation.unresolved_ctxt)
+                .into_iter()
+                .filter(|identity| {
+                    function_index
+                        .unique(identity)
+                        .is_some_and(is_two_way_binding_set_definition)
+                })
+                .collect::<HashSet<_>>();
+        if candidates.is_empty() {
+            return None;
+        }
+        common_candidates = Some(match common_candidates {
+            None => candidates,
+            Some(common) => common.intersection(&candidates).cloned().collect(),
+        });
+    }
+    single_identity(common_candidates?.iter()).cloned()
+}
+
+fn is_two_way_binding_set_definition(definition: &RuntimeFunction) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    let [_, value] = parameters.as_slice() else {
+        return false;
+    };
+    !returns_identity(definition, &definition.identity)
+        && exact_returned_identity(definition).is_some()
+        && contains_member_property(&definition.body, "set")
+        && contains_string_literal(&definition.body, "function")
+        && direct_calls(definition).iter().any(|call| {
+            is_member_call_named(call, "set")
+                && matches!(
+                    call.arguments.first().map(Box::as_ref),
+                    Some(Expr::Ident(identifier)) if binding_key(identifier) == *value
+                )
+        })
+}
+
+fn nested_runtime_call_identities(
+    expression: &Expr,
+    unresolved_ctxt: SyntaxContext,
+) -> HashSet<SymbolIdentity> {
+    struct Collector {
+        unresolved_ctxt: SyntaxContext,
+        identities: HashSet<SymbolIdentity>,
+    }
+
+    impl Visit for Collector {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Some(identity) = symbol_identity(callee.as_ref(), self.unresolved_ctxt) {
+                    self.identities.insert(identity);
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        unresolved_ctxt,
+        identities: HashSet::new(),
+    };
+    expression.visit_with(&mut collector);
+    collector.identities
+}
+
+fn infer_animation_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut inferred = Vec::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        let [value] = parameters.as_slice() else {
+            continue;
+        };
+        if !returns_identity(definition, &definition.identity)
+            || !calls.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 1
+                    && observation.arguments.len() == 1
+            })
+        {
+            continue;
+        }
+        let family = match (
+            contains_string_literal(&definition.body, "NgAnimateEnter"),
+            contains_string_literal(&definition.body, "NgAnimateLeave"),
+        ) {
+            (true, false) => "enter",
+            (false, true) => "leave",
+            _ => continue,
+        };
+        let is_listener = parameter_called_via_call_member(definition, value)
+            || parameter_forwarded_to_call_member(definition, value, function_index);
+        let arguments_match = calls.iter().all(|observation| {
+            let argument = observation.arguments[0].as_ref();
+            if is_listener {
+                matches!(strip_parentheses(argument), Expr::Fn(_) | Expr::Arrow(_))
+            } else {
+                is_animation_binding_argument(argument)
+            }
+        });
+        if !arguments_match {
+            continue;
+        }
+        let role = match (family, is_listener) {
+            ("enter", false) => "ɵɵanimateEnter",
+            ("enter", true) => "ɵɵanimateEnterListener",
+            ("leave", false) => "ɵɵanimateLeave",
+            ("leave", true) => "ɵɵanimateLeaveListener",
+            _ => unreachable!("animation family is constrained above"),
+        };
+        inferred.push((identity.clone(), role));
+    }
+    inferred
+}
+
+fn is_animation_binding_argument(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Str(_)) => true,
+        Expr::Fn(function) => function.function.params.is_empty(),
+        Expr::Arrow(arrow) => arrow.params.is_empty(),
+        _ => false,
+    }
+}
+
+fn parameter_called_via_call_member(definition: &RuntimeFunction, parameter: &BindingKey) -> bool {
+    struct Finder<'a> {
+        parameter: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            let Callee::Expr(callee) = &call.callee else {
+                call.visit_children_with(self);
+                return;
+            };
+            if let Expr::Member(member) = strip_parentheses(callee.as_ref()) {
+                if member_prop_name(&member.prop).as_deref() == Some("call")
+                    && matches!(
+                        strip_parentheses(member.obj.as_ref()),
+                        Expr::Ident(identifier) if binding_key(identifier) == *self.parameter
+                    )
+                {
+                    self.found = true;
+                    return;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        parameter,
+        found: false,
+    };
+    definition.body.visit_with(&mut finder);
+    finder.found
+}
+
+fn parameter_forwarded_to_call_member(
+    definition: &RuntimeFunction,
+    parameter: &BindingKey,
+    function_index: &RuntimeFunctionIndex<'_>,
+) -> bool {
+    struct ForwardingCollector<'a> {
+        parameter: &'a BindingKey,
+        unresolved_ctxt: SyntaxContext,
+        targets: Vec<(SymbolIdentity, usize)>,
+    }
+
+    impl Visit for ForwardingCollector<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Some(identity) = symbol_identity(callee.as_ref(), self.unresolved_ctxt) {
+                    for (index, argument) in call.args.iter().enumerate() {
+                        if matches!(
+                            strip_parentheses(argument.expr.as_ref()),
+                            Expr::Ident(identifier)
+                                if binding_key(identifier) == *self.parameter
+                        ) {
+                            self.targets.push((identity.clone(), index));
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = ForwardingCollector {
+        parameter,
+        unresolved_ctxt: definition.unresolved_ctxt,
+        targets: Vec::new(),
+    };
+    definition.body.visit_with(&mut collector);
+    collector.targets.into_iter().any(|(identity, index)| {
+        let Some(target) = function_index.unique(&identity) else {
+            return false;
+        };
+        let Some(parameters) = plain_parameter_bindings(target) else {
+            return false;
+        };
+        parameters
+            .get(index)
+            .is_some_and(|parameter| parameter_called_via_call_member(target, parameter))
+    })
+}
+
+fn string_literal_value(expression: &Expr) -> Option<&str> {
+    let Expr::Lit(Lit::Str(string)) = strip_parentheses(expression) else {
+        return None;
+    };
+    string.value.as_str()
 }
 
 fn is_boolean_value(expression: &Expr, expected: bool) -> bool {
