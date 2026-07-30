@@ -4,23 +4,26 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
-    Callee, CatchClause, ClassDecl, Expr, ExprOrSpread, FnDecl, ForHead, ForInStmt, ForOfStmt,
-    Function, ImportDecl, ImportSpecifier, Lit, MemberProp, ObjectPatProp, Pat, Prop, PropName,
-    ReturnStmt, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl, ForHead,
+    ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp, ObjectPatProp,
+    Pat, Prop, PropName, ReturnStmt, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::{
     symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity, REFERENCE_CANDIDATE_NAME,
 };
-use crate::angular_recovery::syntax::{binding_key, member_prop_name, BindingKey};
+use crate::angular_recovery::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
 use crate::angular_recovery::PreparedAngularModule;
 
 pub(super) struct StructuralRoleEvidence {
     functions: Vec<RuntimeFunction>,
+    classes: Vec<RuntimeClass>,
     definition_counts: HashMap<SymbolIdentity, usize>,
     invalid_values: HashSet<SymbolIdentity>,
     assignment_definitions: HashMap<SymbolIdentity, Vec<(usize, u32)>>,
+    value_aliases: Vec<(SymbolIdentity, SymbolIdentity)>,
 }
 
 impl StructuralRoleEvidence {
@@ -84,6 +87,261 @@ impl StructuralRoleEvidence {
         inferred.extend(infer_element_family(&self.functions));
         inferred.extend(infer_element_container_family(&self.functions));
         inferred
+    }
+
+    fn propagate_class_api_aliases(
+        &self,
+        inferred: Vec<(SymbolIdentity, &'static str)>,
+    ) -> Vec<(SymbolIdentity, &'static str)> {
+        let mut names = inferred.into_iter().collect::<HashMap<_, _>>();
+        let specialized_signals = self
+            .specialized_signal_api_calls()
+            .into_iter()
+            .map(|(identity, _)| identity)
+            .collect::<HashSet<_>>();
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        for (left, right) in &self.value_aliases {
+            adjacency
+                .entry(left.clone())
+                .or_default()
+                .push(right.clone());
+            adjacency
+                .entry(right.clone())
+                .or_default()
+                .push(left.clone());
+        }
+
+        let mut visited = HashSet::new();
+        for start in adjacency.keys() {
+            if visited.contains(start) {
+                continue;
+            }
+            let mut stack = vec![start.clone()];
+            let mut component = Vec::new();
+            while let Some(identity) = stack.pop() {
+                if !visited.insert(identity.clone()) {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&identity) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+                component.push(identity);
+            }
+            let component_names = component
+                .iter()
+                .filter_map(|identity| names.get(identity).copied())
+                .collect::<HashSet<_>>();
+            let mut component_names = component_names.into_iter();
+            let Some(name) = component_names.next() else {
+                continue;
+            };
+            if component_names.next().is_some() {
+                continue;
+            }
+            if component
+                .iter()
+                .filter(|identity| specialized_signals.contains(*identity))
+                .take(2)
+                .count()
+                > 1
+            {
+                continue;
+            }
+            for identity in component {
+                names.entry(identity).or_insert(name);
+            }
+        }
+        names.into_iter().collect()
+    }
+
+    pub(super) fn infer_class_api_roles(&self) -> Vec<(SymbolIdentity, &'static str)> {
+        let mut inferred = Vec::new();
+
+        let mut signal_apis = self
+            .functions
+            .iter()
+            .filter(|function| is_signal_api_shape(function))
+            .map(|function| function.identity.clone())
+            .collect::<HashSet<_>>();
+        signal_apis.extend(
+            self.specialized_signal_api_calls()
+                .into_iter()
+                .map(|(identity, _)| identity),
+        );
+        inferred.extend(
+            signal_apis
+                .iter()
+                .cloned()
+                .map(|identity| (identity, "signal")),
+        );
+
+        let computed_factories = self
+            .functions
+            .iter()
+            .filter(|function| is_computed_factory_shape(function))
+            .map(|function| function.identity.clone())
+            .collect::<HashSet<_>>();
+        inferred.extend(
+            self.functions
+                .iter()
+                .filter(|function| is_computed_api_shape(function, &computed_factories))
+                .map(|function| (function.identity.clone(), "computed")),
+        );
+
+        let inject_flags_helpers = self
+            .functions
+            .iter()
+            .filter(|function| is_inject_options_flags_shape(function))
+            .map(|function| function.identity.clone())
+            .collect::<HashSet<_>>();
+        inferred.extend(
+            self.functions
+                .iter()
+                .filter(|function| is_inject_api_shape(function, &inject_flags_helpers))
+                .map(|function| (function.identity.clone(), "inject")),
+        );
+
+        let mut input_apis = self
+            .functions
+            .iter()
+            .filter(|function| is_input_signal_factory_shape(function))
+            .map(|function| function.identity.clone())
+            .collect::<HashSet<_>>();
+        loop {
+            let wrappers = self
+                .functions
+                .iter()
+                .filter(|function| {
+                    !input_apis.contains(&function.identity)
+                        && is_forwarding_api_wrapper(function, &input_apis)
+                })
+                .map(|function| function.identity.clone())
+                .collect::<Vec<_>>();
+            if wrappers.is_empty() {
+                break;
+            }
+            input_apis.extend(wrappers);
+        }
+        inferred.extend(input_apis.into_iter().map(|identity| (identity, "input")));
+
+        let mut model_apis = self
+            .functions
+            .iter()
+            .filter(|function| is_model_signal_factory_shape(function))
+            .map(|function| function.identity.clone())
+            .collect::<HashSet<_>>();
+        loop {
+            let wrappers = self
+                .functions
+                .iter()
+                .filter(|function| {
+                    !model_apis.contains(&function.identity)
+                        && is_forwarding_api_wrapper(function, &model_apis)
+                })
+                .map(|function| function.identity.clone())
+                .collect::<Vec<_>>();
+            if wrappers.is_empty() {
+                break;
+            }
+            model_apis.extend(wrappers);
+        }
+        inferred.extend(model_apis.into_iter().map(|identity| (identity, "model")));
+
+        let output_classes = self
+            .classes
+            .iter()
+            .filter(|class| is_output_ref_class_shape(&class.class))
+            .map(|class| class.identity.clone())
+            .collect::<HashSet<_>>();
+        inferred.extend(
+            output_classes
+                .iter()
+                .cloned()
+                .map(|identity| (identity, "output")),
+        );
+        inferred.extend(
+            self.functions
+                .iter()
+                .filter(|function| is_output_api_shape(function, &output_classes))
+                .map(|function| (function.identity.clone(), "output")),
+        );
+
+        self.propagate_class_api_aliases(inferred)
+    }
+
+    pub(super) fn specialized_class_api_call_arguments(
+        &self,
+    ) -> Vec<(SymbolIdentity, Vec<Box<Expr>>)> {
+        let direct = self.specialized_signal_api_calls();
+        let mut arguments = direct.iter().cloned().collect::<HashMap<_, _>>();
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        for (left, right) in &self.value_aliases {
+            adjacency
+                .entry(left.clone())
+                .or_default()
+                .push(right.clone());
+            adjacency
+                .entry(right.clone())
+                .or_default()
+                .push(left.clone());
+        }
+
+        let direct_identities = direct
+            .iter()
+            .map(|(identity, _)| identity)
+            .collect::<HashSet<_>>();
+        let mut visited = HashSet::new();
+        for start in adjacency.keys() {
+            if visited.contains(start) {
+                continue;
+            }
+            let mut stack = vec![start.clone()];
+            let mut component = Vec::new();
+            while let Some(identity) = stack.pop() {
+                if !visited.insert(identity.clone()) {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&identity) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+                component.push(identity);
+            }
+            let sources = component
+                .iter()
+                .filter(|identity| direct_identities.contains(*identity))
+                .collect::<Vec<_>>();
+            let [source] = sources.as_slice() else {
+                continue;
+            };
+            let Some(source_arguments) = arguments.get(*source).cloned() else {
+                continue;
+            };
+            for identity in component {
+                arguments
+                    .entry(identity)
+                    .or_insert_with(|| source_arguments.clone());
+            }
+        }
+        arguments.into_iter().collect()
+    }
+
+    fn specialized_signal_api_calls(&self) -> Vec<(SymbolIdentity, Vec<Box<Expr>>)> {
+        let factories = self
+            .functions
+            .iter()
+            .filter_map(|function| {
+                specialized_signal_factory_argument(function)
+                    .map(|argument| (function.identity.clone(), argument))
+            })
+            .collect::<HashMap<_, _>>();
+
+        self.functions
+            .iter()
+            .filter_map(|function| {
+                specialized_signal_api_arguments(function, &factories)
+                    .map(|arguments| (function.identity.clone(), arguments))
+            })
+            .collect()
     }
 
     pub(super) fn infer_template_roles(
@@ -239,26 +497,1146 @@ impl StructuralRoleEvidence {
     }
 }
 
+fn is_signal_api_shape(function: &RuntimeFunction) -> bool {
+    let Some(initial) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(options) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+    let Some(returned) = single_returned_binding(&function.body) else {
+        return false;
+    };
+
+    let mut destructured = None;
+    for statement in &function.body.stmts {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(declaration)) = statement else {
+            continue;
+        };
+        for declarator in &declaration.decls {
+            let Pat::Array(array) = &declarator.name else {
+                continue;
+            };
+            let [Some(Pat::Ident(read)), Some(Pat::Ident(set)), Some(Pat::Ident(update))] =
+                array.elems.as_slice()
+            else {
+                continue;
+            };
+            if array.optional || array.type_ann.is_some() {
+                continue;
+            }
+            let Some(Expr::Call(call)) = declarator.init.as_deref().map(strip_parentheses) else {
+                continue;
+            };
+            if call.args.len() != 2
+                || call.args.iter().any(|argument| argument.spread.is_some())
+                || !expression_is_binding(call.args[0].expr.as_ref(), &initial)
+                || !expression_has_member_on_binding(call.args[1].expr.as_ref(), &options, "equal")
+            {
+                continue;
+            }
+            destructured = Some((
+                binding_key(&read.id),
+                binding_key(&set.id),
+                binding_key(&update.id),
+            ));
+        }
+    }
+    let Some((read, set, update)) = destructured else {
+        return false;
+    };
+    if returned != read {
+        return false;
+    }
+
+    let assignments = top_level_assignments(&function.body);
+    member_assignment_from_binding(&assignments, &read, "set", &set)
+        && member_assignment_from_binding(&assignments, &read, "update", &update)
+        && member_assignment_binds_receiver(&assignments, &read)
+}
+
+fn specialized_signal_factory_argument(function: &RuntimeFunction) -> Option<Box<Expr>> {
+    if !function.params.is_empty() {
+        return None;
+    }
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    let [returned] = returns.expressions.as_slice() else {
+        return None;
+    };
+    let returned = match strip_parentheses(returned.as_ref()) {
+        Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
+        returned => returned,
+    };
+    let Expr::Array(returned) = strip_parentheses(returned) else {
+        return None;
+    };
+    let [Some(read), Some(set), Some(update)] = returned.elems.as_slice() else {
+        return None;
+    };
+    if read.spread.is_some()
+        || set.spread.is_some()
+        || update.spread.is_some()
+        || !matches!(
+            strip_parentheses(set.expr.as_ref()),
+            Expr::Arrow(_) | Expr::Fn(_)
+        )
+        || !matches!(
+            strip_parentheses(update.expr.as_ref()),
+            Expr::Arrow(_) | Expr::Fn(_)
+        )
+    {
+        return None;
+    }
+    let Expr::Ident(read) = strip_parentheses(read.expr.as_ref()) else {
+        return None;
+    };
+    let read = binding_key(read);
+    let assignments = top_level_assignments(&function.body);
+    let candidates = object_create_state_bindings(&function.body)
+        .into_iter()
+        .filter_map(|state| {
+            let initial = member_assignment_value(&assignments, &state, "value")?;
+            if !is_portable_specialized_argument(initial.as_ref())
+                || !computed_state_is_attached(&assignments, &read, &state)
+                || !local_function_value(&function.body, &read).is_some_and(|read| {
+                    read.params.is_empty() && local_function_returns_member(&read, &state, "value")
+                })
+            {
+                return None;
+            }
+            Some(initial)
+        })
+        .collect::<Vec<_>>();
+    let [initial] = candidates.as_slice() else {
+        return None;
+    };
+    Some(initial.clone())
+}
+
+fn specialized_signal_api_arguments(
+    function: &RuntimeFunction,
+    factories: &HashMap<SymbolIdentity, Box<Expr>>,
+) -> Option<Vec<Box<Expr>>> {
+    if !function.params.is_empty() {
+        return None;
+    }
+    let returned = single_returned_binding(&function.body)?;
+    let assignments = top_level_assignments(&function.body);
+    let mut candidates = Vec::new();
+
+    for statement in &function.body.stmts {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(declaration)) = statement else {
+            continue;
+        };
+        for declarator in &declaration.decls {
+            let Pat::Array(array) = &declarator.name else {
+                continue;
+            };
+            let [Some(Pat::Ident(read)), Some(Pat::Ident(set)), Some(Pat::Ident(update))] =
+                array.elems.as_slice()
+            else {
+                continue;
+            };
+            let Some(Expr::Call(call)) = declarator.init.as_deref().map(strip_parentheses) else {
+                continue;
+            };
+            if !call.args.is_empty() {
+                continue;
+            }
+            let Some(factory) = call_callee_identity(call, function.unresolved_ctxt) else {
+                continue;
+            };
+            let Some(initial) = factories.get(&factory) else {
+                continue;
+            };
+            let (read, set, update) = (
+                binding_key(&read.id),
+                binding_key(&set.id),
+                binding_key(&update.id),
+            );
+            if returned == read
+                && member_assignment_from_binding(&assignments, &read, "set", &set)
+                && member_assignment_from_binding(&assignments, &read, "update", &update)
+                && member_assignment_binds_receiver(&assignments, &read)
+            {
+                candidates.push(initial.clone());
+            }
+        }
+    }
+
+    let [initial] = candidates.as_slice() else {
+        return None;
+    };
+    Some(vec![initial.clone()])
+}
+
+fn is_portable_specialized_argument(expression: &Expr) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Null(_) | Lit::Bool(_) | Lit::Num(_) | Lit::Str(_) | Lit::BigInt(_)) => true,
+        Expr::Unary(unary) if matches!(unary.op, UnaryOp::Plus | UnaryOp::Minus) => {
+            matches!(
+                strip_parentheses(unary.arg.as_ref()),
+                Expr::Lit(Lit::Num(_))
+            )
+        }
+        _ => false,
+    }
+}
+
+fn is_computed_factory_shape(function: &RuntimeFunction) -> bool {
+    let Some(computation) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(equal) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+    let Some(returned) = single_returned_binding(&function.body) else {
+        return false;
+    };
+    let assignments = top_level_assignments(&function.body);
+
+    object_create_state_bindings(&function.body)
+        .into_iter()
+        .any(|state| {
+            member_assignment_from_any_property(&assignments, &state, &computation)
+                && member_assignment_from_binding(&assignments, &state, "equal", &equal)
+                && computed_state_is_attached(&assignments, &returned, &state)
+                && local_function_value(&function.body, &returned).is_some_and(|read| {
+                    read.params.is_empty()
+                        && local_function_returns_member(&read, &state, "value")
+                        && local_function_contains_member(&read, &state, "error")
+                })
+        })
+}
+
+fn is_computed_api_shape(
+    function: &RuntimeFunction,
+    computed_factories: &HashSet<SymbolIdentity>,
+) -> bool {
+    if is_specialized_computed_api_shape(function) {
+        return true;
+    }
+
+    let Some(computation) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(options) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+    let Some(call) = single_returned_call(&function.body) else {
+        return false;
+    };
+    let Some(identity) = call_callee_identity(call, function.unresolved_ctxt) else {
+        return false;
+    };
+    computed_factories.contains(&identity)
+        && call.args.len() == 2
+        && call.args.iter().all(|argument| argument.spread.is_none())
+        && expression_is_binding(call.args[0].expr.as_ref(), &computation)
+        && expression_has_member_on_binding(call.args[1].expr.as_ref(), &options, "equal")
+}
+
+fn is_specialized_computed_api_shape(function: &RuntimeFunction) -> bool {
+    let Some(computation) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Some(returned) = single_returned_binding(&function.body) else {
+        return false;
+    };
+    let assignments = top_level_assignments(&function.body);
+
+    object_create_state_bindings(&function.body)
+        .into_iter()
+        .any(|state| {
+            member_assignment_from_any_property(&assignments, &state, &computation)
+                && computed_state_is_attached(&assignments, &returned, &state)
+                && local_function_value(&function.body, &returned).is_some_and(|read| {
+                    read.params.is_empty()
+                        && local_function_returns_member(&read, &state, "value")
+                        && local_function_contains_member(&read, &state, "error")
+                })
+        })
+}
+
+fn is_inject_options_flags_shape(function: &RuntimeFunction) -> bool {
+    let Some(options) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    if function.params.len() != 1 {
+        return false;
+    }
+
+    let mut evidence = InjectFlagsEvidence {
+        options: &options,
+        properties: HashSet::new(),
+        typeof_options: false,
+        type_strings: HashSet::new(),
+        bitwise_or: false,
+        closure_undefined_check: false,
+    };
+    function.body.visit_with(&mut evidence);
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+
+    evidence.typeof_options
+        && (evidence.type_strings.contains("undefined") || evidence.closure_undefined_check)
+        && evidence.type_strings.contains("number")
+        && evidence.bitwise_or
+        && ["optional", "host", "self"]
+            .iter()
+            .all(|property| evidence.properties.contains(*property))
+        && returns
+            .expressions
+            .iter()
+            .any(|expression| expression_contains_binding(expression.as_ref(), &options))
+        && !returns.expressions.is_empty()
+}
+
+fn is_inject_api_shape(
+    function: &RuntimeFunction,
+    flags_helpers: &HashSet<SymbolIdentity>,
+) -> bool {
+    let Some(token) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(options) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+    let Some(call) = single_returned_call(&function.body) else {
+        return false;
+    };
+    if call.args.len() != 2
+        || call.args.iter().any(|argument| argument.spread.is_some())
+        || !expression_is_binding(call.args[0].expr.as_ref(), &token)
+    {
+        return false;
+    }
+    let Expr::Call(flags_call) = strip_parentheses(call.args[1].expr.as_ref()) else {
+        return false;
+    };
+    flags_call.args.len() == 1
+        && flags_call.args[0].spread.is_none()
+        && expression_is_binding(flags_call.args[0].expr.as_ref(), &options)
+        && call_callee_identity(flags_call, function.unresolved_ctxt)
+            .is_some_and(|identity| flags_helpers.contains(&identity))
+}
+
+fn is_input_signal_factory_shape(function: &RuntimeFunction) -> bool {
+    let Some(initial) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(options) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+    let Some(returned) = single_returned_binding(&function.body) else {
+        return false;
+    };
+    let assignments = top_level_assignments(&function.body);
+
+    object_create_state_bindings(&function.body)
+        .into_iter()
+        .any(|state| {
+            member_assignment_from_binding(&assignments, &state, "value", &initial)
+                && assignments.iter().any(|assignment| {
+                    member_assignment_target(&assignment.left)
+                        .is_some_and(|(object, _)| object == state)
+                        && expression_has_member_on_binding(
+                            assignment.right.as_ref(),
+                            &options,
+                            "transform",
+                        )
+                })
+                && computed_state_is_attached(&assignments, &returned, &state)
+                && local_function_value(&function.body, &returned).is_some_and(|read| {
+                    read.params.is_empty()
+                        && local_function_returns_member(&read, &state, "value")
+                        && local_function_contains_number(&read, -950.0)
+                })
+        })
+}
+
+fn is_model_signal_factory_shape(function: &RuntimeFunction) -> bool {
+    let Some(initial) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Some(returned) = single_returned_binding(&function.body) else {
+        return false;
+    };
+    let assignments = top_level_assignments(&function.body);
+
+    object_create_state_bindings(&function.body)
+        .into_iter()
+        .any(|state| {
+            member_assignment_from_binding(&assignments, &state, "value", &initial)
+                && computed_state_is_attached(&assignments, &returned, &state)
+                && ["set", "update", "subscribe"]
+                    .iter()
+                    .all(|property| member_assignment_exists(&assignments, &returned, property))
+                && member_assignment_binds_receiver(&assignments, &returned)
+                && local_function_value(&function.body, &returned).is_some_and(|read| {
+                    read.params.is_empty()
+                        && local_function_returns_member(&read, &state, "value")
+                        && local_function_contains_number(&read, 952.0)
+                })
+        })
+}
+
+fn is_output_api_shape(
+    function: &RuntimeFunction,
+    output_classes: &HashSet<SymbolIdentity>,
+) -> bool {
+    if !function.params.is_empty() {
+        return false;
+    }
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    let [expression] = returns.expressions.as_slice() else {
+        return false;
+    };
+    let Expr::New(created) = strip_parentheses(expression.as_ref()) else {
+        return false;
+    };
+    if created
+        .args
+        .as_ref()
+        .is_some_and(|arguments| !arguments.is_empty())
+    {
+        return false;
+    }
+    symbol_identity(created.callee.as_ref(), function.unresolved_ctxt)
+        .is_some_and(|identity| output_classes.contains(&identity))
+}
+
+fn is_output_ref_class_shape(class: &Class) -> bool {
+    let methods = class
+        .body
+        .iter()
+        .filter_map(|member| {
+            let ClassMember::Method(method) = member else {
+                return None;
+            };
+            Some((prop_name(&method.key)?, method.function.as_ref()))
+        })
+        .collect::<Vec<_>>();
+    let unique_method = |name: &str| {
+        let candidates = methods
+            .iter()
+            .filter(|(method_name, _)| method_name == name)
+            .map(|(_, function)| *function)
+            .collect::<Vec<_>>();
+        let [function] = candidates.as_slice() else {
+            return None;
+        };
+        Some(*function)
+    };
+    let Some(subscribe) = unique_method("subscribe") else {
+        return false;
+    };
+    let Some(subscribe_body) = &subscribe.body else {
+        return false;
+    };
+    let emit_candidates = methods
+        .iter()
+        .filter(|(name, function)| {
+            name != "subscribe"
+                && function.params.len() == 1
+                && function.body.as_ref().is_some_and(|body| {
+                    block_contains_number(body, 953.0) || block_contains_string(body, "NG0953")
+                })
+        })
+        .map(|(_, function)| *function)
+        .collect::<Vec<_>>();
+    let [_emit] = emit_candidates.as_slice() else {
+        return false;
+    };
+
+    subscribe.params.len() == 1
+        && block_contains_number(subscribe_body, 953.0)
+        && contains_object_property(subscribe_body, "unsubscribe")
+}
+
+fn is_forwarding_api_wrapper(
+    function: &RuntimeFunction,
+    targets: &HashSet<SymbolIdentity>,
+) -> bool {
+    let Some(call) = single_returned_call(&function.body) else {
+        return false;
+    };
+    let Some(target) = call_callee_identity(call, function.unresolved_ctxt) else {
+        return false;
+    };
+    targets.contains(&target)
+        && call.args.len() == function.params.len()
+        && call
+            .args
+            .iter()
+            .zip(&function.params)
+            .all(|(argument, parameter)| {
+                argument.spread.is_none()
+                    && pat_binding(parameter).is_some_and(|binding| {
+                        expression_is_binding(argument.expr.as_ref(), &binding)
+                    })
+            })
+}
+
+fn runtime_parameter_binding(function: &RuntimeFunction, index: usize) -> Option<BindingKey> {
+    pat_binding(function.params.get(index)?)
+}
+
+fn pat_binding(pattern: &Pat) -> Option<BindingKey> {
+    let Pat::Ident(binding) = pattern else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+fn single_returned_binding(body: &BlockStmt) -> Option<BindingKey> {
+    let mut returns = ReturnExpressionCollector::default();
+    body.visit_with(&mut returns);
+    let [expression] = returns.expressions.as_slice() else {
+        return None;
+    };
+    let expression = match strip_parentheses(expression.as_ref()) {
+        Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
+        expression => expression,
+    };
+    let Expr::Ident(identifier) = strip_parentheses(expression) else {
+        return None;
+    };
+    Some(binding_key(identifier))
+}
+
+fn single_returned_call(body: &BlockStmt) -> Option<&CallExpr> {
+    let mut expression = None;
+    for statement in &body.stmts {
+        match statement {
+            Stmt::Return(ReturnStmt {
+                arg: Some(returned),
+                ..
+            }) if expression.is_none() => expression = Some(returned.as_ref()),
+            Stmt::Return(_) => return None,
+            Stmt::Empty(_) => {}
+            _ => {}
+        }
+    }
+    let Expr::Call(call) = strip_parentheses(expression?) else {
+        return None;
+    };
+    Some(call)
+}
+
+fn call_callee_identity(call: &CallExpr, unresolved_ctxt: SyntaxContext) -> Option<SymbolIdentity> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    symbol_identity(callee.as_ref(), unresolved_ctxt)
+}
+
+fn expression_is_binding(expression: &Expr, expected: &BindingKey) -> bool {
+    matches!(
+        strip_parentheses(expression),
+        Expr::Ident(identifier) if binding_key(identifier) == *expected
+    )
+}
+
+fn expression_contains_binding(expression: &Expr, expected: &BindingKey) -> bool {
+    struct Finder<'a> {
+        expected: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, identifier: &swc_core::ecma::ast::Ident) {
+            if binding_key(identifier) == *self.expected {
+                self.found = true;
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    expression.visit_with(&mut finder);
+    finder.found
+}
+
+fn expression_has_member_on_binding(
+    expression: &Expr,
+    object: &BindingKey,
+    property: &str,
+) -> bool {
+    struct Finder<'a> {
+        object: &'a BindingKey,
+        property: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if self.found {
+                return;
+            }
+            if member_prop_name(&member.prop).as_deref() == Some(self.property)
+                && matches!(
+                    strip_parentheses(member.obj.as_ref()),
+                    Expr::Ident(identifier) if binding_key(identifier) == *self.object
+                )
+            {
+                self.found = true;
+                return;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        object,
+        property,
+        found: false,
+    };
+    expression.visit_with(&mut finder);
+    finder.found
+}
+
+fn object_create_state_bindings(body: &BlockStmt) -> Vec<BindingKey> {
+    let mut bindings = Vec::new();
+    for statement in &body.stmts {
+        let Stmt::Decl(swc_core::ecma::ast::Decl::Var(declaration)) = statement else {
+            continue;
+        };
+        for declarator in &declaration.decls {
+            let Pat::Ident(binding) = &declarator.name else {
+                continue;
+            };
+            let Some(Expr::Call(call)) = declarator.init.as_deref().map(strip_parentheses) else {
+                continue;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                continue;
+            };
+            let Expr::Member(member) = strip_parentheses(callee.as_ref()) else {
+                continue;
+            };
+            if member_prop_name(&member.prop).as_deref() != Some("create")
+                || !matches!(
+                    strip_parentheses(member.obj.as_ref()),
+                    Expr::Ident(identifier) if identifier.sym.as_ref() == "Object"
+                )
+            {
+                continue;
+            }
+            bindings.push(binding_key(&binding.id));
+        }
+    }
+    bindings
+}
+
+fn top_level_assignments(body: &BlockStmt) -> Vec<AssignExpr> {
+    #[derive(Default)]
+    struct Collector {
+        assignments: Vec<AssignExpr>,
+    }
+
+    impl Visit for Collector {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            self.assignments.push(assignment.clone());
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector::default();
+    body.visit_with(&mut collector);
+    collector.assignments
+}
+
+fn member_assignment_target(target: &AssignTarget) -> Option<(BindingKey, Atom)> {
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+        return None;
+    };
+    let Expr::Ident(object) = strip_parentheses(member.obj.as_ref()) else {
+        return None;
+    };
+    Some((binding_key(object), member_prop_name(&member.prop)?))
+}
+
+fn member_assignment_object(target: &AssignTarget) -> Option<BindingKey> {
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+        return None;
+    };
+    let Expr::Ident(object) = strip_parentheses(member.obj.as_ref()) else {
+        return None;
+    };
+    Some(binding_key(object))
+}
+
+fn member_assignment_from_binding(
+    assignments: &[AssignExpr],
+    object: &BindingKey,
+    property: &str,
+    value: &BindingKey,
+) -> bool {
+    assignments.iter().any(|assignment| {
+        member_assignment_target(&assignment.left).is_some_and(
+            |(assigned_object, assigned_property)| {
+                assigned_object == *object && assigned_property.as_ref() == property
+            },
+        ) && expression_is_binding(assignment.right.as_ref(), value)
+    })
+}
+
+fn member_assignment_from_any_property(
+    assignments: &[AssignExpr],
+    object: &BindingKey,
+    value: &BindingKey,
+) -> bool {
+    assignments.iter().any(|assignment| {
+        member_assignment_target(&assignment.left)
+            .is_some_and(|(assigned_object, _)| assigned_object == *object)
+            && expression_is_binding(assignment.right.as_ref(), value)
+    })
+}
+
+fn member_assignment_exists(
+    assignments: &[AssignExpr],
+    object: &BindingKey,
+    property: &str,
+) -> bool {
+    assignments.iter().any(|assignment| {
+        member_assignment_target(&assignment.left).is_some_and(
+            |(assigned_object, assigned_property)| {
+                assigned_object == *object && assigned_property.as_ref() == property
+            },
+        )
+    })
+}
+
+fn member_assignment_value(
+    assignments: &[AssignExpr],
+    object: &BindingKey,
+    property: &str,
+) -> Option<Box<Expr>> {
+    let values = assignments
+        .iter()
+        .filter(|assignment| {
+            member_assignment_target(&assignment.left).is_some_and(
+                |(assigned_object, assigned_property)| {
+                    assigned_object == *object && assigned_property.as_ref() == property
+                },
+            )
+        })
+        .map(|assignment| assignment.right.clone())
+        .collect::<Vec<_>>();
+    let [value] = values.as_slice() else {
+        return None;
+    };
+    Some(value.clone())
+}
+
+fn member_assignment_binds_receiver(assignments: &[AssignExpr], object: &BindingKey) -> bool {
+    assignments.iter().any(|assignment| {
+        if !member_assignment_object(&assignment.left)
+            .is_some_and(|assigned_object| assigned_object == *object)
+        {
+            return false;
+        }
+        let Expr::Call(call) = strip_parentheses(assignment.right.as_ref()) else {
+            return false;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            return false;
+        };
+        let Expr::Member(member) = strip_parentheses(callee.as_ref()) else {
+            return false;
+        };
+        member_prop_name(&member.prop).as_deref() == Some("bind")
+            && matches!(
+                call.args.as_slice(),
+                [argument]
+                    if argument.spread.is_none()
+                        && expression_is_binding(argument.expr.as_ref(), object)
+            )
+    })
+}
+
+fn computed_state_is_attached(
+    assignments: &[AssignExpr],
+    callable: &BindingKey,
+    state: &BindingKey,
+) -> bool {
+    assignments.iter().any(|assignment| {
+        member_assignment_object(&assignment.left).is_some_and(|object| object == *callable)
+            && expression_is_binding(assignment.right.as_ref(), state)
+    })
+}
+
+#[derive(Clone)]
+struct LocalFunctionValue {
+    params: Vec<Pat>,
+    body: BlockStmt,
+}
+
+fn local_function_value(body: &BlockStmt, binding: &BindingKey) -> Option<LocalFunctionValue> {
+    struct Finder<'a> {
+        binding: &'a BindingKey,
+        values: Vec<LocalFunctionValue>,
+    }
+
+    impl Finder<'_> {
+        fn record_function(&mut self, function: &Function) {
+            let Some(body) = &function.body else {
+                return;
+            };
+            self.values.push(LocalFunctionValue {
+                params: function
+                    .params
+                    .iter()
+                    .map(|parameter| parameter.pat.clone())
+                    .collect(),
+                body: body.clone(),
+            });
+        }
+
+        fn record_arrow(&mut self, arrow: &ArrowExpr) {
+            let body = match arrow.body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(body) => body.clone(),
+                BlockStmtOrExpr::Expr(expression) => BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: SyntaxContext::empty(),
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        span: DUMMY_SP,
+                        arg: Some(expression.clone()),
+                    })],
+                },
+            };
+            self.values.push(LocalFunctionValue {
+                params: arrow.params.clone(),
+                body,
+            });
+        }
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_fn_decl(&mut self, declaration: &FnDecl) {
+            if binding_key(&declaration.ident) == *self.binding {
+                self.record_function(declaration.function.as_ref());
+            }
+        }
+
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            let Pat::Ident(identifier) = &declarator.name else {
+                return;
+            };
+            if binding_key(&identifier.id) != *self.binding {
+                return;
+            }
+            match declarator.init.as_deref().map(strip_parentheses) {
+                Some(Expr::Fn(function)) => self.record_function(function.function.as_ref()),
+                Some(Expr::Arrow(arrow)) => self.record_arrow(arrow),
+                _ => {}
+            }
+        }
+
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assignment.left else {
+                return;
+            };
+            if binding_key(&target.id) != *self.binding {
+                return;
+            }
+            match strip_parentheses(assignment.right.as_ref()) {
+                Expr::Fn(function) => self.record_function(function.function.as_ref()),
+                Expr::Arrow(arrow) => self.record_arrow(arrow),
+                _ => {}
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        binding,
+        values: Vec::new(),
+    };
+    body.visit_with(&mut finder);
+    let [value] = finder.values.as_slice() else {
+        return None;
+    };
+    Some(value.clone())
+}
+
+fn local_function_returns_member(
+    function: &LocalFunctionValue,
+    object: &BindingKey,
+    property: &str,
+) -> bool {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    returns
+        .expressions
+        .iter()
+        .any(|expression| expression_has_member_on_binding(expression.as_ref(), object, property))
+}
+
+fn local_function_contains_member(
+    function: &LocalFunctionValue,
+    object: &BindingKey,
+    property: &str,
+) -> bool {
+    expression_or_block_has_member(&function.body, object, property)
+}
+
+fn expression_or_block_has_member(body: &BlockStmt, object: &BindingKey, property: &str) -> bool {
+    struct Finder<'a> {
+        object: &'a BindingKey,
+        property: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if member_prop_name(&member.prop).as_deref() == Some(self.property)
+                && matches!(
+                    strip_parentheses(member.obj.as_ref()),
+                    Expr::Ident(identifier) if binding_key(identifier) == *self.object
+                )
+            {
+                self.found = true;
+                return;
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        object,
+        property,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn local_function_contains_number(function: &LocalFunctionValue, expected: f64) -> bool {
+    block_contains_number(&function.body, expected)
+}
+
+fn block_contains_number(body: &BlockStmt, expected: f64) -> bool {
+    struct Finder {
+        expected: f64,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if numeric_expression_value(expression) == Some(self.expected) {
+                self.found = true;
+                return;
+            }
+            expression.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn contains_object_property(body: &BlockStmt, expected: &str) -> bool {
+    struct Finder<'a> {
+        expected: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_prop(&mut self, property: &Prop) {
+            let name = match property {
+                Prop::Shorthand(identifier) => Some(identifier.sym.to_string()),
+                Prop::KeyValue(property) => prop_name(&property.key),
+                Prop::Assign(property) => Some(property.key.sym.to_string()),
+                Prop::Getter(property) => prop_name(&property.key),
+                Prop::Setter(property) => prop_name(&property.key),
+                Prop::Method(property) => prop_name(&property.key),
+            };
+            if name.as_deref() == Some(self.expected) {
+                self.found = true;
+                return;
+            }
+            property.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, function: &Function) {
+            function.visit_children_with(self);
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            arrow.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn block_contains_string(body: &BlockStmt, expected: &str) -> bool {
+    struct Finder<'a> {
+        expected: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_str(&mut self, string: &swc_core::ecma::ast::Str) {
+            if string.value.as_bytes() == self.expected.as_bytes() {
+                self.found = true;
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn numeric_expression_value(expression: &Expr) -> Option<f64> {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Num(number)) => Some(number.value),
+        Expr::Unary(unary) if unary.op == UnaryOp::Minus => {
+            numeric_expression_value(unary.arg.as_ref()).map(|value| -value)
+        }
+        _ => None,
+    }
+}
+
+struct InjectFlagsEvidence<'a> {
+    options: &'a BindingKey,
+    properties: HashSet<String>,
+    typeof_options: bool,
+    type_strings: HashSet<String>,
+    bitwise_or: bool,
+    closure_undefined_check: bool,
+}
+
+impl Visit for InjectFlagsEvidence<'_> {
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if matches!(
+            strip_parentheses(member.obj.as_ref()),
+            Expr::Ident(identifier) if binding_key(identifier) == *self.options
+        ) {
+            if let Some(property) = member_prop_name(&member.prop) {
+                self.properties.insert(property.to_string());
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::TypeOf && expression_is_binding(unary.arg.as_ref(), self.options) {
+            self.typeof_options = true;
+        }
+        unary.visit_children_with(self);
+    }
+
+    fn visit_str(&mut self, string: &swc_core::ecma::ast::Str) {
+        self.type_strings
+            .insert(String::from_utf8_lossy(string.value.as_bytes()).to_string());
+    }
+
+    fn visit_bin_expr(&mut self, binary: &swc_core::ecma::ast::BinExpr) {
+        if binary.op == BinaryOp::BitOr {
+            self.bitwise_or = true;
+        }
+        if binary.op == BinaryOp::Gt
+            && matches!(
+                strip_parentheses(binary.left.as_ref()),
+                Expr::Unary(unary)
+                    if unary.op == UnaryOp::TypeOf
+                        && expression_is_binding(unary.arg.as_ref(), self.options)
+            )
+            && matches!(
+                strip_parentheses(binary.right.as_ref()),
+                Expr::Lit(Lit::Str(string))
+                    if string.value.as_bytes() == b"u"
+            )
+        {
+            self.closure_undefined_check = true;
+        }
+        binary.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+}
+
 fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRoleEvidence {
     let mut functions = Vec::new();
+    let mut classes = Vec::new();
     let mut definition_counts = HashMap::<SymbolIdentity, usize>::new();
     let mut invalid_values = HashSet::new();
     let mut assignment_definitions = HashMap::<SymbolIdentity, Vec<(usize, u32)>>::new();
+    let mut value_aliases = Vec::new();
     for (module_index, prepared) in modules.iter().enumerate() {
         let mut collector = RuntimeFunctionCollector {
             module_index,
             unresolved_ctxt: prepared.unresolved_ctxt,
             functions: Vec::new(),
+            classes: Vec::new(),
             definition_counts: HashMap::new(),
             invalid_values: HashSet::new(),
             assignment_definitions: HashMap::new(),
+            value_aliases: Vec::new(),
         };
         prepared.module.visit_with(&mut collector);
         functions.extend(collector.functions);
+        classes.extend(collector.classes);
         for (identity, count) in collector.definition_counts {
             *definition_counts.entry(identity).or_default() += count;
         }
         invalid_values.extend(collector.invalid_values);
+        value_aliases.extend(collector.value_aliases);
         for (identity, assignments) in collector.assignment_definitions {
             assignment_definitions
                 .entry(identity)
@@ -277,12 +1655,20 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
         .map(|(identity, _)| identity.clone())
         .collect::<HashSet<_>>();
     functions.retain(|function| stable_values.contains(&function.identity));
+    classes.retain(|class| stable_values.contains(&class.identity));
+    value_aliases.retain(|(left, _)| {
+        definition_counts.get(left) == Some(&1)
+            && !invalid_values.contains(left)
+            && is_supported_value_alias_identity(left)
+    });
 
     StructuralRoleEvidence {
         functions,
+        classes,
         definition_counts,
         invalid_values,
         assignment_definitions,
+        value_aliases,
     }
 }
 
@@ -312,12 +1698,37 @@ fn has_stable_container(
     }
 }
 
+fn is_supported_value_alias_identity(identity: &SymbolIdentity) -> bool {
+    match identity {
+        SymbolIdentity::LocalBinding(_) | SymbolIdentity::GlobalBinding(_) => true,
+        SymbolIdentity::GlobalMember { object, .. } => {
+            object.as_ref() == "globalThis" || object.starts_with("globalThis.")
+        }
+        SymbolIdentity::LocalMember { .. } => false,
+    }
+}
+
+fn value_alias_identity(value: &Expr, unresolved_ctxt: SyntaxContext) -> Option<SymbolIdentity> {
+    let value = match strip_parentheses(value) {
+        Expr::Seq(sequence) => strip_parentheses(sequence.exprs.last()?.as_ref()),
+        value => value,
+    };
+    let identity = symbol_identity(value, unresolved_ctxt)?;
+    is_supported_value_alias_identity(&identity).then_some(identity)
+}
+
 #[derive(Clone)]
 struct RuntimeFunction {
     identity: SymbolIdentity,
     params: Vec<Pat>,
     body: BlockStmt,
     unresolved_ctxt: SyntaxContext,
+}
+
+#[derive(Clone)]
+struct RuntimeClass {
+    identity: SymbolIdentity,
+    class: Box<Class>,
 }
 
 struct RuntimeFunctionIndex<'a> {
@@ -364,9 +1775,11 @@ struct RuntimeFunctionCollector {
     module_index: usize,
     unresolved_ctxt: SyntaxContext,
     functions: Vec<RuntimeFunction>,
+    classes: Vec<RuntimeClass>,
     definition_counts: HashMap<SymbolIdentity, usize>,
     invalid_values: HashSet<SymbolIdentity>,
     assignment_definitions: HashMap<SymbolIdentity, Vec<(usize, u32)>>,
+    value_aliases: Vec<(SymbolIdentity, SymbolIdentity)>,
 }
 
 struct TemplateCallObservation {
@@ -3194,7 +4607,7 @@ fn infer_text_interpolation_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    text_interpolation_pairs(function_index, observations)
+    let mut inferred = text_interpolation_pairs(function_index, observations)
         .into_iter()
         .flat_map(|pair| {
             [
@@ -3202,7 +4615,66 @@ fn infer_text_interpolation_family(
                 (pair.text_one, "ɵɵtextInterpolate1"),
             ]
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    for (identity, calls_in_templates) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let parameters = definition
+            .params
+            .iter()
+            .map(parameter_binding_with_default)
+            .collect::<Option<Vec<_>>>();
+        let Some(parameters) = parameters else {
+            continue;
+        };
+        let Some(name) = text_interpolation_name(parameters.len()) else {
+            continue;
+        };
+        if parameters.len() < 3
+            || !calls_in_templates.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 2
+                    && matches!(
+                        observation.arguments.len(),
+                        count if count == parameters.len() || count + 1 == parameters.len()
+                    )
+            })
+            || !returns_identity(definition, identity)
+            || !contains_member_property(&definition.body, "nodeValue")
+        {
+            continue;
+        }
+        let has_interpolation_helper = direct_calls(definition).iter().any(|call| {
+            call.callee != *identity
+                && call.arguments.len() == parameters.len() + 1
+                && forwards_parameters_in_order(call, &parameters)
+                && function_index
+                    .unique(&call.callee)
+                    .is_some_and(|helper| helper.params.len() == call.arguments.len())
+        });
+        if has_interpolation_helper {
+            inferred.push((identity.clone(), name));
+        }
+    }
+
+    inferred
+}
+
+fn text_interpolation_name(parameter_count: usize) -> Option<&'static str> {
+    Some(match parameter_count {
+        1 => "ɵɵtextInterpolate",
+        3 => "ɵɵtextInterpolate1",
+        5 => "ɵɵtextInterpolate2",
+        7 => "ɵɵtextInterpolate3",
+        9 => "ɵɵtextInterpolate4",
+        11 => "ɵɵtextInterpolate5",
+        13 => "ɵɵtextInterpolate6",
+        15 => "ɵɵtextInterpolate7",
+        17 => "ɵɵtextInterpolate8",
+        _ => return None,
+    })
 }
 
 struct TextInterpolationPair {
@@ -3585,6 +5057,13 @@ impl RuntimeFunctionCollector {
         });
     }
 
+    fn record_class(&mut self, identity: SymbolIdentity, class: &Class) {
+        self.classes.push(RuntimeClass {
+            identity,
+            class: Box::new(class.clone()),
+        });
+    }
+
     fn record_value_definition(
         &mut self,
         target: &Expr,
@@ -3599,6 +5078,11 @@ impl RuntimeFunctionCollector {
         } else {
             self.record_definition(identity.clone());
         }
+        if let Some(alias) = value_alias_identity(value, self.unresolved_ctxt) {
+            if alias != identity {
+                self.value_aliases.push((identity.clone(), alias));
+            }
+        }
         self.record_function_value(identity, value);
     }
 
@@ -3606,6 +5090,7 @@ impl RuntimeFunctionCollector {
         match value {
             Expr::Fn(function) => self.record_function(identity, function.function.as_ref()),
             Expr::Arrow(arrow) => self.record_arrow(identity, arrow),
+            Expr::Class(class) => self.record_class(identity, class.class.as_ref()),
             Expr::Paren(paren) => self.record_function_value(identity, paren.expr.as_ref()),
             _ => {}
         }
@@ -3810,9 +5295,9 @@ impl Visit for RuntimeFunctionCollector {
     }
 
     fn visit_class_decl(&mut self, declaration: &ClassDecl) {
-        self.record_definition(SymbolIdentity::LocalBinding(binding_key(
-            &declaration.ident,
-        )));
+        let identity = SymbolIdentity::LocalBinding(binding_key(&declaration.ident));
+        self.record_definition(identity.clone());
+        self.record_class(identity, declaration.class.as_ref());
         declaration.class.visit_children_with(self);
     }
 
