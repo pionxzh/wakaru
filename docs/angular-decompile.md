@@ -401,12 +401,31 @@ primitive literal. It does not emit `signal()` and silently change the initial
 value.
 
 Canonical API imports are introduced only when their names are not shadowed
-inside the recovered class. Otherwise the compiled callee remains. Query
-families such as `viewChild`, `viewChildren`, `contentChild`, and
-`contentChildren` are not yet restored structurally: optimized factories can
-be runtime-identical, while their actual role and locator live in compiled
-query metadata. Mapping those helpers from call shape alone would overclaim
-which source API was used.
+inside the recovered class. Otherwise the compiled callee remains.
+
+Signal query APIs use a stricter, metadata-guided path. Wakaru restores
+`viewChild`, `viewChildren`, `contentChild`, and `contentChildren`, including
+single-result `.required`, only when two independent forms of evidence agree:
+
+- the initializer is a named Angular query API or belongs to a structurally
+  proven Closure query-factory family, which supplies cardinality and
+  requiredness;
+- the component descriptor has a unique signal-query registration for the
+  same field, which supplies view-versus-content ownership, the locator,
+  `read`, and `descendants`.
+
+This distinction matters because Closure can reduce view and content
+initializers to runtime-identical helpers. Call shape alone cannot recover the
+source API honestly. Query plans are therefore derived from the untouched
+evidence AST and applied by field to the readable class, supporting both class
+properties and production output lowered to constructor assignments. When the
+initializer arguments exactly match the descriptor-derived source arguments,
+their readable spelling is retained; otherwise the descriptor remains
+authoritative.
+
+Missing, duplicate, static, legacy decorator/`QueryList`, or malformed query
+metadata leaves the initializer unchanged. The production descriptor does not
+carry a source `debugName`, so Wakaru does not synthesize one.
 
 ## Artifact contract
 

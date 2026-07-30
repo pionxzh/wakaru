@@ -217,7 +217,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 20);
+    assert_eq!(by_selector.len(), 21);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -530,6 +530,51 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
             "missing {expected:?}:\n{class_apis}"
         );
     }
+    assert_eq!(
+        by_selector["structural-query-apis"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-query-apis"].issues,
+        by_selector["structural-query-apis"].source,
+    );
+    let query_apis = &by_selector["structural-query-apis"].source;
+    assert!(query_apis.contains(
+        "import { Component, contentChild, contentChildren, viewChild, viewChildren } from \"@angular/core\";"
+    ));
+    for expected in [
+        "viewChild(\"viewOptional\")",
+        "viewChild.required(\"viewRequired\")",
+        "viewChildren(\"viewMany\", {",
+        "contentChild(\"contentOptional\", {",
+        "descendants: false",
+        "contentChild.required(\"contentRequired\", {",
+        "contentChildren(\"contentMany\")",
+    ] {
+        assert!(
+            query_apis.contains(expected),
+            "missing {expected:?}:\n{query_apis}"
+        );
+    }
+    assert_eq!(
+        query_apis.matches("viewChild(").count(),
+        2,
+        "class-token view query was not recovered:\n{query_apis}"
+    );
+    assert_eq!(
+        query_apis.matches("read:").count(),
+        2,
+        "query read tokens were not recovered:\n{query_apis}"
+    );
+    let restored_query_calls = query_apis.matches("viewChild(").count()
+        + query_apis.matches("viewChild.required(").count()
+        + query_apis.matches("viewChildren(").count()
+        + query_apis.matches("contentChild(").count()
+        + query_apis.matches("contentChild.required(").count()
+        + query_apis.matches("contentChildren(").count();
+    assert_eq!(
+        restored_query_calls, 7,
+        "not every generated query initializer was recovered:\n{query_apis}"
+    );
     assert_eq!(report.stats.malformed_instruction_calls, 0);
 }
 
