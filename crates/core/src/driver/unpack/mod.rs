@@ -461,7 +461,7 @@ pub fn unpack_prepared_inputs_with_policy(
     raw: bool,
     scope_hoist_policy: ScopeHoistPolicy,
 ) -> Result<PreparedUnpackOutput> {
-    unpack_prepared_inputs_impl(inputs, options, raw, scope_hoist_policy, None, false)
+    unpack_prepared_inputs_with_policy_and_capture(inputs, options, raw, scope_hoist_policy, false)
         .map(|captured| captured.output)
 }
 
@@ -473,23 +473,34 @@ pub fn unpack_prepared_inputs_with_policy_and_capture(
     scope_hoist_policy: ScopeHoistPolicy,
     capture_pre_rewrite: bool,
 ) -> Result<CapturedUnpackOutput> {
-    unpack_prepared_inputs_impl(
-        inputs,
+    unpack_prepared_inputs_with_policies_and_capture(
+        inputs
+            .into_iter()
+            .map(|input| (input, scope_hoist_policy))
+            .collect(),
         options,
         raw,
-        scope_hoist_policy,
-        None,
         capture_pre_rewrite,
     )
 }
 
-/// [`unpack_prepared_inputs_with_policy`], recording each module's interop
-/// report in `interop` when one is given (`wakaru debug interop`).
+#[doc(hidden)]
+pub fn unpack_prepared_inputs_with_policies_and_capture(
+    inputs: Vec<(PreparedUnpackInput, ScopeHoistPolicy)>,
+    options: DecompileOptions,
+    raw: bool,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
+    unpack_prepared_inputs_impl(inputs, options, raw, None, capture_pre_rewrite)
+}
+
+/// [`unpack_prepared_inputs_with_policies_and_capture`], recording each
+/// module's interop report in `interop` when one is given
+/// (`wakaru debug interop`).
 fn unpack_prepared_inputs_impl(
-    inputs: Vec<PreparedUnpackInput>,
+    inputs: Vec<(PreparedUnpackInput, ScopeHoistPolicy)>,
     mut options: DecompileOptions,
     raw: bool,
-    scope_hoist_policy: ScopeHoistPolicy,
     interop: Option<&InteropSink>,
     capture_pre_rewrite: bool,
 ) -> Result<CapturedUnpackOutput> {
@@ -503,7 +514,7 @@ fn unpack_prepared_inputs_impl(
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
     let mut origins = Vec::with_capacity(inputs.len());
-    for (input_index, input) in inputs.into_iter().enumerate() {
+    for (input_index, (input, scope_hoist_policy)) in inputs.into_iter().enumerate() {
         let input_id = PreparedInputId::from_index(input_index);
         let PreparedUnpackInput {
             filename,
