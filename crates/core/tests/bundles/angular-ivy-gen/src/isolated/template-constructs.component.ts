@@ -1,5 +1,5 @@
 import { NgFor, NgIf, UpperCasePipe } from '@angular/common';
-import { Component } from '@angular/core';
+import { Component, Directive } from '@angular/core';
 
 @Component({
   selector: 'fixture-flat-bindings',
@@ -27,6 +27,97 @@ export class FixtureFlatBindingsComponent {
     this.active = !this.active;
   }
 }
+
+@Component({
+  selector: 'fixture-container-i18n',
+  template: `
+    <section>
+      <ng-container>
+        <span>Grouped content</span>
+      </ng-container>
+      <p i18n>Hello, localized world!</p>
+      <p i18n>Hello, {{ name }}!</p>
+    </section>
+  `,
+})
+export class FixtureContainerI18nComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'button[fixtureAction],a[fixtureAction]',
+  template: `<span>Selector matrix</span>`,
+})
+export class FixtureSelectorMatrixComponent {}
+
+@Component({
+  selector: 'dialog[fixtureDialog]',
+  template: `<span>Element selector</span>`,
+})
+export class FixtureElementSelectorComponent {}
+
+@Directive({
+  selector: 'fixture-pure-target',
+  inputs: ['config', 'items'],
+})
+export class FixturePureTargetDirective {
+  config: unknown;
+  items: unknown;
+}
+
+@Component({
+  selector: 'fixture-pure-bindings',
+  imports: [FixturePureTargetDirective],
+  template: `
+    <fixture-pure-target [config]="{ fixed: true }" />
+    <fixture-pure-target
+      [config]="{ label: label }"
+      [items]="[label]"
+    />
+    <button title="{{ label }}" attr.data-label="Hello {{ label }}!">
+      Interpolate
+    </button>
+  `,
+})
+export class FixturePureBindingsComponent {
+  label = 'reader';
+}
+
+@Component({
+  selector: 'fixture-let-bindings',
+  template: `
+    @let displayLabel = prefix + label;
+    <p>{{ displayLabel }}</p>
+    @if (active) {
+      <button type="button" (click)="activate(displayLabel)">
+        {{ displayLabel }}
+      </button>
+    }
+  `,
+})
+export class FixtureLetBindingsComponent {
+  prefix = 'Status: ';
+  label = 'ready';
+  active = true;
+
+  activate(label: string) {
+    console.log(label);
+  }
+}
+
+@Component({
+  selector: 'fixture-namespaces',
+  template: `
+    <svg viewBox="0 0 10 10">
+      <circle cx="5" cy="5" r="4" />
+    </svg>
+    <math>
+      <mi>x</mi><mo>=</mo><mn>1</mn>
+    </math>
+    <p>HTML</p>
+  `,
+})
+export class FixtureNamespacesComponent {}
 
 @Component({
   selector: 'fixture-structural-constructs',

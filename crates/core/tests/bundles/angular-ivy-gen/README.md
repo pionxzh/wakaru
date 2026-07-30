@@ -25,11 +25,13 @@ The pinned Angular CLI application produces:
   packaging.
 
 The source deliberately exercises element structure, static attributes, text
-interpolation, a listener, a property binding, nested `@if` / `@else` embedded
-views, content projection, a local template reference, a pipe binding,
-component styles, and a cross-chunk component. The generated files contain
-production Ivy definitions; they do not contain `ɵsetClassMetadata` or a copy
-of the original HTML template literal.
+and expression interpolation, listeners, property/attribute/class/style
+bindings, nested `@if` / `@else` embedded views, `@let`, pure literal
+expressions, HTML/SVG/MathML namespace switches, content projection, local
+template references, pipe bindings, selector matrices, component styles, and a
+cross-chunk component. The generated files contain production Ivy definitions;
+they do not contain `ɵsetClassMetadata` or a copy of the original HTML template
+literal.
 
 `src/isolated/template-constructs.component.ts` is compiled directly with the
 pinned Angular compiler in full AOT mode, then passed through esbuild syntax
@@ -37,6 +39,13 @@ minification with `ngDevMode=false`. It isolates:
 
 - flat event, attribute, class, style, property, and multi-expression text
   bindings;
+- expression interpolation used by property and attribute bindings;
+- pure object/array literal bindings emitted through `ɵɵpureFunction*`;
+- `@let` declarations read by interpolation and a nested conditional;
+- `<ng-container>`, bounded static/interpolated i18n messages, and element and
+  attribute selector matrices;
+- SVG and MathML trees followed by an HTML element, including the corresponding
+  namespace switches and a statically split constant-attribute table;
 - `@if`, `@for` / `@empty`, projection, a loop-local reference, and a pipe,
   including the view restoration and `$implicit` aliases emitted for a loop
   listener;
@@ -83,22 +92,21 @@ exports only `ɵɵdefineComponent` by canonical name. An otherwise anonymous
 control-flow runtime root keeps Angular's generic first-call/continuation
 template helper family observable. Wakaru must identify that family from
 template argument shape, the returned self-continuation, and shared
-parameter-forwarding behavior. It must also identify Closure-specialized
-conditional and property instructions from their runtime bodies and template
-uses; the fixture does not expose any of those Ivy role names. A fourth
-component adds a conditional embedded view with a captured listener and a
-parent-context property binding. Closure preserves structurally recognizable
-`nextContext`, `restoreView`, and `resetView` bodies but inlines
-`getCurrentView` into a member read. Their canonical role names are likewise
-absent, so recovery must prove the view-state family and validate the inlined
-capture from its use by the restore helper. A fifth component keeps a deferred
-primary and placeholder view observable while requiring the defer instruction
-role to be inferred without its canonical name. Sixth and seventh components
-retain `prefetch on idle` and `hydrate on idle` helpers as negative evidence:
-those helpers must not be conflated with the ordinary idle trigger. The
-structural component also contains `@for` / `@empty`, so the repeater
-creation/update roles and track expression must be recovered after the
-instruction names are removed.
+parameter-forwarding behavior.
+
+The structural components require Closure-renamed roles to be recovered from
+runtime contracts and template use. They cover conditional and property
+instructions; attribute/class/style families; `<ng-container>` and bounded
+i18n; pure literal expressions; `@let`; HTML/SVG/MathML namespace switches; and
+optimized repeater and defer families. One conditional view has a captured
+listener and parent-context property binding. Closure preserves structurally
+recognizable `nextContext`, `restoreView`, and `resetView` bodies but inlines
+`getCurrentView` into a member read, so recovery must prove the view-state
+family and validate that use. Separate components retain `prefetch on idle` and
+`hydrate on idle` helpers as negative evidence: those helpers must not be
+conflated with the ordinary idle trigger. Selector-only components also prove
+that selector matrices are reconstructed independently of readable descriptor
+property names.
 
 All three roots are necessary. Exporting a class alone does not make an unused
 static `ɵcmp` assignment observable to Closure, and retaining component
