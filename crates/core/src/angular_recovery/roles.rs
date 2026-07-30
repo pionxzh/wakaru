@@ -16,6 +16,41 @@ mod structural;
 
 const REFERENCE_CANDIDATE_NAME: &str = "__wakaruIvyReferenceCandidate";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(super) enum AngularClassApi {
+    Computed,
+    Inject,
+    Input,
+    Model,
+    Output,
+    Signal,
+}
+
+impl AngularClassApi {
+    fn from_export_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "computed" => Self::Computed,
+            "inject" => Self::Inject,
+            "input" => Self::Input,
+            "model" => Self::Model,
+            "output" => Self::Output,
+            "signal" => Self::Signal,
+            _ => return None,
+        })
+    }
+
+    pub(super) fn canonical_export_name(self) -> &'static str {
+        match self {
+            Self::Computed => "computed",
+            Self::Inject => "inject",
+            Self::Input => "input",
+            Self::Model => "model",
+            Self::Output => "output",
+            Self::Signal => "signal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum IvyInstruction {
     DefineComponent,
@@ -296,10 +331,12 @@ pub(super) enum SymbolIdentity {
 pub(super) struct IvyRoleTable {
     ivy_names: HashMap<SymbolIdentity, String>,
     ambiguous_symbols: HashSet<SymbolIdentity>,
+    class_api_call_arguments: HashMap<SymbolIdentity, Vec<Box<Expr>>>,
     core_namespaces: HashSet<BindingKey>,
     namespace_state_targets: HashSet<SymbolIdentity>,
     alias_groups: Vec<Vec<SymbolIdentity>>,
     alias_group_by_symbol: HashMap<SymbolIdentity, usize>,
+    class_api_argument_alias_groups: HashSet<usize>,
 }
 
 impl IvyRoleTable {
@@ -319,6 +356,12 @@ impl IvyRoleTable {
         }
         for (identity, name) in structural_evidence.infer_ivy_roles() {
             table.record_mapping(identity, name.to_string());
+        }
+        for (identity, name) in structural_evidence.infer_class_api_roles() {
+            table.record_mapping(identity, name.to_string());
+        }
+        for (identity, arguments) in structural_evidence.specialized_class_api_call_arguments() {
+            table.record_class_api_call_arguments(identity, arguments);
         }
         let aliases = super::workspace::collect_esm_symbol_aliases(modules);
         table.install_aliases(&aliases);
@@ -351,7 +394,9 @@ impl IvyRoleTable {
                             .as_ref()
                             .map(module_export_name)
                             .unwrap_or_else(|| named.local.sym.to_string());
-                        if imported.starts_with("ɵɵ") {
+                        if imported.starts_with("ɵɵ")
+                            || AngularClassApi::from_export_name(&imported).is_some()
+                        {
                             self.record_mapping(
                                 SymbolIdentity::LocalBinding(binding_key(&named.local)),
                                 imported,
@@ -397,10 +442,28 @@ impl IvyRoleTable {
             .is_some_and(|existing| existing != &name)
         {
             self.ivy_names.remove(&identity);
+            self.class_api_call_arguments.remove(&identity);
             self.ambiguous_symbols.insert(identity);
             return;
         }
         self.ivy_names.insert(identity, name);
+    }
+
+    fn record_class_api_call_arguments(
+        &mut self,
+        identity: SymbolIdentity,
+        arguments: Vec<Box<Expr>>,
+    ) {
+        if self.ambiguous_symbols.contains(&identity)
+            || self
+                .ivy_names
+                .get(&identity)
+                .is_none_or(|name| name != "signal")
+            || self.class_api_call_arguments.contains_key(&identity)
+        {
+            return;
+        }
+        self.class_api_call_arguments.insert(identity, arguments);
     }
 
     fn install_aliases(&mut self, aliases: &[WorkspaceSymbolAlias]) {
@@ -441,23 +504,44 @@ impl IvyRoleTable {
     }
 
     fn propagate_aliases(&mut self) {
-        for component in self.alias_groups.clone() {
+        for (group_index, component) in self.alias_groups.clone().into_iter().enumerate() {
             let names = component
                 .iter()
                 .filter_map(|identity| self.ivy_names.get(identity).cloned())
                 .collect::<HashSet<_>>();
+            let arguments_already_propagated =
+                self.class_api_argument_alias_groups.contains(&group_index);
+            let call_argument_sources = if arguments_already_propagated {
+                Vec::new()
+            } else {
+                component
+                    .iter()
+                    .filter_map(|identity| self.class_api_call_arguments.get(identity).cloned())
+                    .collect::<Vec<_>>()
+            };
             let is_ambiguous = component
                 .iter()
                 .any(|identity| self.ambiguous_symbols.contains(identity))
-                || names.len() > 1;
+                || names.len() > 1
+                || call_argument_sources.len() > 1;
             if is_ambiguous {
+                self.class_api_argument_alias_groups.remove(&group_index);
                 for identity in component {
                     self.ivy_names.remove(&identity);
+                    self.class_api_call_arguments.remove(&identity);
                     self.ambiguous_symbols.insert(identity);
                 }
             } else if let Some(name) = names.into_iter().next() {
+                let call_arguments = call_argument_sources.into_iter().next();
                 for identity in component {
-                    self.ivy_names.insert(identity, name.clone());
+                    self.ivy_names.insert(identity.clone(), name.clone());
+                    if let Some(arguments) = &call_arguments {
+                        self.class_api_call_arguments
+                            .insert(identity, arguments.clone());
+                    }
+                }
+                if call_arguments.is_some() {
+                    self.class_api_argument_alias_groups.insert(group_index);
                 }
             }
         }
@@ -476,6 +560,50 @@ impl IvyRoleTable {
             return None;
         };
         self.instruction_for_expr(expr.as_ref(), unresolved_ctxt)
+    }
+
+    pub(super) fn class_api_for_callee(
+        &self,
+        callee: &Callee,
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<AngularClassApi> {
+        let Callee::Expr(expr) = callee else {
+            return None;
+        };
+        self.class_api_for_expr(expr.as_ref(), unresolved_ctxt)
+    }
+
+    pub(super) fn specialized_class_api_arguments_for_callee(
+        &self,
+        callee: &Callee,
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<Vec<Box<Expr>>> {
+        let Callee::Expr(expr) = callee else {
+            return None;
+        };
+        let identity = symbol_identity(expr.as_ref(), unresolved_ctxt)?;
+        self.class_api_call_arguments.get(&identity).cloned()
+    }
+
+    pub(super) fn class_api_for_expr(
+        &self,
+        expr: &Expr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<AngularClassApi> {
+        if let Some(name) = self.ivy_name_for_expr(expr, unresolved_ctxt) {
+            return AngularClassApi::from_export_name(&name);
+        }
+
+        let Expr::Member(member) = expr else {
+            return None;
+        };
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            return None;
+        };
+        if !self.core_namespaces.contains(&binding_key(object)) {
+            return None;
+        }
+        AngularClassApi::from_export_name(member_prop_name(&member.prop)?.as_ref())
     }
 
     pub(super) fn instruction_for_expr(
