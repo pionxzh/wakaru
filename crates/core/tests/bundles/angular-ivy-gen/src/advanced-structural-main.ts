@@ -2,7 +2,12 @@ import { bootstrapApplication } from '@angular/platform-browser';
 import {
   Component,
   Directive,
+  computed,
+  inject,
+  input,
   model,
+  output,
+  signal,
   ɵɵanimateEnter,
   ɵɵanimateEnterListener,
   ɵɵanimateLeave,
@@ -40,6 +45,7 @@ import {
   ɵɵrestoreView,
   ɵɵstoreLet,
   ɵɵstyleProp,
+  ɵɵtextInterpolate2,
   ɵɵtwoWayBindingSet,
   ɵɵtwoWayListener,
   ɵɵtwoWayProperty,
@@ -339,6 +345,31 @@ class StructuralAnimationBindingsComponent {
 })
 class StructuralNamespacesComponent {}
 
+class StructuralApiService {}
+
+@Component({
+  selector: 'structural-class-apis',
+  standalone: true,
+  template: `
+    <button type="button" (click)="increment()">
+      {{ label() }}: {{ count() }}
+    </button>
+    <button type="button" (click)="changed.emit()">Notify</button>
+  `,
+})
+class StructuralClassApisComponent {
+  name = input('reader');
+  count = signal(0);
+  label = computed(() => this.name().toUpperCase());
+  service = inject(StructuralApiService, { optional: true });
+  selection = model('');
+  changed = output<void>();
+
+  increment(): void {
+    this.count.update((value) => value + 1);
+  }
+}
+
 producerGlobal.__wakaruAngularRoots = [
   AppComponent,
   FixtureCardComponent,
@@ -359,6 +390,7 @@ producerGlobal.__wakaruAngularRoots = [
   StructuralTwoWayBindingComponent,
   StructuralAnimationBindingsComponent,
   StructuralNamespacesComponent,
+  StructuralClassApisComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
   (AppComponent as typeof AppComponent & { ɵcmp: unknown }).ɵcmp,
@@ -444,6 +476,11 @@ producerGlobal.__wakaruAngularDefinitions = [
       ɵcmp: unknown;
     }
   ).ɵcmp,
+  (
+    StructuralClassApisComponent as typeof StructuralClassApisComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
 ];
 producerGlobal.__wakaruIvyRuntime = {
   'ɵɵdefineComponent': ɵɵdefineComponent,
@@ -485,6 +522,7 @@ producerGlobal.__wakaruStructuralRuntime = [
   ɵɵrestoreView,
   ɵɵstoreLet,
   ɵɵstyleProp,
+  ɵɵtextInterpolate2,
   ɵɵtwoWayBindingSet,
   ɵɵtwoWayListener,
   ɵɵtwoWayProperty,

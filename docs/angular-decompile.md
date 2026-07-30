@@ -308,7 +308,11 @@ not produce standalone template syntax; their effect is represented by the
 recovered `<svg>`, `<math>`, and following HTML elements.
 
 Expression interpolation roles are paired with the already-proven text
-interpolation family and their exact parameter-forwarding behavior. Pure
+interpolation family and their exact parameter-forwarding behavior. Closure-
+renamed text interpolation wrappers with two through eight values are
+classified from their odd-arity public call shape, self return, DOM
+`nodeValue` update, and exact forwarding into the corresponding stateful
+interpolation helper. Arity alone is insufficient. Pure
 function bindings are expanded only when the callback and value arity are
 proven and the callback body can be substituted safely. Otherwise the runtime
 operation remains explicit unsupported output. Basic i18n recovery is
@@ -359,6 +363,50 @@ immediately invoked function when the corresponding parameter is never
 reassigned. This is generic symbol-edge normalization. It neither identifies a
 bundle format nor assigns an Ivy role; role classification remains in the Ivy
 analyzer.
+
+When that namespace originates from top-level `this`, the readable view uses
+`globalThis` before substituting it into a nested class or function. This
+preserves global ownership instead of emitting a misleading component access
+such as `this.runtime.helper()`. A `this`-rooted namespace reached under a
+dynamic function or class receiver is not canonicalized because its ownership
+cannot be proven.
+
+### Source-level Angular class APIs
+
+The recovered class can replace proven compiler/runtime identities with
+source-level imports for `computed`, `inject`, `input`, `model`, `output`, and
+`signal`. Ordinary named imports are canonicalized directly. Closure-renamed
+forms require structural runtime evidence and remain independent of template
+instruction inference:
+
+- writable signals require the read/set/update tuple plus the attached
+  `set`, `update`, and readonly-view behavior;
+- computed values require an attached reactive node, computation/value/error
+  behavior, and either the options-forwarding wrapper or its optimizer-
+  specialized single-argument form;
+- injection requires the options-to-flags family and its token/flags
+  forwarding wrapper, including Closure's optimized `typeof value > "u"`
+  spelling;
+- input and model signals require their reactive node, required-value error
+  code, and API-specific behavior; stable forwarding and `.required` aliases
+  are propagated;
+- output requires a zero-argument factory or inlined constructor whose class
+  proves the `subscribe`/emission contract, `unsubscribe` result, and Angular
+  `NG0953` destroyed-output behavior.
+
+Closure can specialize `signal(0)` into a zero-argument public helper and a
+zero-argument internal tuple factory. Wakaru restores the argument only when
+the complete relationship is proven and the baked value is a portable
+primitive literal. It does not emit `signal()` and silently change the initial
+value.
+
+Canonical API imports are introduced only when their names are not shadowed
+inside the recovered class. Otherwise the compiled callee remains. Query
+families such as `viewChild`, `viewChildren`, `contentChild`, and
+`contentChildren` are not yet restored structurally: optimized factories can
+be runtime-identical, while their actual role and locator live in compiled
+query metadata. Mapping those helpers from call shape alone would overclaim
+which source API was used.
 
 ## Artifact contract
 
@@ -500,6 +548,13 @@ component recovers `@for` / `@empty`. Unproven pipe and projection operations
 remain explicit partial regions. Two additional minimally rooted components
 retain Closure-renamed prefetch-idle and hydrate-idle helpers as negative
 fixtures; neither is classified as the ordinary idle trigger.
+
+The same generated `ADVANCED` profile includes a class-API component using
+`computed`, `inject`, `input`, `model`, `output`, and `signal`. It proves
+source-level imports after public helper names are removed, including
+Closure's zero-argument specialization of `signal(0)`, inlining of `output()`
+to its constructor, and multi-value text interpolation selected by the new
+template.
 
 The isolated and assignment-lowered Angular 22 fixtures also cover a
 multi-level `@let` / `@for` / `@if` listener with a local reference, structural
