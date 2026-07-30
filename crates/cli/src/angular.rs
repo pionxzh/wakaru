@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -93,15 +92,45 @@ pub(crate) fn single_file_angular_sidecar_path(
     artifact_filename: &str,
     output_path: &Path,
 ) -> PathBuf {
-    let sidecar_name = Path::new(artifact_filename)
+    let artifact_name = Path::new(artifact_filename)
         .file_name()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| OsStr::new("module.angular.ts"));
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty());
+    let sidecar_name = if artifact_name == Some("<stdin>.angular.ts") {
+        let output_stem = output_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("module");
+        format!("{output_stem}.angular.ts")
+    } else {
+        artifact_name
+            .map(portable_sidecar_filename)
+            .unwrap_or_else(|| "module.angular.ts".to_string())
+    };
     output_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .map(|parent| parent.join(sidecar_name))
+        .map(|parent| parent.join(&sidecar_name))
         .unwrap_or_else(|| PathBuf::from(sidecar_name))
+}
+
+fn portable_sidecar_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn is_angular_output_path(path: &Path) -> bool {
