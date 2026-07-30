@@ -52,6 +52,7 @@ struct RetainedInput {
     id: InputId,
     prepared: wakaru_core::driver::PreparedUnpackInput,
     preserve: bool,
+    unpack_mode: UnpackMode,
 }
 
 impl std::fmt::Debug for UnpackJob {
@@ -102,7 +103,7 @@ impl UnpackJob {
     /// remains usable. A successful push returns the assigned ID and
     /// detection result so a walker can report progress before `finish`.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt> {
-        self.push_with_unmatched(input, self.options.unmatched())
+        self.push_with_unmatched_and_mode(input, self.options.unmatched(), self.options.mode())
     }
 
     /// Detects and prepares one input using an input-specific plain-source
@@ -114,6 +115,21 @@ impl UnpackJob {
         &mut self,
         input: Source,
         unmatched: UnmatchedInput,
+    ) -> Result<InputReceipt> {
+        self.push_with_unmatched_and_mode(input, unmatched, self.options.mode())
+    }
+
+    /// Detects and prepares one input with input-specific plain-source and
+    /// scope-hoist policies while retaining every other job option.
+    ///
+    /// This is useful for mixed explicit-file and directory jobs, where
+    /// heuristic splitting may be desirable for an explicit file but not for
+    /// production chunks discovered while walking a directory.
+    pub fn push_with_unmatched_and_mode(
+        &mut self,
+        input: Source,
+        unmatched: UnmatchedInput,
+        unpack_mode: UnpackMode,
     ) -> Result<InputReceipt> {
         if input.source_map().is_some() {
             return Err(Error::new(
@@ -130,7 +146,7 @@ impl UnpackJob {
             parts.code,
             matches!(self.options.modules(), ModuleMode::Decompile(_))
                 && unmatched == UnmatchedInput::Process,
-            core_scope_hoist_policy(&self.options),
+            core_scope_hoist_policy_for_mode(&self.options, unpack_mode),
         )
         .map_err(|error| {
             let kind = from_core_driver_error(error.kind());
@@ -166,6 +182,7 @@ impl UnpackJob {
                 id,
                 prepared,
                 preserve,
+                unpack_mode,
             });
         }
 
@@ -197,6 +214,11 @@ impl UnpackJob {
             ));
         }
 
+        let inspection_only = self.options.mode() == UnpackMode::Inspect
+            || self
+                .retained
+                .iter()
+                .any(|input| input.unpack_mode == UnpackMode::Inspect);
         let mut processed = Vec::new();
         let mut preserved = Vec::new();
         for input in self.retained {
@@ -241,7 +263,7 @@ impl UnpackJob {
             artifacts,
             inputs: self.reports,
             diagnostics,
-            safety: if self.options.mode() == UnpackMode::Inspect {
+            safety: if inspection_only {
                 OutputSafety::InspectionOnly
             } else {
                 OutputSafety::Normal
@@ -299,20 +321,35 @@ fn run_core_unpack(
         diagnostics: !raw && options.diagnostics(),
         emit_source_map: options.output_source_maps(),
     };
-    let core_inputs = inputs.into_iter().map(|input| input.prepared).collect();
+    let core_inputs = inputs
+        .into_iter()
+        .map(|input| {
+            (
+                input.prepared,
+                core_scope_hoist_policy_for_mode(options, input.unpack_mode),
+            )
+        })
+        .collect();
 
-    let result = wakaru_core::driver::unpack_prepared_inputs_with_policy_and_capture(
+    let result = wakaru_core::driver::unpack_prepared_inputs_with_policies_and_capture(
         core_inputs,
         core_options,
         raw,
-        core_scope_hoist_policy(options),
         !raw && options.recovery().angular_components(),
     );
     result.map_err(|error| Error::new(ErrorKind::Internal, None, error))
 }
 
+#[cfg(test)]
 fn core_scope_hoist_policy(options: &UnpackOptions) -> wakaru_core::driver::ScopeHoistPolicy {
-    match options.mode() {
+    core_scope_hoist_policy_for_mode(options, options.mode())
+}
+
+fn core_scope_hoist_policy_for_mode(
+    options: &UnpackOptions,
+    mode: UnpackMode,
+) -> wakaru_core::driver::ScopeHoistPolicy {
+    match mode {
         UnpackMode::Strict => wakaru_core::driver::ScopeHoistPolicy::Disabled,
         UnpackMode::Inspect => wakaru_core::driver::ScopeHoistPolicy::Inspect,
         UnpackMode::Auto => match options.modules() {
@@ -707,6 +744,47 @@ mod tests {
     }
 
     #[test]
+    fn mixed_job_inputs_keep_their_own_scope_hoist_modes() {
+        let source = r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#;
+        let mut job = UnpackJob::new(
+            UnpackOptions::default()
+                .with_modules(ModuleMode::Raw)
+                .with_mode(UnpackMode::Auto),
+        )
+        .expect("mixed-mode job options should be valid");
+
+        let explicit = job
+            .push_with_unmatched_and_mode(
+                Source::new("explicit.js", source),
+                UnmatchedInput::Process,
+                UnpackMode::Auto,
+            )
+            .expect("explicit input should prepare");
+        let directory = job
+            .push_with_unmatched_and_mode(
+                Source::new("directory/chunk.js", source),
+                UnmatchedInput::Process,
+                UnpackMode::Strict,
+            )
+            .expect("directory input should prepare");
+
+        assert_eq!(explicit.detection, InputDetection::HeuristicScopeHoisted);
+        assert_eq!(directory.detection, InputDetection::Plain);
+        let output = job.finish().expect("mixed-mode job should finish");
+        assert_eq!(output.safety, OutputSafety::Normal);
+    }
+
+    #[test]
     fn unpack_profiles_map_to_valid_internal_policies() {
         assert_eq!(
             core_scope_hoist_policy(&UnpackOptions::default()),
@@ -868,6 +946,73 @@ mod tests {
             .contains(r#"import { ChildCardComponent } from "./child.angular";"#));
         assert!(parent.code.contains("imports: [ChildCardComponent]"));
         assert!(parent.code.contains("childType = ChildCardComponent;"));
+        assert!(!parent.code.contains(r#"from "./child.js""#));
+    }
+
+    #[test]
+    fn angular_evidence_imports_follow_recovered_module_filenames() {
+        let child = r#"
+            import * as core from "@angular/core";
+            const sentryMarker = {
+                "data-sentry-component": "ChildCard",
+                "data-sentry-source-file": "src/renamed-child.js"
+            };
+            void sentryMarker;
+            export class a {
+                static compiled = core.ɵɵdefineComponent({
+                    type: a,
+                    selectors: [["renamed-child-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "span");
+                    },
+                });
+            }
+        "#;
+        let parent = r#"
+            import * as core from "@angular/core";
+            import { a as c } from "./child.js";
+            export class b {
+                childType = c;
+                static compiled = core.ɵɵdefineComponent({
+                    type: b,
+                    selectors: [["renamed-parent-card"]],
+                    template(rf) {
+                        if (rf & 1) core.ɵɵelement(0, "main");
+                    },
+                    dependencies: [c],
+                });
+            }
+        "#;
+        let output = unpack(
+            vec![
+                Source::new("src/child.js", child),
+                Source::new("src/parent.js", parent),
+            ],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_unmatched(UnmatchedInput::Process)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed ESM modules should recover linked Angular artifacts");
+
+        assert!(output
+            .modules
+            .iter()
+            .any(|module| module.filename == "src/renamed-child.js"));
+        let parent = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"renamed-parent-card\""))
+            .expect("the renamed parent artifact should recover");
+        assert_eq!(parent.status, crate::ArtifactStatus::Complete);
+        assert!(
+            parent.code.contains(
+                r#"import { RenamedChildCardComponent } from "./src/renamed-child.angular";"#
+            ),
+            "{}",
+            parent.code
+        );
+        assert!(parent.code.contains("imports: [RenamedChildCardComponent]"));
         assert!(!parent.code.contains(r#"from "./child.js""#));
     }
 

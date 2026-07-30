@@ -26,6 +26,7 @@ pub use types::{
 };
 pub use unpack::{
     prepare_unpack_input, prepare_unpack_input_with_policy, unpack_prepared_inputs,
+    unpack_prepared_inputs_with_policies_and_capture, unpack_prepared_inputs_with_policy,
     unpack_prepared_inputs_with_policy_and_capture, PreparedInputDetection, PreparedUnpackInput,
     ScopeHoistPolicy,
 };

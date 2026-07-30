@@ -20,20 +20,39 @@ fn public_unpack_maps_cli_profiles() {
 #[test]
 fn angular_directory_auto_preserves_intact_production_chunks() {
     assert_eq!(
-        effective_directory_unpack_mode(UnpackMode::Auto, true, true),
+        directory_unpack_mode(UnpackMode::Auto, true),
         UnpackMode::Strict
     );
     assert_eq!(
-        effective_directory_unpack_mode(UnpackMode::Auto, true, false),
-        UnpackMode::Auto
-    );
-    assert_eq!(
-        effective_directory_unpack_mode(UnpackMode::Inspect, true, true),
+        directory_unpack_mode(UnpackMode::Inspect, true),
         UnpackMode::Inspect
     );
     assert_eq!(
-        effective_directory_unpack_mode(UnpackMode::Auto, false, true),
+        directory_unpack_mode(UnpackMode::Auto, false),
         UnpackMode::Auto
+    );
+}
+
+#[test]
+fn stdin_angular_sidecar_uses_the_output_stem() {
+    assert_eq!(
+        single_file_angular_sidecar_path("<stdin>.angular.ts", Path::new("dist/recovered.js"),),
+        PathBuf::from("dist/recovered.angular.ts")
+    );
+}
+
+#[test]
+fn aggregate_warnings_do_not_render_an_empty_filename_separator() {
+    let warning = CliWarning::new(
+        String::new(),
+        wakaru::DiagnosticCode::ArtifactRecoveryReport,
+        wakaru::DiagnosticSeverity::Warning,
+        "Angular recovery summary".to_string(),
+    );
+
+    assert_eq!(
+        format_warning_line("warning", &warning),
+        "warning: Angular recovery summary"
     );
 }
 
@@ -1440,6 +1459,59 @@ fn unpack_mixed_explicit_and_directory_inputs_processes_plain_explicit_file() {
             .any(|module| { module.input.ends_with("explicit.js") && !module.ranges.is_empty() }),
         "plain explicit provenance was dropped: {:?}",
         execution.output.provenance
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
+fn angular_mixed_input_keeps_auto_detection_for_the_explicit_file() {
+    let dir = temp_test_dir("angular-mixed-input-modes");
+    let chunks = dir.join("chunks");
+    fs::create_dir_all(&chunks).expect("create chunks dir");
+    let explicit = dir.join("explicit.js");
+    fs::write(
+        &explicit,
+        r#"
+            class A {}
+            const x1 = 1; function f1() { return x1; }
+            const x2 = 2; function f2() { return x2; }
+            const x3 = 3; function f3() { return x3; }
+            const x4 = 4; function f4() { return x4; }
+            function make() { return new A(); }
+            const result = make();
+            console.log(result, f1(), f2(), f3(), f4());
+            export { result };
+        "#,
+    )
+    .expect("write explicit scope-hoisted file");
+    fs::write(chunks.join("companion.js"), "export const companion = 1;")
+        .expect("write plain directory companion");
+
+    let execution = run_public_unpack(
+        &[explicit, chunks],
+        false,
+        UnpackMode::Auto,
+        DceMode::Off,
+        RewriteLevel::Standard,
+        false,
+        false,
+        true,
+    )
+    .expect("mixed Angular inputs should unpack");
+
+    assert!(execution
+        .output
+        .detected_formats
+        .contains(&CliBundleFormat::ScopeHoisted));
+    assert_eq!(
+        execution.scan_stats,
+        Some(DirectoryScanStats {
+            scanned: 1,
+            detected: 0,
+            processed: 1,
+            skipped: 0,
+        })
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");

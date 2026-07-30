@@ -861,7 +861,15 @@ fn print_warnings(warnings: &[CliWarning], styled: &Styled) {
         } else {
             styled.warning("warning")
         };
-        eprintln!("{label}: {}: {}", warning.filename, warning.message);
+        eprintln!("{}", format_warning_line(&label, warning));
+    }
+}
+
+fn format_warning_line(label: &str, warning: &CliWarning) -> String {
+    if warning.filename.is_empty() {
+        format!("{label}: {}", warning.message)
+    } else {
+        format!("{label}: {}: {}", warning.filename, warning.message)
     }
 }
 
@@ -1254,7 +1262,6 @@ fn run_public_unpack(
     angular: bool,
 ) -> Result<PublicUnpackExecution> {
     let saw_directory = paths.iter().any(|path| path.is_dir());
-    let unpack_mode = effective_directory_unpack_mode(unpack_mode, angular, saw_directory);
     let rewrite = wakaru::RewriteOptions::default()
         .with_level(public_rewrite_level(level))
         .with_dce(public_dce_mode(dce_mode));
@@ -1309,13 +1316,14 @@ fn run_public_unpack(
                     } else {
                         candidate.to_string_lossy().into_owned()
                     };
-                    let receipt = match job.push_with_unmatched(
+                    let receipt = match job.push_with_unmatched_and_mode(
                         wakaru::Source::new(source_filename, code),
                         if angular {
                             wakaru::UnmatchedInput::Process
                         } else {
                             wakaru::UnmatchedInput::Skip
                         },
+                        public_unpack_mode(directory_unpack_mode(unpack_mode, angular)),
                     ) {
                         Ok(receipt) => receipt,
                         Err(error) if error.kind() == wakaru::ErrorKind::Parse => {
@@ -1449,12 +1457,8 @@ fn sanitize_bun_embedded_path(name: &str, index: u32) -> String {
     sanitized
 }
 
-fn effective_directory_unpack_mode(
-    requested: UnpackMode,
-    angular: bool,
-    saw_directory: bool,
-) -> UnpackMode {
-    if angular && saw_directory && requested == UnpackMode::Auto {
+fn directory_unpack_mode(requested: UnpackMode, angular: bool) -> UnpackMode {
+    if angular && requested == UnpackMode::Auto {
         UnpackMode::Strict
     } else {
         requested
