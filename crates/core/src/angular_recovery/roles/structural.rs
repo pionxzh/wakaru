@@ -12,7 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::{
-    symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity, REFERENCE_CANDIDATE_NAME,
+    symbol_identity, IvyInstruction, IvyRoleTable, QueryInitializerRole, SymbolIdentity,
+    REFERENCE_CANDIDATE_NAME,
 };
 use crate::angular_recovery::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
 use crate::angular_recovery::PreparedAngularModule;
@@ -342,6 +343,82 @@ impl StructuralRoleEvidence {
                     .map(|arguments| (function.identity.clone(), arguments))
             })
             .collect()
+    }
+
+    pub(super) fn infer_query_initializer_roles(
+        &self,
+    ) -> Vec<(SymbolIdentity, QueryInitializerRole)> {
+        let mut roles = self
+            .functions
+            .iter()
+            .filter(|function| is_query_signal_factory_shape(function))
+            .map(|function| {
+                (
+                    function.identity.clone(),
+                    QueryInitializerRole::DynamicFactory,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        loop {
+            let inferred = self
+                .functions
+                .iter()
+                .filter(|function| !roles.contains_key(&function.identity))
+                .filter_map(|function| {
+                    query_initializer_wrapper_role(function, &roles)
+                        .map(|role| (function.identity.clone(), role))
+                })
+                .collect::<Vec<_>>();
+            if inferred.is_empty() {
+                break;
+            }
+            roles.extend(inferred);
+        }
+
+        let mut adjacency = HashMap::<SymbolIdentity, Vec<SymbolIdentity>>::new();
+        for (left, right) in &self.value_aliases {
+            adjacency
+                .entry(left.clone())
+                .or_default()
+                .push(right.clone());
+            adjacency
+                .entry(right.clone())
+                .or_default()
+                .push(left.clone());
+        }
+        let mut visited = HashSet::new();
+        for start in adjacency.keys() {
+            if visited.contains(start) {
+                continue;
+            }
+            let mut stack = vec![start.clone()];
+            let mut component = Vec::new();
+            while let Some(identity) = stack.pop() {
+                if !visited.insert(identity.clone()) {
+                    continue;
+                }
+                if let Some(neighbors) = adjacency.get(&identity) {
+                    stack.extend(neighbors.iter().cloned());
+                }
+                component.push(identity);
+            }
+            let component_roles = component
+                .iter()
+                .filter_map(|identity| roles.get(identity).copied())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let [role] = component_roles.as_slice() else {
+                continue;
+            };
+            let role = *role;
+            for identity in component {
+                roles.entry(identity).or_insert(role);
+            }
+        }
+
+        roles.into_iter().collect()
     }
 
     pub(super) fn infer_template_roles(
@@ -912,6 +989,106 @@ fn is_output_api_shape(
     }
     symbol_identity(created.callee.as_ref(), function.unresolved_ctxt)
         .is_some_and(|identity| output_classes.contains(&identity))
+}
+
+fn is_query_signal_factory_shape(function: &RuntimeFunction) -> bool {
+    if !(2..=3).contains(&function.params.len())
+        || single_returned_binding(&function.body).is_none()
+    {
+        return false;
+    }
+    let Some(first_only) = runtime_parameter_binding(function, 0) else {
+        return false;
+    };
+    let Some(required) = runtime_parameter_binding(function, 1) else {
+        return false;
+    };
+
+    struct Evidence<'a> {
+        first_only: &'a BindingKey,
+        required: &'a BindingKey,
+        reads_first_only: bool,
+        reads_required: bool,
+        required_error: bool,
+        reads_first_result: bool,
+    }
+
+    impl Visit for Evidence<'_> {
+        fn visit_expr(&mut self, expression: &Expr) {
+            if numeric_expression_value(expression) == Some(-951.0) {
+                self.required_error = true;
+            }
+            expression.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, identifier: &swc_core::ecma::ast::Ident) {
+            let binding = binding_key(identifier);
+            self.reads_first_only |= binding == *self.first_only;
+            self.reads_required |= binding == *self.required;
+        }
+
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if member_prop_name(&member.prop).as_deref() == Some("first") {
+                self.reads_first_result = true;
+            }
+            member.visit_children_with(self);
+        }
+    }
+
+    let mut evidence = Evidence {
+        first_only: &first_only,
+        required: &required,
+        reads_first_only: false,
+        reads_required: false,
+        required_error: false,
+        reads_first_result: false,
+    };
+    function.body.visit_with(&mut evidence);
+    evidence.reads_first_only
+        && evidence.reads_required
+        && evidence.required_error
+        && evidence.reads_first_result
+}
+
+fn query_initializer_wrapper_role(
+    function: &RuntimeFunction,
+    known_roles: &HashMap<SymbolIdentity, QueryInitializerRole>,
+) -> Option<QueryInitializerRole> {
+    let call = single_returned_call(&function.body)?;
+    let target = call_callee_identity(call, function.unresolved_ctxt)?;
+    if target == function.identity {
+        return None;
+    }
+    match known_roles.get(&target)? {
+        QueryInitializerRole::DynamicFactory => {
+            let [first_only, required, ..] = call.args.as_slice() else {
+                return None;
+            };
+            if first_only.spread.is_some() || required.spread.is_some() {
+                return None;
+            }
+            let first_only = static_boolean_value(first_only.expr.as_ref())?;
+            let required = static_boolean_value(required.expr.as_ref())?;
+            (!(!first_only && required)).then_some(QueryInitializerRole::Fixed {
+                multiple: !first_only,
+                required,
+            })
+        }
+        role @ QueryInitializerRole::Fixed { .. } => Some(*role),
+    }
+}
+
+fn static_boolean_value(expression: &Expr) -> Option<bool> {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Bool(boolean)) => Some(boolean.value),
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
+            match strip_parentheses(unary.arg.as_ref()) {
+                Expr::Lit(Lit::Num(number)) => Some(number.value == 0.0),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn is_output_ref_class_shape(class: &Class) -> bool {
