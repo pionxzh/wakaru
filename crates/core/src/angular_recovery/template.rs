@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
     Decl, Expr, ExprOrSpread, FnDecl, Function, Ident, Lit, MemberProp, Module, Pat, ReturnStmt,
     SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
@@ -17,7 +17,9 @@ use super::emitter::{
     handler_expression, print_template_expression, print_template_expression_with_aliases,
 };
 use super::roles::{IvyInstruction, IvyRoleTable};
-use super::syntax::{binding_key, member_prop_name, string_lit, BindingKey};
+use super::syntax::{
+    binding_key, member_prop_name, prop_name, string_lit, wtf8_to_string, BindingKey,
+};
 use super::{
     AngularRecoveryIssue, AngularRecoveryIssueKind, AngularRecoverySourceRange,
     AngularTemplatePhase, AngularTemplateRecoveryStats, AngularUnknownRuntimeCallShape,
@@ -182,7 +184,7 @@ impl Visit for TemplateFunctionCollector<'_> {
                     && self.binding_uses.direct_write_count(&key) == 1;
                 let supported_value = matches!(
                     strip_parentheses(assignment.right.as_ref()),
-                    Expr::Fn(_) | Expr::Ident(_)
+                    Expr::Fn(_) | Expr::Arrow(_) | Expr::Ident(_)
                 );
                 if stable_assignment && supported_value {
                     self.record_value(key, assignment.right.clone());
@@ -203,6 +205,7 @@ struct TemplateRecoveryEnvironment<'a> {
     projection_selectors: &'a [String],
     roles: &'a IvyRoleTable,
     template_functions: &'a TemplateFunctionTable,
+    implicit_view_context_properties: &'a HashSet<String>,
     unresolved_ctxt: SyntaxContext,
     source_start_pos: u32,
     cm: Lrc<SourceMap>,
@@ -227,7 +230,28 @@ struct TemplateOperationProvenance {
 struct InstructionCall {
     instruction: IvyInstruction,
     args: Vec<Box<Expr>>,
+    result_binding: Option<BindingKey>,
     provenance: TemplateOperationProvenance,
+}
+
+struct InlineReferenceAlias {
+    binding: BindingKey,
+    slot: usize,
+    context_depth: usize,
+    provenance: TemplateOperationProvenance,
+}
+
+struct PendingReferenceAlias {
+    binding: BindingKey,
+    call: InstructionCall,
+    context_depth: usize,
+    structural_candidate: bool,
+}
+
+struct PendingAliasDeclaration {
+    binding: BindingKey,
+    span: Span,
+    phase: Option<u8>,
 }
 
 #[derive(Default)]
@@ -244,10 +268,16 @@ struct TemplateProgram {
     saved_views: HashSet<BindingKey>,
     update_context_depth: usize,
     repeater_item_name: Option<String>,
-    reference_aliases: Vec<(BindingKey, InstructionCall, usize)>,
+    reference_aliases: Vec<PendingReferenceAlias>,
+    inline_reference_aliases: Vec<InlineReferenceAlias>,
     local_reference_names: HashMap<BindingKey, String>,
     pipes: HashMap<usize, String>,
+    pending_i18n_expressions: Vec<String>,
     artifact_references: HashSet<BindingKey>,
+    pending_alias_declarations: Vec<PendingAliasDeclaration>,
+    resolved_alias_declarations: HashSet<BindingKey>,
+    member_object_bindings: HashSet<BindingKey>,
+    implicit_view_context_properties: HashSet<String>,
 }
 
 impl TemplateProgram {
@@ -283,6 +313,7 @@ type ReferenceScope = HashMap<usize, String>;
 struct TemplateConstants {
     attributes: Vec<Vec<TemplateAttribute>>,
     local_references: Vec<Vec<String>>,
+    i18n_messages: Vec<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -298,6 +329,11 @@ enum TemplateNodeKind {
     },
     Text {
         value: String,
+    },
+    Let {
+        name: String,
+        value: Option<String>,
+        provenance: TemplateOperationProvenance,
     },
     EmbeddedView {
         tree: Box<TemplateTree>,
@@ -346,6 +382,7 @@ struct TemplateTree {
     stack: Vec<usize>,
     index_to_node: HashMap<usize, usize>,
     local_reference_slots: HashMap<usize, String>,
+    let_names: HashMap<usize, String>,
     placed_issue_operations: HashSet<(AngularTemplatePhase, usize)>,
     cursor: usize,
     pending_defer: Option<usize>,
@@ -565,11 +602,17 @@ pub(super) fn recover_template(
     let constants = constant_table
         .map(decode_component_constant_table)
         .unwrap_or_default();
+    let implicit_view_context_properties = discover_implicit_view_context_properties(
+        template_functions,
+        roles,
+        context.unresolved_ctxt,
+    );
     let environment = TemplateRecoveryEnvironment {
         constants: &constants,
         projection_selectors,
         roles,
         template_functions,
+        implicit_view_context_properties: &implicit_view_context_properties,
         unresolved_ctxt: context.unresolved_ctxt,
         source_start_pos: context.source_start_pos,
         cm: context.cm,
@@ -629,6 +672,9 @@ fn recover_template_tree(
     let view_id = *next_view_id;
     *next_view_id = view_id.saturating_add(1);
     let mut program = TemplateProgram::new(view_id);
+    program
+        .implicit_view_context_properties
+        .extend(environment.implicit_view_context_properties.iter().cloned());
     let Some(render_flags) = function_param_binding(template, 0) else {
         record_program_issue(
             &mut program,
@@ -651,15 +697,19 @@ fn recover_template_tree(
         }
     }
     if let Some(body) = &template.body {
+        program.member_object_bindings = member_object_bindings(body);
         program.saved_views.extend(inlined_current_view_captures(
             body,
             environment.roles,
             environment.unresolved_ctxt,
         ));
         collect_statements(&body.stmts, None, &render_flags, environment, &mut program);
+        record_unresolved_alias_declarations(&mut program, environment);
     }
 
     let mut tree = TemplateTree::default();
+    seed_local_reference_slots(&program.create, &mut tree, environment);
+    tree.let_names = seed_let_names(&program.update);
     for instruction in program.create.clone() {
         let insertion_point = tree.next_insertion_point();
         let issue_start = program.issues.len();
@@ -696,6 +746,32 @@ fn recover_template_tree(
             insertion_point,
         );
     }
+    let uninitialized_lets = tree
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.kind {
+            TemplateNodeKind::Let {
+                value: None,
+                provenance,
+                ..
+            } => Some(provenance.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for provenance in uninitialized_lets {
+        program.stats.malformed_instruction_calls += 1;
+        record_issue(
+            &mut program.issues,
+            issue_at_operation(
+                issue(
+                    AngularRecoveryIssueKind::MalformedInstruction,
+                    Some("ɵɵdeclareLet".to_string()),
+                    Some("let declaration has no matching stored value".to_string()),
+                ),
+                &provenance,
+            ),
+        );
+    }
     if !tree.stack.is_empty() {
         record_program_issue(
             &mut program,
@@ -719,29 +795,92 @@ fn resolve_reference_aliases(
     tree: &TemplateTree,
     ancestor_references: &[ReferenceScope],
 ) {
-    for (binding, call, context_depth) in std::mem::take(&mut program.reference_aliases) {
+    for alias in std::mem::take(&mut program.reference_aliases) {
+        let PendingReferenceAlias {
+            binding,
+            call,
+            context_depth,
+            structural_candidate,
+        } = alias;
         let Some(slot) = numeric_arg(&call.args, 0).filter(|_| call.args.len() == 1) else {
-            record_malformed_instruction(
-                &call,
-                "expected one numeric local-reference slot",
-                &mut program.issues,
-                &mut program.stats,
-            );
+            if structural_candidate {
+                record_unresolved_reference_candidate(
+                    &call,
+                    "candidate call does not have one numeric slot",
+                    program,
+                );
+            } else {
+                record_malformed_instruction(
+                    &call,
+                    "expected one numeric local-reference slot",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+            }
             continue;
         };
         let Some(name) = reference_name_at_depth(tree, ancestor_references, context_depth, slot)
         else {
-            record_missing_target(
-                &call,
-                &format!("no local reference at slot {slot} in context depth {context_depth}"),
-                &mut program.issues,
-                &mut program.stats,
-            );
+            if structural_candidate {
+                record_unresolved_reference_candidate(
+                    &call,
+                    &format!("no local reference at slot {slot} in context depth {context_depth}"),
+                    program,
+                );
+            } else {
+                record_missing_target(
+                    &call,
+                    &format!("no local reference at slot {slot} in context depth {context_depth}"),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+            }
             continue;
         };
         program.local_reference_names.insert(binding, name);
         program.stats.rendered_instruction_calls += 1;
     }
+    for alias in std::mem::take(&mut program.inline_reference_aliases) {
+        let Some(name) =
+            reference_name_at_depth(tree, ancestor_references, alias.context_depth, alias.slot)
+        else {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MissingTargetNode,
+                        Some("inlined ɵɵreference".to_string()),
+                        Some(format!(
+                            "no local reference at slot {} in context depth {}",
+                            alias.slot, alias.context_depth
+                        )),
+                    ),
+                    &alias.provenance,
+                ),
+            );
+            continue;
+        };
+        program.local_reference_names.insert(alias.binding, name);
+    }
+}
+
+fn record_unresolved_reference_candidate(
+    call: &InstructionCall,
+    detail: &str,
+    program: &mut TemplateProgram,
+) {
+    program.stats.unsupported_runtime_calls += 1;
+    record_issue(
+        &mut program.issues,
+        issue_at_operation(
+            issue(
+                AngularRecoveryIssueKind::UnknownRuntimeInstruction,
+                None,
+                Some(detail.to_string()),
+            ),
+            &call.provenance,
+        ),
+    );
 }
 
 fn reference_name_at_depth(
@@ -776,12 +915,19 @@ pub(super) fn ivy_template_score(
                 .map(|instruction| match instruction {
                     IvyInstruction::ElementStart
                     | IvyInstruction::Element
+                    | IvyInstruction::ElementContainerStart
+                    | IvyInstruction::ElementContainer
                     | IvyInstruction::Text
                     | IvyInstruction::Template
                     | IvyInstruction::Defer
                     | IvyInstruction::RepeaterCreate
+                    | IvyInstruction::DeclareLet
                     | IvyInstruction::Projection => 3,
                     IvyInstruction::ElementEnd
+                    | IvyInstruction::ElementContainerEnd
+                    | IvyInstruction::NamespaceHtml
+                    | IvyInstruction::NamespaceSvg
+                    | IvyInstruction::NamespaceMathMl
                     | IvyInstruction::Listener
                     | IvyInstruction::DeferOnIdle
                     | IvyInstruction::Conditional
@@ -794,13 +940,40 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::ResetView
                     | IvyInstruction::ProjectionDef
                     | IvyInstruction::Reference
+                    | IvyInstruction::StoreLet
+                    | IvyInstruction::ReadContextLet
                     | IvyInstruction::Pipe
                     | IvyInstruction::PipeBind1
                     | IvyInstruction::PipeBind2
                     | IvyInstruction::PipeBind3
                     | IvyInstruction::PipeBind4
                     | IvyInstruction::PipeBindV
+                    | IvyInstruction::PureFunction0
+                    | IvyInstruction::PureFunction1
+                    | IvyInstruction::PureFunction2
+                    | IvyInstruction::PureFunction3
+                    | IvyInstruction::PureFunction4
+                    | IvyInstruction::PureFunction5
+                    | IvyInstruction::PureFunction6
+                    | IvyInstruction::PureFunction7
+                    | IvyInstruction::PureFunction8
+                    | IvyInstruction::PureFunctionV
+                    | IvyInstruction::I18n
+                    | IvyInstruction::I18nStart
+                    | IvyInstruction::I18nEnd
+                    | IvyInstruction::I18nExp
+                    | IvyInstruction::I18nApply
                     | IvyInstruction::Advance
+                    | IvyInstruction::Interpolate
+                    | IvyInstruction::Interpolate1
+                    | IvyInstruction::Interpolate2
+                    | IvyInstruction::Interpolate3
+                    | IvyInstruction::Interpolate4
+                    | IvyInstruction::Interpolate5
+                    | IvyInstruction::Interpolate6
+                    | IvyInstruction::Interpolate7
+                    | IvyInstruction::Interpolate8
+                    | IvyInstruction::InterpolateV
                     | IvyInstruction::TextInterpolate
                     | IvyInstruction::TextInterpolate1
                     | IvyInstruction::TextInterpolate2
@@ -948,15 +1121,62 @@ fn collect_variable_declaration(
     program: &mut TemplateProgram,
 ) {
     for declarator in &declaration.decls {
+        if let (Pat::Ident(binding), None) = (&declarator.name, declarator.init.as_deref()) {
+            program
+                .pending_alias_declarations
+                .push(PendingAliasDeclaration {
+                    binding: binding_key(&binding.id),
+                    span: declarator.span,
+                    phase,
+                });
+            continue;
+        }
+
         let supported_compiler_alias = match (&declarator.name, declarator.init.as_deref()) {
             (Pat::Ident(binding), Some(Expr::Call(call))) => {
-                collect_current_view_alias(&binding.id, call, phase, environment, program)
+                collect_store_let_alias(&binding.id, call, phase, environment, program)
+                    || collect_read_context_let_alias(
+                        &binding.id,
+                        call,
+                        phase,
+                        environment,
+                        program,
+                    )
+                    || collect_current_view_alias(&binding.id, call, phase, environment, program)
                     || collect_next_context_alias(&binding.id, call, phase, environment, program)
                     || collect_reference_alias(&binding.id, call, phase, environment, program)
+                    || collect_reference_candidate_alias(
+                        &binding.id,
+                        call,
+                        phase,
+                        environment,
+                        program,
+                    )
             }
             (Pat::Ident(binding), Some(initializer)) => {
                 is_inlined_current_view_alias(&binding.id, initializer, phase, program)
+                    || collect_inlined_reference_alias(
+                        &binding.id,
+                        initializer,
+                        phase,
+                        declarator.span,
+                        environment,
+                        program,
+                    )
                     || collect_view_context_alias(&binding.id, initializer, phase, program)
+                    || collect_component_context_member_alias(
+                        &binding.id,
+                        initializer,
+                        phase,
+                        program,
+                    )
+                    || collect_next_context_member_expression_alias(
+                        &binding.id,
+                        initializer,
+                        phase,
+                        environment,
+                        program,
+                    )
             }
             _ => false,
         };
@@ -985,6 +1205,32 @@ fn collect_variable_declaration(
                 program,
             );
         }
+    }
+}
+
+fn record_unresolved_alias_declarations(
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) {
+    for declaration in std::mem::take(&mut program.pending_alias_declarations) {
+        if program
+            .resolved_alias_declarations
+            .contains(&declaration.binding)
+        {
+            continue;
+        }
+        record_program_issue(
+            program,
+            issue(
+                AngularRecoveryIssueKind::UnsupportedStatement,
+                None,
+                Some("declaration".to_string()),
+            ),
+            declaration.phase,
+            declaration.span,
+            None,
+            environment,
+        );
     }
 }
 
@@ -1042,6 +1288,108 @@ fn inlined_current_view_captures(
         .intersection(&collector.restored_bindings)
         .cloned()
         .collect()
+}
+
+fn member_object_bindings(body: &BlockStmt) -> HashSet<BindingKey> {
+    #[derive(Default)]
+    struct Collector {
+        bindings: HashSet<BindingKey>,
+    }
+
+    impl Visit for Collector {
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if let Expr::Ident(object) = strip_parentheses(member.obj.as_ref()) {
+                self.bindings.insert(binding_key(object));
+            }
+            member.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector::default();
+    body.visit_with(&mut collector);
+    collector.bindings
+}
+
+fn discover_implicit_view_context_properties(
+    template_functions: &TemplateFunctionTable,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> HashSet<String> {
+    struct Collector<'a> {
+        context: &'a BindingKey,
+        member_objects: &'a HashSet<BindingKey>,
+        properties: HashSet<String>,
+    }
+
+    impl Collector<'_> {
+        fn collect_alias(&mut self, binding: &swc_core::ecma::ast::Ident, initializer: &Expr) {
+            if !self.member_objects.contains(&binding_key(binding)) {
+                return;
+            }
+            let Expr::Member(member) = strip_parentheses(initializer) else {
+                return;
+            };
+            let Expr::Ident(context) = strip_parentheses(member.obj.as_ref()) else {
+                return;
+            };
+            if binding_key(context) != *self.context {
+                return;
+            }
+            let Some(property) = member_prop_name(&member.prop) else {
+                return;
+            };
+            let property = property.to_string();
+            if property == "$implicit" || is_likely_generated_alias(&property) {
+                self.properties.insert(property);
+            }
+        }
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if let (Pat::Ident(binding), Some(initializer)) =
+                (&declarator.name, declarator.init.as_deref())
+            {
+                self.collect_alias(&binding.id, initializer);
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
+                    self.collect_alias(&binding.id, assignment.right.as_ref());
+                }
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+    }
+
+    let mut properties = HashSet::new();
+    for function in template_functions.functions.values() {
+        if ivy_template_score(function, roles, unresolved_ctxt) < 3 {
+            continue;
+        }
+        let Some(context) = function_param_binding(function, 1) else {
+            continue;
+        };
+        let Some(body) = function.body.as_ref() else {
+            continue;
+        };
+        let member_objects = member_object_bindings(body);
+        let mut collector = Collector {
+            context: &context,
+            member_objects: &member_objects,
+            properties: HashSet::new(),
+        };
+        body.visit_with(&mut collector);
+        properties.extend(collector.properties);
+    }
+    properties
 }
 
 fn is_inlined_current_view_alias(
@@ -1120,6 +1468,9 @@ fn collect_view_context_alias(
     let Expr::Ident(context) = strip_parentheses(member.obj.as_ref()) else {
         return false;
     };
+    if program.component_contexts.contains(&binding_key(context)) {
+        return false;
+    }
     if program
         .view_context
         .as_ref()
@@ -1131,22 +1482,175 @@ fn collect_view_context_alias(
         return false;
     };
     let property = property.to_string();
-    if property != "$implicit" && !property.starts_with('$') {
-        return false;
-    }
-
-    let fallback = if property == "$implicit" {
-        "item"
-    } else {
+    let inferred_implicit = property == "$implicit"
+        || program.implicit_view_context_properties.contains(&property)
+        || (is_likely_generated_alias(&property)
+            && !program.component_contexts.contains(&binding_key(context))
+            && program
+                .member_object_bindings
+                .contains(&binding_key(binding)));
+    let fallback = if inferred_implicit {
+        program.repeater_item_name.as_deref().unwrap_or("item")
+    } else if property.starts_with('$') || !is_likely_generated_alias(&property) {
         property.as_str()
+    } else {
+        return false;
     };
     let name = recovered_view_alias_name(binding.sym.as_ref(), fallback);
     program
         .local_reference_names
         .insert(binding_key(binding), name.clone());
-    if property == "$implicit" {
+    if inferred_implicit {
+        program.implicit_view_context_properties.insert(property);
         program.repeater_item_name.get_or_insert(name);
     }
+    true
+}
+
+fn collect_component_context_member_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    initializer: &Expr,
+    phase: Option<u8>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return false;
+    };
+    let Expr::Ident(context) = strip_parentheses(member.obj.as_ref()) else {
+        return false;
+    };
+    if !program.component_contexts.contains(&binding_key(context)) {
+        return false;
+    }
+    let Some(property) = member_prop_name(&member.prop) else {
+        return false;
+    };
+    program.local_reference_names.insert(
+        binding_key(binding),
+        to_valid_identifier_name(property.as_ref()),
+    );
+    true
+}
+
+fn collect_next_context_member_expression_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    initializer: &Expr,
+    phase: Option<u8>,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return false;
+    };
+    let Expr::Call(call) = strip_parentheses(member.obj.as_ref()) else {
+        return false;
+    };
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::NextContext)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    let provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
+    let Some(property) = member_prop_name(&member.prop) else {
+        program.stats.malformed_instruction_calls += argument_lists.len();
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵnextContext".to_string()),
+                        Some("context member has a computed property".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
+        return true;
+    };
+    let Some(context_hop) = context_hop(&argument_lists) else {
+        program.stats.malformed_instruction_calls += argument_lists.len();
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵnextContext".to_string()),
+                        Some("unexpected context-depth arguments".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
+        return true;
+    };
+
+    program.stats.rendered_instruction_calls += argument_lists.len();
+    program.local_reference_names.insert(
+        binding_key(binding),
+        to_valid_identifier_name(property.as_ref()),
+    );
+    program.update_context_depth = program.update_context_depth.saturating_add(context_hop);
+    true
+}
+
+fn collect_inlined_reference_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    initializer: &Expr,
+    phase: Option<u8>,
+    span: Span,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parentheses(initializer) else {
+        return false;
+    };
+    if !matches!(strip_parentheses(member.obj.as_ref()), Expr::Member(_)) {
+        return false;
+    }
+    let MemberProp::Computed(computed) = &member.prop else {
+        return false;
+    };
+    let Some(index) = numeric_expr(computed.expr.as_ref()) else {
+        return false;
+    };
+    let Some(slot) = index.checked_sub(27) else {
+        return false;
+    };
+    let provenance = program.next_operation(
+        AngularTemplatePhase::Update,
+        span,
+        None,
+        environment.source_start_pos,
+    );
+    program.inline_reference_aliases.push(InlineReferenceAlias {
+        binding: binding_key(binding),
+        slot,
+        context_depth: program.update_context_depth,
+        provenance,
+    });
     true
 }
 
@@ -1228,6 +1732,147 @@ fn context_hop(argument_lists: &[&[ExprOrSpread]]) -> Option<usize> {
     }
 }
 
+fn collect_store_let_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    call: &CallExpr,
+    phase: Option<u8>,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::StoreLet)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    let provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
+    program.update.extend(
+        argument_lists
+            .into_iter()
+            .zip(provenances)
+            .map(|(args, provenance)| InstructionCall {
+                instruction: IvyInstruction::StoreLet,
+                args: args.iter().map(|argument| argument.expr.clone()).collect(),
+                result_binding: Some(binding_key(binding)),
+                provenance,
+            }),
+    );
+    true
+}
+
+fn collect_read_context_let_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    call: &CallExpr,
+    phase: Option<u8>,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .instruction_for_expr(root, environment.unresolved_ctxt)
+            == Some(IvyInstruction::ReadContextLet)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    let provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
+    let [arguments] = argument_lists.as_slice() else {
+        program.stats.malformed_instruction_calls += argument_lists.len();
+        for provenance in provenances {
+            record_issue(
+                &mut program.issues,
+                issue_at_operation(
+                    issue(
+                        AngularRecoveryIssueKind::MalformedInstruction,
+                        Some("ɵɵreadContextLet".to_string()),
+                        Some("unexpected chained invocation".to_string()),
+                    ),
+                    &provenance,
+                ),
+            );
+        }
+        return true;
+    };
+    let [slot] = *arguments else {
+        program.stats.malformed_instruction_calls += 1;
+        record_issue(
+            &mut program.issues,
+            issue_at_operation(
+                issue(
+                    AngularRecoveryIssueKind::MalformedInstruction,
+                    Some("ɵɵreadContextLet".to_string()),
+                    Some("expected one numeric let slot".to_string()),
+                ),
+                provenances
+                    .first()
+                    .expect("a call chain always contains one invocation"),
+            ),
+        );
+        return true;
+    };
+    let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
+        program.stats.malformed_instruction_calls += 1;
+        record_issue(
+            &mut program.issues,
+            issue_at_operation(
+                issue(
+                    AngularRecoveryIssueKind::MalformedInstruction,
+                    Some("ɵɵreadContextLet".to_string()),
+                    Some("expected one numeric let slot".to_string()),
+                ),
+                provenances
+                    .first()
+                    .expect("a call chain always contains one invocation"),
+            ),
+        );
+        return true;
+    };
+    program.local_reference_names.insert(
+        binding_key(binding),
+        recovered_let_name(Some(binding.sym.as_ref()), slot),
+    );
+    program.stats.rendered_instruction_calls += 1;
+    true
+}
+
+fn recovered_let_name(binding: Option<&str>, slot: usize) -> String {
+    let fallback = if slot == 0 {
+        "value".to_string()
+    } else {
+        format!("value{slot}")
+    };
+    binding.map_or_else(
+        || fallback.clone(),
+        |binding| recovered_view_alias_name(binding, &fallback),
+    )
+}
+
 fn collect_reference_alias(
     binding: &swc_core::ecma::ast::Ident,
     call: &CallExpr,
@@ -1276,18 +1921,72 @@ fn collect_reference_alias(
     let provenance = provenances
         .pop()
         .expect("a call chain always contains one invocation");
-    program.reference_aliases.push((
-        binding_key(binding),
-        InstructionCall {
+    program.reference_aliases.push(PendingReferenceAlias {
+        binding: binding_key(binding),
+        call: InstructionCall {
             instruction: IvyInstruction::Reference,
             args: argument_lists[0]
                 .iter()
                 .map(|argument| argument.expr.clone())
                 .collect(),
+            result_binding: None,
             provenance,
         },
-        program.update_context_depth,
-    ));
+        context_depth: program.update_context_depth,
+        structural_candidate: false,
+    });
+    true
+}
+
+fn collect_reference_candidate_alias(
+    binding: &swc_core::ecma::ast::Ident,
+    call: &CallExpr,
+    phase: Option<u8>,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    program: &mut TemplateProgram,
+) -> bool {
+    if phase != Some(2) {
+        return false;
+    }
+    let Some((root, argument_lists)) = call_chain(call).filter(|(root, _)| {
+        environment
+            .roles
+            .is_reference_candidate_expr(root, environment.unresolved_ctxt)
+    }) else {
+        return false;
+    };
+
+    program.stats.runtime_calls_observed += argument_lists.len();
+    let mut provenances = call_provenances(
+        program,
+        phase,
+        call,
+        root,
+        argument_lists.len(),
+        environment,
+    );
+    let provenance = provenances
+        .pop()
+        .expect("a call chain always contains one invocation");
+    let args = if let [arguments] = argument_lists.as_slice() {
+        arguments
+            .iter()
+            .map(|argument| argument.expr.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    program.reference_aliases.push(PendingReferenceAlias {
+        binding: binding_key(binding),
+        call: InstructionCall {
+            instruction: IvyInstruction::Reference,
+            args,
+            result_binding: None,
+            provenance,
+        },
+        context_depth: program.update_context_depth,
+        structural_candidate: true,
+    });
     true
 }
 
@@ -1365,14 +2064,61 @@ fn collect_expression(
             );
         }
         Expr::Assign(assignment) => {
+            if phase == Some(1)
+                && environment
+                    .roles
+                    .is_namespace_html_reset_assignment(assignment, environment.unresolved_ctxt)
+            {
+                return;
+            }
+            let pending_alias_binding = match &assignment.left {
+                AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                    if assignment.op == AssignOp::Assign =>
+                {
+                    let key = binding_key(&binding.id);
+                    program
+                        .pending_alias_declarations
+                        .iter()
+                        .any(|declaration| declaration.binding == key)
+                        .then_some(key)
+                }
+                _ => None,
+            };
             let supported_context_alias = match (&assignment.left, assignment.right.as_ref()) {
                 (AssignTarget::Simple(SimpleAssignTarget::Ident(binding)), right)
                     if assignment.op == AssignOp::Assign =>
                 {
                     collect_view_context_alias(&binding.id, right, phase, program)
+                        || collect_inlined_reference_alias(
+                            &binding.id,
+                            right,
+                            phase,
+                            assignment.span,
+                            environment,
+                            program,
+                        )
+                        || collect_next_context_member_expression_alias(
+                            &binding.id,
+                            right,
+                            phase,
+                            environment,
+                            program,
+                        )
                         || match right {
                             Expr::Call(call) => {
-                                collect_next_context_alias(
+                                collect_store_let_alias(
+                                    &binding.id,
+                                    call,
+                                    phase,
+                                    environment,
+                                    program,
+                                ) || collect_read_context_let_alias(
+                                    &binding.id,
+                                    call,
+                                    phase,
+                                    environment,
+                                    program,
+                                ) || collect_next_context_alias(
                                     &binding.id,
                                     call,
                                     phase,
@@ -1384,14 +2130,33 @@ fn collect_expression(
                                     phase,
                                     environment,
                                     program,
+                                ) || collect_reference_candidate_alias(
+                                    &binding.id,
+                                    call,
+                                    phase,
+                                    environment,
+                                    program,
                                 )
                             }
                             _ => false,
                         }
+                        || pending_alias_binding.as_ref().is_some_and(|key| {
+                            !program.resolved_alias_declarations.contains(key)
+                                && collect_component_context_member_alias(
+                                    &binding.id,
+                                    right,
+                                    phase,
+                                    program,
+                                )
+                        })
                 }
                 _ => false,
             };
-            if !supported_context_alias {
+            if supported_context_alias {
+                if let Some(binding) = pending_alias_binding {
+                    program.resolved_alias_declarations.insert(binding);
+                }
+            } else {
                 record_program_issue(
                     program,
                     issue(
@@ -1616,6 +2381,7 @@ fn collect_expression(
                     .map(|(args, provenance)| InstructionCall {
                         instruction,
                         args: args.iter().map(|arg| arg.expr.clone()).collect(),
+                        result_binding: None,
                         provenance,
                     }),
             );
@@ -1642,6 +2408,12 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
             IvyInstruction::ElementStart
                 | IvyInstruction::ElementEnd
                 | IvyInstruction::Element
+                | IvyInstruction::ElementContainerStart
+                | IvyInstruction::ElementContainerEnd
+                | IvyInstruction::ElementContainer
+                | IvyInstruction::NamespaceHtml
+                | IvyInstruction::NamespaceSvg
+                | IvyInstruction::NamespaceMathMl
                 | IvyInstruction::Text
                 | IvyInstruction::Listener
                 | IvyInstruction::Template
@@ -1651,6 +2423,10 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::ProjectionDef
                 | IvyInstruction::Projection
                 | IvyInstruction::Pipe
+                | IvyInstruction::DeclareLet
+                | IvyInstruction::I18n
+                | IvyInstruction::I18nStart
+                | IvyInstruction::I18nEnd
         ),
         2 => matches!(
             instruction,
@@ -1670,6 +2446,9 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::StyleProp
                 | IvyInstruction::Conditional
                 | IvyInstruction::Repeater
+                | IvyInstruction::StoreLet
+                | IvyInstruction::I18nExp
+                | IvyInstruction::I18nApply
         ),
         _ => false,
     }
@@ -1812,6 +2591,7 @@ fn recover_view_listener_handler(
     let mut local_names = program.local_reference_names.clone();
     let mut expression_aliases = HashMap::new();
     let mut effects = Vec::new();
+    let mut effect_references = Vec::new();
     if let Some(event) = handler_event_binding(handler) {
         local_names.insert(event, "$event".to_string());
     }
@@ -1833,11 +2613,6 @@ fn recover_view_listener_handler(
                         let Some(property) = restored_view_property(initializer) else {
                             return Err("restored view has no context property".to_string());
                         };
-                        if property != "$implicit" {
-                            return Err(format!(
-                                "unsupported restored view context property {property}"
-                            ));
-                        }
                         let argument_lists = validated_single_call(call, "ɵɵrestoreView")?;
                         let [saved_view] = argument_lists[0] else {
                             return Err("ɵɵrestoreView expected one saved view".to_string());
@@ -1851,10 +2626,20 @@ fn recover_view_listener_handler(
                                 "ɵɵrestoreView does not reference a captured view".to_string()
                             );
                         }
-                        let item = program.repeater_item_name.clone().unwrap_or_else(|| {
-                            recovered_view_alias_name(binding.id.sym.as_ref(), "item")
-                        });
-                        local_names.insert(binding_key(&binding.id), item);
+                        let name = if property == "$implicit"
+                            || program.implicit_view_context_properties.contains(&property)
+                        {
+                            program.repeater_item_name.clone().unwrap_or_else(|| {
+                                recovered_view_alias_name(binding.id.sym.as_ref(), "item")
+                            })
+                        } else if !is_likely_generated_alias(&property) {
+                            to_valid_identifier_name(&property)
+                        } else {
+                            return Err(format!(
+                                "unsupported restored view context property {property}"
+                            ));
+                        };
+                        local_names.insert(binding_key(&binding.id), name);
                         runtime_calls += 1;
                         context_depth = 0;
                         continue;
@@ -1872,6 +2657,21 @@ fn recover_view_listener_handler(
                     let Expr::Call(call) = strip_parentheses(initializer) else {
                         return Err("unsupported view-local alias initializer".to_string());
                     };
+                    if is_instruction_call(call, IvyInstruction::ReadContextLet, environment) {
+                        let argument_lists = validated_single_call(call, "ɵɵreadContextLet")?;
+                        let [slot] = argument_lists[0] else {
+                            return Err("ɵɵreadContextLet expected one let slot".to_string());
+                        };
+                        let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
+                            return Err("ɵɵreadContextLet slot is not numeric".to_string());
+                        };
+                        local_names.insert(
+                            binding_key(&binding.id),
+                            recovered_let_name(Some(binding.id.sym.as_ref()), slot),
+                        );
+                        runtime_calls += 1;
+                        continue;
+                    }
                     if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
                         validate_restore_view_call(call, program)?;
                         component_contexts.insert(binding_key(&binding.id));
@@ -1879,7 +2679,9 @@ fn recover_view_listener_handler(
                         context_depth = 0;
                         continue;
                     }
-                    if is_instruction_call(call, IvyInstruction::Reference, environment) {
+                    if is_instruction_call(call, IvyInstruction::Reference, environment)
+                        || is_reference_candidate_call(call, environment)
+                    {
                         let argument_lists = validated_single_call(call, "ɵɵreference")?;
                         let [slot] = argument_lists[0] else {
                             return Err("ɵɵreference expected one slot".to_string());
@@ -1932,13 +2734,35 @@ fn recover_view_listener_handler(
                         context_depth = context_depth.saturating_add(context_hop);
                         continue;
                     }
+                    if is_instruction_call(call, IvyInstruction::ReadContextLet, environment) {
+                        let argument_lists = validated_single_call(call, "ɵɵreadContextLet")?;
+                        let [slot] = argument_lists[0] else {
+                            return Err("ɵɵreadContextLet expected one let slot".to_string());
+                        };
+                        if numeric_expr(slot.expr.as_ref()).is_none() {
+                            return Err("ɵɵreadContextLet slot is not numeric".to_string());
+                        }
+                        runtime_calls += 1;
+                        continue;
+                    }
                 }
                 if contains_runtime_call(expression.expr.as_ref(), environment) {
-                    return Err(
-                        "unsupported Ivy runtime call in restored handler expression".to_string(),
-                    );
+                    let (rewritten, rewritten_calls, context_hops) =
+                        rewrite_next_context_members(expression.expr.as_ref(), environment)?;
+                    if contains_runtime_call(rewritten.as_ref(), environment) {
+                        return Err(
+                            "unsupported Ivy runtime call in restored handler expression"
+                                .to_string(),
+                        );
+                    }
+                    runtime_calls += rewritten_calls;
+                    context_depth = context_depth.saturating_add(context_hops);
+                    effect_references.push(expression.expr.clone());
+                    effects.push(rewritten);
+                } else {
+                    effect_references.push(expression.expr.clone());
+                    effects.push(expression.expr.clone());
                 }
-                effects.push(expression.expr.clone());
             }
             Stmt::Return(ReturnStmt {
                 arg: Some(returned),
@@ -1975,6 +2799,16 @@ fn recover_view_listener_handler(
     if !saw_reset_return {
         return Err("restored handler has no ɵɵresetView return".to_string());
     }
+    let action_references = action.clone();
+    if let Some(raw_action) = action.take() {
+        let (rewritten, rewritten_calls, _) =
+            rewrite_next_context_members(raw_action.as_ref(), environment)?;
+        if contains_runtime_call(rewritten.as_ref(), environment) {
+            return Err("unsupported Ivy runtime call in restored handler expression".to_string());
+        }
+        runtime_calls += rewritten_calls;
+        action = Some(rewritten);
+    }
     let mut sources = Vec::with_capacity(effects.len() + usize::from(action.is_some()));
     for effect in &effects {
         sources.push(
@@ -2004,11 +2838,11 @@ fn recover_view_listener_handler(
         sources.push("undefined".to_string());
     }
     let source = sources.join("; ");
-    let mut artifact_references = action
+    let mut artifact_references = action_references
         .as_deref()
         .map(expression_references)
         .unwrap_or_default();
-    for effect in &effects {
+    for effect in &effect_references {
         artifact_references.extend(expression_references(effect.as_ref()));
     }
     for alias in expression_aliases.values() {
@@ -2019,6 +2853,70 @@ fn recover_view_listener_handler(
         runtime_calls,
         artifact_references,
     }))
+}
+
+fn rewrite_next_context_members(
+    expression: &Expr,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<(Box<Expr>, usize, usize), String> {
+    struct Rewriter<'a> {
+        environment: &'a TemplateRecoveryEnvironment<'a>,
+        runtime_calls: usize,
+        context_hops: usize,
+        error: Option<String>,
+    }
+
+    impl VisitMut for Rewriter<'_> {
+        fn visit_mut_expr(&mut self, expression: &mut Expr) {
+            expression.visit_mut_children_with(self);
+            if self.error.is_some() {
+                return;
+            }
+            let Expr::Member(member) = expression else {
+                return;
+            };
+            let Expr::Call(call) = strip_parentheses(member.obj.as_ref()) else {
+                return;
+            };
+            if !is_instruction_call(call, IvyInstruction::NextContext, self.environment) {
+                return;
+            }
+            let Ok(argument_lists) = validated_single_call(call, "ɵɵnextContext") else {
+                self.error = Some("ɵɵnextContext has an unexpected chained invocation".to_string());
+                return;
+            };
+            let Some(context_hop) = context_hop(&argument_lists) else {
+                self.error =
+                    Some("ɵɵnextContext has unexpected context-depth arguments".to_string());
+                return;
+            };
+            let MemberProp::Ident(property) = &member.prop else {
+                self.error =
+                    Some("ɵɵnextContext result has a computed context property".to_string());
+                return;
+            };
+            self.runtime_calls += argument_lists.len();
+            self.context_hops = self.context_hops.saturating_add(context_hop);
+            *expression = Expr::Ident(Ident::new(
+                property.sym.clone(),
+                property.span,
+                SyntaxContext::empty(),
+            ));
+        }
+    }
+
+    let mut expression = Box::new(expression.clone());
+    let mut rewriter = Rewriter {
+        environment,
+        runtime_calls: 0,
+        context_hops: 0,
+        error: None,
+    };
+    expression.visit_mut_with(&mut rewriter);
+    if let Some(error) = rewriter.error {
+        return Err(error);
+    }
+    Ok((expression, rewriter.runtime_calls, rewriter.context_hops))
 }
 
 fn next_context_member_alias(
@@ -2071,7 +2969,7 @@ fn contains_runtime_call(expression: &Expr, environment: &TemplateRecoveryEnviro
                 || self
                     .environment
                     .roles
-                    .is_known_runtime_member(root, self.environment.unresolved_ctxt)
+                    .is_core_namespace_member(root, self.environment.unresolved_ctxt)
             {
                 self.found = true;
                 return;
@@ -2172,6 +3070,17 @@ fn is_instruction_call(
     })
 }
 
+fn is_reference_candidate_call(
+    call: &CallExpr,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> bool {
+    call_chain(call).is_some_and(|(root, _)| {
+        environment
+            .roles
+            .is_reference_candidate_expr(root, environment.unresolved_ctxt)
+    })
+}
+
 fn validate_restore_view_call(
     call: &CallExpr,
     program: &TemplateProgram,
@@ -2252,7 +3161,7 @@ fn apply_create_instruction(
                 .and_then(|index| environment.constants.attributes.get(index).cloned())
                 .unwrap_or_default();
             let node = tree.push_node(index, TemplateNodeKind::Element { tag, attributes });
-            attach_local_references(call, index, node, tree, environment);
+            attach_local_references(call, index, node, 3, tree, environment);
             tree.stack.push(node);
         }
         IvyInstruction::Element => {
@@ -2278,13 +3187,62 @@ fn apply_create_instruction(
                 .and_then(|index| environment.constants.attributes.get(index).cloned())
                 .unwrap_or_default();
             let node = tree.push_node(index, TemplateNodeKind::Element { tag, attributes });
-            attach_local_references(call, index, node, tree, environment);
+            attach_local_references(call, index, node, 3, tree, environment);
         }
         IvyInstruction::ElementEnd => {
             if tree.stack.pop().is_none() {
                 record_missing_target(
                     call,
                     "no open element",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+        }
+        IvyInstruction::ElementContainerStart | IvyInstruction::ElementContainer => {
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric ng-container index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let attributes = numeric_arg(&call.args, 1)
+                .and_then(|index| environment.constants.attributes.get(index).cloned())
+                .unwrap_or_default();
+            let node = tree.push_node(
+                index,
+                TemplateNodeKind::Element {
+                    tag: "ng-container".to_string(),
+                    attributes,
+                },
+            );
+            attach_local_references(call, index, node, 2, tree, environment);
+            if call.instruction == IvyInstruction::ElementContainerStart {
+                tree.stack.push(node);
+            }
+        }
+        IvyInstruction::ElementContainerEnd => {
+            if tree.stack.pop().is_none() {
+                record_missing_target(
+                    call,
+                    "no open ng-container",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+        }
+        IvyInstruction::NamespaceHtml
+        | IvyInstruction::NamespaceSvg
+        | IvyInstruction::NamespaceMathMl => {
+            if !call.args.is_empty() {
+                record_malformed_instruction(
+                    call,
+                    "namespace switch does not accept arguments",
                     &mut program.issues,
                     &mut program.stats,
                 );
@@ -2307,6 +3265,118 @@ fn apply_create_instruction(
                 .and_then(|arg| string_lit(arg.as_ref()))
                 .unwrap_or_default();
             tree.push_node(index, TemplateNodeKind::Text { value });
+        }
+        IvyInstruction::DeclareLet => {
+            if call.args.len() != 1 {
+                record_malformed_instruction(
+                    call,
+                    "expected one let slot",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "let slot is not numeric",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let name = tree
+                .let_names
+                .get(&index)
+                .cloned()
+                .unwrap_or_else(|| recovered_let_name(None, index));
+            tree.push_node(
+                index,
+                TemplateNodeKind::Let {
+                    name,
+                    value: None,
+                    provenance: call.provenance.clone(),
+                },
+            );
+        }
+        IvyInstruction::I18n => {
+            if !matches!(call.args.len(), 2 | 3) {
+                record_malformed_instruction(
+                    call,
+                    "expected an i18n node index, message index, and optional sub-template index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric i18n node index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(message_index) = numeric_arg(&call.args, 1) else {
+                record_malformed_instruction(
+                    call,
+                    "missing numeric i18n message index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(message) = environment
+                .constants
+                .i18n_messages
+                .get(message_index)
+                .and_then(|message| message.clone())
+                .filter(|message| is_basic_i18n_message(message))
+            else {
+                record_unsupported_instruction(
+                    call,
+                    "i18n message constant is missing or contains structural opcodes",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(parent) = tree.stack.last().copied() else {
+                record_missing_target(
+                    call,
+                    "i18n text has no containing element",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            tree.add_attribute(
+                parent,
+                TemplateAttribute {
+                    name: "i18n".to_string(),
+                    value: None,
+                },
+            );
+            tree.push_node(index, TemplateNodeKind::Text { value: message });
+        }
+        IvyInstruction::I18nStart => {
+            record_unsupported_instruction(
+                call,
+                "structural i18n regions are not yet reconstructed",
+                &mut program.issues,
+                &mut program.stats,
+            );
+            return Ok(());
+        }
+        IvyInstruction::I18nEnd => {
+            record_unsupported_instruction(
+                call,
+                "structural i18n regions are not yet reconstructed",
+                &mut program.issues,
+                &mut program.stats,
+            );
+            return Ok(());
         }
         IvyInstruction::Listener => {
             let Some(node) = tree.stack.last().copied() else {
@@ -2708,7 +3778,7 @@ fn apply_create_instruction(
             let attributes = numeric_arg(&call.args, 5)
                 .and_then(|index| environment.constants.attributes.get(index).cloned())
                 .unwrap_or_default();
-            tree.push_node(
+            let node = tree.push_node(
                 index,
                 TemplateNodeKind::EmbeddedView {
                     tree: Box::new(child_tree),
@@ -2716,6 +3786,7 @@ fn apply_create_instruction(
                     branch: None,
                 },
             );
+            attach_local_references(call, index, node, 6, tree, environment);
         }
         IvyInstruction::Defer => {
             if !(3..=10).contains(&call.args.len()) {
@@ -3109,17 +4180,86 @@ fn optional_defer_template_index(
         .ok_or("defer child-template index is not numeric or null")
 }
 
+fn seed_local_reference_slots(
+    calls: &[InstructionCall],
+    tree: &mut TemplateTree,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) {
+    for call in calls {
+        let reference_argument = match call.instruction {
+            IvyInstruction::ElementStart | IvyInstruction::Element => {
+                if call
+                    .args
+                    .get(1)
+                    .and_then(|argument| string_lit(argument.as_ref()))
+                    .is_none()
+                {
+                    continue;
+                }
+                3
+            }
+            IvyInstruction::ElementContainerStart | IvyInstruction::ElementContainer => 2,
+            IvyInstruction::Template => {
+                if call.args.get(1).is_none() {
+                    continue;
+                }
+                6
+            }
+            _ => continue,
+        };
+        let Some(node_index) = numeric_arg(&call.args, 0) else {
+            continue;
+        };
+        let Some(references) = local_references_for_call(call, reference_argument, environment)
+        else {
+            continue;
+        };
+        for (offset, name) in references.iter().enumerate() {
+            tree.local_reference_slots
+                .insert(node_index + offset + 1, name.clone());
+        }
+    }
+}
+
+fn seed_let_names(calls: &[InstructionCall]) -> HashMap<usize, String> {
+    let mut cursor = 0usize;
+    let mut names = HashMap::new();
+    for call in calls {
+        match call.instruction {
+            IvyInstruction::Advance => {
+                let amount = if call.args.is_empty() {
+                    Some(1)
+                } else if call.args.len() == 1 {
+                    numeric_arg(&call.args, 0)
+                } else {
+                    None
+                };
+                if let Some(amount) = amount {
+                    cursor = cursor.saturating_add(amount);
+                }
+            }
+            IvyInstruction::StoreLet => {
+                let binding = call
+                    .result_binding
+                    .as_ref()
+                    .map(|binding| binding.0.as_ref());
+                names.insert(cursor, recovered_let_name(binding, cursor));
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 fn attach_local_references(
     call: &InstructionCall,
     node_index: usize,
     node: usize,
+    reference_argument: usize,
     tree: &mut TemplateTree,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) {
-    let Some(reference_index) = numeric_arg(&call.args, 3) else {
-        return;
-    };
-    let Some(references) = environment.constants.local_references.get(reference_index) else {
+    let Some(references) = local_references_for_call(call, reference_argument, environment) else {
         return;
     };
     for (offset, name) in references.iter().enumerate() {
@@ -3133,6 +4273,16 @@ fn attach_local_references(
         tree.local_reference_slots
             .insert(node_index + offset + 1, name.clone());
     }
+}
+
+fn local_references_for_call<'a>(
+    call: &InstructionCall,
+    reference_argument: usize,
+    environment: &'a TemplateRecoveryEnvironment<'_>,
+) -> Option<&'a [String]> {
+    numeric_arg(&call.args, reference_argument)
+        .and_then(|index| environment.constants.local_references.get(index))
+        .map(Vec::as_slice)
 }
 
 fn apply_update_instruction(
@@ -3158,6 +4308,60 @@ fn apply_update_instruction(
                 amount
             };
             tree.cursor = tree.cursor.saturating_add(amount);
+        }
+        IvyInstruction::StoreLet => {
+            if call.args.len() != 1 {
+                record_malformed_instruction(
+                    call,
+                    "expected one let value",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Ok(value) =
+                recover_template_expression(call.args[0].as_ref(), program, environment)
+            else {
+                record_malformed_instruction(
+                    call,
+                    "let expression could not be printed",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(&node) = tree.index_to_node.get(&tree.cursor) else {
+                record_missing_target(
+                    call,
+                    &format!("no let declaration at cursor {}", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let TemplateNodeKind::Let {
+                name,
+                value: current,
+                ..
+            } = &mut tree.nodes[node].kind
+            else {
+                record_missing_target(
+                    call,
+                    &format!(
+                        "cursor {} does not reference a let declaration",
+                        tree.cursor
+                    ),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            *current = Some(value);
+            if let Some(binding) = &call.result_binding {
+                program
+                    .local_reference_names
+                    .insert(binding.clone(), name.clone());
+            }
         }
         IvyInstruction::TextInterpolate
         | IvyInstruction::TextInterpolate1
@@ -3266,13 +4470,107 @@ fn apply_update_instruction(
                 IvyInstruction::StyleProp => "style.",
                 _ => unreachable!(),
             };
+            let suffix = if call.instruction == IvyInstruction::StyleProp {
+                match call.args.get(2) {
+                    Some(suffix) => {
+                        let Some(suffix) = string_lit(suffix.as_ref()) else {
+                            record_malformed_instruction(
+                                call,
+                                "style unit suffix is not a literal string",
+                                &mut program.issues,
+                                &mut program.stats,
+                            );
+                            return Ok(());
+                        };
+                        format!(".{suffix}")
+                    }
+                    None => String::new(),
+                }
+            } else {
+                String::new()
+            };
             tree.add_attribute(
                 node,
                 TemplateAttribute {
-                    name: format!("[{prefix}{name}]"),
+                    name: format!("[{prefix}{name}{suffix}]"),
                     value: Some(expression),
                 },
             );
+        }
+        IvyInstruction::I18nExp => {
+            if call.args.len() != 1 {
+                record_malformed_instruction(
+                    call,
+                    "expected one i18n binding expression",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Ok(expression) =
+                recover_template_expression(call.args[0].as_ref(), program, environment)
+            else {
+                record_malformed_instruction(
+                    call,
+                    "i18n binding expression could not be printed",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            program.pending_i18n_expressions.push(expression);
+        }
+        IvyInstruction::I18nApply => {
+            if call.args.len() != 1 {
+                record_malformed_instruction(
+                    call,
+                    "expected one i18n node index",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let Some(index) = numeric_arg(&call.args, 0) else {
+                record_malformed_instruction(
+                    call,
+                    "i18n node index is not numeric",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(&node) = tree.index_to_node.get(&index) else {
+                record_missing_target(
+                    call,
+                    &format!("no i18n text node at index {index}"),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let TemplateNodeKind::Text { value } = &mut tree.nodes[node].kind else {
+                record_missing_target(
+                    call,
+                    &format!("i18n index {index} does not reference text"),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Some(rendered) =
+                render_basic_i18n_message(value, &program.pending_i18n_expressions)
+            else {
+                record_malformed_instruction(
+                    call,
+                    "i18n placeholders do not match the collected binding expressions",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                program.pending_i18n_expressions.clear();
+                return Ok(());
+            };
+            *value = rendered;
+            program.pending_i18n_expressions.clear();
         }
         IvyInstruction::Conditional => {
             if !apply_conditional_instruction(call, tree, environment.cm.clone(), program) {
@@ -3395,6 +4693,7 @@ fn apply_conditional_instruction(
         return false;
     };
 
+    let mut resolved = Vec::with_capacity(branches.len());
     for (index, branch) in branches {
         let Some(&node) = tree.index_to_node.get(&index) else {
             record_missing_target(
@@ -3405,11 +4704,7 @@ fn apply_conditional_instruction(
             );
             return false;
         };
-        let TemplateNodeKind::EmbeddedView {
-            branch: node_branch,
-            ..
-        } = &mut tree.nodes[node].kind
-        else {
+        if !matches!(tree.nodes[node].kind, TemplateNodeKind::EmbeddedView { .. }) {
             record_missing_target(
                 call,
                 &format!("index {index} does not reference an embedded template"),
@@ -3417,6 +4712,53 @@ fn apply_conditional_instruction(
                 &mut program.stats,
             );
             return false;
+        }
+        resolved.push((node, branch));
+    }
+
+    let points = resolved
+        .iter()
+        .map(|(node, _)| tree.insertion_point_before_node(*node))
+        .collect::<Option<Vec<_>>>();
+    let Some(points) = points else {
+        record_malformed_instruction(
+            call,
+            "conditional branch template has no insertion point",
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return false;
+    };
+    let parent = points.first().and_then(|point| point.parent);
+    if points.iter().any(|point| point.parent != parent) {
+        record_malformed_instruction(
+            call,
+            "conditional branch templates are not siblings",
+            &mut program.issues,
+            &mut program.stats,
+        );
+        return false;
+    }
+    let mut positions = points
+        .iter()
+        .map(|point| point.position)
+        .collect::<Vec<_>>();
+    positions.sort_unstable();
+    let ordered_nodes = resolved.iter().map(|(node, _)| *node).collect::<Vec<_>>();
+    let siblings = match parent {
+        Some(parent) => &mut tree.nodes[parent].children,
+        None => &mut tree.roots,
+    };
+    for (position, node) in positions.into_iter().zip(ordered_nodes) {
+        siblings[position] = node;
+    }
+    for (node, branch) in resolved {
+        let TemplateNodeKind::EmbeddedView {
+            branch: node_branch,
+            ..
+        } = &mut tree.nodes[node].kind
+        else {
+            unreachable!("conditional branch kinds were validated before mutation");
         };
         *node_branch = Some(branch);
     }
@@ -3432,68 +4774,123 @@ fn decode_conditional_branches(
     local_references: &HashMap<BindingKey, String>,
     cm: Lrc<SourceMap>,
 ) -> Option<Vec<(usize, ConditionalBranch)>> {
-    let mut branches = Vec::new();
-    decode_conditional_branch(
-        strip_parentheses(selection),
-        true,
-        component_contexts,
-        local_references,
-        cm,
-        &mut branches,
-    )?;
-    (!branches.is_empty()).then_some(branches)
-}
-
-fn decode_conditional_branch(
-    selection: &Expr,
-    first: bool,
-    component_contexts: &HashSet<BindingKey>,
-    local_references: &HashMap<BindingKey, String>,
-    cm: Lrc<SourceMap>,
-    branches: &mut Vec<(usize, ConditionalBranch)>,
-) -> Option<()> {
-    let Expr::Cond(conditional) = strip_parentheses(selection) else {
-        return None;
-    };
-    let condition = print_template_expression(
-        conditional.test.as_ref(),
-        component_contexts,
-        local_references,
-        cm.clone(),
-    )
-    .ok()?;
-    let index = signed_integer(conditional.cons.as_ref())?;
-    if index < 0 {
-        return None;
+    struct Leaf {
+        index: isize,
+        conditions: Vec<(String, bool)>,
     }
-    branches.push((
-        index as usize,
-        if first {
-            ConditionalBranch::If(condition)
-        } else {
-            ConditionalBranch::ElseIf(condition)
-        },
-    ));
 
-    match strip_parentheses(conditional.alt.as_ref()) {
-        Expr::Cond(_) => decode_conditional_branch(
+    fn collect_leaves(
+        selection: &Expr,
+        conditions: &mut Vec<(String, bool)>,
+        component_contexts: &HashSet<BindingKey>,
+        local_references: &HashMap<BindingKey, String>,
+        cm: Lrc<SourceMap>,
+        leaves: &mut Vec<Leaf>,
+    ) -> Option<()> {
+        let Expr::Cond(conditional) = strip_parentheses(selection) else {
+            let index = signed_integer(selection)?;
+            if index < -1 {
+                return None;
+            }
+            leaves.push(Leaf {
+                index,
+                conditions: conditions.clone(),
+            });
+            return Some(());
+        };
+        let condition = print_template_expression(
+            conditional.test.as_ref(),
+            component_contexts,
+            local_references,
+            cm.clone(),
+        )
+        .ok()?;
+        conditions.push((condition.clone(), true));
+        collect_leaves(
+            conditional.cons.as_ref(),
+            conditions,
+            component_contexts,
+            local_references,
+            cm.clone(),
+            leaves,
+        )?;
+        conditions.pop();
+        conditions.push((condition, false));
+        collect_leaves(
             conditional.alt.as_ref(),
-            false,
+            conditions,
             component_contexts,
             local_references,
             cm,
-            branches,
-        ),
-        alternate => {
-            let index = signed_integer(alternate)?;
-            if index >= 0 {
-                branches.push((index as usize, ConditionalBranch::Else));
-            } else if index != -1 {
-                return None;
-            }
-            Some(())
-        }
+            leaves,
+        )?;
+        conditions.pop();
+        Some(())
     }
+
+    fn render_conditions(conditions: &[(String, bool)]) -> Option<String> {
+        if conditions.len() == 1 {
+            let (condition, positive) = &conditions[0];
+            return Some(if *positive {
+                condition.clone()
+            } else {
+                format!("!({condition})")
+            });
+        }
+        (!conditions.is_empty()).then(|| {
+            conditions
+                .iter()
+                .map(|(condition, positive)| {
+                    if *positive {
+                        format!("({condition})")
+                    } else {
+                        format!("!({condition})")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" && ")
+        })
+    }
+
+    let mut leaves = Vec::new();
+    collect_leaves(
+        strip_parentheses(selection),
+        &mut Vec::new(),
+        component_contexts,
+        local_references,
+        cm,
+        &mut leaves,
+    )?;
+    let has_omitted_leaf = leaves.iter().any(|leaf| leaf.index == -1);
+    let visible = leaves
+        .iter()
+        .filter(|leaf| leaf.index >= 0)
+        .collect::<Vec<_>>();
+    let mut indices = HashSet::new();
+    if visible.is_empty()
+        || visible
+            .iter()
+            .any(|leaf| !indices.insert(leaf.index as usize))
+    {
+        return None;
+    }
+    let last = visible.len().saturating_sub(1);
+    visible
+        .into_iter()
+        .enumerate()
+        .map(|(position, leaf)| {
+            let index = leaf.index as usize;
+            let condition = render_conditions(&leaf.conditions)?;
+            let branch = if position == 0 {
+                ConditionalBranch::If(condition)
+            } else if !has_omitted_leaf && position == last {
+                ConditionalBranch::Else
+            } else {
+                ConditionalBranch::ElseIf(condition)
+            };
+            Some((index, branch))
+        })
+        .collect()
 }
 
 fn signed_integer(expression: &Expr) -> Option<isize> {
@@ -3665,6 +5062,7 @@ fn recover_template_expression(
                         .iter()
                         .map(|argument| argument.expr.clone())
                         .collect(),
+                    result_binding: None,
                     provenance: provenances
                         .pop()
                         .expect("a call chain always contains one invocation"),
@@ -3721,6 +5119,145 @@ fn recover_template_expression(
                 return Ok(output);
             }
 
+            if let Some(instruction) = environment
+                .roles
+                .instruction_for_expr(root, environment.unresolved_ctxt)
+                .filter(|instruction| is_pure_function(*instruction))
+            {
+                program.stats.runtime_calls_observed += argument_lists.len();
+                let mut provenances = call_provenances(
+                    program,
+                    Some(2),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                );
+                if argument_lists.len() != 1 {
+                    program.stats.malformed_instruction_calls += argument_lists.len();
+                    for provenance in provenances {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::MalformedInstruction,
+                                    Some(instruction.canonical_export_name().to_string()),
+                                    Some("unexpected chained pure-function binding".to_string()),
+                                ),
+                                &provenance,
+                            ),
+                        );
+                    }
+                    return Err(anyhow!("unexpected chained Ivy pure function"));
+                }
+                let nested = InstructionCall {
+                    instruction,
+                    args: argument_lists[0]
+                        .iter()
+                        .map(|argument| argument.expr.clone())
+                        .collect(),
+                    result_binding: None,
+                    provenance: provenances
+                        .pop()
+                        .expect("a call chain always contains one invocation"),
+                };
+                let Some(values) = pure_function_values(&nested) else {
+                    record_malformed_instruction(
+                        &nested,
+                        "unexpected pure-function arguments",
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Err(anyhow!("malformed Ivy pure function"));
+                };
+                let Some(callback) = nested.args.get(1) else {
+                    record_malformed_instruction(
+                        &nested,
+                        "missing pure-function callback",
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Err(anyhow!("missing Ivy pure-function callback"));
+                };
+                let expanded = match expand_pure_function(
+                    callback.as_ref(),
+                    &values,
+                    environment.template_functions,
+                ) {
+                    Ok(expanded) => expanded,
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            &nested,
+                            &detail,
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Err(anyhow!("unresolved Ivy pure-function callback"));
+                    }
+                };
+                let output = recover_template_expression(expanded.as_ref(), program, environment)?;
+                program.stats.rendered_instruction_calls += 1;
+                return Ok(output);
+            }
+
+            if let Some(instruction) = environment
+                .roles
+                .instruction_for_expr(root, environment.unresolved_ctxt)
+                .filter(|instruction| is_expression_interpolation(*instruction))
+            {
+                program.stats.runtime_calls_observed += argument_lists.len();
+                let mut provenances = call_provenances(
+                    program,
+                    Some(2),
+                    call,
+                    root,
+                    argument_lists.len(),
+                    environment,
+                );
+                if argument_lists.len() != 1 {
+                    program.stats.malformed_instruction_calls += argument_lists.len();
+                    for provenance in provenances {
+                        record_issue(
+                            &mut program.issues,
+                            issue_at_operation(
+                                issue(
+                                    AngularRecoveryIssueKind::MalformedInstruction,
+                                    Some(instruction.canonical_export_name().to_string()),
+                                    Some("unexpected chained expression interpolation".to_string()),
+                                ),
+                                &provenance,
+                            ),
+                        );
+                    }
+                    return Err(anyhow!("unexpected chained Ivy interpolation"));
+                }
+                let nested = InstructionCall {
+                    instruction,
+                    args: argument_lists[0]
+                        .iter()
+                        .map(|argument| argument.expr.clone())
+                        .collect(),
+                    result_binding: None,
+                    provenance: provenances
+                        .pop()
+                        .expect("a call chain always contains one invocation"),
+                };
+                let output = match expression_interpolation_value(&nested, program, environment) {
+                    Ok(output) => output,
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            &nested,
+                            &detail,
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Err(anyhow!("malformed Ivy expression interpolation"));
+                    }
+                };
+                program.stats.rendered_instruction_calls += 1;
+                return Ok(output);
+            }
+
             if let Some(name) = environment
                 .roles
                 .ivy_name_for_expr(root, environment.unresolved_ctxt)
@@ -3749,44 +5286,6 @@ fn recover_template_expression(
                 }
                 return Err(anyhow!("unsupported nested Ivy instruction"));
             }
-            if environment
-                .roles
-                .is_known_runtime_member(root, environment.unresolved_ctxt)
-            {
-                program.stats.runtime_calls_observed += argument_lists.len();
-                program.stats.unsupported_runtime_calls += argument_lists.len();
-                let argument_counts = argument_lists
-                    .iter()
-                    .map(|arguments| arguments.len())
-                    .collect::<Vec<_>>();
-                let shape = program
-                    .unknown_runtime_call_shapes
-                    .entry((AngularTemplatePhase::Update, argument_counts))
-                    .or_default();
-                shape.0 += 1;
-                shape.1 += argument_lists.len();
-                for provenance in call_provenances(
-                    program,
-                    Some(2),
-                    call,
-                    root,
-                    argument_lists.len(),
-                    environment,
-                ) {
-                    record_issue(
-                        &mut program.issues,
-                        issue_at_operation(
-                            issue(
-                                AngularRecoveryIssueKind::UnknownRuntimeInstruction,
-                                None,
-                                Some("nested in a template expression".to_string()),
-                            ),
-                            &provenance,
-                        ),
-                    );
-                }
-                return Err(anyhow!("unknown nested Ivy instruction"));
-            }
         }
     }
 
@@ -3811,6 +5310,239 @@ fn is_pipe_binding(instruction: IvyInstruction) -> bool {
             | IvyInstruction::PipeBind4
             | IvyInstruction::PipeBindV
     )
+}
+
+fn is_pure_function(instruction: IvyInstruction) -> bool {
+    matches!(
+        instruction,
+        IvyInstruction::PureFunction0
+            | IvyInstruction::PureFunction1
+            | IvyInstruction::PureFunction2
+            | IvyInstruction::PureFunction3
+            | IvyInstruction::PureFunction4
+            | IvyInstruction::PureFunction5
+            | IvyInstruction::PureFunction6
+            | IvyInstruction::PureFunction7
+            | IvyInstruction::PureFunction8
+            | IvyInstruction::PureFunctionV
+    )
+}
+
+fn is_expression_interpolation(instruction: IvyInstruction) -> bool {
+    matches!(
+        instruction,
+        IvyInstruction::Interpolate
+            | IvyInstruction::Interpolate1
+            | IvyInstruction::Interpolate2
+            | IvyInstruction::Interpolate3
+            | IvyInstruction::Interpolate4
+            | IvyInstruction::Interpolate5
+            | IvyInstruction::Interpolate6
+            | IvyInstruction::Interpolate7
+            | IvyInstruction::Interpolate8
+            | IvyInstruction::InterpolateV
+    )
+}
+
+fn expression_interpolation_value(
+    call: &InstructionCall,
+    program: &mut TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<String, String> {
+    if call.instruction == IvyInstruction::Interpolate {
+        let [value] = call.args.as_slice() else {
+            return Err("unexpected ɵɵinterpolate arguments".to_string());
+        };
+        let value = recover_template_expression(value.as_ref(), program, environment)
+            .map_err(|_| "interpolation expression could not be printed".to_string())?;
+        return Ok(format!("`${{{value}}}`"));
+    }
+
+    let expected_values = match call.instruction {
+        IvyInstruction::Interpolate1 => Some(1),
+        IvyInstruction::Interpolate2 => Some(2),
+        IvyInstruction::Interpolate3 => Some(3),
+        IvyInstruction::Interpolate4 => Some(4),
+        IvyInstruction::Interpolate5 => Some(5),
+        IvyInstruction::Interpolate6 => Some(6),
+        IvyInstruction::Interpolate7 => Some(7),
+        IvyInstruction::Interpolate8 => Some(8),
+        IvyInstruction::InterpolateV => None,
+        _ => return Err("not an Ivy expression interpolation".to_string()),
+    };
+    let arguments = if call.instruction == IvyInstruction::InterpolateV {
+        let [values] = call.args.as_slice() else {
+            return Err("unexpected ɵɵinterpolateV arguments".to_string());
+        };
+        let Expr::Array(values) = strip_parentheses(values.as_ref()) else {
+            return Err("ɵɵinterpolateV values are not an array".to_string());
+        };
+        values
+            .elems
+            .iter()
+            .map(|value| {
+                value
+                    .as_ref()
+                    .filter(|value| value.spread.is_none())
+                    .map(|value| value.expr.clone())
+                    .ok_or_else(|| "ɵɵinterpolateV contains a hole or spread".to_string())
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        call.args.clone()
+    };
+    if let Some(value_count) = expected_values {
+        if !matches!(
+            arguments.len(),
+            length if length == value_count * 2 || length == value_count * 2 + 1
+        ) {
+            return Err("unexpected expression-interpolation arity".to_string());
+        }
+    } else if arguments.len() < 3 || arguments.len() % 2 == 0 {
+        return Err("unexpected ɵɵinterpolateV value layout".to_string());
+    }
+
+    let mut output = String::from("`");
+    for (index, argument) in arguments.iter().enumerate() {
+        if index % 2 == 0 {
+            let Some(text) = string_lit(argument.as_ref()) else {
+                return Err("interpolation static segment is not a string".to_string());
+            };
+            push_template_literal_text(&mut output, &text);
+        } else {
+            let value = recover_template_expression(argument.as_ref(), program, environment)
+                .map_err(|_| "interpolation expression could not be printed".to_string())?;
+            output.push_str("${");
+            output.push_str(&value);
+            output.push('}');
+        }
+    }
+    output.push('`');
+    Ok(output)
+}
+
+fn push_template_literal_text(output: &mut String, text: &str) {
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => output.push_str("\\\\"),
+            '`' => output.push_str("\\`"),
+            '$' if characters.peek() == Some(&'{') => output.push_str("\\$"),
+            '\r' => output.push_str("\\r"),
+            '\n' => output.push_str("\\n"),
+            '\u{2028}' => output.push_str("\\u2028"),
+            '\u{2029}' => output.push_str("\\u2029"),
+            character => output.push(character),
+        }
+    }
+}
+
+fn pure_function_values(call: &InstructionCall) -> Option<Vec<Box<Expr>>> {
+    let value_count = match call.instruction {
+        IvyInstruction::PureFunction0 => 0,
+        IvyInstruction::PureFunction1 => 1,
+        IvyInstruction::PureFunction2 => 2,
+        IvyInstruction::PureFunction3 => 3,
+        IvyInstruction::PureFunction4 => 4,
+        IvyInstruction::PureFunction5 => 5,
+        IvyInstruction::PureFunction6 => 6,
+        IvyInstruction::PureFunction7 => 7,
+        IvyInstruction::PureFunction8 => 8,
+        IvyInstruction::PureFunctionV => {
+            if call.args.len() != 3 || numeric_arg(&call.args, 0).is_none() {
+                return None;
+            }
+            let Expr::Array(values) = strip_parentheses(call.args[2].as_ref()) else {
+                return None;
+            };
+            return values
+                .elems
+                .iter()
+                .map(|value| value.as_ref().map(|value| value.expr.clone()))
+                .collect();
+        }
+        _ => return None,
+    };
+    (call.args.len() == value_count + 2 && numeric_arg(&call.args, 0).is_some())
+        .then(|| call.args[2..].to_vec())
+}
+
+fn expand_pure_function(
+    callback: &Expr,
+    values: &[Box<Expr>],
+    template_functions: &TemplateFunctionTable,
+) -> std::result::Result<Box<Expr>, String> {
+    fn function_body(function: &Function) -> Option<(Vec<BindingKey>, Box<Expr>)> {
+        if function.is_async || function.is_generator {
+            return None;
+        }
+        let parameters = function
+            .params
+            .iter()
+            .map(|parameter| {
+                let Pat::Ident(binding) = &parameter.pat else {
+                    return None;
+                };
+                Some(binding_key(&binding.id))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let body = function.body.as_ref().and_then(single_return_value)?;
+        Some((parameters, Box::new(body.clone())))
+    }
+
+    let resolved = template_functions.resolve_expression(callback);
+    let candidate = match strip_parentheses(resolved.as_ref()) {
+        Expr::Arrow(arrow) if !arrow.is_async => {
+            let parameters = arrow
+                .params
+                .iter()
+                .map(|parameter| {
+                    let Pat::Ident(binding) = parameter else {
+                        return None;
+                    };
+                    Some(binding_key(&binding.id))
+                })
+                .collect::<Option<Vec<_>>>();
+            let body = match arrow.body.as_ref() {
+                BlockStmtOrExpr::Expr(expression) => Some(expression.clone()),
+                BlockStmtOrExpr::BlockStmt(block) => {
+                    single_return_value(block).map(|expression| Box::new(expression.clone()))
+                }
+            };
+            parameters.zip(body)
+        }
+        Expr::Fn(function) => function_body(function.function.as_ref()),
+        _ => template_functions
+            .resolve(callback)
+            .and_then(|resolved| function_body(&resolved.function)),
+    }
+    .ok_or_else(|| "pure-function callback is not a single expression".to_string())?;
+    let (parameters, mut body) = candidate;
+    if parameters.len() != values.len() {
+        return Err("pure-function callback parameter count does not match values".to_string());
+    }
+    let aliases = parameters
+        .into_iter()
+        .zip(values.iter().cloned())
+        .collect::<HashMap<_, _>>();
+    body.visit_mut_with(&mut PureFunctionParameterSubstituter { aliases: &aliases });
+    Ok(body)
+}
+
+struct PureFunctionParameterSubstituter<'a> {
+    aliases: &'a HashMap<BindingKey, Box<Expr>>,
+}
+
+impl VisitMut for PureFunctionParameterSubstituter<'_> {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if let Expr::Ident(identifier) = expression {
+            if let Some(alias) = self.aliases.get(&binding_key(identifier)) {
+                *expression = alias.as_ref().clone();
+                return;
+            }
+        }
+        expression.visit_mut_children_with(self);
+    }
 }
 
 fn pipe_binding_values(call: &InstructionCall) -> Option<Vec<Box<Expr>>> {
@@ -3849,27 +5581,396 @@ fn numeric_expr(expression: &Expr) -> Option<usize> {
 }
 
 fn decode_component_constant_table(constants: &Expr) -> TemplateConstants {
-    let Expr::Array(table) = constants else {
+    let Some(decoded) = decode_component_constant_entries(constants) else {
         return TemplateConstants::default();
     };
-    let entries = table
-        .elems
-        .iter()
-        .map(|entry| entry.as_ref().map(|entry| entry.expr.as_ref()))
-        .collect::<Vec<_>>();
     TemplateConstants {
-        attributes: entries
+        attributes: decoded
+            .entries
             .iter()
-            .map(|entry| entry.map(decode_constant_attributes).unwrap_or_default())
+            .map(|entry| {
+                entry
+                    .as_deref()
+                    .and_then(|entry| {
+                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::new())
+                    })
+                    .map(decode_constant_attributes)
+                    .unwrap_or_default()
+            })
             .collect(),
-        local_references: entries
+        local_references: decoded
+            .entries
             .iter()
-            .map(|entry| entry.and_then(decode_local_references).unwrap_or_default())
+            .map(|entry| {
+                entry
+                    .as_deref()
+                    .and_then(|entry| {
+                        resolve_constant_expression(entry, &decoded.values, &mut HashSet::new())
+                    })
+                    .and_then(decode_local_references)
+                    .unwrap_or_default()
+            })
+            .collect(),
+        i18n_messages: decoded
+            .entries
+            .iter()
+            .map(|entry| {
+                entry.as_deref().and_then(|entry| {
+                    decode_i18n_message_expression(
+                        entry,
+                        &decoded.values,
+                        &mut HashSet::new(),
+                        decoded.allow_unnamed_localizer,
+                    )
+                })
+            })
             .collect(),
     }
 }
 
+struct DecodedComponentConstantEntries {
+    entries: Vec<Option<Box<Expr>>>,
+    values: HashMap<BindingKey, Box<Expr>>,
+    allow_unnamed_localizer: bool,
+}
+
+fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedComponentConstantEntries> {
+    if let Expr::Array(array) = strip_parentheses(expression) {
+        return Some(DecodedComponentConstantEntries {
+            entries: array
+                .elems
+                .iter()
+                .map(|element| element.as_ref().map(|element| element.expr.clone()))
+                .collect(),
+            values: HashMap::new(),
+            allow_unnamed_localizer: false,
+        });
+    }
+
+    let body = match strip_parentheses(expression) {
+        Expr::Fn(function) if function.function.params.is_empty() => {
+            function.function.body.as_ref()?
+        }
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(body) if arrow.params.is_empty() => body,
+            BlockStmtOrExpr::Expr(expression) => {
+                let Expr::Array(array) = strip_parentheses(expression.as_ref()) else {
+                    return None;
+                };
+                return Some(DecodedComponentConstantEntries {
+                    entries: array
+                        .elems
+                        .iter()
+                        .map(|element| element.as_ref().map(|element| element.expr.clone()))
+                        .collect(),
+                    values: HashMap::new(),
+                    allow_unnamed_localizer: true,
+                });
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    let mut collector = ComponentConstantFactoryCollector::default();
+    body.visit_with(&mut collector);
+    let returned = collector.returns.last()?.as_ref();
+    let returned = match strip_parentheses(returned) {
+        Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
+        expression => expression,
+    };
+    let returned = resolve_constant_expression(returned, &collector.values, &mut HashSet::new())?;
+    let Expr::Array(array) = strip_parentheses(returned) else {
+        return None;
+    };
+    Some(DecodedComponentConstantEntries {
+        entries: array
+            .elems
+            .iter()
+            .map(|element| element.as_ref().map(|element| element.expr.clone()))
+            .collect(),
+        values: collector.values,
+        allow_unnamed_localizer: true,
+    })
+}
+
+#[derive(Default)]
+struct ComponentConstantFactoryCollector {
+    values: HashMap<BindingKey, Box<Expr>>,
+    returns: Vec<Box<Expr>>,
+}
+
+impl Visit for ComponentConstantFactoryCollector {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(binding), Some(initializer)) = (&declarator.name, &declarator.init) {
+            self.values
+                .insert(binding_key(&binding.id), initializer.clone());
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if assignment.op == AssignOp::Assign {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
+                self.values
+                    .insert(binding_key(&binding.id), assignment.right.clone());
+            }
+        }
+        assignment.visit_children_with(self);
+    }
+
+    fn visit_return_stmt(&mut self, statement: &ReturnStmt) {
+        if let Some(argument) = &statement.arg {
+            self.returns.push(argument.clone());
+        }
+        statement.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _function: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+}
+
+fn resolve_constant_expression<'a>(
+    expression: &'a Expr,
+    values: &'a HashMap<BindingKey, Box<Expr>>,
+    resolving: &mut HashSet<BindingKey>,
+) -> Option<&'a Expr> {
+    let expression = strip_parentheses(expression);
+    let Expr::Ident(identifier) = expression else {
+        return Some(expression);
+    };
+    let key = binding_key(identifier);
+    if !resolving.insert(key.clone()) {
+        return None;
+    }
+    let resolved = resolve_constant_expression(values.get(&key)?.as_ref(), values, resolving);
+    resolving.remove(&key);
+    resolved
+}
+
+fn decode_i18n_message_expression(
+    expression: &Expr,
+    values: &HashMap<BindingKey, Box<Expr>>,
+    resolving: &mut HashSet<BindingKey>,
+    allow_unnamed_localizer: bool,
+) -> Option<String> {
+    let expression = strip_parentheses(expression);
+    if let Expr::Ident(identifier) = expression {
+        let key = binding_key(identifier);
+        if !resolving.insert(key.clone()) {
+            return None;
+        }
+        let decoded = decode_i18n_message_expression(
+            values.get(&key)?.as_ref(),
+            values,
+            resolving,
+            allow_unnamed_localizer,
+        );
+        resolving.remove(&key);
+        return decoded;
+    }
+    if let Some(value) = string_lit(expression) {
+        return Some(value);
+    }
+    match expression {
+        Expr::Seq(sequence) => decode_i18n_message_expression(
+            sequence.exprs.last()?.as_ref(),
+            values,
+            resolving,
+            allow_unnamed_localizer,
+        ),
+        Expr::Bin(binary) if binary.op == BinaryOp::Add => {
+            let mut message = decode_i18n_message_expression(
+                binary.left.as_ref(),
+                values,
+                resolving,
+                allow_unnamed_localizer,
+            )?;
+            message.push_str(&decode_i18n_message_expression(
+                binary.right.as_ref(),
+                values,
+                resolving,
+                allow_unnamed_localizer,
+            )?);
+            Some(message)
+        }
+        Expr::TaggedTpl(tagged)
+            if matches!(
+                strip_parentheses(tagged.tag.as_ref()),
+                Expr::Ident(identifier) if identifier.sym == "$localize"
+            ) =>
+        {
+            decode_localized_template(
+                tagged.tpl.as_ref(),
+                values,
+                resolving,
+                allow_unnamed_localizer,
+            )
+        }
+        Expr::Call(call) if is_goog_get_msg(call) => {
+            decode_localization_call(call, values, resolving, allow_unnamed_localizer)
+        }
+        Expr::Call(call) if allow_unnamed_localizer => {
+            decode_localization_call(call, values, resolving, allow_unnamed_localizer)
+        }
+        _ => None,
+    }
+}
+
+fn decode_localized_template(
+    template: &swc_core::ecma::ast::Tpl,
+    values: &HashMap<BindingKey, Box<Expr>>,
+    resolving: &mut HashSet<BindingKey>,
+    allow_unnamed_localizer: bool,
+) -> Option<String> {
+    if template.quasis.len() != template.exprs.len() + 1 {
+        return None;
+    }
+    let mut message = String::new();
+    for (index, quasi) in template.quasis.iter().enumerate() {
+        let text = quasi
+            .cooked
+            .as_ref()
+            .map(wtf8_to_string)
+            .unwrap_or_else(|| quasi.raw.to_string());
+        message.push_str(strip_localize_metadata(&text));
+        if let Some(expression) = template.exprs.get(index) {
+            message.push_str(&decode_i18n_message_expression(
+                expression.as_ref(),
+                values,
+                resolving,
+                allow_unnamed_localizer,
+            )?);
+        }
+    }
+    Some(message)
+}
+
+fn strip_localize_metadata(value: &str) -> &str {
+    let Some(metadata) = value.strip_prefix(':') else {
+        return value;
+    };
+    let mut escaped = false;
+    for (index, character) in metadata.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == ':' {
+            return &metadata[index + character.len_utf8()..];
+        }
+    }
+    value
+}
+
+fn is_goog_get_msg(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parentheses(callee.as_ref()) else {
+        return false;
+    };
+    matches!(
+        strip_parentheses(member.obj.as_ref()),
+        Expr::Ident(identifier) if identifier.sym == "goog"
+    ) && member_prop_name(&member.prop).is_some_and(|property| property == "getMsg")
+}
+
+fn decode_localization_call(
+    call: &CallExpr,
+    values: &HashMap<BindingKey, Box<Expr>>,
+    resolving: &mut HashSet<BindingKey>,
+    allow_unnamed_localizer: bool,
+) -> Option<String> {
+    let mut message = call
+        .args
+        .first()
+        .and_then(|argument| string_lit(argument.expr.as_ref()))?;
+    let Some(mapping) = call.args.get(1) else {
+        if call.args.len() != 1 {
+            return None;
+        }
+        return Some(message);
+    };
+    if call.args.len() != 2 {
+        return None;
+    }
+    let Expr::Object(mapping) = strip_parentheses(mapping.expr.as_ref()) else {
+        return None;
+    };
+    for property in &mapping.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(property) = property else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(property) = property.as_ref() else {
+            return None;
+        };
+        let name = prop_name(&property.key)?;
+        let value = decode_i18n_message_expression(
+            property.value.as_ref(),
+            values,
+            resolving,
+            allow_unnamed_localizer,
+        )?;
+        message = message.replace(&format!("{{${name}}}"), &value);
+    }
+    Some(message)
+}
+
+fn is_basic_i18n_message(message: &str) -> bool {
+    parse_i18n_markers(message).is_some()
+}
+
+fn render_basic_i18n_message(message: &str, expressions: &[String]) -> Option<String> {
+    let markers = parse_i18n_markers(message)?;
+    let mut rendered = String::new();
+    let mut cursor = 0;
+    for (start, end, expression_index) in markers {
+        rendered.push_str(&message[cursor..start]);
+        let expression = expressions.get(expression_index)?;
+        rendered.push_str("{{ ");
+        rendered.push_str(expression);
+        rendered.push_str(" }}");
+        cursor = end;
+    }
+    rendered.push_str(&message[cursor..]);
+    Some(rendered)
+}
+
+fn parse_i18n_markers(message: &str) -> Option<Vec<(usize, usize, usize)>> {
+    const MARKER: char = '\u{fffd}';
+
+    let mut markers = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = message[cursor..].find(MARKER) {
+        let start = cursor + relative_start;
+        let content_start = start + MARKER.len_utf8();
+        let relative_end = message[content_start..].find(MARKER)?;
+        let marker_end = content_start + relative_end;
+        let content = &message[content_start..marker_end];
+        if content.is_empty()
+            || !content
+                .chars()
+                .all(|character| character.is_ascii_digit() || character == ':')
+        {
+            return None;
+        }
+        let expression_index = content.split(':').next()?.parse().ok()?;
+        let end = marker_end + MARKER.len_utf8();
+        markers.push((start, end, expression_index));
+        cursor = end;
+    }
+    Some(markers)
+}
+
 fn decode_local_references(expression: &Expr) -> Option<Vec<String>> {
+    if let Some(values) = decode_static_string_split(expression) {
+        if values.len() % 2 != 0 {
+            return None;
+        }
+        return Some(values.chunks_exact(2).map(|pair| pair[0].clone()).collect());
+    }
     let Expr::Array(array) = expression else {
         return None;
     };
@@ -3889,6 +5990,15 @@ fn decode_local_references(expression: &Expr) -> Option<Vec<String>> {
 }
 
 fn decode_constant_attributes(expression: &Expr) -> Vec<TemplateAttribute> {
+    if let Some(values) = decode_static_string_split(expression) {
+        return values
+            .chunks_exact(2)
+            .map(|pair| TemplateAttribute {
+                name: pair[0].clone(),
+                value: Some(pair[1].clone()),
+            })
+            .collect();
+    }
     let Expr::Array(array) = expression else {
         return Vec::new();
     };
@@ -3951,6 +6061,33 @@ fn decode_constant_attributes(expression: &Expr) -> Vec<TemplateAttribute> {
     attributes
 }
 
+fn decode_static_string_split(expression: &Expr) -> Option<Vec<String>> {
+    let Expr::Call(call) = strip_parentheses(expression) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parentheses(callee.as_ref()) else {
+        return None;
+    };
+    if member_prop_name(&member.prop).as_deref() != Some("split") {
+        return None;
+    }
+    let source = string_lit(strip_parentheses(member.obj.as_ref()))?;
+    let [delimiter] = call.args.as_slice() else {
+        return None;
+    };
+    if delimiter.spread.is_some() {
+        return None;
+    }
+    let delimiter = string_lit(strip_parentheses(delimiter.expr.as_ref()))?;
+    if delimiter.is_empty() || !source.is_ascii() || !delimiter.is_ascii() {
+        return None;
+    }
+    Some(source.split(&delimiter).map(str::to_string).collect())
+}
+
 impl TemplateTree {
     fn push_node(&mut self, index: usize, kind: TemplateNodeKind) -> usize {
         let node = self.nodes.len();
@@ -3972,6 +6109,7 @@ impl TemplateTree {
             TemplateNodeKind::Element { attributes, .. }
             | TemplateNodeKind::EmbeddedView { attributes, .. } => attributes.push(attribute),
             TemplateNodeKind::Text { .. }
+            | TemplateNodeKind::Let { .. }
             | TemplateNodeKind::Defer { .. }
             | TemplateNodeKind::Repeater { .. }
             | TemplateNodeKind::Projection { .. }
@@ -4060,7 +6198,8 @@ impl TemplateTree {
     ) -> Option<TreeInsertionPoint> {
         if !matches!(
             instruction,
-            IvyInstruction::TextInterpolate
+            IvyInstruction::StoreLet
+                | IvyInstruction::TextInterpolate
                 | IvyInstruction::TextInterpolate1
                 | IvyInstruction::TextInterpolate2
                 | IvyInstruction::TextInterpolate3
@@ -4153,6 +6292,10 @@ fn render_node(
     let indent = "  ".repeat(depth);
     match &current.kind {
         TemplateNodeKind::Text { value } => format!("{indent}{}", escape_text(value)),
+        TemplateNodeKind::Let { name, value, .. } => match value {
+            Some(value) => format!("{indent}@let {name} = {value};"),
+            None => format!("{indent}<!-- Unrecovered Angular @let {name} -->"),
+        },
         TemplateNodeKind::Projection { selector } => match selector {
             Some(selector) => {
                 format!(
