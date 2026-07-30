@@ -4267,6 +4267,64 @@ fn recovers_nested_view_aliases_and_sequence_wrapped_listener_actions() {
 }
 
 #[test]
+fn recovers_optional_chain_temps_in_restored_listeners() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class OptionalListenerComponent {
+            input() {}
+            activate() {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: OptionalListenerComponent,
+                selectors: [["optional-listener"]],
+                consts: [
+                    ["type", "button", 3, "click"],
+                ],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button", 0);
+                        core.ɵɵlistener("click", function($event) {
+                            const component = core.ɵɵrestoreView(savedView);
+                            let temporary;
+                            $event.target !== (
+                                (temporary = component.input()) == null
+                                    ? void 0
+                                    : temporary.nativeElement
+                            ) && component.activate();
+                            return core.ɵɵresetView();
+                        });
+                        core.ɵɵtext(1, "Activate");
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("optional-chain listener temp should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(
+        component.source.contains(
+            r#"(click)="$event.target !== (input()?.nativeElement) &amp;&amp; activate()""#
+        ),
+        "{}",
+        component.source
+    );
+    assert!(!component.source.contains("temporary"));
+}
+
+#[test]
 fn recovers_structural_i18n_regions_with_nested_elements() {
     let source = r#"
         import * as core from "@angular/core";
