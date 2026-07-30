@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr,
-    ExprOrSpread, ImportSpecifier, MemberProp, ModuleDecl, ModuleExportName, ModuleItem, Pat,
-    SimpleAssignTarget, UpdateExpr,
+    ExprOrSpread, ForHead, ForInStmt, ForOfStmt, ImportSpecifier, MemberProp, ModuleDecl,
+    ModuleExportName, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp,
+    UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::syntax::{binding_key, member_prop_name, BindingKey};
 use super::PreparedAngularModule;
@@ -269,10 +272,16 @@ impl ModuleLookup {
             return Some(*index);
         }
         if !has_module_extension(&filename) {
-            for extension in [".js", ".jsx", ".mjs", ".cjs"] {
-                if let Some(index) = self.filenames.get(&format!("{filename}{extension}")) {
-                    return Some(*index);
-                }
+            let mut matches = [".js", ".jsx", ".mjs", ".cjs"]
+                .into_iter()
+                .filter_map(|extension| self.filenames.get(&format!("{filename}{extension}")))
+                .copied();
+            let resolved = matches.next();
+            if resolved.is_some() && matches.next().is_none() {
+                return resolved;
+            }
+            if resolved.is_some() {
+                return None;
             }
         }
         for extension in [".js", ".jsx", ".mjs", ".cjs"] {
@@ -307,8 +316,12 @@ pub(super) fn canonicalize_immediate_iife_namespace_aliases(
     module: &mut swc_core::ecma::ast::Module,
     unresolved_ctxt: SyntaxContext,
 ) {
-    let mut writes = BindingWriteCollector::default();
-    module.visit_with(&mut writes);
+    let binding_uses = BindingUseIndex::collect(module);
+    let mut namespace_mutations = NamespaceMutationCollector {
+        unresolved_ctxt,
+        paths: HashMap::new(),
+    };
+    module.visit_with(&mut namespace_mutations);
 
     let mut collector = ImmediateIifeAliasCollector {
         unresolved_ctxt,
@@ -316,43 +329,168 @@ pub(super) fn canonicalize_immediate_iife_namespace_aliases(
         ambiguous: HashSet::new(),
     };
     module.visit_with(&mut collector);
-    collector
-        .aliases
-        .retain(|binding, _| !writes.bindings.contains(binding));
+    collector.aliases.retain(|binding, alias| {
+        !binding_uses.has_direct_write(binding)
+            && namespace_path(alias.expression.as_ref(), unresolved_ctxt).is_some_and(|path| {
+                !namespace_mutations
+                    .paths
+                    .iter()
+                    .any(|(mutation, positions)| {
+                        path.starts_with(mutation)
+                            && positions
+                                .iter()
+                                .any(|position| *position >= alias.invocation_position)
+                    })
+            })
+    });
     if collector.aliases.is_empty() {
         return;
     }
 
     module.visit_mut_with(&mut NamespaceAliasRewriter {
-        aliases: collector.aliases,
+        aliases: collector
+            .aliases
+            .into_iter()
+            .map(|(binding, alias)| (binding, alias.expression))
+            .collect(),
     });
 }
 
-#[derive(Default)]
-struct BindingWriteCollector {
-    bindings: HashSet<BindingKey>,
+type NamespacePath = Vec<Atom>;
+
+struct NamespaceMutationCollector {
+    unresolved_ctxt: SyntaxContext,
+    paths: HashMap<NamespacePath, Vec<u32>>,
 }
 
-impl Visit for BindingWriteCollector {
-    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
-        if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
-            self.bindings.insert(binding_key(&binding.id));
+impl NamespaceMutationCollector {
+    fn record_expression(&mut self, expression: &Expr) {
+        if let Some(path) = namespace_path(expression, self.unresolved_ctxt) {
+            self.paths
+                .entry(path)
+                .or_default()
+                .push(expression.span().lo.0);
         }
+    }
+
+    fn record_simple_target(&mut self, target: &SimpleAssignTarget) {
+        match target {
+            SimpleAssignTarget::Ident(binding) => {
+                self.record_expression(&Expr::Ident(binding.id.clone()));
+            }
+            SimpleAssignTarget::Member(member) => {
+                self.record_expression(&Expr::Member(member.clone()));
+            }
+            SimpleAssignTarget::Paren(paren) => self.record_expression(paren.expr.as_ref()),
+            SimpleAssignTarget::TsAs(ts_as) => self.record_expression(ts_as.expr.as_ref()),
+            SimpleAssignTarget::TsSatisfies(ts_satisfies) => {
+                self.record_expression(ts_satisfies.expr.as_ref());
+            }
+            SimpleAssignTarget::TsNonNull(ts_non_null) => {
+                self.record_expression(ts_non_null.expr.as_ref());
+            }
+            SimpleAssignTarget::TsTypeAssertion(ts_assertion) => {
+                self.record_expression(ts_assertion.expr.as_ref());
+            }
+            SimpleAssignTarget::TsInstantiation(ts_instantiation) => {
+                self.record_expression(ts_instantiation.expr.as_ref());
+            }
+            _ => {}
+        }
+    }
+
+    fn record_pattern(&mut self, pattern: &Pat) {
+        match pattern {
+            Pat::Ident(binding) => {
+                self.record_expression(&Expr::Ident(binding.id.clone()));
+            }
+            Pat::Array(array) => {
+                for element in array.elems.iter().flatten() {
+                    self.record_pattern(element);
+                }
+            }
+            Pat::Object(object) => {
+                for property in &object.props {
+                    match property {
+                        ObjectPatProp::KeyValue(key_value) => {
+                            self.record_pattern(key_value.value.as_ref());
+                        }
+                        ObjectPatProp::Assign(assign) => {
+                            self.record_expression(&Expr::Ident(assign.key.id.clone()));
+                        }
+                        ObjectPatProp::Rest(rest) => self.record_pattern(rest.arg.as_ref()),
+                    }
+                }
+            }
+            Pat::Assign(assign) => self.record_pattern(assign.left.as_ref()),
+            Pat::Rest(rest) => self.record_pattern(rest.arg.as_ref()),
+            Pat::Expr(expression) => self.record_expression(expression.as_ref()),
+            Pat::Invalid(_) => {}
+        }
+    }
+
+    fn record_assignment_target(&mut self, target: &AssignTarget) {
+        match target {
+            AssignTarget::Simple(simple) => self.record_simple_target(simple),
+            AssignTarget::Pat(pattern) => match pattern {
+                swc_core::ecma::ast::AssignTargetPat::Array(array) => {
+                    for element in array.elems.iter().flatten() {
+                        self.record_pattern(element);
+                    }
+                }
+                swc_core::ecma::ast::AssignTargetPat::Object(object) => {
+                    self.record_pattern(&Pat::Object(object.clone()));
+                }
+                swc_core::ecma::ast::AssignTargetPat::Invalid(_) => {}
+            },
+        }
+    }
+
+    fn record_for_head(&mut self, head: &ForHead) {
+        if let ForHead::Pat(pattern) = head {
+            self.record_pattern(pattern);
+        }
+    }
+}
+
+impl Visit for NamespaceMutationCollector {
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        self.record_assignment_target(&assignment.left);
         assignment.visit_children_with(self);
     }
 
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
-        if let Expr::Ident(identifier) = update.arg.as_ref() {
-            self.bindings.insert(binding_key(identifier));
-        }
+        self.record_expression(update.arg.as_ref());
         update.visit_children_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, statement: &ForInStmt) {
+        self.record_for_head(&statement.left);
+        statement.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, statement: &ForOfStmt) {
+        self.record_for_head(&statement.left);
+        statement.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete {
+            self.record_expression(unary.arg.as_ref());
+        }
+        unary.visit_children_with(self);
     }
 }
 
 struct ImmediateIifeAliasCollector {
     unresolved_ctxt: SyntaxContext,
-    aliases: HashMap<BindingKey, Box<Expr>>,
+    aliases: HashMap<BindingKey, ImmediateIifeAlias>,
     ambiguous: HashSet<BindingKey>,
+}
+
+struct ImmediateIifeAlias {
+    expression: Box<Expr>,
+    invocation_position: u32,
 }
 
 impl Visit for ImmediateIifeAliasCollector {
@@ -374,13 +512,19 @@ impl Visit for ImmediateIifeAliasCollector {
                 if self
                     .aliases
                     .get(&key)
-                    .is_some_and(|existing| existing.as_ref() != argument.expr.as_ref())
+                    .is_some_and(|existing| existing.expression.as_ref() != argument.expr.as_ref())
                 {
                     self.aliases.remove(&key);
                     self.ambiguous.insert(key);
                     continue;
                 }
-                self.aliases.insert(key, argument.expr.clone());
+                self.aliases.insert(
+                    key,
+                    ImmediateIifeAlias {
+                        expression: argument.expr.clone(),
+                        invocation_position: call.span.lo.0,
+                    },
+                );
             }
         }
         call.visit_children_with(self);
@@ -425,15 +569,22 @@ fn function_parameters(expression: &Expr) -> Option<Vec<&Pat>> {
 }
 
 fn is_stable_namespace_expression(expression: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
+    namespace_path(expression, unresolved_ctxt).is_some()
+}
+
+fn namespace_path(expression: &Expr, unresolved_ctxt: SyntaxContext) -> Option<NamespacePath> {
     match expression {
-        Expr::This(_) => true,
-        Expr::Ident(identifier) => identifier.ctxt == unresolved_ctxt,
-        Expr::Member(member) => {
-            member_prop_name(&member.prop).is_some()
-                && is_stable_namespace_expression(member.obj.as_ref(), unresolved_ctxt)
+        Expr::This(_) => Some(vec![Atom::from("this")]),
+        Expr::Ident(identifier) if identifier.ctxt == unresolved_ctxt => {
+            Some(vec![identifier.sym.clone()])
         }
-        Expr::Paren(paren) => is_stable_namespace_expression(paren.expr.as_ref(), unresolved_ctxt),
-        _ => false,
+        Expr::Member(member) => {
+            let mut path = namespace_path(member.obj.as_ref(), unresolved_ctxt)?;
+            path.push(member_prop_name(&member.prop)?);
+            Some(path)
+        }
+        Expr::Paren(paren) => namespace_path(paren.expr.as_ref(), unresolved_ctxt),
+        _ => None,
     }
 }
 
@@ -460,6 +611,20 @@ mod tests {
     use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
     use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
     use swc_core::ecma::transforms::base::resolver;
+
+    #[test]
+    fn extensionless_resolution_rejects_ambiguous_module_candidates() {
+        let lookup = ModuleLookup {
+            filenames: HashMap::from([
+                ("dependency.js".to_string(), 0),
+                ("dependency.mjs".to_string(), 1),
+            ]),
+        };
+
+        assert_eq!(lookup.resolve_normalized("dependency"), None);
+        assert_eq!(lookup.resolve_normalized("dependency.js"), Some(0));
+        assert_eq!(lookup.resolve_normalized("dependency.mjs"), Some(1));
+    }
 
     #[test]
     fn canonicalizes_unwritten_immediate_iife_namespace_parameters() {
@@ -522,6 +687,80 @@ mod tests {
             assert!(finder.local_namespace_use);
             assert!(!finder.global_namespace_use);
         });
+    }
+
+    #[test]
+    fn does_not_canonicalize_a_destructured_parameter_write() {
+        let module = canonicalized_fixture(
+            "(function(namespace) { [namespace] = sources; namespace.value(); })(this.shared);",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(finder.local_namespace_use);
+        assert!(!finder.global_namespace_use);
+    }
+
+    #[test]
+    fn does_not_canonicalize_a_loop_head_parameter_write() {
+        let module = canonicalized_fixture(
+            "(function(namespace) { for (namespace of sources) {} namespace.value(); })(this.shared);",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(finder.local_namespace_use);
+        assert!(!finder.global_namespace_use);
+    }
+
+    #[test]
+    fn does_not_canonicalize_a_namespace_member_that_is_later_reassigned() {
+        let module = canonicalized_fixture(
+            "(function(namespace) { namespace.value(); })(shared.current); shared.current = other;",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(finder.local_namespace_use);
+    }
+
+    #[test]
+    fn canonicalizes_a_namespace_member_initialized_before_the_iife() {
+        let module = canonicalized_fixture(
+            "this.shared = this.shared || {}; \
+             (function(namespace) { namespace.value(); }).call(this, this.shared);",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(!finder.local_namespace_use);
+        assert!(finder.global_namespace_use);
+    }
+
+    fn canonicalized_fixture(source: &str) -> swc_core::ecma::ast::Module {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(
+                FileName::Custom("fixture.js".to_string()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*file),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("fixture should parse");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            canonicalize_immediate_iife_namespace_aliases(
+                &mut module,
+                SyntaxContext::empty().apply_mark(unresolved_mark),
+            );
+            module
+        })
     }
 
     #[derive(Default)]
