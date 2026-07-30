@@ -161,20 +161,37 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert_production_artifact(CLOSURE_ADVANCED_STRUCTURAL);
     assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
     for omitted_role in [
+        "ɵɵattribute",
+        "ɵɵclassProp",
         "ɵɵtext",
         "ɵɵtextInterpolate",
         "ɵɵtextInterpolate1",
         "ɵɵtemplate",
         "ɵɵconditional",
+        "ɵɵdeclareLet",
         "ɵɵdefer",
         "ɵɵdeferOnIdle",
         "ɵɵgetCurrentView",
+        "ɵɵinterpolate",
+        "ɵɵinterpolate1",
+        "ɵɵnamespaceHTML",
+        "ɵɵnamespaceMathML",
+        "ɵɵnamespaceSVG",
         "ɵɵnextContext",
         "ɵɵrepeater",
         "ɵɵrepeaterCreate",
+        "ɵɵelementContainer",
+        "ɵɵi18n",
+        "ɵɵi18nApply",
+        "ɵɵi18nExp",
         "ɵɵproperty",
+        "ɵɵpureFunction0",
+        "ɵɵpureFunction1",
+        "ɵɵreadContextLet",
         "ɵɵresetView",
         "ɵɵrestoreView",
+        "ɵɵstoreLet",
+        "ɵɵstyleProp",
     ] {
         assert!(
             !CLOSURE_ADVANCED_STRUCTURAL.contains(omitted_role),
@@ -193,7 +210,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 7);
+    assert_eq!(by_selector.len(), 14);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -296,6 +313,114 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["fixture-card"]
         .source
         .contains("[disabled]=\"disabled\""));
+    assert_eq!(
+        by_selector["structural-binding-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-binding-card"].issues,
+        by_selector["structural-binding-card"].source,
+    );
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("[style.width.px]=\"width\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("[class.active]=\"active\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("[attr.aria-label]=\"label\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("#action"));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("{{ action.disabled }}"));
+    assert_eq!(
+        by_selector["structural-container-i18n-card"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-container-i18n-card"].issues,
+        by_selector["structural-container-i18n-card"].source,
+    );
+    assert!(by_selector["structural-container-i18n-card"]
+        .source
+        .contains("<ng-container>"));
+    assert!(by_selector["structural-container-i18n-card"]
+        .source
+        .contains("<p i18n>Hello, localized world!</p>"));
+    assert!(by_selector["structural-container-i18n-card"]
+        .source
+        .contains("<p i18n>Hello, {{ name }}!</p>"));
+    assert!(by_selector.contains_key("button[fixtureAction],a[fixtureAction]"));
+    assert!(by_selector.contains_key("dialog[fixtureDialog]"));
+    assert_eq!(
+        by_selector["structural-pure-bindings"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-pure-bindings"].issues,
+        by_selector["structural-pure-bindings"].source,
+    );
+    assert!(by_selector["structural-pure-bindings"]
+        .source
+        .contains("[config]="));
+    assert!(
+        by_selector["structural-pure-bindings"]
+            .source
+            .contains("fixed: !0")
+            || by_selector["structural-pure-bindings"]
+                .source
+                .contains("fixed: true")
+    );
+    assert!(by_selector["structural-pure-bindings"]
+        .source
+        .contains("label"));
+    assert!(by_selector["structural-pure-bindings"]
+        .source
+        .contains("[items]=\"["));
+    assert!(by_selector["structural-pure-bindings"]
+        .source
+        .contains(r#"[title]="\`\${label}\`""#));
+    assert!(by_selector["structural-pure-bindings"]
+        .source
+        .contains(r#"[attr.data-label]="\`Hello \${label}!\`""#));
+    assert_eq!(
+        by_selector["structural-let-bindings"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-let-bindings"].issues,
+        by_selector["structural-let-bindings"].source,
+    );
+    assert!(by_selector["structural-let-bindings"]
+        .source
+        .contains("@let value = prefix + label;"));
+    assert!(by_selector["structural-let-bindings"]
+        .source
+        .contains("{{ value }}"));
+    assert!(by_selector["structural-let-bindings"]
+        .source
+        .contains("(click)=\"console.log(value); void 0\""));
+    assert_eq!(
+        by_selector["structural-namespaces"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-namespaces"].issues,
+        by_selector["structural-namespaces"].source,
+    );
+    assert!(by_selector["structural-namespaces"]
+        .source
+        .contains("<svg viewBox=\"0 0 10 10\">"));
+    assert!(by_selector["structural-namespaces"]
+        .source
+        .contains("<circle cx=\"5\" cy=\"5\" r=\"4\"></circle>"));
+    assert!(by_selector["structural-namespaces"]
+        .source
+        .contains("<math>"));
+    assert!(by_selector["structural-namespaces"]
+        .source
+        .contains("<mi>x</mi>"));
+    assert!(by_selector["structural-namespaces"]
+        .source
+        .contains("<p>HTML</p>"));
     assert_eq!(report.stats.malformed_instruction_calls, 0);
 }
 
@@ -326,6 +451,237 @@ fn recovers_flat_bindings_from_isolated_angular_compiler_output() {
     assert!(component
         .source
         .contains("<input [disabled]=\"disabled\" />"));
+}
+
+#[test]
+fn recovers_element_and_attribute_selector_matrices() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    assert!(by_selector.contains_key("button[fixtureAction],a[fixtureAction]"));
+    assert!(by_selector.contains_key("dialog[fixtureDialog]"));
+    assert!(by_selector["button[fixtureAction],a[fixtureAction]"]
+        .source
+        .contains("<span>Selector matrix</span>"));
+    assert!(by_selector["dialog[fixtureDialog]"]
+        .source
+        .contains("<span>Element selector</span>"));
+}
+
+#[test]
+fn recovers_ng_container_and_basic_i18n_messages() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for instruction in [
+        "ɵɵdomElementContainerStart",
+        "ɵɵdomElementContainerEnd",
+        "ɵɵi18n",
+        "ɵɵi18nExp",
+        "ɵɵi18nApply",
+    ] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-container-i18n")
+        .expect("container and i18n component should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<ng-container>"));
+    assert!(component.source.contains("<span>Grouped content</span>"));
+    assert!(component
+        .source
+        .contains("<p i18n>Hello, localized world!</p>"));
+    assert!(component.source.contains("<p i18n>Hello, {{ name }}!</p>"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+    assert_eq!(component.stats.unsupported_runtime_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_pure_literal_bindings_from_angular_compiler_output() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for instruction in ["ɵɵpureFunction0", "ɵɵpureFunction1"] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-pure-bindings")
+        .expect("pure literal binding component should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("[config]="));
+    assert!(
+        component.source.contains("fixed: !0") || component.source.contains("fixed: true"),
+        "{}",
+        component.source,
+    );
+    assert!(component.source.contains("label"));
+    assert!(component.source.contains("[items]=\"["));
+    assert!(!component.source.contains("ɵɵpureFunction"));
+    assert_eq!(
+        component.stats.runtime_calls_observed,
+        component.stats.rendered_instruction_calls
+    );
+}
+
+#[test]
+fn recovers_expression_interpolation_from_angular_compiler_output() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for instruction in ["ɵɵinterpolate", "ɵɵinterpolate1"] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "fixture-pure-bindings")
+        .expect("expression interpolation component should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[title]="\`\${label}\`""#));
+    assert!(component
+        .source
+        .contains(r#"[attr.data-label]="\`Hello \${label}!\`""#));
+    assert!(!component.source.contains("ɵɵinterpolate"));
+}
+
+#[test]
+fn recovers_let_bindings_from_angular_compiler_output() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        for instruction in ["ɵɵdeclareLet", "ɵɵstoreLet", "ɵɵreadContextLet"] {
+            assert!(
+                source.contains(instruction)
+                    || source.contains(&instruction.replace('ɵ', "\\u0275")),
+                "generated fixture should contain {instruction}"
+            );
+        }
+
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular @let output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-let-bindings")
+            .expect("the @let component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component
+            .source
+            .contains("@let displayLabel = prefix + label;"));
+        assert!(component.source.contains("<p>{{ displayLabel }}</p>"));
+        assert!(component.source.contains("@if (active) {"));
+        assert!(component
+            .source
+            .contains("(click)=\"activate(displayLabel)\""));
+        assert_eq!(
+            component.stats.runtime_calls_observed,
+            component.stats.rendered_instruction_calls
+        );
+        assert_eq!(component.stats.unsupported_runtime_calls, 0);
+        assert_eq!(component.stats.malformed_instruction_calls, 0);
+    }
+}
+
+#[test]
+fn recovers_namespace_switches_from_angular_compiler_output() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        for instruction in ["ɵɵnamespaceHTML", "ɵɵnamespaceMathML", "ɵɵnamespaceSVG"] {
+            assert!(
+                source.contains(instruction)
+                    || source.contains(&instruction.replace('ɵ', "\\u0275")),
+                "generated fixture should contain {instruction}"
+            );
+        }
+
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular namespace output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-namespaces")
+            .expect("the namespace component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains("<svg viewBox=\"0 0 10 10\">"));
+        assert!(component
+            .source
+            .contains("<circle cx=\"5\" cy=\"5\" r=\"4\"></circle>"));
+        assert!(component.source.contains("<math>"));
+        assert!(component.source.contains("<mi>x</mi>"));
+        assert!(component.source.contains("<mo>=</mo>"));
+        assert!(component.source.contains("<mn>1</mn>"));
+        assert!(component.source.contains("<p>HTML</p>"));
+        assert_eq!(
+            component.stats.runtime_calls_observed,
+            component.stats.rendered_instruction_calls
+        );
+        assert_eq!(component.stats.unsupported_runtime_calls, 0);
+        assert_eq!(component.stats.malformed_instruction_calls, 0);
+    }
 }
 
 #[test]
@@ -525,7 +881,7 @@ fn preserves_legacy_structural_directives_as_neutral_templates() {
 fn recovers_assignment_lowered_angular_template_constructs() {
     assert_production_artifact(TEMPLATE_CONSTRUCTS_ASSIGNMENT);
     assert!(TEMPLATE_CONSTRUCTS_ASSIGNMENT
-        .contains("var FixtureStructuralConstructsComponent_Conditional_1_Template"));
+        .contains("FixtureStructuralConstructsComponent_Conditional_1_Template,"));
     assert!(TEMPLATE_CONSTRUCTS_ASSIGNMENT
         .contains("FixtureStructuralConstructsComponent_Conditional_1_Template = function"));
     assert!(!TEMPLATE_CONSTRUCTS_ASSIGNMENT
