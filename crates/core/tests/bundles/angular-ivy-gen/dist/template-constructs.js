@@ -1,5 +1,5 @@
 import { NgFor, NgIf, UpperCasePipe } from "@angular/common";
-import "@angular/core";
+import { model } from "@angular/core";
 import * as i0 from "@angular/core";
 const _c0 = () => ({ fixed: !0 }), _c1 = (a0) => ({ label: a0 }), _c2 = (a0) => [a0];
 function FixtureLetBindingsComponent_Conditional_3_Template(rf, ctx) {
@@ -42,6 +42,33 @@ function FixtureStructuralConstructsComponent_For_4_Template(rf, ctx) {
 }
 function FixtureStructuralConstructsComponent_ForEmpty_5_Template(rf, ctx) {
   rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "No items"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureComplexListenerComponent_For_2_Conditional_0_Template(rf, ctx) {
+  if (rf & 1) {
+    const _r1 = i0.\u0275\u0275getCurrentView();
+    i0.\u0275\u0275domElementStart(0, "button", 2, 0), i0.\u0275\u0275domListener("click", function() {
+      i0.\u0275\u0275restoreView(_r1);
+      const button_r2 = i0.\u0275\u0275reference(1), item_r3 = i0.\u0275\u0275nextContext().$implicit, ctx_r3 = i0.\u0275\u0275nextContext(), displayLabel_r5 = i0.\u0275\u0275readContextLet(0);
+      return ctx_r3.record(button_r2, item_r3, displayLabel_r5), i0.\u0275\u0275resetView(ctx_r3.active = !1);
+    }), i0.\u0275\u0275text(2), i0.\u0275\u0275domElementEnd();
+  }
+  if (rf & 2) {
+    const item_r3 = i0.\u0275\u0275nextContext().$implicit;
+    i0.\u0275\u0275advance(2), i0.\u0275\u0275textInterpolate1(" ", item_r3.label, " ");
+  }
+}
+function FixtureComplexListenerComponent_For_2_Template(rf, ctx) {
+  if (rf & 1 && i0.\u0275\u0275conditionalCreate(0, FixtureComplexListenerComponent_For_2_Conditional_0_Template, 3, 1, "button", 1), rf & 2) {
+    const ctx_r3 = i0.\u0275\u0275nextContext();
+    i0.\u0275\u0275conditional(ctx_r3.active ? 0 : -1);
+  }
+}
+const _c5 = [[["", "card-title", ""]], "*"], _c6 = ["[card-title]", "*"];
+function FixtureProjectionFallbackComponent_ProjectionFallback_1_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "h2"), i0.\u0275\u0275text(1, "Fallback title"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureProjectionFallbackComponent_ProjectionFallback_3_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Fallback body"), i0.\u0275\u0275domElementEnd());
 }
 function FixtureDeferredConstructsComponent_Defer_1_Template(rf, ctx) {
   if (rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1), i0.\u0275\u0275domElementEnd()), rf & 2) {
@@ -184,6 +211,78 @@ class FixtureStructuralConstructsComponent {
     rf & 1 && (i0.\u0275\u0275projectionDef(_c3), i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275conditionalCreate(1, FixtureStructuralConstructsComponent_Conditional_1_Template, 3, 3, "h2")(2, FixtureStructuralConstructsComponent_Conditional_2_Template, 2, 0, "p"), i0.\u0275\u0275repeaterCreate(3, FixtureStructuralConstructsComponent_For_4_Template, 3, 1, "button", 1, _forTrack0, !1, FixtureStructuralConstructsComponent_ForEmpty_5_Template, 2, 0, "p"), i0.\u0275\u0275projection(6), i0.\u0275\u0275domElementEnd()), rf & 2 && (i0.\u0275\u0275advance(), i0.\u0275\u0275conditional(ctx.showDetails ? 1 : 2), i0.\u0275\u0275advance(2), i0.\u0275\u0275repeater(ctx.items));
   }, dependencies: [UpperCasePipe], encapsulation: 2 });
 }
+class FixtureComplexListenerComponent {
+  prefix = "Selected: ";
+  suffix = "item";
+  active = !0;
+  items = [{ id: 1, label: "First" }];
+  record(_button, _item, _displayLabel) {
+    console.log(_button, _item, _displayLabel);
+  }
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureComplexListenerComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureComplexListenerComponent, selectors: [["fixture-complex-listener"]], decls: 3, vars: 1, consts: [["button", ""], ["type", "button"], ["type", "button", 3, "click"]], template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275declareLet(0), i0.\u0275\u0275repeaterCreate(1, FixtureComplexListenerComponent_For_2_Template, 1, 1, null, null, _forTrack0)), rf & 2 && (i0.\u0275\u0275storeLet(ctx.prefix + ctx.suffix), i0.\u0275\u0275advance(), i0.\u0275\u0275repeater(ctx.items));
+  }, encapsulation: 2 });
+}
+class FixtureStructuralI18nComponent {
+  name = "reader";
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureStructuralI18nComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureStructuralI18nComponent, selectors: [["fixture-structural-i18n"]], decls: 3, vars: 1, consts: () => {
+    let i18n_2;
+    return typeof ngI18nClosureMode < "u" && ngI18nClosureMode ? i18n_2 = /* @ts-ignore */
+    goog.getMsg("Hello {$startTagStrong}{$interpolation}{$closeTagStrong}!", { closeTagStrong: "\uFFFD/#2\uFFFD", interpolation: "\uFFFD0\uFFFD", startTagStrong: "\uFFFD#2\uFFFD" }, { original_code: { closeTagStrong: "</strong>", interpolation: "{{ name }}", startTagStrong: "<strong>" } }) : i18n_2 = $localize`Hello ${"\uFFFD#2\uFFFD"}:START_TAG_STRONG:${"\uFFFD0\uFFFD"}:INTERPOLATION:${"\uFFFD/#2\uFFFD"}:CLOSE_TAG_STRONG:!`, [i18n_2];
+  }, template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275i18nStart(1, 0), i0.\u0275\u0275domElement(2, "strong"), i0.\u0275\u0275i18nEnd(), i0.\u0275\u0275domElementEnd()), rf & 2 && (i0.\u0275\u0275advance(2), i0.\u0275\u0275i18nExp(ctx.name), i0.\u0275\u0275i18nApply(1));
+  }, encapsulation: 2 });
+}
+class FixtureProjectionFallbackComponent {
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureProjectionFallbackComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureProjectionFallbackComponent, selectors: [["fixture-projection-fallback"]], ngContentSelectors: _c6, decls: 5, vars: 0, template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275projectionDef(_c5), i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275projection(1, 0, null, FixtureProjectionFallbackComponent_ProjectionFallback_1_Template, 2, 0), i0.\u0275\u0275projection(3, 1, null, FixtureProjectionFallbackComponent_ProjectionFallback_3_Template, 2, 0), i0.\u0275\u0275domElementEnd());
+  }, encapsulation: 2 });
+}
+class FixtureModelTargetDirective {
+  value = model(
+    ""
+  );
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureModelTargetDirective)();
+  };
+  static \u0275dir = /* @__PURE__ */ i0.\u0275\u0275defineDirective({ type: FixtureModelTargetDirective, selectors: [["fixture-model-target"]], inputs: { value: [1, "value"] }, outputs: { value: "valueChange" } });
+}
+class FixtureTwoWayBindingComponent {
+  name = "reader";
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureTwoWayBindingComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureTwoWayBindingComponent, selectors: [["fixture-two-way-binding"]], decls: 1, vars: 1, consts: [[3, "valueChange", "value"]], template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275elementStart(0, "fixture-model-target", 0), i0.\u0275\u0275twoWayListener("valueChange", function($event) {
+      return i0.\u0275\u0275twoWayBindingSet(ctx.name, $event) || (ctx.name = $event), $event;
+    }), i0.\u0275\u0275elementEnd()), rf & 2 && i0.\u0275\u0275twoWayProperty("value", ctx.name);
+  }, dependencies: [FixtureModelTargetDirective], encapsulation: 2 });
+}
+class FixtureAnimationBindingsComponent {
+  leaveClass = "fade-out";
+  started(_event) {
+    console.log(_event);
+  }
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureAnimationBindingsComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureAnimationBindingsComponent, selectors: [["fixture-animation-bindings"]], decls: 2, vars: 0, template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "div"), i0.\u0275\u0275animateLeave(function() {
+      return ctx.leaveClass;
+    }), i0.\u0275\u0275animateEnter("fade-in"), i0.\u0275\u0275animateEnterListener(function($event) {
+      return ctx.started($event);
+    }), i0.\u0275\u0275text(1, " Animated "), i0.\u0275\u0275domElementEnd());
+  }, encapsulation: 2 });
+}
 class FixtureDeferredConstructsComponent {
   title = "Deferred content";
   static \u0275fac = function(__ngFactoryType__) {
@@ -220,6 +319,8 @@ class FixtureLegacyStructuralConstructsComponent {
   }, dependencies: [NgIf, NgFor], encapsulation: 2 });
 }
 export {
+  FixtureAnimationBindingsComponent,
+  FixtureComplexListenerComponent,
   FixtureContainerI18nComponent,
   FixtureDeferredConstructsComponent,
   FixtureElementSelectorComponent,
@@ -227,10 +328,14 @@ export {
   FixtureHydrateIdleConstructsComponent,
   FixtureLegacyStructuralConstructsComponent,
   FixtureLetBindingsComponent,
+  FixtureModelTargetDirective,
   FixtureNamespacesComponent,
   FixturePrefetchIdleConstructsComponent,
+  FixtureProjectionFallbackComponent,
   FixturePureBindingsComponent,
   FixturePureTargetDirective,
   FixtureSelectorMatrixComponent,
-  FixtureStructuralConstructsComponent
+  FixtureStructuralConstructsComponent,
+  FixtureStructuralI18nComponent,
+  FixtureTwoWayBindingComponent
 };
