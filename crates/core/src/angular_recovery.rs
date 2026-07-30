@@ -30,10 +30,10 @@ use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
 use artifact::{class_references, dependency_binding, ArtifactSymbolTable};
 use emitter::{
-    clean_component_class, emit_angular_module_source, emit_component_source, ComponentEmitInput,
-    ModuleComponentEmitInput,
+    clean_component_class, emit_angular_module_source, emit_component_source,
+    recover_component_class_apis, ComponentEmitInput, ModuleComponentEmitInput,
 };
-use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
+use roles::{symbol_identity, AngularClassApi, IvyInstruction, IvyRoleTable, SymbolIdentity};
 use syntax::{prop_name, string_lit, wtf8_to_string, BindingKey};
 use template::{
     ivy_template_score, recover_template, TemplateFunctionTable, TemplateRecoveryContext,
@@ -270,6 +270,7 @@ struct RecoveredModuleComponentDraft {
     readable_class_roots: HashSet<BindingKey>,
     template_roots: HashSet<BindingKey>,
     dependencies: Vec<Box<Expr>>,
+    angular_imports: Vec<AngularClassApi>,
     evidence_class_identity: SymbolIdentity,
     readable_class_identity: SymbolIdentity,
     completeness: AngularRecoveryCompleteness,
@@ -511,11 +512,21 @@ fn recover_prepared_modules(
                 &roles,
                 prepared.unresolved_ctxt,
             );
-            let reserved_names = HashSet::from([
+            let (class, angular_imports) = recover_component_class_apis(
+                &class,
+                &roles,
+                readable_modules[module_index].unresolved_ctxt,
+            );
+            let mut reserved_names = HashSet::from([
                 Atom::from("Component"),
                 readable_class.name.clone(),
                 Atom::from(name.as_str()),
             ]);
+            reserved_names.extend(
+                angular_imports
+                    .iter()
+                    .map(|api| Atom::from(api.canonical_export_name())),
+            );
             let mut class_roots = class_references(&class);
             class_roots.retain(|root| root.0 != readable_class.name);
             let mut support = readable_artifact_symbols[module_index].recover(
@@ -558,6 +569,7 @@ fn recover_prepared_modules(
                     template: &recovered_template,
                     support: &support,
                     dependencies: &dependencies,
+                    angular_imports: &angular_imports,
                 },
                 emit_cm.clone(),
             )?;
@@ -586,6 +598,7 @@ fn recover_prepared_modules(
                 readable_class_roots: class_roots,
                 template_roots: recovered_template.artifact_references.clone(),
                 dependencies: descriptor.dependencies.clone(),
+                angular_imports,
                 evidence_class_identity: descriptor.class.identity.clone(),
                 readable_class_identity: readable_class.identity.clone(),
                 completeness,
@@ -766,6 +779,12 @@ fn emit_recovered_angular_module(
     let mut reserved_names = HashSet::from([Atom::from("Component")]);
 
     for draft in drafts {
+        reserved_names.extend(
+            draft
+                .angular_imports
+                .iter()
+                .map(|api| Atom::from(api.canonical_export_name())),
+        );
         let recovered_name = Atom::from(draft.name.as_str());
         reserved_names.insert(recovered_name.clone());
         for identity in [
@@ -947,6 +966,7 @@ fn emit_recovered_angular_module(
             class: &draft.class,
             template_source: &draft.template_source,
             dependencies,
+            angular_imports: &draft.angular_imports,
         })
         .collect::<Vec<_>>();
     let source = emit_angular_module_source(&components, &support, &renames, cm)?;
