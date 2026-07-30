@@ -301,6 +301,7 @@ for (const selector of [
   'structural-let-bindings',
   'structural-namespaces',
   'structural-class-apis',
+  'structural-query-apis',
 ]) {
   if (!advancedStructuralSource.includes(selector)) {
     throw new Error(`Structural ADVANCED output is missing ${selector}`);
