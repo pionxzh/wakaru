@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CallExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr,
-    ExprOrSpread, ForHead, ForInStmt, ForOfStmt, ImportSpecifier, MemberProp, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp,
-    UpdateExpr,
+    AssignExpr, AssignTarget, CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr,
+    ExprOrSpread, ForHead, ForInStmt, ForOfStmt, Function, Ident, ImportSpecifier, MemberProp,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, UnaryExpr,
+    UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -327,6 +327,7 @@ pub(super) fn canonicalize_immediate_iife_namespace_aliases(
         unresolved_ctxt,
         aliases: HashMap::new(),
         ambiguous: HashSet::new(),
+        dynamic_this_depth: 0,
     };
     module.visit_with(&mut collector);
     collector.aliases.retain(|binding, alias| {
@@ -486,6 +487,7 @@ struct ImmediateIifeAliasCollector {
     unresolved_ctxt: SyntaxContext,
     aliases: HashMap<BindingKey, ImmediateIifeAlias>,
     ambiguous: HashSet<BindingKey>,
+    dynamic_this_depth: usize,
 }
 
 struct ImmediateIifeAlias {
@@ -505,6 +507,23 @@ impl Visit for ImmediateIifeAliasCollector {
                 {
                     continue;
                 }
+                let namespace = namespace_path(argument.expr.as_ref(), self.unresolved_ctxt)
+                    .expect("stable namespace expressions have a path");
+                if namespace
+                    .first()
+                    .is_some_and(|root| root.as_ref() == "this")
+                    && self.dynamic_this_depth != 0
+                {
+                    continue;
+                }
+                let expression = if namespace
+                    .first()
+                    .is_some_and(|root| root.as_ref() == "this")
+                {
+                    normalize_global_this_namespace(argument.expr.as_ref(), self.unresolved_ctxt)
+                } else {
+                    argument.expr.clone()
+                };
                 let key = binding_key(&binding.id);
                 if self.ambiguous.contains(&key) {
                     continue;
@@ -512,7 +531,7 @@ impl Visit for ImmediateIifeAliasCollector {
                 if self
                     .aliases
                     .get(&key)
-                    .is_some_and(|existing| existing.expression.as_ref() != argument.expr.as_ref())
+                    .is_some_and(|existing| existing.expression.as_ref() != expression.as_ref())
                 {
                     self.aliases.remove(&key);
                     self.ambiguous.insert(key);
@@ -521,13 +540,49 @@ impl Visit for ImmediateIifeAliasCollector {
                 self.aliases.insert(
                     key,
                     ImmediateIifeAlias {
-                        expression: argument.expr.clone(),
+                        expression,
                         invocation_position: call.span.lo.0,
                     },
                 );
             }
         }
         call.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.dynamic_this_depth += 1;
+        function.visit_children_with(self);
+        self.dynamic_this_depth -= 1;
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.dynamic_this_depth += 1;
+        class.visit_children_with(self);
+        self.dynamic_this_depth -= 1;
+    }
+}
+
+fn normalize_global_this_namespace(expression: &Expr, unresolved_ctxt: SyntaxContext) -> Box<Expr> {
+    let mut expression = expression.clone();
+    expression.visit_mut_with(&mut GlobalThisNamespaceNormalizer { unresolved_ctxt });
+    Box::new(expression)
+}
+
+struct GlobalThisNamespaceNormalizer {
+    unresolved_ctxt: SyntaxContext,
+}
+
+impl VisitMut for GlobalThisNamespaceNormalizer {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if let Expr::This(this) = expression {
+            *expression = Expr::Ident(Ident::new(
+                Atom::from("globalThis"),
+                this.span,
+                self.unresolved_ctxt,
+            ));
+            return;
+        }
+        expression.visit_mut_children_with(self);
     }
 }
 
@@ -654,7 +709,41 @@ mod tests {
             module.visit_with(&mut finder);
             assert!(!finder.local_namespace_use);
             assert!(finder.global_namespace_use);
+            assert!(finder.global_this_namespace_use);
+            assert!(!finder.dynamic_this_namespace_use);
         });
+    }
+
+    #[test]
+    fn keeps_a_top_level_namespace_global_inside_a_component_class() {
+        let module = canonicalized_fixture(
+            "(function(namespace) { \
+                 class Example { read() { return namespace.value(); } } \
+             }).call(this, this.shared);",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(!finder.local_namespace_use);
+        assert!(finder.global_namespace_use);
+        assert!(finder.global_this_namespace_use);
+        assert!(!finder.dynamic_this_namespace_use);
+    }
+
+    #[test]
+    fn does_not_guess_that_a_function_receiver_is_global_this() {
+        let module = canonicalized_fixture(
+            "function outer() { \
+                 (function(namespace) { namespace.value(); })(this.shared); \
+             }",
+        );
+
+        let mut finder = NamespaceUseFinder::default();
+        module.visit_with(&mut finder);
+        assert!(finder.local_namespace_use);
+        assert!(!finder.global_namespace_use);
+        assert!(!finder.global_this_namespace_use);
+        assert!(!finder.dynamic_this_namespace_use);
     }
 
     #[test]
@@ -767,6 +856,8 @@ mod tests {
     struct NamespaceUseFinder {
         local_namespace_use: bool,
         global_namespace_use: bool,
+        global_this_namespace_use: bool,
+        dynamic_this_namespace_use: bool,
     }
 
     impl Visit for NamespaceUseFinder {
@@ -781,6 +872,15 @@ mod tests {
                             .is_some_and(|property| property.as_ref() == "shared") =>
                     {
                         self.global_namespace_use = true;
+                        match object.obj.as_ref() {
+                            Expr::Ident(identifier) if identifier.sym.as_ref() == "globalThis" => {
+                                self.global_this_namespace_use = true;
+                            }
+                            Expr::This(_) => {
+                                self.dynamic_this_namespace_use = true;
+                            }
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
