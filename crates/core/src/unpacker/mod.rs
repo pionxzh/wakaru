@@ -501,12 +501,12 @@ pub(crate) enum PreparedSource {
 pub(crate) fn try_prepare_bundle(source: &str) -> anyhow::Result<Option<DetectedBundle>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = {
+        let mut module = {
             let span = tracing::info_span!("parse_bundle");
             let _enter = span.enter();
             parse_es_module(source, "bundle.js", cm.clone())?
         };
-        Ok(detect_parsed_source(&module, cm, source))
+        Ok(detect_parsed_source(&mut module, cm, source))
     })
 }
 
@@ -534,7 +534,7 @@ pub(crate) fn try_prepare_source(
             parse_es_module_with_recovery(source, filename, cm.clone())?
         };
 
-        if let Some(result) = detect_parsed_source(&module, cm, source) {
+        if let Some(result) = detect_parsed_source(&mut module, cm, source) {
             return Ok(PreparedSourceParts::Bundle(result));
         }
 
@@ -574,12 +574,19 @@ pub(crate) fn try_prepare_source(
 }
 
 fn detect_parsed_source(
-    module: &Module,
+    module: &mut Module,
     cm: Lrc<SourceMap>,
     source: &str,
 ) -> Option<DetectedBundle> {
     let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
     if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true) {
+        result.chunk_ids = chunk_ids;
+        return Some(result);
+    }
+
+    if let Some(mut result) = wrappers::try_detect_bun_compile_candidate(module, |candidate| {
+        detect_bundle_candidate(candidate, cm.clone(), source, false)
+    }) {
         result.chunk_ids = chunk_ids;
         return Some(result);
     }

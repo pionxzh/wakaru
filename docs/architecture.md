@@ -53,6 +53,12 @@ use a parenthesized CommonJS container with the exact parameters `exports`,
 that body to the existing esbuild/Bun factory detector. This second stage can
 recover thousands of inner factory and scope-hoisted modules.
 
+Standalone entry bodies can be tens of megabytes, so this handoff moves the
+wrapper body into the detector instead of cloning it, restoring the body if
+detection rejects the candidate. The esbuild/Bun detector likewise indexes
+top-level declaration items by position and clones an item only when a
+recovered module needs to own it; it must not retain one AST clone per binding.
+
 This trailer-first parser is independent of the native executable format and
 does not execute the input. The public `wakaru::bun` API borrows exact content
 slices and reports their absolute executable byte ranges. The CLI ignores

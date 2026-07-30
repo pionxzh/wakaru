@@ -141,21 +141,12 @@ pub(super) fn detect_from_module_with_source(
         })
         .collect();
     let external_imports = collect_external_imports(&analysis_module.body, &module.body);
-    let mut top_level_decl_items: HashMap<BindingId, (usize, ModuleItem, ModuleItem)> =
-        HashMap::new();
-    for (index, (analysis_item, source_item)) in analysis_module
-        .body
-        .iter()
-        .zip(module.body.iter())
-        .enumerate()
-    {
-        for binding in module_item_declared_binding_ids(analysis_item) {
-            top_level_decl_items
-                .entry(binding)
-                .or_insert_with(|| (index, source_item.clone(), analysis_item.clone()));
-        }
-    }
-    let top_level_decl_binding_by_atom = atom_binding_map_from_keys(&top_level_decl_items);
+    // Keep only item indices here. One top-level declaration can own many
+    // bindings, so retaining a cloned source + analysis item per binding
+    // multiplies large Bun/esbuild ASTs. Clone the selected item only when a
+    // recovered module actually needs to own it.
+    let top_level_decl_indices = collect_top_level_decl_indices(&analysis_module.body);
+    let top_level_decl_binding_by_atom = atom_binding_map_from_keys(&top_level_decl_indices);
 
     struct PendingFactory {
         binding: BindingId,
@@ -226,7 +217,7 @@ pub(super) fn detect_from_module_with_source(
                 || factory_importable_bindings.contains_key(ref_binding)
                 || helper_syms.contains(&ref_binding.0)
                 || factory_syms.contains(&ref_binding.0)
-                || !top_level_decl_items.contains_key(ref_binding)
+                || !top_level_decl_indices.contains_key(ref_binding)
             {
                 continue;
             }
@@ -396,7 +387,7 @@ pub(super) fn detect_from_module_with_source(
                 || binding_to_filename.contains_key(ref_binding)
                 || helper_syms.contains(&ref_binding.0)
                 || factory_syms.contains(&ref_binding.0)
-                || !top_level_decl_items.contains_key(ref_binding)
+                || !top_level_decl_indices.contains_key(ref_binding)
             {
                 continue;
             }
@@ -414,7 +405,8 @@ pub(super) fn detect_from_module_with_source(
             let owned_analysis_decl_items = factory_owned_analysis_decl_items(
                 &factory.filename,
                 &factory_owned_bindings,
-                &top_level_decl_items,
+                &top_level_decl_indices,
+                &analysis_module.body,
             );
             for item in &owned_analysis_decl_items {
                 let mut collector = TopLevelRefCollector {
@@ -426,7 +418,7 @@ pub(super) fn detect_from_module_with_source(
                     if binding_to_filename.contains_key(&ref_binding)
                         || helper_syms.contains(&ref_binding.0)
                         || factory_syms.contains(&ref_binding.0)
-                        || !top_level_decl_items.contains_key(&ref_binding)
+                        || !top_level_decl_indices.contains_key(&ref_binding)
                     {
                         continue;
                     }
@@ -446,6 +438,7 @@ pub(super) fn detect_from_module_with_source(
 
     // Append merged factory bodies to their target modules, synthesizing
     // imports for any cross-module reads the factory body needs.
+    let source_module_items = &module.body;
     if !merged_factories.is_empty() {
         for module in &mut modules {
             let Some(factories) = merged_factories.remove(&module.filename) else {
@@ -472,7 +465,7 @@ pub(super) fn detect_from_module_with_source(
                     if binding_to_filename
                         .get(owned_binding)
                         .is_some_and(|filename| filename == &module.filename)
-                        && top_level_decl_items.contains_key(owned_binding)
+                        && top_level_decl_indices.contains_key(owned_binding)
                     {
                         extra_owned_bindings.insert(owned_binding.clone());
                     }
@@ -505,7 +498,7 @@ pub(super) fn detect_from_module_with_source(
                     } else if let Some(import_binding) = external_import_by_atom.get(&ref_binding.0)
                     {
                         extra_external_imports.insert(import_binding.clone());
-                    } else if top_level_decl_items.contains_key(ref_binding) {
+                    } else if top_level_decl_indices.contains_key(ref_binding) {
                         extra_owned_bindings.insert(ref_binding.clone());
                     }
                 }
@@ -517,10 +510,10 @@ pub(super) fn detect_from_module_with_source(
                 changed = false;
                 let owned_bindings: Vec<BindingId> = extra_owned_bindings.iter().cloned().collect();
                 for owned_binding in owned_bindings {
-                    let Some((_, _, analysis_item)) = top_level_decl_items.get(&owned_binding)
-                    else {
+                    let Some(index) = top_level_decl_indices.get(&owned_binding) else {
                         continue;
                     };
+                    let analysis_item = &analysis_module.body[*index];
                     let mut collector = TopLevelRefCollector {
                         top_level_bindings: &all_top_level_bindings,
                         references: HashSet::new(),
@@ -554,7 +547,7 @@ pub(super) fn detect_from_module_with_source(
                             external_import_by_atom.get(&ref_binding.0)
                         {
                             extra_external_imports.insert(import_binding.clone());
-                        } else if top_level_decl_items.contains_key(&ref_binding) {
+                        } else if top_level_decl_indices.contains_key(&ref_binding) {
                             extra_owned_bindings.insert(ref_binding);
                             changed = true;
                         }
@@ -623,9 +616,9 @@ pub(super) fn detect_from_module_with_source(
                             .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
                 })
                 .filter_map(|binding| {
-                    top_level_decl_items
+                    top_level_decl_indices
                         .get(&binding)
-                        .map(|(index, source_item, _)| (*index, source_item.clone()))
+                        .map(|index| (*index, source_module_items[*index].clone()))
                 })
                 .collect();
             extra_owned_items.sort_by_key(|(index, _)| *index);
@@ -656,12 +649,14 @@ pub(super) fn detect_from_module_with_source(
         let owned_decl_items = factory_owned_decl_items(
             &factory.filename,
             &factory_owned_bindings,
-            &top_level_decl_items,
+            &top_level_decl_indices,
+            &module.body,
         );
         let owned_analysis_decl_items = factory_owned_analysis_decl_items(
             &factory.filename,
             &factory_owned_bindings,
-            &top_level_decl_items,
+            &top_level_decl_indices,
+            &analysis_module.body,
         );
         let declared_owned_atoms: HashSet<Atom> = owned_decl_items
             .iter()
@@ -1011,6 +1006,16 @@ fn atom_binding_map_from_keys<T>(imports: &HashMap<BindingId, T>) -> HashMap<Ato
             .or_insert_with(|| binding.clone());
     }
     by_atom
+}
+
+fn collect_top_level_decl_indices(items: &[ModuleItem]) -> HashMap<BindingId, usize> {
+    let mut indices = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        for binding in module_item_declared_binding_ids(item) {
+            indices.entry(binding).or_insert(index);
+        }
+    }
+    indices
 }
 
 fn add_factory_atom_import(
@@ -3916,9 +3921,15 @@ fn js_string_literal(value: &Atom) -> String {
 fn factory_owned_decl_items(
     filename: &str,
     factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
-    top_level_decl_items: &HashMap<BindingId, (usize, ModuleItem, ModuleItem)>,
+    top_level_decl_indices: &HashMap<BindingId, usize>,
+    source_items: &[ModuleItem],
 ) -> Vec<ModuleItem> {
-    factory_owned_decl_items_from(filename, factory_owned_bindings, top_level_decl_items, true)
+    factory_owned_decl_items_from(
+        filename,
+        factory_owned_bindings,
+        top_level_decl_indices,
+        source_items,
+    )
 }
 
 fn scope_owned_support_decl_items(
@@ -3949,21 +3960,22 @@ fn scope_owned_support_decl_items(
 fn factory_owned_analysis_decl_items(
     filename: &str,
     factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
-    top_level_decl_items: &HashMap<BindingId, (usize, ModuleItem, ModuleItem)>,
+    top_level_decl_indices: &HashMap<BindingId, usize>,
+    analysis_items: &[ModuleItem],
 ) -> Vec<ModuleItem> {
     factory_owned_decl_items_from(
         filename,
         factory_owned_bindings,
-        top_level_decl_items,
-        false,
+        top_level_decl_indices,
+        analysis_items,
     )
 }
 
 fn factory_owned_decl_items_from(
     filename: &str,
     factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
-    top_level_decl_items: &HashMap<BindingId, (usize, ModuleItem, ModuleItem)>,
-    use_source: bool,
+    top_level_decl_indices: &HashMap<BindingId, usize>,
+    items: &[ModuleItem],
 ) -> Vec<ModuleItem> {
     let Some(owned) = factory_owned_bindings.get(filename) else {
         return vec![];
@@ -3972,15 +3984,9 @@ fn factory_owned_decl_items_from(
     let mut item_indices: Vec<(usize, ModuleItem)> = owned
         .iter()
         .filter_map(|binding| {
-            top_level_decl_items
+            top_level_decl_indices
                 .get(binding)
-                .map(|(index, source, analysis)| {
-                    if use_source {
-                        (*index, source.clone())
-                    } else {
-                        (*index, analysis.clone())
-                    }
-                })
+                .map(|index| (*index, items[*index].clone()))
         })
         .collect();
     item_indices.sort_by_key(|(index, _)| *index);
@@ -4277,6 +4283,30 @@ fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_level_declaration_index_reuses_items_with_multiple_bindings() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = super::super::parse_es_module(
+                "var first = 1, second = 2; function third() {}",
+                "decl-indices.js",
+                cm,
+            )
+            .expect("fixture should parse");
+            module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
+            let indices = collect_top_level_decl_indices(&module.body);
+            let by_name = indices
+                .into_iter()
+                .map(|((name, _), index)| (name.to_string(), index))
+                .collect::<HashMap<_, _>>();
+
+            assert_eq!(by_name.get("first"), Some(&0));
+            assert_eq!(by_name.get("second"), Some(&0));
+            assert_eq!(by_name.get("third"), Some(&1));
+        });
+    }
 
     fn collect_atom_refs(source: &str, candidates: &[&str]) -> HashSet<Atom> {
         GLOBALS.set(&Default::default(), || {

@@ -6,7 +6,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::utils::paren::strip_parens;
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
     let mut candidates = Vec::new();
@@ -15,7 +15,6 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
         };
-        collect_bun_compile_candidate(expr, &mut candidates);
         collect_umd_factory_candidates(expr, &mut candidates);
         collect_amd_define_candidates(expr, &mut candidates);
     }
@@ -23,21 +22,54 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
     candidates
 }
 
-fn collect_bun_compile_candidate(expr: &Expr, candidates: &mut Vec<Module>) {
-    let Expr::Fn(FnExpr { function, .. }) = strip_parens(expr) else {
-        return;
+/// Tries Bun's compiled CommonJS container by moving its body into the
+/// detector candidate instead of cloning the entire embedded bundle.
+///
+/// A rejected candidate is restored exactly so an ordinary function with the
+/// same parameter names still follows the plain-source fallback.
+pub(super) fn try_detect_bun_compile_candidate<T>(
+    module: &mut Module,
+    mut detect: impl FnMut(&Module) -> Option<T>,
+) -> Option<T> {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        let Some(body) = bun_compile_body_mut(expr) else {
+            continue;
+        };
+        let body_span = body.span;
+        let mut candidate = module_from_stmts(std::mem::take(&mut body.stmts));
+        candidate.span = body_span;
+        if let Some(result) = detect(&candidate) {
+            return Some(result);
+        }
+        body.stmts = candidate
+            .body
+            .into_iter()
+            .map(|item| match item {
+                ModuleItem::Stmt(stmt) => stmt,
+                ModuleItem::ModuleDecl(_) => {
+                    unreachable!("Bun wrapper candidates contain statements only")
+                }
+            })
+            .collect();
+    }
+    None
+}
+
+fn bun_compile_body_mut(expr: &mut Box<Expr>) -> Option<&mut BlockStmt> {
+    let Expr::Fn(FnExpr { function, .. }) = strip_parens_mut(expr) else {
+        return None;
     };
     if function.is_async || function.is_generator {
-        return;
+        return None;
     }
-    let Some(params) = function
+    let params = function
         .params
         .iter()
         .map(|param| pat_ident_sym(&param.pat))
-        .collect::<Option<Vec<_>>>()
-    else {
-        return;
-    };
+        .collect::<Option<Vec<_>>>()?;
     let expected = ["exports", "require", "module", "__filename", "__dirname"];
     if params.len() != expected.len()
         || params
@@ -45,14 +77,9 @@ fn collect_bun_compile_candidate(expr: &Expr, candidates: &mut Vec<Module>) {
             .zip(expected)
             .any(|(actual, expected)| actual.as_ref() != expected)
     {
-        return;
+        return None;
     }
-    let Some(body) = &function.body else {
-        return;
-    };
-    let mut candidate = module_from_stmts(body.stmts.clone());
-    candidate.span = body.span;
-    candidates.push(candidate);
+    function.body.as_mut()
 }
 
 fn collect_umd_factory_candidates(expr: &Expr, candidates: &mut Vec<Module>) {
@@ -245,5 +272,43 @@ fn module_from_stmts(stmts: Vec<Stmt>) -> Module {
         span: DUMMY_SP,
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
+
+    use super::try_detect_bun_compile_candidate;
+
+    #[test]
+    fn rejected_bun_compile_candidate_restores_moved_body() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = crate::unpacker::parse_es_module(
+                r#"
+                (function(exports, require, module, __filename, __dirname) {
+                    const value = 1;
+                    module.exports = value;
+                })
+                "#,
+                "bun-wrapper.js",
+                cm,
+            )
+            .expect("fixture should parse");
+
+            let mut rejected_body_len = 0;
+            let rejected = try_detect_bun_compile_candidate(&mut module, |candidate| {
+                rejected_body_len = candidate.body.len();
+                None::<()>
+            });
+            assert!(rejected.is_none());
+            assert_eq!(rejected_body_len, 2);
+
+            let accepted = try_detect_bun_compile_candidate(&mut module, |candidate| {
+                Some(candidate.body.len())
+            });
+            assert_eq!(accepted, Some(2), "rejected body should be restored");
+        });
     }
 }
