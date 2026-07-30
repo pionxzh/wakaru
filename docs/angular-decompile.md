@@ -46,7 +46,11 @@ Initial recovery covers:
 - text interpolation;
 - property, attribute, class, and style bindings, including expression
   interpolation and compiler-hoisted pure object/array literals;
-- event listeners;
+- event listeners, including ordered effects in restored nested-view handlers;
+- proven `[(property)]` pairs from `ɵɵtwoWayListener`,
+  `ɵɵtwoWayBindingSet`, and `ɵɵtwoWayProperty`, including restored-view
+  targets;
+- Angular 20.2+ `animate.enter` / `animate.leave` bindings and listeners;
 - `@let` declarations and reads across nested views;
 - nested embedded views selected by modern `@if` / `@else if` / `@else`
   control flow, including component-context reads through `ɵɵnextContext`;
@@ -57,10 +61,11 @@ Initial recovery covers:
   plus an immediately following `on idle` trigger;
 - legacy structural-directive templates in neutral `<ng-template>` form when
   their ordinary template and property operations are recoverable;
-- content projection, including selector-bearing `<ng-content>` slots;
+- content projection, including selector-bearing `<ng-content>` slots and
+  compiler-emitted fallback views;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
-- bounded static and interpolated i18n messages;
+- bounded static, interpolated, and element-marker i18n messages;
 - exact ESM imports referenced by the recovered class or rendered template,
   plus dependency-closed portable local helpers;
 - compiled component dependencies when their bindings can be materialized as
@@ -258,6 +263,24 @@ non-reference slots, so it remains unknown without a stronger relationship.
 Resolving a proven reference slot to a template name is still view-local and
 requires a matching creation-table declaration.
 
+Two-way binding roles are inferred as a family rather than as three independent
+call shapes. The creation-phase event must end in `Change`, a unique
+update-phase property helper must use the matching base name in the same views,
+and the nested handler must contain a helper whose writable-signal `set`
+contract survives optimization. The property helper is then excluded from
+ordinary `ɵɵproperty` inference. Rendering additionally verifies that the
+binding-set target, assignment fallback, and returned event are identical.
+Restored handlers may resolve a proven parent context or local-reference slot
+before performing that exact update.
+
+Animation roles retain Angular's `NgAnimateEnter` or `NgAnimateLeave` runtime
+marker. Binding and listener helpers are distinguished by whether the supplied
+parameter is invoked with the listener `.call(context, event)` contract,
+directly or through one stable helper; a function-valued class binding that is
+merely normalized is not listener evidence. Template use must then be a static
+string, zero-argument binding thunk, or handler function of the corresponding
+kind. This deliberately leaves marker-free or ambiguous wrappers unknown.
+
 Constant-table recovery accepts either a direct component-local array or a
 unique factory whose complete return behavior proves that it produces the
 array. Entries are resolved independently, so one opaque value does not discard
@@ -290,8 +313,10 @@ function bindings are expanded only when the callback and value arity are
 proven and the callback body can be substituted safely. Otherwise the runtime
 operation remains explicit unsupported output. Basic i18n recovery is
 similarly bounded to a uniquely resolved static/interpolated message and a
-valid containing element; structural ICU regions and ambiguous message
-factories remain partial.
+valid containing element. A structural region may contain balanced element
+start/end markers and interpolation placeholders; ICU expressions,
+sub-template opcodes, unbalanced markers, and ambiguous message factories
+remain partial.
 
 Each recovered render function owns its node cursor, reference slots, context
 depth, aliases, and listener operations. Entering an embedded view snapshots
@@ -476,6 +501,15 @@ remain explicit partial regions. Two additional minimally rooted components
 retain Closure-renamed prefetch-idle and hydrate-idle helpers as negative
 fixtures; neither is classified as the ordinary idle trigger.
 
+The isolated and assignment-lowered Angular 22 fixtures also cover a
+multi-level `@let` / `@for` / `@if` listener with a local reference, structural
+i18n element markers, selected and default projection fallbacks, signal-backed
+two-way binding, and static/dynamic animation bindings plus a listener. The
+minimally rooted `ADVANCED` profile recovers corresponding Closure-renamed
+families without exporting their canonical helper names. Authored component
+field names erased by Closure remain erased, but their class/template uses stay
+consistent.
+
 A supplementary private production corpus is reported only in aggregate. The
 current pass emitted 691 of 700 component candidates: 81 complete, 610 partial,
 and 9 rejected. It rendered 52,669 of 60,812 observed runtime calls, with 6,463
@@ -490,8 +524,8 @@ defer correctness remains established by the generated fixtures rather than
 claimed from private data.
 
 A second, smaller four-script local production corpus now emits all 120
-component candidates: 63 complete, 57 partial, and none rejected. It renders
-7,861 of 7,981 observed runtime calls, with 96 unsupported and 25 malformed
+component candidates: 68 complete, 52 partial, and none rejected. It renders
+7,893 of 7,989 observed runtime calls, with 61 unsupported and 36 malformed
 calls reported, and all four module-oriented artifacts parse as TypeScript.
 The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
 with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are
@@ -500,12 +534,13 @@ newly reachable child views and corrected failed-view accounting changed what
 the analyzer observes.
 
 Remaining partial regions in that smaller corpus are concentrated in
-structural i18n, multi-statement restored listeners and unresolved view aliases,
-ambiguous projection fallback/selector metadata, newer signal-form runtime
-hooks without an authored-template equivalent, and ordinary application
-declarations or calls. None of those operations is consumed based on a
-corpus-specific minified callee name. They remain typed diagnostics until a
-generic runtime contract and generated producer fixture justify recovery.
+ICU/sub-template i18n and unresolved i18n targets, less common restored-listener
+statement and alias forms, projection selector/attribute metadata that cannot
+be tied to a declared slot, newer signal-form runtime hooks without an
+authored-template equivalent, and ordinary application declarations or calls.
+None of those operations is consumed based on a corpus-specific minified
+callee name. They remain typed diagnostics until a generic runtime contract
+and generated producer fixture justify recovery.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -577,6 +612,8 @@ Pause and re-check this boundary after each milestone:
 15. generated and Closure-renamed defer/repeater control-flow families.
 16. selector/constant-table families, expression interpolation, pure literals,
     bounded i18n, `@let`, and HTML/SVG/MathML namespace transitions.
+17. view-local alias propagation, structural i18n element markers, projection
+    fallbacks, and Closure-renamed two-way/animation binding families.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
