@@ -80,6 +80,34 @@ export class FixtureDeferredConstructsComponent {
 }
 
 @Component({
+  selector: 'fixture-prefetch-idle-constructs',
+  template: `
+    <section>
+      @defer (on interaction; prefetch on idle) {
+        <article>Prefetched content</article>
+      } @placeholder {
+        <button type="button">Load prefetched content</button>
+      }
+    </section>
+  `,
+})
+export class FixturePrefetchIdleConstructsComponent {}
+
+@Component({
+  selector: 'fixture-hydrate-idle-constructs',
+  template: `
+    <section>
+      @defer (on interaction; hydrate on idle) {
+        <article>Hydrated content</article>
+      } @placeholder {
+        <button type="button">Load hydrated content</button>
+      }
+    </section>
+  `,
+})
+export class FixtureHydrateIdleConstructsComponent {}
+
+@Component({
   selector: 'fixture-legacy-structural-constructs',
   imports: [NgIf, NgFor],
   template: `

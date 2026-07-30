@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, ClassProp, Expr, ImportSpecifier,
     Module, ModuleDecl, ModuleExportName, ModuleItem, Prop, PropName, SimpleAssignTarget, Stmt,
@@ -180,10 +180,15 @@ impl IvyRoleTable {
         for prepared in modules {
             table.collect_imports(&prepared.module);
         }
-        for prepared in modules {
-            table.collect_export_maps(&prepared.module, prepared.unresolved_ctxt);
-        }
         let structural_evidence = structural::StructuralRoleEvidence::collect(modules);
+        for (module_index, prepared) in modules.iter().enumerate() {
+            table.collect_export_maps(
+                &prepared.module,
+                prepared.unresolved_ctxt,
+                module_index,
+                &structural_evidence,
+            );
+        }
         for (identity, name) in structural_evidence.infer_ivy_roles() {
             table.record_mapping(identity, name.to_string());
         }
@@ -229,14 +234,23 @@ impl IvyRoleTable {
         }
     }
 
-    fn collect_export_maps(&mut self, module: &Module, unresolved_ctxt: SyntaxContext) {
+    fn collect_export_maps(
+        &mut self,
+        module: &Module,
+        unresolved_ctxt: SyntaxContext,
+        module_index: usize,
+        structural_evidence: &structural::StructuralRoleEvidence,
+    ) {
         let mut collector = IvyExportMapCollector {
             unresolved_ctxt,
+            module_index,
             mappings: Vec::new(),
         };
         module.visit_with(&mut collector);
-        for (identity, name) in collector.mappings {
-            self.record_mapping(identity, name);
+        for (identity, name, mapping_module, position) in collector.mappings {
+            if structural_evidence.is_stable_export_reference(&identity, mapping_module, position) {
+                self.record_mapping(identity, name);
+            }
         }
     }
 
@@ -553,7 +567,8 @@ fn global_object_path(expr: &Expr, unresolved_ctxt: SyntaxContext) -> Option<Ato
 
 struct IvyExportMapCollector {
     unresolved_ctxt: SyntaxContext,
-    mappings: Vec<(SymbolIdentity, String)>,
+    module_index: usize,
+    mappings: Vec<(SymbolIdentity, String, usize, u32)>,
 }
 
 impl Visit for IvyExportMapCollector {
@@ -575,7 +590,12 @@ impl Visit for IvyExportMapCollector {
             return;
         };
         if let Some(identity) = symbol_identity(value, self.unresolved_ctxt) {
-            self.mappings.push((identity, name));
+            self.mappings.push((
+                identity,
+                name,
+                self.module_index,
+                key_value.value.span().lo.0,
+            ));
         }
         key_value.visit_children_with(self);
     }

@@ -193,7 +193,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 5);
+    assert_eq!(by_selector.len(), 7);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -261,6 +261,22 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-defer-card"]
         .source
         .contains("<p>Waiting</p>"));
+    for selector in [
+        "structural-prefetch-idle-card",
+        "structural-hydrate-idle-card",
+    ] {
+        assert_eq!(
+            by_selector[selector].completeness,
+            AngularRecoveryCompleteness::Partial,
+            "issues: {:#?}\n{}",
+            by_selector[selector].issues,
+            by_selector[selector].source,
+        );
+        assert!(
+            !by_selector[selector].source.contains("@defer (on idle) {"),
+            "{selector} must not be mislabeled as an ordinary idle trigger"
+        );
+    }
     assert_eq!(
         by_selector["fixture-card"].completeness,
         AngularRecoveryCompleteness::Partial
@@ -422,6 +438,43 @@ fn recovers_deferred_views_from_isolated_angular_compiler_output() {
     );
     assert_eq!(component.stats.unsupported_runtime_calls, 0);
     assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn keeps_prefetch_and_hydrate_idle_triggers_distinct_from_ordinary_idle() {
+    assert_production_artifact(TEMPLATE_CONSTRUCTS);
+    for instruction in ["ɵɵdeferPrefetchOnIdle", "ɵɵdeferHydrateOnIdle"] {
+        assert!(
+            TEMPLATE_CONSTRUCTS.contains(instruction)
+                || TEMPLATE_CONSTRUCTS.contains(&instruction.replace('ɵ', "\\u0275")),
+            "generated fixture should contain {instruction}"
+        );
+    }
+
+    let recovered =
+        recover_angular_components_from_js(TEMPLATE_CONSTRUCTS, AngularRecoveryOptions::default())
+            .expect("pinned Angular compiler output should parse");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    for selector in [
+        "fixture-prefetch-idle-constructs",
+        "fixture-hydrate-idle-constructs",
+    ] {
+        assert_eq!(
+            by_selector[selector].completeness,
+            AngularRecoveryCompleteness::Partial,
+            "issues: {:#?}\n{}",
+            by_selector[selector].issues,
+            by_selector[selector].source,
+        );
+        assert!(
+            !by_selector[selector].source.contains("@defer (on idle) {"),
+            "{selector} must not be mislabeled as an ordinary idle trigger"
+        );
+    }
 }
 
 #[test]
