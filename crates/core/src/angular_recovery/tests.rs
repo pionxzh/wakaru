@@ -3240,6 +3240,528 @@ fn recovers_repeater_views_with_assignment_backed_track_and_restored_listeners()
 }
 
 #[test]
+fn recovers_nested_view_aliases_and_sequence_wrapped_listener_actions() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const trackItem = ($index, item) => item.id;
+        const runtimeState = { view: [] };
+
+        function ConditionalView(rf) {
+            if (rf & 1) {
+                const savedView = core.ɵɵgetCurrentView();
+                core.ɵɵelementStart(0, "button", 2, 0);
+                core.ɵɵlistener("click", function() {
+                    core.ɵɵrestoreView(savedView);
+                    const button = runtimeState.view[28];
+                    const item = core.ɵɵnextContext().$implicit;
+                    const component = core.ɵɵnextContext();
+                    const displayLabel = core.ɵɵreadContextLet(0);
+                    return (
+                        component.record(button, item, displayLabel),
+                        core.ɵɵresetView(component.active = false)
+                    );
+                });
+                core.ɵɵtext(2);
+                core.ɵɵelementEnd();
+            }
+            if (rf & 2) {
+                const item = core.ɵɵnextContext().$implicit;
+                core.ɵɵadvance(2);
+                core.ɵɵtextInterpolate(item.label);
+            }
+        }
+
+        function RepeaterView(rf) {
+            if (rf & 1) {
+                core.ɵɵtemplate(0, ConditionalView, 3, 1, "button", 1);
+            }
+            if (rf & 2) {
+                const component = core.ɵɵnextContext();
+                core.ɵɵconditional(component.active ? 0 : -1);
+            }
+        }
+
+        class NestedListenerComponent {
+            active = true;
+            items = [];
+            prefix = "Selected: ";
+            suffix = "item";
+            record(button, item, displayLabel) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: NestedListenerComponent,
+                selectors: [["nested-listener"]],
+                consts: [
+                    ["button", ""],
+                    ["type", "button"],
+                    ["type", "button", 3, "click"],
+                ],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵdeclareLet(0);
+                        core.ɵɵrepeaterCreate(
+                            1,
+                            RepeaterView,
+                            1,
+                            1,
+                            null,
+                            null,
+                            trackItem
+                        );
+                    }
+                    if (rf & 2) {
+                        core.ɵɵstoreLet(component.prefix + component.suffix);
+                        core.ɵɵadvance();
+                        core.ɵɵrepeater(component.items);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("nested view aliases should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("@let displayLabel = prefix + suffix;"));
+    assert!(component
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(component.source.contains("@if (active) {"));
+    assert!(component
+        .source
+        .contains("(click)=\"record(button, item, displayLabel); active = false\""));
+    assert!(component.source.contains("{{ item.label }}"));
+    assert!(!component.source.contains("$implicit"));
+}
+
+#[test]
+fn recovers_structural_i18n_regions_with_nested_elements() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        class StructuralI18nComponent {
+            name = "reader";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: StructuralI18nComponent,
+                selectors: [["structural-i18n"]],
+                consts: () => [
+                    localize("Hello \uFFFD#2\uFFFD\uFFFD0\uFFFD\uFFFD/#2\uFFFD!")
+                ],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18nStart(1, 0);
+                        core.ɵɵelement(2, "strong");
+                        core.ɵɵi18nEnd();
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance(2);
+                        core.ɵɵi18nExp(component.name);
+                        core.ɵɵi18nApply(1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("structural i18n should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<p i18n>"));
+    assert!(component
+        .source
+        .contains("Hello <strong>{{ name }}</strong>!"));
+    assert!(!component.source.contains("ɵɵi18n"));
+}
+
+#[test]
+fn recovers_projection_fallback_template_functions() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function TitleFallback(rf) {
+            if (rf & 1) {
+                core.ɵɵelementStart(0, "h2");
+                core.ɵɵtext(1, "Fallback title");
+                core.ɵɵelementEnd();
+            }
+        }
+
+        class ProjectionFallbackComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ProjectionFallbackComponent,
+                selectors: [["projection-fallback"]],
+                ngContentSelectors: ["[card-title]"],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵprojectionDef([[["", "card-title", ""]]]);
+                        core.ɵɵprojection(
+                            0,
+                            0,
+                            null,
+                            TitleFallback,
+                            2,
+                            0
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("projection fallback should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains("<ng-content select=\"[card-title]\">"));
+    assert!(component.source.contains("<h2>Fallback title</h2>"));
+    assert!(component.source.contains("</ng-content>"));
+}
+
+#[test]
+fn recovers_two_way_binding_instruction_triplets() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class TwoWayComponent {
+            name = "reader";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: TwoWayComponent,
+                selectors: [["two-way-binding"]],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "fixture-model-target");
+                        core.ɵɵtwoWayListener("valueChange", function($event) {
+                            return (
+                                core.ɵɵtwoWayBindingSet(component.name, $event) ||
+                                    (component.name = $event),
+                                $event
+                            );
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵtwoWayProperty("value", component.name);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("two-way binding instructions should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[(value)]="name""#));
+    assert!(!component.source.contains("valueChange"));
+    assert!(!component.source.contains("ɵɵtwoWay"));
+}
+
+#[test]
+fn recovers_two_way_binding_through_a_restored_local_reference() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class RestoredTwoWayComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: RestoredTwoWayComponent,
+                selectors: [["restored-two-way-binding"]],
+                consts: [["target", ""]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(
+                            0,
+                            "fixture-model-target",
+                            null,
+                            0
+                        );
+                        core.ɵɵtwoWayListener("valueChange", function($event) {
+                            core.ɵɵrestoreView(savedView);
+                            const target = core.ɵɵreference(1);
+                            core.ɵɵtwoWayBindingSet(target.value, $event) ||
+                                (target.value = $event);
+                            return core.ɵɵresetView($event);
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        const target = core.ɵɵreference(1);
+                        core.ɵɵtwoWayProperty("value", target.value);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("restored-view two-way binding instructions should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("#target"));
+    assert!(component.source.contains(r#"[(value)]="target.value""#));
+    assert!(!component.source.contains("ɵɵtwoWay"));
+}
+
+#[test]
+fn recovers_two_way_binding_through_a_restored_parent_context() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class RestoredParentTwoWayComponent {
+            name = "reader";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: RestoredParentTwoWayComponent,
+                selectors: [["restored-parent-two-way-binding"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "fixture-model-target");
+                        core.ɵɵtwoWayListener("valueChange", function($event) {
+                            core.ɵɵrestoreView(savedView);
+                            const parent = core.ɵɵnextContext(2);
+                            core.ɵɵtwoWayBindingSet(parent.name, $event) ||
+                                (parent.name = $event);
+                            return core.ɵɵresetView($event);
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵtwoWayProperty("value", context.name);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("parent-context two-way binding instructions should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[(value)]="name""#));
+    assert!(!component.source.contains("ɵɵtwoWay"));
+}
+
+#[test]
+fn recovers_animation_binding_and_listener_instructions() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class AnimationComponent {
+            leaveClass = "fade-out";
+            started(event) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: AnimationComponent,
+                selectors: [["animation-bindings"]],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "div");
+                        core.ɵɵanimateLeave(function() {
+                            return component.leaveClass;
+                        });
+                        core.ɵɵanimateEnter("fade-in");
+                        core.ɵɵanimateEnterListener(function($event) {
+                            component.started($event);
+                        });
+                        core.ɵɵtext(1, "Animated");
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("animation binding instructions should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"animate.enter="fade-in""#));
+    assert!(component.source.contains(r#"[animate.leave]="leaveClass""#));
+    assert!(component
+        .source
+        .contains(r#"(animate.enter)="started($event)""#));
+    assert!(!component.source.contains("ɵɵanimate"));
+}
+
+#[test]
+fn infers_closure_renamed_two_way_and_animation_families() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.elementStart = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.elementStart;
+        };
+        runtime.elementEnd = function() {
+            closeElement();
+            return runtime.elementEnd;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+
+        runtime.listen = function(name, handler) {
+            installOutput(name, handler);
+            return runtime.listen;
+        };
+        runtime.bind = function(name, value, sanitizer) {
+            isSignal(value) && typeof value.set == "function" && (value = value());
+            const view = currentView();
+            if (bindingChanged(view, value)) {
+                writeProperty(currentNode(), view, name, value, currentRenderer(), sanitizer);
+            }
+            return runtime.bind;
+        };
+        runtime.set = function(target, value) {
+            const writable = isSignal(target) && typeof target.set == "function";
+            return writable && target.set(value), writable;
+        };
+
+        runtime.enter = function(value) {
+            marker("NgAnimateEnter");
+            schedule(() => normalizeAnimation(value));
+            return runtime.enter;
+        };
+        runtime.enterListener = function(listener) {
+            marker("NgAnimateEnter");
+            schedule(() => listener.call(currentContext(), currentEvent()));
+            return runtime.enterListener;
+        };
+        runtime.leave = function(value) {
+            marker("NgAnimateLeave");
+            schedule(() => normalizeAnimation(value));
+            return runtime.leave;
+        };
+
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.elementStart,
+            "ɵɵelementEnd": runtime.elementEnd,
+            "ɵɵtext": runtime.text,
+        };
+
+        class RenamedBindingFamiliesComponent {
+            name = "reader";
+            leaveClass = "fade-out";
+            started() {}
+
+            static compiled = runtime.component({
+                type: RenamedBindingFamiliesComponent,
+                selectors: [["renamed-binding-families"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.elementStart(0, "fixture-model-target");
+                        runtime.listen("valueChange", function(event) {
+                            return (
+                                runtime.set(context.name, event) ||
+                                    (context.name = event),
+                                event
+                            );
+                        });
+                        runtime.elementEnd();
+                        runtime.elementStart(1, "div");
+                        runtime.leave(function() {
+                            return context.leaveClass;
+                        });
+                        runtime.enter("fade-in");
+                        runtime.enterListener(function() {
+                            context.started();
+                        });
+                        runtime.text(2, "Animated");
+                        runtime.elementEnd();
+                    }
+                    if (renderFlags & 2) {
+                        runtime.bind("value", context.name);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed Angular 22 binding families should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[(value)]="name""#));
+    assert!(component.source.contains(r#"[animate.leave]="leaveClass""#));
+    assert!(component.source.contains(r#"animate.enter="fade-in""#));
+    assert!(component.source.contains(r#"(animate.enter)="started()""#));
+}
+
+#[test]
 fn resolves_reference_aliases_at_their_view_context_depth() {
     let source = r#"
         import * as core from "@angular/core";
