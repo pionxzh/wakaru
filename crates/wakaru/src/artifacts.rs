@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use crate::output::{
@@ -199,7 +200,10 @@ fn link_angular_artifact_dependencies(
             })
             .collect::<Vec<_>>()
             .join(", ");
-        import_source.push_str(&format!("import {{ {bindings} }} from \"{specifier}\";\n"));
+        import_source.push_str(&format!(
+            "import {{ {bindings} }} from {};\n",
+            quote_module_specifier(&specifier)
+        ));
     }
     let insertion = source.find('\n').map_or(source.len(), |index| index + 1);
     let mut linked = String::with_capacity(source.len() + import_source.len());
@@ -207,6 +211,31 @@ fn link_angular_artifact_dependencies(
     linked.push_str(&import_source);
     linked.push_str(&source[insertion..]);
     linked
+}
+
+fn quote_module_specifier(specifier: &str) -> String {
+    let mut quoted = String::with_capacity(specifier.len() + 2);
+    quoted.push('"');
+    for character in specifier.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{0008}' => quoted.push_str("\\b"),
+            '\u{000c}' => quoted.push_str("\\f"),
+            '\u{2028}' => quoted.push_str("\\u2028"),
+            '\u{2029}' => quoted.push_str("\\u2029"),
+            character if character <= '\u{001f}' => {
+                write!(quoted, "\\u{:04x}", character as u32)
+                    .expect("writing to a String cannot fail");
+            }
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn relative_artifact_specifier(from_filename: &str, target_filename: &str) -> String {
@@ -362,6 +391,14 @@ mod tests {
         assert_eq!(
             angular_module_artifact_filename("src/FEATURE.mjs", &mut seen),
             "src/FEATURE_2.angular.ts"
+        );
+    }
+
+    #[test]
+    fn generated_import_specifiers_are_javascript_string_literals() {
+        assert_eq!(
+            quote_module_specifier("./child\"\\\n\u{2028}.angular"),
+            "\"./child\\\"\\\\\\n\\u2028.angular\""
         );
     }
 }

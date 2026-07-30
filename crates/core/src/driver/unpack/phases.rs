@@ -744,18 +744,27 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
         .iter()
         .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
         .collect();
-    let pre_rewrite_modules = modules
-        .iter()
-        .filter_map(|(final_filename, _)| {
-            let provisional = reverse_rename
-                .get(final_filename.as_str())
-                .copied()
-                .unwrap_or(final_filename.as_str());
-            pre_rewrite_by_provisional
-                .get(provisional)
-                .map(|source| (final_filename.clone(), source.clone()))
-        })
-        .collect();
+    let mut pre_rewrite_modules = Vec::new();
+    for (final_filename, _) in &modules {
+        let provisional = reverse_rename
+            .get(final_filename.as_str())
+            .copied()
+            .unwrap_or(final_filename.as_str());
+        let Some(source) = pre_rewrite_by_provisional.get(provisional) else {
+            continue;
+        };
+        let remapped = if rename_map.is_empty() {
+            Some(source.clone())
+        } else {
+            remap_captured_import_sources(source, provisional, &rename_map).ok()
+        };
+        // A missing evidence entry makes artifact recovery fall back to the
+        // final rewritten module. Retaining an unremapped entry would be worse:
+        // it could prove a stale cross-module edge under the recovered name.
+        if let Some(source) = remapped {
+            pre_rewrite_modules.push((final_filename.clone(), source));
+        }
+    }
     let modules = modules
         .into_iter()
         .map(|(final_filename, code)| {
@@ -791,6 +800,27 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
     })
 }
 
+fn remap_captured_import_sources(
+    source: &str,
+    provisional_filename: &str,
+    rename_map: &std::collections::HashMap<String, String>,
+) -> Result<String> {
+    let globals = Globals::new();
+    GLOBALS.set(&globals, || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(source, provisional_filename, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+        rewrite_import_sources(
+            &mut module,
+            provisional_filename,
+            rename_map,
+            unresolved_mark,
+        );
+        apply_fixer(&mut module)?;
+        print_js(&module, cm)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
