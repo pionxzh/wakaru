@@ -792,6 +792,142 @@ fn infers_renamed_component_and_element_helpers_from_runtime_shapes() {
 }
 
 #[test]
+fn does_not_infer_a_runtime_helper_after_a_non_function_reassignment() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.component = unrelated;
+
+        class ReassignedComponent {}
+        ReassignedComponent.compiled = runtime.component({
+            type: ReassignedComponent,
+            selectors: [["reassigned-card"]],
+            template: function() {},
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("reassigned runtime helpers should parse");
+
+    assert!(
+        recovered.is_empty(),
+        "a stale structural definition must not classify the reassigned helper"
+    );
+}
+
+#[test]
+fn does_not_trust_export_map_evidence_after_a_binding_reassignment() {
+    let source = r#"
+        function define(definition) {
+            return definition;
+        }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+        };
+        define = unrelated;
+
+        class ReassignedExportComponent {}
+        ReassignedExportComponent.compiled = define({
+            type: ReassignedExportComponent,
+            selectors: [["reassigned-export-card"]],
+            template: function() {},
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("reassigned export-map helpers should parse");
+
+    assert!(
+        recovered.is_empty(),
+        "export-map evidence must not survive reassignment of its value"
+    );
+}
+
+#[test]
+fn does_not_treat_a_logical_assignment_as_a_direct_helper_definition() {
+    let source = r#"
+        let define;
+        define ||= function(definition) {
+            return definition;
+        };
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+        };
+
+        class ConditionalDefinitionComponent {}
+        ConditionalDefinitionComponent.compiled = define({
+            type: ConditionalDefinitionComponent,
+            selectors: [["conditional-definition-card"]],
+            template: function() {},
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("logical helper assignments should parse");
+
+    assert!(
+        recovered.is_empty(),
+        "a logical assignment does not prove which helper value is installed"
+    );
+}
+
+#[test]
+fn does_not_infer_self_returning_helpers_from_nested_return_values() {
+    let source = r#"
+        function define(definition) {
+            return definition;
+        }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return wrap(runtime.start);
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+
+        class NestedReturnComponent {}
+        NestedReturnComponent.compiled = define({
+            type: NestedReturnComponent,
+            selectors: [["nested-return-card"]],
+            template: function(renderFlags) {
+                if (renderFlags & 1) {
+                    runtime.element(0, "article");
+                }
+            },
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("nested self-return lookalikes should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Partial
+    );
+    assert!(!recovered[0].source.contains("<article></article>"));
+}
+
+#[test]
 fn infers_a_component_helper_after_object_merge_lowering() {
     let source = r#"
         runtime.component = function(definition) {
@@ -858,7 +994,6 @@ fn infers_a_specialized_element_pair_from_proven_template_use() {
             leaveSpecializedNode();
             return runtime.end;
         };
-
         const SpecializedCardComponent = class c {
             static compiled = runtime.component({
                 type: c,
@@ -878,6 +1013,65 @@ fn infers_a_specialized_element_pair_from_proven_template_use() {
 
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].selector, "specialized-card");
+    assert!(recovered[0].source.contains("<article></article>"));
+}
+
+#[test]
+fn infers_a_specialized_element_start_with_a_minified_tracing_branch() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            if (tracing && tracing.enabled) {
+                return tracing.a(node(index), () => {
+                    createSpecializedNode(index, name, attrs, refs);
+                    return runtime.start;
+                });
+            }
+            createSpecializedNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveSpecializedNode();
+            return runtime.end;
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            runtime.start(index, name, attrs, refs);
+            runtime.end();
+            return runtime.element;
+        };
+
+        const TracedSpecializedCardComponent = class c {
+            static compiled = runtime.component({
+                type: c,
+                selectors: [["traced-specialized-card"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "article");
+                    }
+                },
+            });
+        };
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a minified tracing branch should retain the specialized element pair");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        recovered[0].issues,
+        recovered[0].source,
+    );
     assert!(recovered[0].source.contains("<article></article>"));
 }
 
@@ -1944,6 +2138,150 @@ fn recovers_canonical_defer_views_and_idle_trigger() {
         component.stats.runtime_calls_observed,
         component.stats.rendered_instruction_calls
     );
+}
+
+#[test]
+fn rejects_a_canonical_defer_call_without_dependency_metadata() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function PrimaryTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "article");
+            }
+        }
+
+        class ShortDeferComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ShortDeferComponent,
+                selectors: [["short-defer"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, PrimaryTemplate, 1, 0);
+                        core.ɵɵdefer(1, 0);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the malformed defer component should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵdefer")
+            && issue.detail.as_deref() == Some("expected defer metadata arguments")
+    }));
+    assert!(!component.source.contains("@defer"));
+    assert!(component.source.contains("<ng-template>"));
+}
+
+#[test]
+fn does_not_treat_a_shadowed_undefined_defer_slot_as_nullish() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function PrimaryTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "article");
+            }
+        }
+
+        class ShadowedUndefinedComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ShadowedUndefinedComponent,
+                selectors: [["shadowed-undefined"]],
+                template: function(rf, undefined) {
+                    if (rf & 1) {
+                        core.ɵɵtemplate(0, PrimaryTemplate, 1, 0);
+                        core.ɵɵdefer(1, 0, null, undefined);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the shadowed undefined component should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵdefer")
+            && issue.detail.as_deref() == Some("defer child-template index is not numeric or null")
+    }));
+    assert!(!component.source.contains("@defer"));
+}
+
+#[test]
+fn shadowed_undefined_does_not_prove_a_renamed_defer_role() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelement": runtime.element,
+            "ɵɵtemplate": runtime.template,
+        };
+        runtime.defer = function(
+            index,
+            primary,
+            dependencies,
+            loading,
+            placeholder,
+            error,
+            loadingConfig,
+            placeholderConfig,
+            timers,
+            flags
+        ) {
+            markFeature("NgDefer");
+            createDefer(
+                index,
+                primary,
+                dependencies,
+                loading,
+                placeholder,
+                error,
+                loadingConfig,
+                placeholderConfig,
+                timers,
+                flags
+            );
+        };
+
+        function PrimaryTemplate(rf) {
+            if (rf & 1) {
+                runtime.element(0, "article");
+            }
+        }
+
+        class RenamedShadowedUndefinedComponent {
+            static compiled = runtime.component({
+                type: RenamedShadowedUndefinedComponent,
+                selectors: [["renamed-shadowed-undefined"]],
+                template: function(rf, undefined) {
+                    if (rf & 1) {
+                        runtime.template(0, PrimaryTemplate, 1, 0);
+                        runtime.defer(1, 0, null, undefined);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the renamed shadowed undefined component should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction
+            && issue.actual_callee.as_deref() == Some("runtime.defer")
+    }));
+    assert!(!component.source.contains("@defer"));
 }
 
 #[test]
@@ -3207,6 +3545,48 @@ fn rejects_an_unknown_runtime_effect_inside_a_restored_listener() {
 }
 
 #[test]
+fn rejects_unreachable_effects_after_a_restored_listener_return() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class UnreachableRestoredListenerComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: UnreachableRestoredListenerComponent,
+                selectors: [["unreachable-restored-listener"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            core.ɵɵrestoreView(savedView);
+                            return core.ɵɵresetView(context.select());
+                            context.afterReturn();
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("an unreachable restored-listener effect should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵlistener")
+            && issue
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("final handler statement"))
+    }));
+    assert!(!component.source.contains("afterReturn"));
+    assert!(!component.source.contains("(click)=\"select()\""));
+}
+
+#[test]
 fn recovers_builtin_repeater_track_expressions() {
     let source = r#"
         import * as core from "@angular/core";
@@ -3278,6 +3658,44 @@ fn recovers_builtin_repeater_track_expressions() {
     assert!(by_selector["identity-track"]
         .source
         .contains("@for (item of items; track item) {"));
+}
+
+#[test]
+fn failed_repeater_recovery_discards_staged_child_view_diagnostics() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function RowTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵelement(0, "span");
+            }
+        }
+
+        class InvalidTrackComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: InvalidTrackComponent,
+                selectors: [["invalid-track"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵrepeaterCreate(
+                            0, RowTemplate, 1, 0, "span", null, {}
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("the invalid repeater component should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert_eq!(component.stats.runtime_calls_observed, 1);
+    assert_eq!(component.stats.rendered_instruction_calls, 0);
+    assert_eq!(component.stats.malformed_instruction_calls, 1);
+    assert!(!component.source.contains("@for"));
+    assert!(!component.source.contains("<span"));
 }
 
 #[test]
@@ -3639,6 +4057,44 @@ fn refuses_a_local_helper_with_an_impure_dependency_closure() {
         .contains("// Unresolved artifact-local symbols: decorate"));
     assert!(!component.source.contains("function decorate(value)"));
     assert!(!component.source.contains("makeConfig()"));
+}
+
+#[test]
+fn escapes_template_and_style_literals_without_creating_interpolation() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class LiteralSafetyComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: LiteralSafetyComponent,
+                selectors: [["literal-safety"]],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵtext(0, "\\${globalThis.templateInjected = true}`");
+                    }
+                },
+                styles: [
+                    "\\${globalThis.styleInjected = true}` { display: block; }"
+                ],
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("literal escaping fixture should recover");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(component
+        .source
+        .contains(r"\\\${globalThis.templateInjected = true}\`"));
+    assert!(component
+        .source
+        .contains(r"\\\${globalThis.styleInjected = true}\`"));
+    assert_typescript_parses(&component.source);
 }
 
 fn assert_typescript_parses(source: &str) {

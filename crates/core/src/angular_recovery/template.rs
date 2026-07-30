@@ -1819,7 +1819,7 @@ fn recover_view_listener_handler(
     let mut saw_reset_return = false;
     let mut runtime_calls = 0;
     let mut context_depth = 0usize;
-    for statement in &block.stmts {
+    for (statement_index, statement) in block.stmts.iter().enumerate() {
         match statement {
             Stmt::Decl(Decl::Var(declaration)) => {
                 for declarator in &declaration.decls {
@@ -1944,6 +1944,12 @@ fn recover_view_listener_handler(
                 arg: Some(returned),
                 ..
             }) => {
+                if block.stmts[statement_index + 1..]
+                    .iter()
+                    .any(|statement| !matches!(statement, Stmt::Empty(_)))
+                {
+                    return Err("ɵɵresetView return is not the final handler statement".to_string());
+                }
                 if saw_reset_return {
                     return Err("multiple handler returns".to_string());
                 }
@@ -2524,6 +2530,7 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
+            let mut staged_next_view_id = *next_view_id;
             let Some((body, body_program)) = recover_child_template(
                 call,
                 body_expression.as_ref(),
@@ -2533,7 +2540,7 @@ fn apply_create_instruction(
                 ChildViewRecovery {
                     parent_tree: tree,
                     active_templates,
-                    next_view_id,
+                    next_view_id: &mut staged_next_view_id,
                     ancestor_references,
                     depth,
                 },
@@ -2545,10 +2552,9 @@ fn apply_create_instruction(
                 .repeater_item_name
                 .clone()
                 .unwrap_or_else(|| "item".to_string());
-            merge_template_program(program, body_program);
 
             let empty = if let Some(empty_expression) = call.args.get(8) {
-                if is_nullish_expression(empty_expression.as_ref()) {
+                if is_nullish_expression(empty_expression.as_ref(), environment.unresolved_ctxt) {
                     None
                 } else {
                     if numeric_arg(&call.args, 9).is_none() || numeric_arg(&call.args, 10).is_none()
@@ -2570,7 +2576,7 @@ fn apply_create_instruction(
                         ChildViewRecovery {
                             parent_tree: tree,
                             active_templates,
-                            next_view_id,
+                            next_view_id: &mut staged_next_view_id,
                             ancestor_references,
                             depth,
                         },
@@ -2578,8 +2584,7 @@ fn apply_create_instruction(
                     else {
                         return Ok(());
                     };
-                    merge_template_program(program, empty_program);
-                    Some(Box::new(empty))
+                    Some((Box::new(empty), empty_program))
                 }
             } else {
                 None
@@ -2611,6 +2616,12 @@ fn apply_create_instruction(
                     return Ok(());
                 }
             };
+            merge_template_program(program, body_program);
+            let empty = empty.map(|(empty, empty_program)| {
+                merge_template_program(program, empty_program);
+                empty
+            });
+            *next_view_id = staged_next_view_id;
             tree.push_node(
                 index,
                 TemplateNodeKind::Repeater {
@@ -2707,6 +2718,15 @@ fn apply_create_instruction(
             );
         }
         IvyInstruction::Defer => {
+            if !(3..=10).contains(&call.args.len()) {
+                record_malformed_instruction(
+                    call,
+                    "expected defer metadata arguments",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
             let Some(index) = numeric_arg(&call.args, 0) else {
                 record_malformed_instruction(
                     call,
@@ -2725,42 +2745,57 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
-            let loading_index = match optional_defer_template_index(&call.args, 3) {
-                Ok(index) => index,
-                Err(detail) => {
-                    record_malformed_instruction(
-                        call,
-                        detail,
-                        &mut program.issues,
-                        &mut program.stats,
-                    );
-                    return Ok(());
-                }
-            };
-            let placeholder_index = match optional_defer_template_index(&call.args, 4) {
-                Ok(index) => index,
-                Err(detail) => {
-                    record_malformed_instruction(
-                        call,
-                        detail,
-                        &mut program.issues,
-                        &mut program.stats,
-                    );
-                    return Ok(());
-                }
-            };
-            let error_index = match optional_defer_template_index(&call.args, 5) {
-                Ok(index) => index,
-                Err(detail) => {
-                    record_malformed_instruction(
-                        call,
-                        detail,
-                        &mut program.issues,
-                        &mut program.stats,
-                    );
-                    return Ok(());
-                }
-            };
+            if !is_nullish_or_callable_expression(
+                call.args[2].as_ref(),
+                environment.unresolved_ctxt,
+            ) {
+                record_malformed_instruction(
+                    call,
+                    "defer dependency resolver is not callable or null",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let loading_index =
+                match optional_defer_template_index(&call.args, 3, environment.unresolved_ctxt) {
+                    Ok(index) => index,
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            call,
+                            detail,
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                };
+            let placeholder_index =
+                match optional_defer_template_index(&call.args, 4, environment.unresolved_ctxt) {
+                    Ok(index) => index,
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            call,
+                            detail,
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                };
+            let error_index =
+                match optional_defer_template_index(&call.args, 5, environment.unresolved_ctxt) {
+                    Ok(index) => index,
+                    Err(detail) => {
+                        record_malformed_instruction(
+                            call,
+                            detail,
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                };
             let view_indices = [
                 Some(primary_index),
                 loading_index,
@@ -2808,12 +2843,9 @@ fn apply_create_instruction(
             );
             tree.pending_defer = Some(node);
 
-            if call
-                .args
-                .iter()
-                .skip(6)
-                .any(|argument| !is_nullish_expression(argument.as_ref()))
-            {
+            if call.args.iter().skip(6).any(|argument| {
+                !is_nullish_expression(argument.as_ref(), environment.unresolved_ctxt)
+            }) {
                 record_unsupported_instruction(
                     call,
                     "defer timing or hydration metadata is not yet rendered",
@@ -3042,22 +3074,34 @@ fn single_return_value(block: &BlockStmt) -> Option<&Expr> {
     Some(expression.as_ref())
 }
 
-fn is_nullish_expression(expression: &Expr) -> bool {
+fn is_nullish_expression(expression: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
     match strip_parentheses(expression) {
         Expr::Lit(Lit::Null(_)) => true,
-        Expr::Ident(identifier) => identifier.sym == "undefined",
+        Expr::Ident(identifier) => {
+            identifier.sym == "undefined" && identifier.ctxt == unresolved_ctxt
+        }
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => true,
         _ => false,
     }
+}
+
+fn is_nullish_or_callable_expression(expression: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
+    is_nullish_expression(expression, unresolved_ctxt)
+        || matches!(
+            strip_parentheses(expression),
+            Expr::Ident(_) | Expr::Member(_) | Expr::Fn(_) | Expr::Arrow(_)
+        )
 }
 
 fn optional_defer_template_index(
     arguments: &[Box<Expr>],
     index: usize,
+    unresolved_ctxt: SyntaxContext,
 ) -> std::result::Result<Option<usize>, &'static str> {
     let Some(argument) = arguments.get(index) else {
         return Ok(None);
     };
-    if is_nullish_expression(argument.as_ref()) {
+    if is_nullish_expression(argument.as_ref(), unresolved_ctxt) {
         return Ok(None);
     }
     numeric_expr(argument.as_ref())

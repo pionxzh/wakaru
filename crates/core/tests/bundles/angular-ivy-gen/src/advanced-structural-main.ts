@@ -3,7 +3,9 @@ import {
   Component,
   ɵɵconditionalCreate,
   ɵɵdefer,
+  ɵɵdeferHydrateOnIdle,
   ɵɵdeferOnIdle,
+  ɵɵdeferPrefetchOnIdle,
   ɵɵdefineComponent,
   ɵɵgetCurrentView,
   ɵɵnextContext,
@@ -64,12 +66,40 @@ class StructuralDeferCardComponent {
   title = 'Deferred content';
 }
 
+@Component({
+  selector: 'structural-prefetch-idle-card',
+  standalone: true,
+  template: `
+    @defer (on interaction; prefetch on idle) {
+      <article>Prefetched content</article>
+    } @placeholder {
+      <button type="button">Load prefetched content</button>
+    }
+  `,
+})
+class StructuralPrefetchIdleCardComponent {}
+
+@Component({
+  selector: 'structural-hydrate-idle-card',
+  standalone: true,
+  template: `
+    @defer (on interaction; hydrate on idle) {
+      <article>Hydrated content</article>
+    } @placeholder {
+      <button type="button">Load hydrated content</button>
+    }
+  `,
+})
+class StructuralHydrateIdleCardComponent {}
+
 producerGlobal.__wakaruAngularRoots = [
   AppComponent,
   FixtureCardComponent,
   LazyCardComponent,
   StructuralViewCardComponent,
   StructuralDeferCardComponent,
+  StructuralPrefetchIdleCardComponent,
+  StructuralHydrateIdleCardComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
   (AppComponent as typeof AppComponent & { ɵcmp: unknown }).ɵcmp,
@@ -77,6 +107,16 @@ producerGlobal.__wakaruAngularDefinitions = [
   (LazyCardComponent as typeof LazyCardComponent & { ɵcmp: unknown }).ɵcmp,
   (
     StructuralViewCardComponent as typeof StructuralViewCardComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralPrefetchIdleCardComponent as typeof StructuralPrefetchIdleCardComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralHydrateIdleCardComponent as typeof StructuralHydrateIdleCardComponent & {
       ɵcmp: unknown;
     }
   ).ɵcmp,
@@ -92,7 +132,9 @@ producerGlobal.__wakaruIvyRuntime = {
 producerGlobal.__wakaruStructuralRuntime = [
   ɵɵconditionalCreate,
   ɵɵdefer,
+  ɵɵdeferHydrateOnIdle,
   ɵɵdeferOnIdle,
+  ɵɵdeferPrefetchOnIdle,
   ɵɵgetCurrentView,
   ɵɵnextContext,
   ɵɵrepeater,
