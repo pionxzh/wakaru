@@ -182,6 +182,296 @@ fn restores_named_angular_class_api_imports() {
 }
 
 #[test]
+fn restores_named_signal_query_apis_from_compiled_metadata() {
+    let source = r#"
+        import {
+            contentChild as contentOne,
+            contentChildren as contentMany,
+            viewChild as viewOne,
+            viewChildren as viewMany,
+            ɵɵcontentQuerySignal as registerContent,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+            ɵɵqueryAdvance as advance,
+            ɵɵviewQuerySignal as registerView,
+        } from "@angular/core";
+
+        const contentOptionalPredicate = ["contentOptional"];
+        const contentRequiredPredicate = ["contentRequired"];
+        const contentManyPredicate = ["contentMany"];
+        const viewOptionalPredicate = ["viewOptional"];
+        const viewRequiredPredicate = ["viewRequired"];
+        const viewManyPredicate = ["viewMany"];
+        const QueryToken = class {};
+
+        class QueryApiComponent {
+            viewOptional = viewOne("discarded");
+            viewRequired = viewOne.required("discarded");
+            viewMany = viewMany("discarded");
+            viewToken = viewOne(QueryToken);
+            contentOptional = contentOne("discarded");
+            contentRequired = contentOne.required("discarded");
+            contentMany = contentMany("discarded");
+
+            static compiled = define({
+                type: QueryApiComponent,
+                selectors: [["query-api"]],
+                contentQueries: function(renderFlags, context, directiveIndex) {
+                    if (renderFlags & 1) {
+                        registerContent(
+                            directiveIndex,
+                            context.contentOptional,
+                            contentOptionalPredicate,
+                            4
+                        )(
+                            directiveIndex,
+                            context.contentRequired,
+                            contentRequiredPredicate,
+                            5,
+                            ReadToken
+                        )(
+                            directiveIndex,
+                            context.contentMany,
+                            contentManyPredicate,
+                            4
+                        );
+                    }
+                    if (renderFlags & 2) {
+                        advance(3);
+                    }
+                },
+                viewQuery: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        registerView(
+                            context.viewOptional,
+                            viewOptionalPredicate,
+                            5
+                        )(
+                            context.viewRequired,
+                            viewRequiredPredicate,
+                            5
+                        )(
+                            context.viewMany,
+                            viewManyPredicate,
+                            5,
+                            ReadToken
+                        )(
+                            context.viewToken,
+                            QueryToken,
+                            5
+                        );
+                    }
+                    if (renderFlags & 2) {
+                        advance(4);
+                    }
+                },
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("compiled signal query metadata should parse");
+
+    assert_eq!(recovered.len(), 1);
+    let source = &recovered[0].source;
+    assert!(
+        source.contains(
+            "import { Component, contentChild, contentChildren, viewChild, viewChildren } from \"@angular/core\";"
+        ),
+        "{source}"
+    );
+    for expected in [
+        "viewOptional = viewChild(\"viewOptional\")",
+        "viewRequired = viewChild.required(\"viewRequired\")",
+        "viewMany = viewChildren(\"viewMany\", {",
+        "viewToken = viewChild(QueryToken)",
+        "read: ReadToken",
+        "contentOptional = contentChild(\"contentOptional\", {",
+        "descendants: false",
+        "contentRequired = contentChild.required(\"contentRequired\", {",
+        "contentMany = contentChildren(\"contentMany\")",
+    ] {
+        assert!(source.contains(expected), "missing {expected:?}:\n{source}");
+    }
+    assert!(!source.contains("\"discarded\""));
+}
+
+#[test]
+fn uses_query_metadata_to_disambiguate_closure_identical_factories() {
+    let source = r#"
+        import {
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        function makeQuery(firstOnly, required) {
+            let query = computed(function() {
+                const result = refreshQuery(query, firstOnly);
+                if (required && result === undefined) {
+                    throw new RuntimeError(-951, false);
+                }
+                return firstOnly ? result.first : result;
+            });
+            return query;
+        }
+        function one() {
+            return makeQuery(true, false);
+        }
+        one.required = function() {
+            return makeQuery(true, true);
+        };
+        const sharedOne = one;
+        function many() {
+            return makeQuery(false, false);
+        }
+
+        function registerView(target, predicate, flags, read) {
+            bindQuery(target, createViewQuery(predicate, flags, read));
+            return registerView;
+        }
+        function registerContent(directiveIndex, target, predicate, flags, read) {
+            bindQuery(
+                target,
+                createContentQuery(directiveIndex, predicate, flags, read)
+            );
+            return registerContent;
+        }
+
+        class ClosureQueryComponent {
+            constructor() {
+                this.viewOptional = sharedOne();
+                this.viewRequired = sharedOne.required();
+                this.viewMany = many();
+                this.contentOptional = sharedOne();
+                this.contentRequired = sharedOne.required();
+                this.contentMany = many();
+            }
+
+            static compiled = define({
+                type: ClosureQueryComponent,
+                selectors: [["closure-query"]],
+                contentQueries: function(renderFlags, context, directiveIndex) {
+                    if (renderFlags & 1) {
+                        registerContent(
+                            directiveIndex,
+                            context.contentOptional,
+                            ["contentOptional"],
+                            4
+                        )(
+                            directiveIndex,
+                            context.contentRequired,
+                            ["contentRequired"],
+                            5
+                        )(
+                            directiveIndex,
+                            context.contentMany,
+                            ["contentMany"],
+                            4
+                        );
+                    }
+                },
+                viewQuery: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        registerView(
+                            context.viewOptional,
+                            ["viewOptional"],
+                            5
+                        )(
+                            context.viewRequired,
+                            ["viewRequired"],
+                            5
+                        )(
+                            context.viewMany,
+                            ["viewMany"],
+                            5
+                        );
+                    }
+                },
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "section");
+                    }
+                },
+            });
+        }
+
+        class QueryHelperWithoutMetadataComponent {
+            constructor() {
+                this.opaque = sharedOne();
+            }
+
+            static compiled = define({
+                type: QueryHelperWithoutMetadataComponent,
+                selectors: [["query-helper-without-metadata"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "aside");
+                    }
+                },
+            });
+        }
+
+        class StaticQueryMetadataComponent {
+            constructor() {
+                this.opaque = sharedOne();
+            }
+
+            static compiled = define({
+                type: StaticQueryMetadataComponent,
+                selectors: [["static-query-metadata"]],
+                viewQuery: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        registerView(context.opaque, ["opaque"], 7);
+                    }
+                },
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        element(0, "aside");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure query factories should be correlated with metadata");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    let query = &by_selector["closure-query"].source;
+    for expected in [
+        "viewOptional = viewChild(\"viewOptional\")",
+        "viewRequired = viewChild.required(\"viewRequired\")",
+        "viewMany = viewChildren(\"viewMany\")",
+        "contentOptional = contentChild(\"contentOptional\", {",
+        "descendants: false",
+        "contentRequired = contentChild.required(\"contentRequired\")",
+        "contentMany = contentChildren(\"contentMany\")",
+    ] {
+        assert!(query.contains(expected), "missing {expected:?}:\n{query}");
+    }
+
+    let opaque = &by_selector["query-helper-without-metadata"].source;
+    assert!(opaque.contains("opaque = sharedOne()"), "{opaque}");
+    assert!(!opaque.contains("viewChild"), "{opaque}");
+    assert!(!opaque.contains("contentChild"), "{opaque}");
+
+    let static_query = &by_selector["static-query-metadata"].source;
+    assert!(
+        static_query.contains("opaque = sharedOne()"),
+        "{static_query}"
+    );
+    assert!(!static_query.contains("viewChild"), "{static_query}");
+}
+
+#[test]
 fn does_not_introduce_an_angular_api_import_that_would_be_shadowed() {
     let source = r#"
         import {
