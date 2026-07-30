@@ -541,6 +541,13 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(query_apis.contains(
         "import { Component, contentChild, contentChildren, viewChild, viewChildren } from \"@angular/core\";"
     ));
+    assert!(
+        query_apis.contains("Optional listener")
+            && query_apis.contains("(click)=")
+            && query_apis.contains("?.")
+            && query_apis.contains("&amp;&amp; ++"),
+        "generated optional-chain listener was not recovered:\n{query_apis}"
+    );
     for expected in [
         "viewChild(\"viewOptional\")",
         "viewChild.required(\"viewRequired\")",

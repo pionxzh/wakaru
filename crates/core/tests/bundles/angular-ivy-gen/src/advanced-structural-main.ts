@@ -385,11 +385,17 @@ class StructuralClassApisComponent {
     <div #viewMany>First view child</div>
     <div #viewMany>Second view child</div>
     <structural-class-apis />
+    <label
+      (click)="$event.target !== optionalTarget()?.nativeElement && handleOptionalClick()"
+    >
+      Optional listener
+    </label>
+    <span>{{ optionalClicks }}</span>
     <ng-content />
   `,
 })
 class StructuralQueryApisComponent {
-  viewOptional = viewChild('viewOptional');
+  optionalTarget = viewChild<ElementRef<HTMLDivElement>>('viewOptional');
   viewRequired = viewChild.required('viewRequired');
   viewMany = viewChildren('viewMany', { read: ElementRef });
   viewType = viewChild(StructuralClassApisComponent);
@@ -398,6 +404,11 @@ class StructuralQueryApisComponent {
     read: ElementRef,
   });
   contentMany = contentChildren('contentMany');
+  optionalClicks = 0;
+
+  handleOptionalClick(): number {
+    return ++this.optionalClicks;
+  }
 }
 
 producerGlobal.__wakaruAngularRoots = [
