@@ -104,9 +104,10 @@ The structural components require Closure-renamed roles to be recovered from
 runtime contracts and template use. They cover conditional and property
 instructions; attribute/class/style families; `<ng-container>` and bounded
 i18n; pure literal expressions; `@let`; HTML/SVG/MathML namespace switches;
-optimized repeater and defer families; view-local listener aliases; structural
-i18n; projection fallbacks; and two-way/animation binding families. One
-conditional view has a captured listener and parent-context property binding.
+optimized repeater and defer families; signal query APIs and an optional-chain
+listener; view-local listener aliases; structural i18n; projection fallbacks;
+and two-way/animation binding families. One conditional view has a captured
+listener and parent-context property binding.
 Closure preserves structurally recognizable `nextContext`, `restoreView`, and
 `resetView` bodies but inlines `getCurrentView` into a member read, so recovery
 must prove the view-state family and validate that use. Separate components
