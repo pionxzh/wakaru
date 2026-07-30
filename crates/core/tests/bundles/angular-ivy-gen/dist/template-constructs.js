@@ -42,6 +42,18 @@ function FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template(rf, ctx)
 function FixtureDeferredConstructsComponent_DeferError_4_Template(rf, ctx) {
   rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Failed"), i0.\u0275\u0275domElementEnd());
 }
+function FixturePrefetchIdleConstructsComponent_Defer_1_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1, "Prefetched content"), i0.\u0275\u0275domElementEnd());
+}
+function FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "button", 0), i0.\u0275\u0275text(1, "Load prefetched content"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureHydrateIdleConstructsComponent_Defer_1_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1, "Hydrated content"), i0.\u0275\u0275domElementEnd());
+}
+function FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template(rf, ctx) {
+  rf & 1 && (i0.\u0275\u0275domElementStart(0, "button", 0), i0.\u0275\u0275text(1, "Load hydrated content"), i0.\u0275\u0275domElementEnd());
+}
 function FixtureLegacyStructuralConstructsComponent_p_1_Template(rf, ctx) {
   rf & 1 && (i0.\u0275\u0275elementStart(0, "p"), i0.\u0275\u0275text(1, "Legacy visible"), i0.\u0275\u0275elementEnd());
 }
@@ -91,6 +103,22 @@ class FixtureDeferredConstructsComponent {
     rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureDeferredConstructsComponent_Defer_1_Template, 2, 1)(2, FixtureDeferredConstructsComponent_DeferLoading_2_Template, 2, 0)(3, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, 2, 0)(4, FixtureDeferredConstructsComponent_DeferError_4_Template, 2, 0), i0.\u0275\u0275defer(5, 1, null, 2, 3, 4), i0.\u0275\u0275deferOnIdle(), i0.\u0275\u0275domElementEnd());
   }, encapsulation: 2 });
 }
+class FixturePrefetchIdleConstructsComponent {
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixturePrefetchIdleConstructsComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixturePrefetchIdleConstructsComponent, selectors: [["fixture-prefetch-idle-constructs"]], decls: 5, vars: 0, consts: [["type", "button"]], template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixturePrefetchIdleConstructsComponent_Defer_1_Template, 2, 0)(2, FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template, 2, 0), i0.\u0275\u0275defer(3, 1, null, null, 2), i0.\u0275\u0275deferOnInteraction(0, -1), i0.\u0275\u0275deferPrefetchOnIdle(), i0.\u0275\u0275domElementEnd());
+  }, encapsulation: 2 });
+}
+class FixtureHydrateIdleConstructsComponent {
+  static \u0275fac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || FixtureHydrateIdleConstructsComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ i0.\u0275\u0275defineComponent({ type: FixtureHydrateIdleConstructsComponent, selectors: [["fixture-hydrate-idle-constructs"]], decls: 5, vars: 0, consts: [["type", "button"]], template: function(rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureHydrateIdleConstructsComponent_Defer_1_Template, 2, 0)(2, FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template, 2, 0), i0.\u0275\u0275enableIncrementalHydrationRuntime(), i0.\u0275\u0275defer(3, 1, null, null, 2, null, null, null, null, 1), i0.\u0275\u0275deferHydrateOnIdle(), i0.\u0275\u0275deferOnInteraction(0, -1), i0.\u0275\u0275domElementEnd());
+  }, encapsulation: 2 });
+}
 class FixtureLegacyStructuralConstructsComponent {
   visible = !0;
   items = ["First", "Second"];
@@ -104,6 +132,8 @@ class FixtureLegacyStructuralConstructsComponent {
 export {
   FixtureDeferredConstructsComponent,
   FixtureFlatBindingsComponent,
+  FixtureHydrateIdleConstructsComponent,
   FixtureLegacyStructuralConstructsComponent,
+  FixturePrefetchIdleConstructsComponent,
   FixtureStructuralConstructsComponent
 };
