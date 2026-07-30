@@ -14,12 +14,20 @@ use super::PreparedAngularModule;
 
 mod structural;
 
+const REFERENCE_CANDIDATE_NAME: &str = "__wakaruIvyReferenceCandidate";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum IvyInstruction {
     DefineComponent,
     ElementStart,
     ElementEnd,
     Element,
+    ElementContainerStart,
+    ElementContainerEnd,
+    ElementContainer,
+    NamespaceHtml,
+    NamespaceSvg,
+    NamespaceMathMl,
     Text,
     Listener,
     Template,
@@ -37,13 +45,41 @@ pub(super) enum IvyInstruction {
     ProjectionDef,
     Projection,
     Reference,
+    DeclareLet,
+    StoreLet,
+    ReadContextLet,
     Pipe,
     PipeBind1,
     PipeBind2,
     PipeBind3,
     PipeBind4,
     PipeBindV,
+    PureFunction0,
+    PureFunction1,
+    PureFunction2,
+    PureFunction3,
+    PureFunction4,
+    PureFunction5,
+    PureFunction6,
+    PureFunction7,
+    PureFunction8,
+    PureFunctionV,
+    I18n,
+    I18nStart,
+    I18nEnd,
+    I18nExp,
+    I18nApply,
     Advance,
+    Interpolate,
+    Interpolate1,
+    Interpolate2,
+    Interpolate3,
+    Interpolate4,
+    Interpolate5,
+    Interpolate6,
+    Interpolate7,
+    Interpolate8,
+    InterpolateV,
     TextInterpolate,
     TextInterpolate1,
     TextInterpolate2,
@@ -66,6 +102,14 @@ impl IvyInstruction {
             "ɵɵelementStart" | "ɵɵdomElementStart" => Self::ElementStart,
             "ɵɵelementEnd" | "ɵɵdomElementEnd" => Self::ElementEnd,
             "ɵɵelement" | "ɵɵdomElement" => Self::Element,
+            "ɵɵelementContainerStart" | "ɵɵdomElementContainerStart" => {
+                Self::ElementContainerStart
+            }
+            "ɵɵelementContainerEnd" | "ɵɵdomElementContainerEnd" => Self::ElementContainerEnd,
+            "ɵɵelementContainer" | "ɵɵdomElementContainer" => Self::ElementContainer,
+            "ɵɵnamespaceHTML" => Self::NamespaceHtml,
+            "ɵɵnamespaceSVG" => Self::NamespaceSvg,
+            "ɵɵnamespaceMathML" => Self::NamespaceMathMl,
             "ɵɵtext" => Self::Text,
             "ɵɵlistener" | "ɵɵdomListener" => Self::Listener,
             "ɵɵtemplate"
@@ -86,13 +130,41 @@ impl IvyInstruction {
             "ɵɵprojectionDef" => Self::ProjectionDef,
             "ɵɵprojection" => Self::Projection,
             "ɵɵreference" => Self::Reference,
+            "ɵɵdeclareLet" => Self::DeclareLet,
+            "ɵɵstoreLet" => Self::StoreLet,
+            "ɵɵreadContextLet" => Self::ReadContextLet,
             "ɵɵpipe" => Self::Pipe,
             "ɵɵpipeBind1" => Self::PipeBind1,
             "ɵɵpipeBind2" => Self::PipeBind2,
             "ɵɵpipeBind3" => Self::PipeBind3,
             "ɵɵpipeBind4" => Self::PipeBind4,
             "ɵɵpipeBindV" => Self::PipeBindV,
+            "ɵɵpureFunction0" => Self::PureFunction0,
+            "ɵɵpureFunction1" => Self::PureFunction1,
+            "ɵɵpureFunction2" => Self::PureFunction2,
+            "ɵɵpureFunction3" => Self::PureFunction3,
+            "ɵɵpureFunction4" => Self::PureFunction4,
+            "ɵɵpureFunction5" => Self::PureFunction5,
+            "ɵɵpureFunction6" => Self::PureFunction6,
+            "ɵɵpureFunction7" => Self::PureFunction7,
+            "ɵɵpureFunction8" => Self::PureFunction8,
+            "ɵɵpureFunctionV" => Self::PureFunctionV,
+            "ɵɵi18n" => Self::I18n,
+            "ɵɵi18nStart" => Self::I18nStart,
+            "ɵɵi18nEnd" => Self::I18nEnd,
+            "ɵɵi18nExp" => Self::I18nExp,
+            "ɵɵi18nApply" => Self::I18nApply,
             "ɵɵadvance" => Self::Advance,
+            "ɵɵinterpolate" => Self::Interpolate,
+            "ɵɵinterpolate1" => Self::Interpolate1,
+            "ɵɵinterpolate2" => Self::Interpolate2,
+            "ɵɵinterpolate3" => Self::Interpolate3,
+            "ɵɵinterpolate4" => Self::Interpolate4,
+            "ɵɵinterpolate5" => Self::Interpolate5,
+            "ɵɵinterpolate6" => Self::Interpolate6,
+            "ɵɵinterpolate7" => Self::Interpolate7,
+            "ɵɵinterpolate8" => Self::Interpolate8,
+            "ɵɵinterpolateV" => Self::InterpolateV,
             "ɵɵtextInterpolate" => Self::TextInterpolate,
             "ɵɵtextInterpolate1" => Self::TextInterpolate1,
             "ɵɵtextInterpolate2" => Self::TextInterpolate2,
@@ -116,6 +188,12 @@ impl IvyInstruction {
             Self::ElementStart => "ɵɵelementStart",
             Self::ElementEnd => "ɵɵelementEnd",
             Self::Element => "ɵɵelement",
+            Self::ElementContainerStart => "ɵɵelementContainerStart",
+            Self::ElementContainerEnd => "ɵɵelementContainerEnd",
+            Self::ElementContainer => "ɵɵelementContainer",
+            Self::NamespaceHtml => "ɵɵnamespaceHTML",
+            Self::NamespaceSvg => "ɵɵnamespaceSVG",
+            Self::NamespaceMathMl => "ɵɵnamespaceMathML",
             Self::Text => "ɵɵtext",
             Self::Listener => "ɵɵlistener",
             Self::Template => "ɵɵtemplate",
@@ -133,13 +211,41 @@ impl IvyInstruction {
             Self::ProjectionDef => "ɵɵprojectionDef",
             Self::Projection => "ɵɵprojection",
             Self::Reference => "ɵɵreference",
+            Self::DeclareLet => "ɵɵdeclareLet",
+            Self::StoreLet => "ɵɵstoreLet",
+            Self::ReadContextLet => "ɵɵreadContextLet",
             Self::Pipe => "ɵɵpipe",
             Self::PipeBind1 => "ɵɵpipeBind1",
             Self::PipeBind2 => "ɵɵpipeBind2",
             Self::PipeBind3 => "ɵɵpipeBind3",
             Self::PipeBind4 => "ɵɵpipeBind4",
             Self::PipeBindV => "ɵɵpipeBindV",
+            Self::PureFunction0 => "ɵɵpureFunction0",
+            Self::PureFunction1 => "ɵɵpureFunction1",
+            Self::PureFunction2 => "ɵɵpureFunction2",
+            Self::PureFunction3 => "ɵɵpureFunction3",
+            Self::PureFunction4 => "ɵɵpureFunction4",
+            Self::PureFunction5 => "ɵɵpureFunction5",
+            Self::PureFunction6 => "ɵɵpureFunction6",
+            Self::PureFunction7 => "ɵɵpureFunction7",
+            Self::PureFunction8 => "ɵɵpureFunction8",
+            Self::PureFunctionV => "ɵɵpureFunctionV",
+            Self::I18n => "ɵɵi18n",
+            Self::I18nStart => "ɵɵi18nStart",
+            Self::I18nEnd => "ɵɵi18nEnd",
+            Self::I18nExp => "ɵɵi18nExp",
+            Self::I18nApply => "ɵɵi18nApply",
             Self::Advance => "ɵɵadvance",
+            Self::Interpolate => "ɵɵinterpolate",
+            Self::Interpolate1 => "ɵɵinterpolate1",
+            Self::Interpolate2 => "ɵɵinterpolate2",
+            Self::Interpolate3 => "ɵɵinterpolate3",
+            Self::Interpolate4 => "ɵɵinterpolate4",
+            Self::Interpolate5 => "ɵɵinterpolate5",
+            Self::Interpolate6 => "ɵɵinterpolate6",
+            Self::Interpolate7 => "ɵɵinterpolate7",
+            Self::Interpolate8 => "ɵɵinterpolate8",
+            Self::InterpolateV => "ɵɵinterpolateV",
             Self::TextInterpolate => "ɵɵtextInterpolate",
             Self::TextInterpolate1 => "ɵɵtextInterpolate1",
             Self::TextInterpolate2 => "ɵɵtextInterpolate2",
@@ -170,6 +276,7 @@ pub(super) struct IvyRoleTable {
     ivy_names: HashMap<SymbolIdentity, String>,
     ambiguous_symbols: HashSet<SymbolIdentity>,
     core_namespaces: HashSet<BindingKey>,
+    namespace_state_targets: HashSet<SymbolIdentity>,
     alias_groups: Vec<Vec<SymbolIdentity>>,
     alias_group_by_symbol: HashMap<SymbolIdentity, usize>,
 }
@@ -199,6 +306,8 @@ impl IvyRoleTable {
             table.record_mapping(identity, name.to_string());
         }
         table.propagate_aliases();
+        table.namespace_state_targets =
+            structural_evidence.inferred_namespace_state_targets(&table);
         table
     }
 
@@ -386,6 +495,34 @@ impl IvyRoleTable {
         }
     }
 
+    pub(super) fn is_reference_candidate_expr(
+        &self,
+        expr: &Expr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> bool {
+        self.ivy_name_for_expr(expr, unresolved_ctxt).as_deref() == Some(REFERENCE_CANDIDATE_NAME)
+    }
+
+    pub(super) fn is_namespace_html_reset_assignment(
+        &self,
+        assignment: &AssignExpr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> bool {
+        if assignment.op != swc_core::ecma::ast::AssignOp::Assign
+            || !matches!(
+                assignment.right.as_ref(),
+                Expr::Lit(swc_core::ecma::ast::Lit::Null(_))
+            )
+        {
+            return false;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+            return false;
+        };
+        symbol_identity(&Expr::Member(member.clone()), unresolved_ctxt)
+            .is_some_and(|target| self.namespace_state_targets.contains(&target))
+    }
+
     pub(super) fn is_known_runtime_member(
         &self,
         expr: &Expr,
@@ -418,6 +555,18 @@ impl IvyRoleTable {
             }),
             SymbolIdentity::LocalBinding(_) | SymbolIdentity::GlobalBinding(_) => false,
         }
+    }
+
+    pub(super) fn is_core_namespace_member(
+        &self,
+        expr: &Expr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> bool {
+        matches!(
+            symbol_identity(expr, unresolved_ctxt),
+            Some(SymbolIdentity::LocalMember { object, .. })
+                if self.core_namespaces.contains(&object)
+        )
     }
 }
 

@@ -34,7 +34,7 @@ use emitter::{
     ModuleComponentEmitInput,
 };
 use roles::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
-use syntax::{prop_name, string_lit, BindingKey};
+use syntax::{prop_name, string_lit, wtf8_to_string, BindingKey};
 use template::{
     ivy_template_score, recover_template, TemplateFunctionTable, TemplateRecoveryContext,
 };
@@ -1205,6 +1205,8 @@ fn parse_component_descriptor(
 
     let class = descriptor_class(object, classes, unresolved_ctxt)?;
     let template = descriptor_template(object, roles, unresolved_ctxt)?;
+    let contains_i18n =
+        template_contains_instruction(&template, roles, unresolved_ctxt, IvyInstruction::I18n);
     let selector = descriptor_selector(object)?;
     let styles = descriptor_styles(object);
     let projection_selectors = descriptor_projection_selectors(
@@ -1215,7 +1217,7 @@ fn parse_component_descriptor(
         unresolved_ctxt,
     );
     let dependencies = descriptor_dependencies(object, template_functions);
-    let constants = descriptor_constants(object);
+    let constants = descriptor_constants(object, template_functions, contains_i18n);
 
     Some(ComponentDescriptor {
         class,
@@ -1226,6 +1228,43 @@ fn parse_component_descriptor(
         template,
         constants,
     })
+}
+
+fn template_contains_instruction(
+    template: &Function,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    expected: IvyInstruction,
+) -> bool {
+    struct Finder<'a> {
+        roles: &'a IvyRoleTable,
+        unresolved_ctxt: SyntaxContext,
+        expected: IvyInstruction,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self
+                .roles
+                .instruction_for_callee(&call.callee, self.unresolved_ctxt)
+                == Some(self.expected)
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        roles,
+        unresolved_ctxt,
+        expected,
+        found: false,
+    };
+    template.visit_with(&mut finder);
+    finder.found
 }
 
 fn descriptor_class(
@@ -1324,7 +1363,7 @@ fn descriptor_selector(object: &ObjectLit) -> Option<String> {
             return None;
         };
         (prop_name(&key_value.key).as_deref() == Some("selectors"))
-            .then(|| first_selector(key_value.value.as_ref()))
+            .then(|| selector_list_string(key_value.value.as_ref()).map(|decoded| decoded.selector))
             .flatten()
     }) {
         return Some(selector);
@@ -1485,7 +1524,11 @@ fn descriptor_dependencies(
         .unwrap_or_default()
 }
 
-fn descriptor_constants(object: &ObjectLit) -> Option<Box<Expr>> {
+fn descriptor_constants(
+    object: &ObjectLit,
+    template_functions: &TemplateFunctionTable,
+    contains_i18n: bool,
+) -> Option<Box<Expr>> {
     if let Some(constants) = object.props.iter().find_map(|prop| {
         let PropOrSpread::Prop(prop) = prop else {
             return None;
@@ -1495,13 +1538,262 @@ fn descriptor_constants(object: &ObjectLit) -> Option<Box<Expr>> {
         };
         (prop_name(&key_value.key).as_deref() == Some("consts")).then(|| key_value.value.clone())
     }) {
-        return Some(constants);
+        return Some(template_functions.resolve_expression(constants.as_ref()));
     }
 
-    descriptor_expression_values(object)
-        .filter_map(|expression| attribute_table_score(expression).map(|score| (score, expression)))
-        .max_by_key(|(score, _)| *score)
-        .map(|(_, expression)| Box::new(expression.clone()))
+    let mut constant_factories = descriptor_expression_values(object)
+        .map(|expression| template_functions.resolve_expression(expression))
+        .filter_map(|expression| {
+            component_constant_factory_score(expression.as_ref()).map(|score| (score, expression))
+        })
+        .collect::<Vec<_>>();
+    constant_factories.sort_by_key(|(score, _)| *score);
+    if let Some((best_score, best)) = constant_factories.pop() {
+        if constant_factories
+            .last()
+            .is_none_or(|(score, _)| *score < best_score)
+        {
+            return Some(best);
+        }
+    }
+
+    if contains_i18n {
+        let mut array_factories = descriptor_expression_values(object)
+            .map(|expression| template_functions.resolve_expression(expression))
+            .filter(|expression| is_zero_parameter_array_factory(expression.as_ref()))
+            .collect::<Vec<_>>();
+        if array_factories.len() == 1 {
+            return array_factories.pop();
+        }
+    }
+
+    let mut i18n_factories = descriptor_expression_values(object)
+        .filter_map(|expression| {
+            let expression = template_functions.resolve_expression(expression);
+            i18n_constant_factory_score(expression.as_ref()).map(|score| (score, expression))
+        })
+        .collect::<Vec<_>>();
+    i18n_factories.sort_by_key(|(score, _)| *score);
+    if let Some((best_score, best)) = i18n_factories.pop() {
+        if i18n_factories
+            .last()
+            .is_none_or(|(score, _)| *score < best_score)
+        {
+            return Some(best);
+        }
+    }
+
+    let mut constant_tables = descriptor_expression_values(object)
+        .filter_map(|expression| {
+            let expression = template_functions.resolve_expression(expression);
+            component_constant_table_score(expression.as_ref()).map(|score| (score, expression))
+        })
+        .collect::<Vec<_>>();
+    constant_tables.sort_by_key(|(score, _)| *score);
+    let (best_score, best) = constant_tables.pop()?;
+    constant_tables
+        .last()
+        .is_none_or(|(score, _)| *score < best_score)
+        .then_some(best)
+}
+
+fn is_zero_parameter_array_factory(expression: &Expr) -> bool {
+    fn is_array_return(expression: &Expr) -> bool {
+        match expression {
+            Expr::Array(_) => true,
+            Expr::Paren(parenthesized) => is_array_return(parenthesized.expr.as_ref()),
+            Expr::Seq(sequence) => sequence
+                .exprs
+                .last()
+                .is_some_and(|expression| is_array_return(expression.as_ref())),
+            _ => false,
+        }
+    }
+
+    #[derive(Default)]
+    struct ReturnEvidence {
+        array_returns: usize,
+        other_returns: usize,
+    }
+
+    impl Visit for ReturnEvidence {
+        fn visit_return_stmt(&mut self, statement: &swc_core::ecma::ast::ReturnStmt) {
+            if statement.arg.as_deref().is_some_and(is_array_return) {
+                self.array_returns += 1;
+            } else {
+                self.other_returns += 1;
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+    }
+
+    let body = match expression {
+        Expr::Paren(parenthesized) => {
+            return is_zero_parameter_array_factory(parenthesized.expr.as_ref());
+        }
+        Expr::Fn(function) if function.function.params.is_empty() => {
+            function.function.body.as_ref()
+        }
+        Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
+            swc_core::ecma::ast::BlockStmtOrExpr::Expr(expression) => {
+                return is_array_return(expression.as_ref());
+            }
+            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => Some(body),
+        },
+        _ => None,
+    };
+    let Some(body) = body else {
+        return false;
+    };
+    let mut evidence = ReturnEvidence::default();
+    body.visit_with(&mut evidence);
+    evidence.array_returns == 1 && evidence.other_returns == 0
+}
+
+fn component_constant_factory_score(expression: &Expr) -> Option<usize> {
+    fn strip(expression: &Expr) -> &Expr {
+        match expression {
+            Expr::Paren(parenthesized) => strip(parenthesized.expr.as_ref()),
+            Expr::Seq(sequence) => sequence
+                .exprs
+                .last()
+                .map_or(expression, |expression| strip(expression.as_ref())),
+            expression => expression,
+        }
+    }
+
+    fn returned_array(body: &swc_core::ecma::ast::BlockStmt) -> Option<&Expr> {
+        let mut returns = body.stmts.iter().filter_map(|statement| {
+            let swc_core::ecma::ast::Stmt::Return(statement) = statement else {
+                return None;
+            };
+            statement.arg.as_deref()
+        });
+        let returned = returns.next()?;
+        returns.next().is_none().then_some(returned)
+    }
+
+    let returned = match strip(expression) {
+        Expr::Fn(function) if function.function.params.is_empty() => {
+            returned_array(function.function.body.as_ref()?)?
+        }
+        Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
+            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => returned_array(body)?,
+            swc_core::ecma::ast::BlockStmtOrExpr::Expr(expression) => expression.as_ref(),
+        },
+        _ => return None,
+    };
+    let Expr::Array(table) = strip(returned) else {
+        return None;
+    };
+
+    let score = table
+        .elems
+        .iter()
+        .filter_map(|entry| {
+            let Expr::Array(entry) = strip(entry.as_ref()?.expr.as_ref()) else {
+                return None;
+            };
+            let primitive_values = entry
+                .elems
+                .iter()
+                .filter(|value| {
+                    matches!(
+                        value.as_ref().map(|value| strip(value.expr.as_ref())),
+                        Some(Expr::Lit(_))
+                    )
+                })
+                .count();
+            (primitive_values >= 2).then_some(primitive_values + 4)
+        })
+        .sum::<usize>();
+    (score > 0).then_some(score)
+}
+
+fn i18n_constant_factory_score(expression: &Expr) -> Option<usize> {
+    let body = match expression {
+        Expr::Fn(function) if function.function.params.is_empty() => {
+            function.function.body.as_ref()?
+        }
+        Expr::Arrow(arrow) if arrow.params.is_empty() => {
+            let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+                return None;
+            };
+            body
+        }
+        _ => return None,
+    };
+
+    #[derive(Default)]
+    struct Evidence {
+        returns_array: bool,
+        localized_messages: usize,
+        strings: usize,
+    }
+
+    impl Visit for Evidence {
+        fn visit_return_stmt(&mut self, statement: &swc_core::ecma::ast::ReturnStmt) {
+            let Some(argument) = &statement.arg else {
+                return;
+            };
+            let expression = match argument.as_ref() {
+                Expr::Paren(paren) => paren.expr.as_ref(),
+                expression => expression,
+            };
+            let expression = match expression {
+                Expr::Seq(sequence) => sequence.exprs.last().map(Box::as_ref),
+                expression => Some(expression),
+            };
+            self.returns_array |= matches!(expression, Some(Expr::Array(_)));
+            statement.visit_children_with(self);
+        }
+
+        fn visit_tagged_tpl(&mut self, tagged: &swc_core::ecma::ast::TaggedTpl) {
+            if matches!(tagged.tag.as_ref(), Expr::Ident(identifier) if identifier.sym == "$localize")
+            {
+                self.localized_messages += 1;
+            }
+            tagged.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if matches!(
+                &call.callee,
+                swc_core::ecma::ast::Callee::Expr(callee)
+                    if matches!(
+                        callee.as_ref(),
+                        Expr::Member(member)
+                            if matches!(
+                                member.obj.as_ref(),
+                                Expr::Ident(identifier) if identifier.sym == "goog"
+                            )
+                                && syntax::member_prop_name(&member.prop)
+                                    .is_some_and(|property| property == "getMsg")
+                    )
+            ) {
+                self.localized_messages += 1;
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_lit(&mut self, literal: &swc_core::ecma::ast::Lit) {
+            if matches!(literal, swc_core::ecma::ast::Lit::Str(_)) {
+                self.strings += 1;
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &swc_core::ecma::ast::ArrowExpr) {}
+    }
+
+    let mut evidence = Evidence::default();
+    body.visit_with(&mut evidence);
+    (evidence.returns_array && (evidence.localized_messages > 0 || evidence.strings > 0))
+        .then_some(evidence.localized_messages * 10 + evidence.strings)
 }
 
 fn descriptor_expression_values(object: &ObjectLit) -> impl Iterator<Item = &Expr> {
@@ -1517,38 +1809,164 @@ fn descriptor_expression_values(object: &ObjectLit) -> impl Iterator<Item = &Exp
 }
 
 fn selector_shape(expr: &Expr) -> Option<(String, usize)> {
+    let decoded = selector_list_string(expr)?;
+    let mut score = 1;
+    if decoded.rows == 1 {
+        score += 2;
+    }
+    if decoded.first_width == 1 {
+        score += 5;
+    }
+    if decoded.first_element.contains('-') || decoded.first_element.is_empty() {
+        score += 3;
+    }
+    if decoded.has_marker || decoded.has_empty_attribute {
+        score += 4;
+    }
+    (score >= 4).then_some((decoded.selector, score))
+}
+
+struct DecodedSelectorList {
+    selector: String,
+    rows: usize,
+    first_width: usize,
+    first_element: String,
+    has_marker: bool,
+    has_empty_attribute: bool,
+}
+
+fn selector_list_string(expr: &Expr) -> Option<DecodedSelectorList> {
     let Expr::Array(outer) = expr else {
         return None;
     };
     if outer.elems.is_empty() {
         return None;
     }
-    let selectors = outer
-        .elems
-        .iter()
-        .map(|element| {
-            let Expr::Array(selector) = element.as_ref()?.expr.as_ref() else {
-                return None;
-            };
-            let first = string_lit(selector.elems.first()?.as_ref()?.expr.as_ref())?;
-            Some((first, selector.elems.len()))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let (selector, width) = selectors.first()?.clone();
-    let mut score = 1;
-    if selectors.len() == 1 {
-        score += 2;
+
+    let mut selectors = Vec::with_capacity(outer.elems.len());
+    let mut first_width = 0;
+    let mut first_element = String::new();
+    let mut has_marker = false;
+    let mut has_empty_attribute = false;
+    for (row_index, element) in outer.elems.iter().enumerate() {
+        let Expr::Array(row) = element.as_ref()?.expr.as_ref() else {
+            return None;
+        };
+        let decoded = selector_row_string(row)?;
+        if row_index == 0 {
+            first_width = row.elems.len();
+            first_element.clone_from(&decoded.element);
+        }
+        has_marker |= decoded.has_marker;
+        has_empty_attribute |= decoded.has_empty_attribute;
+        selectors.push(decoded.selector);
     }
-    if width == 1 {
-        score += 5;
-    }
-    if selector.contains('-') || selector.is_empty() {
-        score += 3;
-    }
-    (score >= 4).then_some((selector, score))
+
+    Some(DecodedSelectorList {
+        selector: selectors.join(","),
+        rows: selectors.len(),
+        first_width,
+        first_element,
+        has_marker,
+        has_empty_attribute,
+    })
 }
 
-fn attribute_table_score(expr: &Expr) -> Option<usize> {
+struct DecodedSelectorRow {
+    selector: String,
+    element: String,
+    has_marker: bool,
+    has_empty_attribute: bool,
+}
+
+fn selector_row_string(row: &swc_core::ecma::ast::ArrayLit) -> Option<DecodedSelectorRow> {
+    let values = row
+        .elems
+        .iter()
+        .map(|element| Some(element.as_ref()?.expr.as_ref()))
+        .collect::<Option<Vec<_>>>()?;
+    let element = string_lit(*values.first()?)?;
+    let mut selector = element.clone();
+    let mut chunk = String::new();
+    let mut mode = 2u8;
+    let mut negative = false;
+    let mut has_marker = false;
+    let mut has_empty_attribute = false;
+    let mut index = 1;
+    while index < values.len() {
+        match values[index] {
+            Expr::Lit(swc_core::ecma::ast::Lit::Str(value)) => {
+                let value = wtf8_to_string(&value.value);
+                if mode & 2 != 0 {
+                    let attribute_value = string_lit(*values.get(index + 1)?)?;
+                    chunk.push('[');
+                    chunk.push_str(&value);
+                    if !attribute_value.is_empty() {
+                        chunk.push_str("=\"");
+                        chunk.push_str(&escape_css_selector_value(&attribute_value));
+                        chunk.push('"');
+                    } else {
+                        has_empty_attribute = true;
+                    }
+                    chunk.push(']');
+                    index += 2;
+                    continue;
+                }
+                if mode & 8 != 0 {
+                    chunk.push('.');
+                    chunk.push_str(&value);
+                } else if mode & 4 != 0 {
+                    chunk.push(' ');
+                    chunk.push_str(&value);
+                } else {
+                    return None;
+                }
+            }
+            Expr::Lit(swc_core::ecma::ast::Lit::Num(number))
+                if number.value.fract() == 0.0
+                    && matches!(number.value as u8, 2 | 3 | 4 | 5 | 8 | 9) =>
+            {
+                let marker = number.value as u8;
+                if !chunk.is_empty() && marker & 1 != 0 {
+                    append_selector_chunk(&mut selector, &mut chunk, negative);
+                }
+                mode = marker;
+                negative |= marker & 1 != 0;
+                has_marker = true;
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    append_selector_chunk(&mut selector, &mut chunk, negative);
+
+    Some(DecodedSelectorRow {
+        selector,
+        element,
+        has_marker,
+        has_empty_attribute,
+    })
+}
+
+fn append_selector_chunk(selector: &mut String, chunk: &mut String, negative: bool) {
+    if chunk.is_empty() {
+        return;
+    }
+    if negative {
+        selector.push_str(":not(");
+        selector.push_str(chunk.trim());
+        selector.push(')');
+    } else {
+        selector.push_str(chunk);
+    }
+    chunk.clear();
+}
+
+fn escape_css_selector_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn component_constant_table_score(expr: &Expr) -> Option<usize> {
     let Expr::Array(table) = expr else {
         return None;
     };
@@ -1557,13 +1975,23 @@ fn attribute_table_score(expr: &Expr) -> Option<usize> {
     }
     let mut score = 0;
     for entry in &table.elems {
-        let Expr::Array(attributes) = entry.as_ref()?.expr.as_ref() else {
-            return None;
+        let Some(Expr::Array(attributes)) = entry.as_ref().map(|entry| entry.expr.as_ref()) else {
+            continue;
         };
-        if attributes.elems.len() < 2 {
-            return None;
+        let primitive_values = attributes
+            .elems
+            .iter()
+            .filter(|element| {
+                matches!(
+                    element.as_ref().map(|element| element.expr.as_ref()),
+                    Some(Expr::Lit(_))
+                )
+            })
+            .count();
+        if primitive_values < 2 {
+            continue;
         }
-        score += attributes.elems.len();
+        score += primitive_values + 4;
         score += attributes
             .elems
             .iter()
@@ -1576,17 +2004,7 @@ fn attribute_table_score(expr: &Expr) -> Option<usize> {
             .count()
             * 3;
     }
-    Some(score)
-}
-
-fn first_selector(expr: &Expr) -> Option<String> {
-    let Expr::Array(outer) = expr else {
-        return None;
-    };
-    let Expr::Array(selector) = outer.elems.first()?.as_ref()?.expr.as_ref() else {
-        return None;
-    };
-    string_lit(selector.elems.first()?.as_ref()?.expr.as_ref())
+    (score > 0).then_some(score)
 }
 
 fn string_array(expr: &Expr) -> Option<Vec<String>> {
