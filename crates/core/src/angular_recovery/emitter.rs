@@ -4,8 +4,9 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, Expr, Ident, Module,
-    ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl,
+    Expr, Ident, IdentName, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, SimpleAssignTarget,
+    Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -221,6 +222,8 @@ pub(super) fn handler_expression(
             let body = function.function.body.as_ref();
             if let Some(expression) = body.and_then(single_return_expression) {
                 print_template_expression(expression, component_contexts, local_references, cm)
+            } else if let Some(expressions) = body.and_then(handler_effect_expressions) {
+                print_handler_effects(&expressions, component_contexts, local_references, cm)
             } else {
                 print_expression(&expression, cm)
             }
@@ -232,6 +235,8 @@ pub(super) fn handler_expression(
             BlockStmtOrExpr::BlockStmt(block) => {
                 if let Some(expression) = single_return_expression(block) {
                     print_template_expression(expression, component_contexts, local_references, cm)
+                } else if let Some(expressions) = handler_effect_expressions(block) {
+                    print_handler_effects(&expressions, component_contexts, local_references, cm)
                 } else {
                     print_expression(&expression, cm)
                 }
@@ -274,6 +279,42 @@ fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&E
     Some(expression.as_ref())
 }
 
+fn handler_effect_expressions(block: &swc_core::ecma::ast::BlockStmt) -> Option<Vec<&Expr>> {
+    let mut expressions = Vec::new();
+    for (index, statement) in block.stmts.iter().enumerate() {
+        match statement {
+            Stmt::Expr(expression) => expressions.push(expression.expr.as_ref()),
+            Stmt::Return(ReturnStmt { arg, .. })
+                if block.stmts[index + 1..]
+                    .iter()
+                    .all(|statement| matches!(statement, Stmt::Empty(_))) =>
+            {
+                if let Some(expression) = arg {
+                    expressions.push(expression.as_ref());
+                }
+            }
+            Stmt::Empty(_) => {}
+            _ => return None,
+        }
+    }
+    (!expressions.is_empty()).then_some(expressions)
+}
+
+fn print_handler_effects(
+    expressions: &[&Expr],
+    component_contexts: &HashSet<BindingKey>,
+    local_references: &HashMap<BindingKey, String>,
+    cm: Lrc<SourceMap>,
+) -> Result<String> {
+    expressions
+        .iter()
+        .map(|expression| {
+            print_template_expression(expression, component_contexts, local_references, cm.clone())
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|expressions| expressions.join("; "))
+}
+
 pub(super) fn print_template_expression(
     expression: &Expr,
     component_contexts: &HashSet<BindingKey>,
@@ -285,6 +326,7 @@ pub(super) fn print_template_expression(
         component_contexts,
         local_references,
         &HashMap::new(),
+        &HashMap::new(),
         cm,
     )
 }
@@ -294,6 +336,7 @@ pub(super) fn print_template_expression_with_aliases(
     component_contexts: &HashSet<BindingKey>,
     local_references: &HashMap<BindingKey, String>,
     expression_aliases: &HashMap<BindingKey, Box<Expr>>,
+    local_contexts: &HashMap<BindingKey, HashMap<String, String>>,
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut expression = expression.clone();
@@ -303,10 +346,12 @@ pub(super) fn print_template_expression_with_aliases(
             active: HashSet::new(),
         });
     }
-    if !component_contexts.is_empty() || !local_references.is_empty() {
+    if !component_contexts.is_empty() || !local_references.is_empty() || !local_contexts.is_empty()
+    {
         expression.visit_mut_with(&mut TemplateBindingCleaner {
             contexts: component_contexts,
             local_references,
+            local_contexts,
         });
     }
     print_expression(&expression, cm)
@@ -388,9 +433,38 @@ fn print_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
 struct TemplateBindingCleaner<'a> {
     contexts: &'a HashSet<BindingKey>,
     local_references: &'a HashMap<BindingKey, String>,
+    local_contexts: &'a HashMap<BindingKey, HashMap<String, String>>,
 }
 
 impl VisitMut for TemplateBindingCleaner<'_> {
+    fn visit_mut_assign_expr(&mut self, assignment: &mut AssignExpr) {
+        assignment.right.visit_mut_with(self);
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let swc_core::ecma::ast::MemberProp::Ident(property) = &member.prop else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let Some(recovered_property) = self.recovered_context_property(object, property) else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        assignment.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+            id: Ident::new(
+                recovered_property.into(),
+                property.span,
+                SyntaxContext::empty(),
+            ),
+            type_ann: None,
+        }));
+    }
+
     fn visit_mut_expr(&mut self, expression: &mut Expr) {
         expression.visit_mut_children_with(self);
         if let Expr::Ident(identifier) = expression {
@@ -409,17 +483,32 @@ impl VisitMut for TemplateBindingCleaner<'_> {
         let Expr::Ident(object) = member.obj.as_ref() else {
             return;
         };
-        if !self.contexts.contains(&binding_key(object)) {
-            return;
-        }
         let swc_core::ecma::ast::MemberProp::Ident(property) = &member.prop else {
             return;
         };
+        let recovered_property = self.recovered_context_property(object, property);
+        let Some(recovered_property) = recovered_property else {
+            return;
+        };
         *expression = Expr::Ident(Ident::new(
-            property.sym.clone(),
+            recovered_property.into(),
             property.span,
             SyntaxContext::empty(),
         ));
+    }
+}
+
+impl TemplateBindingCleaner<'_> {
+    fn recovered_context_property(&self, object: &Ident, property: &IdentName) -> Option<String> {
+        let object_key = binding_key(object);
+        if self.contexts.contains(&object_key) {
+            Some(property.sym.to_string())
+        } else {
+            self.local_contexts
+                .get(&object_key)
+                .and_then(|properties| properties.get(property.sym.as_ref()))
+                .cloned()
+        }
     }
 }
 
