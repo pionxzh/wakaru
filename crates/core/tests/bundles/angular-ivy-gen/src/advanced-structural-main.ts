@@ -2,12 +2,17 @@ import { bootstrapApplication } from '@angular/platform-browser';
 import {
   Component,
   Directive,
+  ElementRef,
   computed,
+  contentChild,
+  contentChildren,
   inject,
   input,
   model,
   output,
   signal,
+  viewChild,
+  viewChildren,
   ɵɵanimateEnter,
   ɵɵanimateEnterListener,
   ɵɵanimateLeave,
@@ -370,6 +375,31 @@ class StructuralClassApisComponent {
   }
 }
 
+@Component({
+  selector: 'structural-query-apis',
+  standalone: true,
+  imports: [StructuralClassApisComponent],
+  template: `
+    <div #viewOptional>Optional view child</div>
+    <div #viewRequired>Required view child</div>
+    <div #viewMany>First view child</div>
+    <div #viewMany>Second view child</div>
+    <structural-class-apis />
+    <ng-content />
+  `,
+})
+class StructuralQueryApisComponent {
+  viewOptional = viewChild('viewOptional');
+  viewRequired = viewChild.required('viewRequired');
+  viewMany = viewChildren('viewMany', { read: ElementRef });
+  viewType = viewChild(StructuralClassApisComponent);
+  contentOptional = contentChild('contentOptional', { descendants: false });
+  contentRequired = contentChild.required('contentRequired', {
+    read: ElementRef,
+  });
+  contentMany = contentChildren('contentMany');
+}
+
 producerGlobal.__wakaruAngularRoots = [
   AppComponent,
   FixtureCardComponent,
@@ -391,6 +421,7 @@ producerGlobal.__wakaruAngularRoots = [
   StructuralAnimationBindingsComponent,
   StructuralNamespacesComponent,
   StructuralClassApisComponent,
+  StructuralQueryApisComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
   (AppComponent as typeof AppComponent & { ɵcmp: unknown }).ɵcmp,
@@ -478,6 +509,11 @@ producerGlobal.__wakaruAngularDefinitions = [
   ).ɵcmp,
   (
     StructuralClassApisComponent as typeof StructuralClassApisComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralQueryApisComponent as typeof StructuralQueryApisComponent & {
       ɵcmp: unknown;
     }
   ).ɵcmp,
