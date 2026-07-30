@@ -4296,18 +4296,25 @@ fn filter_item_to_owned_bindings(
     item: &ModuleItem,
     owned_atoms: &HashSet<Atom>,
 ) -> Option<ModuleItem> {
-    match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
-            if owned_atoms.contains(&fn_decl.ident.sym) =>
-        {
-            Some(item.clone())
+    let decl = match item {
+        ModuleItem::Stmt(Stmt::Decl(decl)) => decl,
+        // Move only the declaration. Factory modules synthesize their own
+        // exports, and scope modules promote the filtered declaration later.
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => &export_decl.decl,
+        _ => return None,
+    };
+    filter_decl_to_owned_bindings(decl, owned_atoms).map(|decl| ModuleItem::Stmt(Stmt::Decl(decl)))
+}
+
+fn filter_decl_to_owned_bindings(decl: &Decl, owned_atoms: &HashSet<Atom>) -> Option<Decl> {
+    match decl {
+        Decl::Fn(fn_decl) if owned_atoms.contains(&fn_decl.ident.sym) => {
+            Some(Decl::Fn(fn_decl.clone()))
         }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl)))
-            if owned_atoms.contains(&class_decl.ident.sym) =>
-        {
-            Some(item.clone())
+        Decl::Class(class_decl) if owned_atoms.contains(&class_decl.ident.sym) => {
+            Some(Decl::Class(class_decl.clone()))
         }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+        Decl::Var(var_decl) => {
             let stmt_bindings: HashSet<BindingId> = var_decl
                 .decls
                 .iter()
@@ -4340,7 +4347,7 @@ fn filter_item_to_owned_bindings(
                 filtered
                     .decls
                     .retain(|decl| pat_declares_owned(&decl.name, &keep_atoms));
-                Some(ModuleItem::Stmt(Stmt::Decl(Decl::Var(filtered))))
+                Some(Decl::Var(filtered))
             } else {
                 None
             }

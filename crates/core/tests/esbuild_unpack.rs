@@ -1363,6 +1363,60 @@ export { ns_writer };
     );
 }
 
+/// Inline ESM export declarations use a different AST wrapper than ordinary
+/// declarations. Merged factories should still adopt the referenced
+/// declarators without pulling unrelated exported siblings into the module.
+#[test]
+fn merged_factory_adopts_inline_exported_mixed_declaration() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var other_dep = { count: 0 };
+export var seed_a = 1, seed_b = 2, wide_w = other_dep.count;
+var init_state = y(() => { shared = seed_a + seed_b; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { read: () => read, write: () => write });
+var shared;
+function read() { return shared; }
+function write(value) { shared = value; }
+init_state();
+console.log(wide_w);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let writer_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function write"))
+        .expect("scope writer module should exist")
+        .1;
+    assert!(
+        writer_code.contains("var seed_a = 1, seed_b = 2")
+            && !writer_code.contains("wide_w")
+            && !writer_code.contains("other_dep"),
+        "merged module should unwrap and filter the inline export declaration:\n{writer_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("other_dep") && entry_code.contains("wide_w = other_dep.count"),
+        "unowned exported sibling and its dependency should remain in entry:\n{entry_code}"
+    );
+}
+
 /// If a lazy init factory seeds mutable state written by multiple scope
 /// modules, those writer modules must merge into one synthetic module. Keeping
 /// them split would force at least one scope module to assign to an imported
@@ -2044,6 +2098,54 @@ console.log(value());
     assert!(
         init_code.contains("function helper") && init_code.contains("FLAG = \"ok\""),
         "init_value should include helper and its referenced constant:\n{init_code}"
+    );
+}
+
+#[test]
+fn standalone_factory_adopts_inline_exported_support_declarations() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var other_dep = { count: 0 };
+export var seed = 1, unrelated = other_dep.count;
+export function helper() { return seed; }
+export class Box { value() { return helper(); } }
+var result;
+var init_result = y(() => { result = new Box().value(); });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_result();
+console.log(result, unrelated);
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "init_result.js")
+        .expect("init_result module should exist")
+        .1;
+    assert!(
+        init_code.contains("var seed = 1")
+            && init_code.contains("function helper")
+            && init_code.contains("class Box")
+            && !init_code.contains("unrelated")
+            && !init_code.contains("other_dep"),
+        "standalone factory should adopt the inline exported dependency closure:\n{init_code}"
+    );
+    assert!(
+        !init_code.contains("export var seed"),
+        "adopted declaration should use the factory module's generated export list:\n{init_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("unrelated = other_dep.count"),
+        "original exported declaration should remain available to entry:\n{entry_code}"
     );
 }
 
