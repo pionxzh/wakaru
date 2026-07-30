@@ -333,6 +333,16 @@ effects, substitute proven context-member aliases, and treat a zero-argument
 `ɵɵresetView()` return as plumbing. Calls on an unresolved runtime namespace
 are never substituted into the event expression.
 
+Before interpreting a proven restored-view listener, Wakaru applies the
+standard optional-chaining rewrite to a clone of that handler. This removes
+Closure scratch declarations such as
+`let t; (t = component.target()) == null ? void 0 : t.nativeElement` while
+leaving the original Ivy evidence unchanged. Loose `== null` forms inherit the
+standard `no_document_all` assumption documented in
+`docs/rewrite-assumptions.md`. Arbitrary multi-statement application logic and
+devirtualized helper calls are not flattened into template expressions; those
+handlers remain explicit partial regions.
+
 ### Performance and profiling
 
 `--profile` exposes these top-level Angular spans:
@@ -599,7 +609,7 @@ claimed from private data.
 
 A second, smaller four-script local production corpus now emits all 120
 component candidates: 68 complete, 52 partial, and none rejected. It renders
-7,893 of 7,989 observed runtime calls, with 61 unsupported and 36 malformed
+7,897 of 7,992 observed runtime calls, with 61 unsupported and 35 malformed
 calls reported, and all four module-oriented artifacts parse as TypeScript.
 The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
 with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are
