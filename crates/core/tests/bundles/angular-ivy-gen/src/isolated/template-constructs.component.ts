@@ -1,5 +1,5 @@
 import { NgFor, NgIf, UpperCasePipe } from '@angular/common';
-import { Component, Directive } from '@angular/core';
+import { Component, Directive, model } from '@angular/core';
 
 @Component({
   selector: 'fixture-flat-bindings',
@@ -148,6 +148,101 @@ export class FixtureStructuralConstructsComponent {
   items = [{ id: 1, label: 'First' }];
 
   select(_row: HTMLButtonElement, _item: { id: number; label: string }) {}
+}
+
+@Component({
+  selector: 'fixture-complex-listener',
+  template: `
+    @let displayLabel = prefix + suffix;
+    @for (item of items; track item.id) {
+      @if (active) {
+        <button
+          #button
+          type="button"
+          (click)="record(button, item, displayLabel); active = false"
+        >
+          {{ item.label }}
+        </button>
+      }
+    }
+  `,
+})
+export class FixtureComplexListenerComponent {
+  prefix = 'Selected: ';
+  suffix = 'item';
+  active = true;
+  items = [{ id: 1, label: 'First' }];
+
+  record(
+    _button: HTMLButtonElement,
+    _item: { id: number; label: string },
+    _displayLabel: string,
+  ) {
+    console.log(_button, _item, _displayLabel);
+  }
+}
+
+@Component({
+  selector: 'fixture-structural-i18n',
+  template: `
+    <p i18n>Hello <strong>{{ name }}</strong>!</p>
+  `,
+})
+export class FixtureStructuralI18nComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'fixture-projection-fallback',
+  template: `
+    <section>
+      <ng-content select="[card-title]">
+        <h2>Fallback title</h2>
+      </ng-content>
+      <ng-content>
+        <p>Fallback body</p>
+      </ng-content>
+    </section>
+  `,
+})
+export class FixtureProjectionFallbackComponent {}
+
+@Directive({
+  selector: 'fixture-model-target',
+})
+export class FixtureModelTargetDirective {
+  value = model('');
+}
+
+@Component({
+  selector: 'fixture-two-way-binding',
+  imports: [FixtureModelTargetDirective],
+  template: `
+    <fixture-model-target [(value)]="name" />
+  `,
+})
+export class FixtureTwoWayBindingComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'fixture-animation-bindings',
+  template: `
+    <div
+      animate.enter="fade-in"
+      [animate.leave]="leaveClass"
+      (animate.enter)="started($event)"
+    >
+      Animated
+    </div>
+  `,
+})
+export class FixtureAnimationBindingsComponent {
+  leaveClass = 'fade-out';
+
+  started(_event: unknown) {
+    console.log(_event);
+  }
 }
 
 @Component({

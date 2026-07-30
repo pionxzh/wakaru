@@ -2,6 +2,11 @@ import { bootstrapApplication } from '@angular/platform-browser';
 import {
   Component,
   Directive,
+  model,
+  ɵɵanimateEnter,
+  ɵɵanimateEnterListener,
+  ɵɵanimateLeave,
+  ɵɵanimateLeaveListener,
   ɵɵattribute,
   ɵɵclassProp,
   ɵɵconditionalCreate,
@@ -35,6 +40,9 @@ import {
   ɵɵrestoreView,
   ɵɵstoreLet,
   ɵɵstyleProp,
+  ɵɵtwoWayBindingSet,
+  ɵɵtwoWayListener,
+  ɵɵtwoWayProperty,
 } from '@angular/core';
 import { AppComponent } from './app/app.component';
 import { FixtureCardComponent } from './app/fixture-card.component';
@@ -217,6 +225,106 @@ class StructuralLetBindingsComponent {
 }
 
 @Component({
+  selector: 'structural-complex-listener',
+  standalone: true,
+  template: `
+    @let displayLabel = prefix + suffix;
+    @for (item of items; track item.id) {
+      @if (active) {
+        <button
+          #button
+          type="button"
+          (click)="record(button, item, displayLabel); active = false"
+        >
+          {{ item.label }}
+        </button>
+      }
+    }
+  `,
+})
+class StructuralComplexListenerComponent {
+  prefix = 'Selected: ';
+  suffix = 'item';
+  active = true;
+  items = [{ id: 1, label: 'First' }];
+
+  record(
+    _button: HTMLButtonElement,
+    _item: { id: number; label: string },
+    _displayLabel: string,
+  ): void {
+    console.log(_button, _item, _displayLabel);
+  }
+}
+
+@Component({
+  selector: 'structural-i18n-region',
+  standalone: true,
+  template: `
+    <p i18n>Hello <strong>{{ name }}</strong>!</p>
+  `,
+})
+class StructuralI18nRegionComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'structural-projection-fallback',
+  standalone: true,
+  template: `
+    <section>
+      <ng-content select="[card-title]">
+        <h2>Fallback title</h2>
+      </ng-content>
+      <ng-content>
+        <p>Fallback body</p>
+      </ng-content>
+    </section>
+  `,
+})
+class StructuralProjectionFallbackComponent {}
+
+@Directive({
+  selector: 'structural-model-target',
+})
+class StructuralModelTargetDirective {
+  value = model('');
+}
+
+@Component({
+  selector: 'structural-two-way-binding',
+  standalone: true,
+  imports: [StructuralModelTargetDirective],
+  template: `
+    <structural-model-target [(value)]="name" />
+  `,
+})
+class StructuralTwoWayBindingComponent {
+  name = 'reader';
+}
+
+@Component({
+  selector: 'structural-animation-bindings',
+  standalone: true,
+  template: `
+    <div
+      animate.enter="fade-in"
+      [animate.leave]="leaveClass"
+      (animate.enter)="started($event)"
+    >
+      Animated
+    </div>
+  `,
+})
+class StructuralAnimationBindingsComponent {
+  leaveClass = 'fade-out';
+
+  started(_event: unknown): void {
+    console.log(_event);
+  }
+}
+
+@Component({
   selector: 'structural-namespaces',
   standalone: true,
   template: `
@@ -245,6 +353,11 @@ producerGlobal.__wakaruAngularRoots = [
   StructuralElementSelectorComponent,
   StructuralPureBindingsComponent,
   StructuralLetBindingsComponent,
+  StructuralComplexListenerComponent,
+  StructuralI18nRegionComponent,
+  StructuralProjectionFallbackComponent,
+  StructuralTwoWayBindingComponent,
+  StructuralAnimationBindingsComponent,
   StructuralNamespacesComponent,
 ];
 producerGlobal.__wakaruAngularDefinitions = [
@@ -302,6 +415,31 @@ producerGlobal.__wakaruAngularDefinitions = [
     }
   ).ɵcmp,
   (
+    StructuralComplexListenerComponent as typeof StructuralComplexListenerComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralI18nRegionComponent as typeof StructuralI18nRegionComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralProjectionFallbackComponent as typeof StructuralProjectionFallbackComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralTwoWayBindingComponent as typeof StructuralTwoWayBindingComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
+    StructuralAnimationBindingsComponent as typeof StructuralAnimationBindingsComponent & {
+      ɵcmp: unknown;
+    }
+  ).ɵcmp,
+  (
     StructuralNamespacesComponent as typeof StructuralNamespacesComponent & {
       ɵcmp: unknown;
     }
@@ -311,6 +449,10 @@ producerGlobal.__wakaruIvyRuntime = {
   'ɵɵdefineComponent': ɵɵdefineComponent,
 };
 producerGlobal.__wakaruStructuralRuntime = [
+  ɵɵanimateEnter,
+  ɵɵanimateEnterListener,
+  ɵɵanimateLeave,
+  ɵɵanimateLeaveListener,
   ɵɵattribute,
   ɵɵclassProp,
   ɵɵconditionalCreate,
@@ -343,6 +485,9 @@ producerGlobal.__wakaruStructuralRuntime = [
   ɵɵrestoreView,
   ɵɵstoreLet,
   ɵɵstyleProp,
+  ɵɵtwoWayBindingSet,
+  ɵɵtwoWayListener,
+  ɵɵtwoWayProperty,
 ];
 
 bootstrapApplication(AppComponent).catch((error) => console.error(error));
