@@ -2,19 +2,21 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, Spanned, SyntaxContext, DUMMY_SP};
+use swc_core::common::{sync::Lrc, EqIgnoreSpan, SourceMap, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Class, ClassDecl,
-    ClassMember, Decl, Expr, ExprOrSpread, Ident, IdentName, Module, ModuleDecl, ModuleItem, Pat,
+    ClassMember, Decl, Expr, ExprOrSpread, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
     ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::artifact::ArtifactSupportPlan;
-use super::roles::{AngularClassApi, IvyInstruction, IvyRoleTable};
+use super::artifact::{expression_references, ArtifactSupportPlan};
+use super::roles::{AngularClassApi, AngularQueryOwner, IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
 use super::template::RecoveredTemplate;
+use super::ComponentQueryMetadata;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
 pub(super) struct ComponentEmitInput<'a> {
@@ -214,21 +216,217 @@ pub(super) fn clean_component_class(
 
 pub(super) fn recover_component_class_apis(
     class: &Class,
+    evidence_class: &Class,
+    queries: &[ComponentQueryMetadata],
     roles: &IvyRoleTable,
-    unresolved_ctxt: SyntaxContext,
-) -> (Box<Class>, Vec<AngularClassApi>) {
+    evidence_unresolved_ctxt: SyntaxContext,
+    readable_unresolved_ctxt: SyntaxContext,
+) -> (Box<Class>, Vec<AngularClassApi>, HashSet<BindingKey>) {
     let mut occupied_names = IdentifierNameCollector::default();
     class.visit_with(&mut occupied_names);
 
     let mut class = Box::new(class.clone());
     let mut rewriter = ClassApiRewriter {
         roles,
-        unresolved_ctxt,
+        unresolved_ctxt: readable_unresolved_ctxt,
         occupied_names: &occupied_names.names,
         imports: BTreeSet::new(),
     };
+    let plans = query_rewrite_plans(evidence_class, queries, roles, evidence_unresolved_ctxt);
+    let query_references = rewriter.rewrite_query_initializers(&mut class, &plans);
     class.visit_mut_with(&mut rewriter);
-    (class, rewriter.imports.into_iter().collect())
+    (
+        class,
+        rewriter.imports.into_iter().collect(),
+        query_references,
+    )
+}
+
+#[derive(Clone)]
+struct QueryRewritePlan {
+    api: AngularClassApi,
+    required: bool,
+    arguments: Vec<ExprOrSpread>,
+    reuse_initializer_arguments: bool,
+}
+
+fn query_rewrite_plans(
+    evidence_class: &Class,
+    queries: &[ComponentQueryMetadata],
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> HashMap<Atom, QueryRewritePlan> {
+    let metadata = queries
+        .iter()
+        .map(|query| (query.field.clone(), query))
+        .collect::<HashMap<_, _>>();
+    let mut plans = HashMap::new();
+    let mut ambiguous = HashSet::new();
+
+    let mut record = |field: Atom, initializer: &CallExpr| {
+        let Some(query) = metadata.get(&field) else {
+            return;
+        };
+        if initializer.type_args.is_some() {
+            return;
+        }
+        let Some(query_initializer) =
+            roles.query_initializer_for_call(initializer, unresolved_ctxt)
+        else {
+            return;
+        };
+        if query_initializer
+            .owner
+            .is_some_and(|owner| owner != query.owner)
+            || (query_initializer.multiple && query_initializer.required)
+        {
+            return;
+        }
+        let api = match (query.owner, query_initializer.multiple) {
+            (AngularQueryOwner::View, false) => AngularClassApi::ViewChild,
+            (AngularQueryOwner::View, true) => AngularClassApi::ViewChildren,
+            (AngularQueryOwner::Content, false) => AngularClassApi::ContentChild,
+            (AngularQueryOwner::Content, true) => AngularClassApi::ContentChildren,
+        };
+        let arguments = query_source_arguments(query, query_initializer.multiple);
+        let plan = QueryRewritePlan {
+            api,
+            required: query_initializer.required,
+            reuse_initializer_arguments: query_arguments_match(&arguments, &initializer.args),
+            arguments,
+        };
+        if plans.insert(field.clone(), plan).is_some() {
+            plans.remove(&field);
+            ambiguous.insert(field);
+        }
+    };
+
+    for member in &evidence_class.body {
+        match member {
+            ClassMember::ClassProp(property) if !property.is_static => {
+                let Some(field) = prop_name(&property.key).map(Atom::from) else {
+                    continue;
+                };
+                let Some(Expr::Call(initializer)) = property.value.as_deref() else {
+                    continue;
+                };
+                record(field, initializer);
+            }
+            ClassMember::Constructor(constructor) => {
+                let Some(body) = &constructor.body else {
+                    continue;
+                };
+                for statement in &body.stmts {
+                    if let Some((field, initializer)) = constructor_query_initializer(statement) {
+                        record(field, initializer);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    plans.retain(|field, _| !ambiguous.contains(field));
+    plans
+}
+
+fn query_arguments_match(metadata: &[ExprOrSpread], initializer: &[ExprOrSpread]) -> bool {
+    metadata.len() == initializer.len()
+        && metadata
+            .iter()
+            .zip(initializer)
+            .all(|(metadata, initializer)| {
+                metadata.spread == initializer.spread
+                    && metadata
+                        .expr
+                        .as_ref()
+                        .eq_ignore_span(initializer.expr.as_ref())
+            })
+}
+
+fn constructor_query_initializer(statement: &Stmt) -> Option<(Atom, &CallExpr)> {
+    let Stmt::Expr(statement) = statement else {
+        return None;
+    };
+    let Expr::Assign(assignment) = statement.expr.as_ref() else {
+        return None;
+    };
+    if assignment.op != swc_core::ecma::ast::AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return None;
+    };
+    if !matches!(target.obj.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    let field = member_prop_name(&target.prop)?;
+    let Expr::Call(initializer) = assignment.right.as_ref() else {
+        return None;
+    };
+    Some((field, initializer))
+}
+
+fn constructor_query_initializer_mut(statement: &mut Stmt) -> Option<(Atom, &mut CallExpr)> {
+    let Stmt::Expr(statement) = statement else {
+        return None;
+    };
+    let Expr::Assign(assignment) = statement.expr.as_mut() else {
+        return None;
+    };
+    if assignment.op != swc_core::ecma::ast::AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return None;
+    };
+    if !matches!(target.obj.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    let field = member_prop_name(&target.prop)?;
+    let Expr::Call(initializer) = assignment.right.as_mut() else {
+        return None;
+    };
+    Some((field, initializer))
+}
+
+fn query_source_arguments(query: &ComponentQueryMetadata, multiple: bool) -> Vec<ExprOrSpread> {
+    let mut arguments = vec![ExprOrSpread {
+        spread: None,
+        expr: query.locator.clone(),
+    }];
+    let mut options = Vec::new();
+    if query.owner == AngularQueryOwner::Content {
+        let default_descendants = !multiple;
+        if query.descendants != default_descendants {
+            options.push(query_option(
+                "descendants",
+                Box::new(Expr::Lit(Lit::Bool(swc_core::ecma::ast::Bool {
+                    span: DUMMY_SP,
+                    value: query.descendants,
+                }))),
+            ));
+        }
+    }
+    if let Some(read) = &query.read {
+        options.push(query_option("read", read.clone()));
+    }
+    if !options.is_empty() {
+        arguments.push(ExprOrSpread {
+            spread: None,
+            expr: Box::new(Expr::Object(ObjectLit {
+                span: DUMMY_SP,
+                props: options,
+            })),
+        });
+    }
+    arguments
+}
+
+fn query_option(name: &str, value: Box<Expr>) -> PropOrSpread {
+    PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+        key: PropName::Ident(IdentName::new(Atom::from(name), DUMMY_SP)),
+        value,
+    })))
 }
 
 #[derive(Default)]
@@ -247,6 +445,112 @@ struct ClassApiRewriter<'a> {
     unresolved_ctxt: SyntaxContext,
     occupied_names: &'a HashSet<Atom>,
     imports: BTreeSet<AngularClassApi>,
+}
+
+impl ClassApiRewriter<'_> {
+    fn rewrite_query_initializers(
+        &mut self,
+        class: &mut Class,
+        plans: &HashMap<Atom, QueryRewritePlan>,
+    ) -> HashSet<BindingKey> {
+        let mut field_counts = HashMap::<Atom, usize>::new();
+        for member in &class.body {
+            match member {
+                ClassMember::ClassProp(property) if !property.is_static => {
+                    if let Some(field) = prop_name(&property.key).map(Atom::from) {
+                        *field_counts.entry(field).or_default() += 1;
+                    }
+                }
+                ClassMember::Constructor(constructor) => {
+                    let Some(body) = &constructor.body else {
+                        continue;
+                    };
+                    for statement in &body.stmts {
+                        if let Some((field, _)) = constructor_query_initializer(statement) {
+                            *field_counts.entry(field).or_default() += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut references = HashSet::new();
+        for member in &mut class.body {
+            match member {
+                ClassMember::ClassProp(property) if !property.is_static => {
+                    let Some(field) = prop_name(&property.key).map(Atom::from) else {
+                        continue;
+                    };
+                    if field_counts.get(&field) != Some(&1) {
+                        continue;
+                    }
+                    let Some(plan) = plans.get(&field) else {
+                        continue;
+                    };
+                    let Some(Expr::Call(call)) = property.value.as_deref_mut() else {
+                        continue;
+                    };
+                    self.rewrite_query_call(call, plan, &mut references);
+                }
+                ClassMember::Constructor(constructor) => {
+                    let Some(body) = &mut constructor.body else {
+                        continue;
+                    };
+                    for statement in &mut body.stmts {
+                        let Some((field, call)) = constructor_query_initializer_mut(statement)
+                        else {
+                            continue;
+                        };
+                        if field_counts.get(&field) != Some(&1) {
+                            continue;
+                        }
+                        let Some(plan) = plans.get(&field) else {
+                            continue;
+                        };
+                        self.rewrite_query_call(call, plan, &mut references);
+                    }
+                }
+                _ => {}
+            }
+        }
+        references
+    }
+
+    fn rewrite_query_call(
+        &mut self,
+        call: &mut CallExpr,
+        plan: &QueryRewritePlan,
+        references: &mut HashSet<BindingKey>,
+    ) {
+        if call.type_args.is_some() {
+            return;
+        }
+        let Some(identifier) = self.imported_identifier(plan.api, call.span) else {
+            return;
+        };
+        let callee = if plan.required {
+            Expr::Member(MemberExpr {
+                span: call.span,
+                obj: Box::new(Expr::Ident(identifier)),
+                prop: MemberProp::Ident(IdentName::new(Atom::from("required"), call.span)),
+            })
+        } else {
+            Expr::Ident(identifier)
+        };
+        let readable_arguments = (plan.reuse_initializer_arguments
+            && call.args.len() == plan.arguments.len())
+        .then(|| call.args.clone());
+        call.callee = swc_core::ecma::ast::Callee::Expr(Box::new(callee));
+        if let Some(readable_arguments) = readable_arguments {
+            call.args = readable_arguments;
+        } else {
+            call.args = plan.arguments.clone();
+            for argument in &call.args {
+                references.extend(expression_references(argument.expr.as_ref()));
+            }
+        }
+    }
 }
 
 impl VisitMut for ClassApiRewriter<'_> {
@@ -290,6 +594,9 @@ impl VisitMut for ClassApiRewriter<'_> {
             .roles
             .class_api_for_callee(&call.callee, self.unresolved_ctxt)
         {
+            if api.is_query() {
+                return;
+            }
             let swc_core::ecma::ast::Callee::Expr(callee) = &mut call.callee else {
                 return;
             };

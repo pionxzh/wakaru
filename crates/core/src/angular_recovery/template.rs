@@ -1122,7 +1122,9 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::Attribute
                     | IvyInstruction::ClassProp
                     | IvyInstruction::StyleProp => 1,
-                    IvyInstruction::DefineComponent => 0,
+                    IvyInstruction::DefineComponent
+                    | IvyInstruction::ViewQuerySignal
+                    | IvyInstruction::ContentQuerySignal => 0,
                 })
                 .unwrap_or(0);
             self.score += score;
@@ -2728,7 +2730,7 @@ fn render_flag_mask(expression: &Expr, render_flags: &BindingKey) -> Option<u8> 
         .then_some(mask.value as u8)
 }
 
-fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
+pub(super) fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
     let mut argument_lists = vec![call.args.as_slice()];
     let mut callee = &call.callee;
     loop {

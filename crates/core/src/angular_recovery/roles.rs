@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, ClassProp, Expr, ImportSpecifier,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, Prop, PropName, SimpleAssignTarget, Stmt,
+    AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, ClassProp, Expr, ExprOrSpread,
+    ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Prop, PropName,
+    SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -18,37 +19,101 @@ const REFERENCE_CANDIDATE_NAME: &str = "__wakaruIvyReferenceCandidate";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum AngularClassApi {
+    ContentChild,
+    ContentChildren,
     Computed,
     Inject,
     Input,
     Model,
     Output,
     Signal,
+    ViewChild,
+    ViewChildren,
 }
 
 impl AngularClassApi {
     fn from_export_name(name: &str) -> Option<Self> {
         Some(match name {
+            "contentChild" => Self::ContentChild,
+            "contentChildren" => Self::ContentChildren,
             "computed" => Self::Computed,
             "inject" => Self::Inject,
             "input" => Self::Input,
             "model" => Self::Model,
             "output" => Self::Output,
             "signal" => Self::Signal,
+            "viewChild" => Self::ViewChild,
+            "viewChildren" => Self::ViewChildren,
             _ => return None,
         })
     }
 
     pub(super) fn canonical_export_name(self) -> &'static str {
         match self {
+            Self::ContentChild => "contentChild",
+            Self::ContentChildren => "contentChildren",
             Self::Computed => "computed",
             Self::Inject => "inject",
             Self::Input => "input",
             Self::Model => "model",
             Self::Output => "output",
             Self::Signal => "signal",
+            Self::ViewChild => "viewChild",
+            Self::ViewChildren => "viewChildren",
         }
     }
+
+    pub(super) fn is_query(self) -> bool {
+        matches!(
+            self,
+            Self::ContentChild | Self::ContentChildren | Self::ViewChild | Self::ViewChildren
+        )
+    }
+
+    fn query_initializer(self) -> Option<AngularQueryInitializer> {
+        Some(match self {
+            Self::ContentChild => AngularQueryInitializer {
+                owner: Some(AngularQueryOwner::Content),
+                multiple: false,
+                required: false,
+            },
+            Self::ContentChildren => AngularQueryInitializer {
+                owner: Some(AngularQueryOwner::Content),
+                multiple: true,
+                required: false,
+            },
+            Self::ViewChild => AngularQueryInitializer {
+                owner: Some(AngularQueryOwner::View),
+                multiple: false,
+                required: false,
+            },
+            Self::ViewChildren => AngularQueryInitializer {
+                owner: Some(AngularQueryOwner::View),
+                multiple: true,
+                required: false,
+            },
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AngularQueryOwner {
+    View,
+    Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AngularQueryInitializer {
+    pub(super) owner: Option<AngularQueryOwner>,
+    pub(super) multiple: bool,
+    pub(super) required: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum QueryInitializerRole {
+    DynamicFactory,
+    Fixed { multiple: bool, required: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,6 +200,8 @@ pub(super) enum IvyInstruction {
     Attribute,
     ClassProp,
     StyleProp,
+    ViewQuerySignal,
+    ContentQuerySignal,
 }
 
 impl IvyInstruction {
@@ -227,6 +294,8 @@ impl IvyInstruction {
             "ɵɵattribute" => Self::Attribute,
             "ɵɵclassProp" => Self::ClassProp,
             "ɵɵstyleProp" => Self::StyleProp,
+            "ɵɵviewQuerySignal" => Self::ViewQuerySignal,
+            "ɵɵcontentQuerySignal" => Self::ContentQuerySignal,
             _ => return None,
         })
     }
@@ -315,6 +384,8 @@ impl IvyInstruction {
             Self::Attribute => "ɵɵattribute",
             Self::ClassProp => "ɵɵclassProp",
             Self::StyleProp => "ɵɵstyleProp",
+            Self::ViewQuerySignal => "ɵɵviewQuerySignal",
+            Self::ContentQuerySignal => "ɵɵcontentQuerySignal",
         }
     }
 }
@@ -332,6 +403,7 @@ pub(super) struct IvyRoleTable {
     ivy_names: HashMap<SymbolIdentity, String>,
     ambiguous_symbols: HashSet<SymbolIdentity>,
     class_api_call_arguments: HashMap<SymbolIdentity, Vec<Box<Expr>>>,
+    query_initializer_roles: HashMap<SymbolIdentity, QueryInitializerRole>,
     core_namespaces: HashSet<BindingKey>,
     namespace_state_targets: HashSet<SymbolIdentity>,
     alias_groups: Vec<Vec<SymbolIdentity>>,
@@ -362,6 +434,9 @@ impl IvyRoleTable {
         }
         for (identity, arguments) in structural_evidence.specialized_class_api_call_arguments() {
             table.record_class_api_call_arguments(identity, arguments);
+        }
+        for (identity, role) in structural_evidence.infer_query_initializer_roles() {
+            table.record_query_initializer_role(identity, role);
         }
         let aliases = super::workspace::collect_esm_symbol_aliases(modules);
         table.install_aliases(&aliases);
@@ -443,10 +518,33 @@ impl IvyRoleTable {
         {
             self.ivy_names.remove(&identity);
             self.class_api_call_arguments.remove(&identity);
+            self.query_initializer_roles.remove(&identity);
             self.ambiguous_symbols.insert(identity);
             return;
         }
         self.ivy_names.insert(identity, name);
+    }
+
+    fn record_query_initializer_role(
+        &mut self,
+        identity: SymbolIdentity,
+        role: QueryInitializerRole,
+    ) {
+        if self.ambiguous_symbols.contains(&identity) {
+            return;
+        }
+        if self
+            .query_initializer_roles
+            .get(&identity)
+            .is_some_and(|existing| *existing != role)
+        {
+            self.ivy_names.remove(&identity);
+            self.class_api_call_arguments.remove(&identity);
+            self.query_initializer_roles.remove(&identity);
+            self.ambiguous_symbols.insert(identity);
+            return;
+        }
+        self.query_initializer_roles.insert(identity, role);
     }
 
     fn record_class_api_call_arguments(
@@ -519,25 +617,38 @@ impl IvyRoleTable {
                     .filter_map(|identity| self.class_api_call_arguments.get(identity).cloned())
                     .collect::<Vec<_>>()
             };
+            let query_roles = component
+                .iter()
+                .filter_map(|identity| self.query_initializer_roles.get(identity).copied())
+                .collect::<HashSet<_>>();
             let is_ambiguous = component
                 .iter()
                 .any(|identity| self.ambiguous_symbols.contains(identity))
                 || names.len() > 1
-                || call_argument_sources.len() > 1;
+                || call_argument_sources.len() > 1
+                || query_roles.len() > 1;
             if is_ambiguous {
                 self.class_api_argument_alias_groups.remove(&group_index);
                 for identity in component {
                     self.ivy_names.remove(&identity);
                     self.class_api_call_arguments.remove(&identity);
+                    self.query_initializer_roles.remove(&identity);
                     self.ambiguous_symbols.insert(identity);
                 }
-            } else if let Some(name) = names.into_iter().next() {
+            } else {
+                let name = names.into_iter().next();
                 let call_arguments = call_argument_sources.into_iter().next();
+                let query_role = query_roles.into_iter().next();
                 for identity in component {
-                    self.ivy_names.insert(identity.clone(), name.clone());
+                    if let Some(name) = &name {
+                        self.ivy_names.insert(identity.clone(), name.clone());
+                    }
                     if let Some(arguments) = &call_arguments {
                         self.class_api_call_arguments
-                            .insert(identity, arguments.clone());
+                            .insert(identity.clone(), arguments.clone());
+                    }
+                    if let Some(role) = query_role {
+                        self.query_initializer_roles.insert(identity, role);
                     }
                 }
                 if call_arguments.is_some() {
@@ -571,6 +682,71 @@ impl IvyRoleTable {
             return None;
         };
         self.class_api_for_expr(expr.as_ref(), unresolved_ctxt)
+    }
+
+    pub(super) fn query_initializer_for_call(
+        &self,
+        call: &CallExpr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<AngularQueryInitializer> {
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let callee = strip_parenthesized_expr(callee.as_ref());
+        if let Expr::Member(member) = callee {
+            if member_prop_name(&member.prop).as_deref() == Some("required") {
+                let mut initializer = self.query_initializer_for_expr(
+                    member.obj.as_ref(),
+                    &call.args,
+                    unresolved_ctxt,
+                )?;
+                if initializer.multiple || initializer.required {
+                    return None;
+                }
+                initializer.required = true;
+                return Some(initializer);
+            }
+        }
+        self.query_initializer_for_expr(callee, &call.args, unresolved_ctxt)
+    }
+
+    fn query_initializer_for_expr(
+        &self,
+        expression: &Expr,
+        arguments: &[ExprOrSpread],
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<AngularQueryInitializer> {
+        let expression = strip_parenthesized_expr(expression);
+        if let Some(initializer) = self
+            .class_api_for_expr(expression, unresolved_ctxt)
+            .and_then(AngularClassApi::query_initializer)
+        {
+            return Some(initializer);
+        }
+
+        let identity = symbol_identity(expression, unresolved_ctxt)?;
+        match self.query_initializer_roles.get(&identity)? {
+            QueryInitializerRole::DynamicFactory => {
+                let [first_only, required, ..] = arguments else {
+                    return None;
+                };
+                if first_only.spread.is_some() || required.spread.is_some() {
+                    return None;
+                }
+                let first_only = boolean_expression_value(first_only.expr.as_ref())?;
+                let required = boolean_expression_value(required.expr.as_ref())?;
+                (!(!first_only && required)).then_some(AngularQueryInitializer {
+                    owner: None,
+                    multiple: !first_only,
+                    required,
+                })
+            }
+            QueryInitializerRole::Fixed { multiple, required } => Some(AngularQueryInitializer {
+                owner: None,
+                multiple: *multiple,
+                required: *required,
+            }),
+        }
     }
 
     pub(super) fn specialized_class_api_arguments_for_callee(
@@ -928,6 +1104,26 @@ fn exported_symbol_expr(expression: &Expr) -> Option<&Expr> {
             exported_symbol_expr(return_statement.arg.as_deref()?)
         }
         Expr::Paren(paren) => exported_symbol_expr(paren.expr.as_ref()),
+        _ => None,
+    }
+}
+
+fn strip_parenthesized_expr(mut expression: &Expr) -> &Expr {
+    while let Expr::Paren(parenthesized) = expression {
+        expression = parenthesized.expr.as_ref();
+    }
+    expression
+}
+
+fn boolean_expression_value(expression: &Expr) -> Option<bool> {
+    match strip_parenthesized_expr(expression) {
+        Expr::Lit(swc_core::ecma::ast::Lit::Bool(boolean)) => Some(boolean.value),
+        Expr::Unary(unary) if unary.op == swc_core::ecma::ast::UnaryOp::Bang => {
+            match strip_parenthesized_expr(unary.arg.as_ref()) {
+                Expr::Lit(swc_core::ecma::ast::Lit::Num(number)) => Some(number.value == 0.0),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
