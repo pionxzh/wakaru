@@ -162,6 +162,10 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
     for omitted_role in [
         "ɵɵattribute",
+        "ɵɵanimateEnter",
+        "ɵɵanimateEnterListener",
+        "ɵɵanimateLeave",
+        "ɵɵanimateLeaveListener",
         "ɵɵclassProp",
         "ɵɵtext",
         "ɵɵtextInterpolate",
@@ -192,6 +196,9 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         "ɵɵrestoreView",
         "ɵɵstoreLet",
         "ɵɵstyleProp",
+        "ɵɵtwoWayBindingSet",
+        "ɵɵtwoWayListener",
+        "ɵɵtwoWayProperty",
     ] {
         assert!(
             !CLOSURE_ADVANCED_STRUCTURAL.contains(omitted_role),
@@ -210,7 +217,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
 
-    assert_eq!(by_selector.len(), 14);
+    assert_eq!(by_selector.len(), 19);
     assert_eq!(
         by_selector["app-root"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -399,6 +406,86 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-let-bindings"]
         .source
         .contains("(click)=\"console.log(value); void 0\""));
+    assert_eq!(
+        by_selector["structural-complex-listener"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-complex-listener"].issues,
+        by_selector["structural-complex-listener"].source,
+    );
+    assert!(by_selector["structural-complex-listener"]
+        .source
+        .contains("@let value = prefix + suffix;"));
+    assert!(by_selector["structural-complex-listener"]
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(by_selector["structural-complex-listener"]
+        .source
+        .contains("(click)=\"console.log(button, item, value); active = !1\""));
+    assert!(by_selector["structural-complex-listener"]
+        .source
+        .contains("{{ item.label }}"));
+    assert!(!by_selector["structural-complex-listener"]
+        .source
+        .contains("$implicit"));
+    assert_eq!(
+        by_selector["structural-i18n-region"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-i18n-region"].issues,
+        by_selector["structural-i18n-region"].source,
+    );
+    assert!(by_selector["structural-i18n-region"]
+        .source
+        .contains("Hello <strong>{{ name }}</strong>!"));
+    assert_eq!(
+        by_selector["structural-projection-fallback"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-projection-fallback"].issues,
+        by_selector["structural-projection-fallback"].source,
+    );
+    assert!(by_selector["structural-projection-fallback"]
+        .source
+        .contains("<ng-content select=\"[card-title]\">"));
+    assert!(by_selector["structural-projection-fallback"]
+        .source
+        .contains("<h2>Fallback title</h2>"));
+    assert!(by_selector["structural-projection-fallback"]
+        .source
+        .contains("<p>Fallback body</p>"));
+    assert_eq!(
+        by_selector["structural-two-way-binding"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-two-way-binding"].issues,
+        by_selector["structural-two-way-binding"].source,
+    );
+    assert!(by_selector["structural-two-way-binding"]
+        .source
+        .contains(r#"[(value)]="name""#));
+    assert!(!by_selector["structural-two-way-binding"]
+        .source
+        .contains("ɵɵtwoWay"));
+    assert_eq!(
+        by_selector["structural-animation-bindings"].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        by_selector["structural-animation-bindings"].issues,
+        by_selector["structural-animation-bindings"].source,
+    );
+    assert!(by_selector["structural-animation-bindings"]
+        .source
+        .contains(r#"[animate.leave]="Uh""#));
+    assert!(by_selector["structural-animation-bindings"]
+        .source
+        .contains(r#"animate.enter="fade-in""#));
+    assert!(by_selector["structural-animation-bindings"]
+        .source
+        .contains(r#"(animate.enter)="console.log($event)""#));
+    assert!(!by_selector["structural-animation-bindings"]
+        .source
+        .contains("ɵɵanimate"));
     assert_eq!(
         by_selector["structural-namespaces"].completeness,
         AngularRecoveryCompleteness::Complete,
@@ -745,6 +832,156 @@ fn recovers_view_local_angular_template_constructs() {
     );
     assert_eq!(component.stats.unsupported_runtime_calls, 0);
     assert_eq!(component.stats.malformed_instruction_calls, 0);
+}
+
+#[test]
+fn recovers_compiler_generated_nested_listener_aliases() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular nested listener output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-complex-listener")
+            .expect("complex listener component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component
+            .source
+            .contains("@let displayLabel = prefix + suffix;"));
+        assert!(component
+            .source
+            .contains("@for (item of items; track item.id) {"));
+        assert!(component.source.contains("@if (active) {"));
+        assert!(
+            component
+                .source
+                .contains("(click)=\"record(button, item, displayLabel); active = false\"")
+                || component
+                    .source
+                    .contains("(click)=\"record(button, item, displayLabel); active = !1\""),
+            "{}",
+            component.source,
+        );
+        assert!(component.source.contains("{{ item.label }}"));
+        assert!(!component.source.contains("$implicit"));
+    }
+}
+
+#[test]
+fn recovers_compiler_generated_structural_i18n() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular structural i18n output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-structural-i18n")
+            .expect("structural i18n component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains("<p i18n>"));
+        assert!(component
+            .source
+            .contains("Hello <strong>{{ name }}</strong>!"));
+        assert!(!component.source.contains("ɵɵi18n"));
+    }
+}
+
+#[test]
+fn recovers_compiler_generated_projection_fallbacks() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular projection fallback output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-projection-fallback")
+            .expect("projection fallback component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component
+            .source
+            .contains("<ng-content select=\"[card-title]\">"));
+        assert!(component.source.contains("<h2>Fallback title</h2>"));
+        assert!(component.source.contains("</ng-content>"));
+        assert!(component.source.contains("<ng-content>"));
+        assert!(component.source.contains("<p>Fallback body</p>"));
+    }
+}
+
+#[test]
+fn recovers_compiler_generated_two_way_bindings() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular two-way binding output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-two-way-binding")
+            .expect("two-way binding component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains(r#"[(value)]="name""#));
+        assert!(!component.source.contains("valueChange"));
+        assert!(!component.source.contains("ɵɵtwoWay"));
+    }
+}
+
+#[test]
+fn recovers_compiler_generated_animation_bindings() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular animation binding output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-animation-bindings")
+            .expect("animation binding component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains(r#"animate.enter="fade-in""#));
+        assert!(component.source.contains(r#"[animate.leave]="leaveClass""#));
+        assert!(component
+            .source
+            .contains(r#"(animate.enter)="started($event)""#));
+        assert!(!component.source.contains("ɵɵanimate"));
+    }
 }
 
 #[test]
