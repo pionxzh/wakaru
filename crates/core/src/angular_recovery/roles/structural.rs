@@ -10,7 +10,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use super::{symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity};
+use super::{
+    symbol_identity, IvyInstruction, IvyRoleTable, SymbolIdentity, REFERENCE_CANDIDATE_NAME,
+};
 use crate::angular_recovery::syntax::{binding_key, member_prop_name, BindingKey};
 use crate::angular_recovery::PreparedAngularModule;
 
@@ -80,6 +82,7 @@ impl StructuralRoleEvidence {
             .map(|function| (function.identity.clone(), "ɵɵdefineComponent"))
             .collect::<Vec<_>>();
         inferred.extend(infer_element_family(&self.functions));
+        inferred.extend(infer_element_container_family(&self.functions));
         inferred
     }
 
@@ -113,7 +116,18 @@ impl StructuralRoleEvidence {
         }
 
         let mut inferred = infer_specialized_element_pair(&function_index, &by_identity);
+        inferred.extend(infer_specialized_element_container_pair(
+            &function_index,
+            &by_identity,
+        ));
+        inferred.extend(infer_namespace_family(&function_index, &by_identity));
+        inferred.extend(infer_styling_property_family(&function_index, &by_identity));
+        inferred.extend(infer_i18n_role_family(&function_index, &by_identity));
         inferred.extend(infer_text_interpolation_family(
+            &function_index,
+            &by_identity,
+        ));
+        inferred.extend(infer_expression_interpolation_family(
             &function_index,
             &by_identity,
         ));
@@ -124,6 +138,7 @@ impl StructuralRoleEvidence {
         inferred.extend(infer_defer_role_family(&function_index, &by_identity));
         inferred.extend(infer_repeater_role_family(&function_index, &by_identity));
         inferred.extend(infer_view_state_role_family(&self.functions, modules));
+        inferred.extend(infer_pure_function_family(&function_index, &by_identity));
         for (identity, observations) in &by_identity {
             let Some(definition) = function_index.unique(identity) else {
                 continue;
@@ -142,6 +157,9 @@ impl StructuralRoleEvidence {
             if is_property_shape(definition, observations) {
                 matches.push("ɵɵproperty");
             }
+            if is_attribute_shape(definition, observations) {
+                matches.push("ɵɵattribute");
+            }
             if is_embedded_template_shape(definition, observations) {
                 matches.push("ɵɵtemplate");
             }
@@ -159,6 +177,17 @@ impl StructuralRoleEvidence {
             }
             if is_reference_shape(definition, observations) {
                 matches.push("ɵɵreference");
+            } else if is_direct_reference_candidate(definition, observations) {
+                inferred.push((definition.identity.clone(), REFERENCE_CANDIDATE_NAME));
+            }
+            if is_declare_let_shape(definition, observations) {
+                matches.push("ɵɵdeclareLet");
+            }
+            if is_store_let_shape(definition, observations) {
+                matches.push("ɵɵstoreLet");
+            }
+            if is_read_context_let_shape(definition, observations) {
+                matches.push("ɵɵreadContextLet");
             }
             if is_pipe_shape(definition, observations) {
                 matches.push("ɵɵpipe");
@@ -171,6 +200,30 @@ impl StructuralRoleEvidence {
             }
         }
         inferred
+    }
+
+    pub(super) fn inferred_namespace_state_targets(
+        &self,
+        roles: &IvyRoleTable,
+    ) -> HashSet<SymbolIdentity> {
+        self.functions
+            .iter()
+            .filter(|function| {
+                roles
+                    .ivy_names
+                    .get(&function.identity)
+                    .and_then(|name| IvyInstruction::from_export_name(name))
+                    .is_some_and(|instruction| {
+                        matches!(
+                            instruction,
+                            IvyInstruction::NamespaceHtml
+                                | IvyInstruction::NamespaceSvg
+                                | IvyInstruction::NamespaceMathMl
+                        )
+                    })
+            })
+            .filter_map(|function| namespace_assignment(function).map(|(target, _)| target))
+            .collect()
     }
 }
 
@@ -457,15 +510,7 @@ impl TemplateCallObserver<'_> {
         if self
             .roles
             .instruction_for_expr(root, self.unresolved_ctxt)
-            .is_some_and(|instruction| {
-                phase == 1
-                    && matches!(
-                        instruction,
-                        IvyInstruction::ElementStart
-                            | IvyInstruction::ElementEnd
-                            | IvyInstruction::Element
-                    )
-            })
+            .is_some_and(|instruction| phase == 1 && is_creation_anchor(instruction))
         {
             self.saw_creation_anchor = true;
             return;
@@ -495,6 +540,27 @@ impl TemplateCallObserver<'_> {
                 }
             }));
     }
+}
+
+fn is_creation_anchor(instruction: IvyInstruction) -> bool {
+    matches!(
+        instruction,
+        IvyInstruction::ElementStart
+            | IvyInstruction::ElementEnd
+            | IvyInstruction::Element
+            | IvyInstruction::ElementContainerStart
+            | IvyInstruction::ElementContainerEnd
+            | IvyInstruction::ElementContainer
+            | IvyInstruction::Text
+            | IvyInstruction::Template
+            | IvyInstruction::Defer
+            | IvyInstruction::ProjectionDef
+            | IvyInstruction::Projection
+            | IvyInstruction::Pipe
+            | IvyInstruction::I18n
+            | IvyInstruction::I18nStart
+            | IvyInstruction::I18nEnd
+    )
 }
 
 fn function_param_binding(function: &Function, index: usize) -> Option<BindingKey> {
@@ -658,6 +724,400 @@ fn infer_specialized_element_pair(
                 .map(|identity| (identity, "ɵɵelementEnd")),
         )
         .collect()
+}
+
+fn infer_specialized_element_container_pair(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let starts = observations
+        .iter()
+        .filter_map(|(identity, calls)| {
+            let definition = function_index.unique(identity)?;
+            is_specialized_element_container_start_shape(definition, calls)
+                .then_some((identity, calls))
+        })
+        .collect::<Vec<_>>();
+    let ends = observations
+        .iter()
+        .filter_map(|(identity, calls)| {
+            if function_index.roles.ivy_names.contains_key(identity) {
+                return None;
+            }
+            let definition = function_index.unique(identity)?;
+            (definition.params.is_empty()
+                && !is_specialized_element_end_shape(definition, calls)
+                && direct_calls(definition).len() <= 3
+                && calls.iter().all(|observation| {
+                    observation.usage == TemplateCallUsage::Effect
+                        && observation.phase == 1
+                        && observation.arguments.is_empty()
+                }))
+            .then_some((identity, calls))
+        })
+        .collect::<Vec<_>>();
+
+    let mut inferred = Vec::new();
+    for (start, start_calls) in starts {
+        let mut paired_end = None;
+        let mut valid = true;
+        for start_call in start_calls {
+            let nearest = ends
+                .iter()
+                .filter_map(|(identity, end_calls)| {
+                    end_calls
+                        .iter()
+                        .filter(|end_call| {
+                            end_call.view_id == start_call.view_id
+                                && end_call.call_order > start_call.call_order
+                        })
+                        .min_by_key(|end_call| end_call.call_order)
+                        .map(|end_call| (*identity, end_call.call_order))
+                })
+                .min_by_key(|(_, call_order)| *call_order)
+                .map(|(identity, _)| identity);
+            let Some(nearest) = nearest else {
+                valid = false;
+                break;
+            };
+            if paired_end.is_some_and(|existing| existing != nearest) {
+                valid = false;
+                break;
+            }
+            paired_end = Some(nearest);
+        }
+        if valid {
+            if let Some(end) = paired_end {
+                inferred.push((start.clone(), "ɵɵelementContainerStart"));
+                inferred.push((end.clone(), "ɵɵelementContainerEnd"));
+            }
+        }
+    }
+    inferred
+}
+
+fn is_specialized_element_container_start_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 3)
+        && returns_identity(definition, &definition.identity)
+        && contains_string_literal(&definition.body, "ng-container")
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && matches!(observation.arguments.len(), 1..=3)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+#[derive(Clone, Copy)]
+enum NamespaceAssignmentValue {
+    Html,
+    Svg,
+    MathMl,
+}
+
+#[derive(Default)]
+struct NamespaceCandidates {
+    html: Vec<SymbolIdentity>,
+    svg: Vec<SymbolIdentity>,
+    math_ml: Vec<SymbolIdentity>,
+}
+
+fn infer_namespace_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut candidates = HashMap::<SymbolIdentity, NamespaceCandidates>::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        if !definition.params.is_empty()
+            || !direct_calls(definition).is_empty()
+            || !calls.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 1
+                    && observation.arguments.is_empty()
+            })
+        {
+            continue;
+        }
+        let Some((target, value)) = namespace_assignment(definition) else {
+            continue;
+        };
+        let family = candidates.entry(target).or_default();
+        match value {
+            NamespaceAssignmentValue::Html => family.html.push(identity.clone()),
+            NamespaceAssignmentValue::Svg => family.svg.push(identity.clone()),
+            NamespaceAssignmentValue::MathMl => family.math_ml.push(identity.clone()),
+        }
+    }
+
+    let mut inferred = Vec::new();
+    for family in candidates.into_values() {
+        if family.html.len() > 1 || family.svg.len() > 1 || family.math_ml.len() > 1 {
+            continue;
+        }
+        let variants = usize::from(!family.html.is_empty())
+            + usize::from(!family.svg.is_empty())
+            + usize::from(!family.math_ml.is_empty());
+        if variants < 2 {
+            continue;
+        }
+        if let [html] = family.html.as_slice() {
+            inferred.push((html.clone(), "ɵɵnamespaceHTML"));
+        }
+        if let [svg] = family.svg.as_slice() {
+            inferred.push((svg.clone(), "ɵɵnamespaceSVG"));
+        }
+        if let [math_ml] = family.math_ml.as_slice() {
+            inferred.push((math_ml.clone(), "ɵɵnamespaceMathML"));
+        }
+    }
+    inferred
+}
+
+fn namespace_assignment(
+    function: &RuntimeFunction,
+) -> Option<(SymbolIdentity, NamespaceAssignmentValue)> {
+    struct Collector {
+        unresolved_ctxt: SyntaxContext,
+        assignments: Vec<(SymbolIdentity, NamespaceAssignmentValue)>,
+    }
+
+    impl Visit for Collector {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op != AssignOp::Assign {
+                return;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+                return;
+            };
+            let value = match strip_parentheses(assignment.right.as_ref()) {
+                Expr::Lit(Lit::Null(_)) => NamespaceAssignmentValue::Html,
+                Expr::Lit(Lit::Str(string)) if string.value == "svg" => {
+                    NamespaceAssignmentValue::Svg
+                }
+                Expr::Lit(Lit::Str(string))
+                    if matches!(string.value.as_str(), Some("math" | "mathml")) =>
+                {
+                    NamespaceAssignmentValue::MathMl
+                }
+                _ => return,
+            };
+            let Some(target) = symbol_identity(&Expr::Member(member.clone()), self.unresolved_ctxt)
+            else {
+                return;
+            };
+            self.assignments.push((target, value));
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        unresolved_ctxt: function.unresolved_ctxt,
+        assignments: Vec::new(),
+    };
+    function.body.visit_with(&mut collector);
+    let [assignment] = collector.assignments.as_slice() else {
+        return None;
+    };
+    Some(assignment.clone())
+}
+
+fn infer_styling_property_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::new();
+    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<&SymbolIdentity>>::new();
+
+    for (identity, calls_in_templates) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        if !returns_identity(definition, &definition.identity) {
+            continue;
+        }
+        let direct = direct_calls(definition);
+        let [call] = direct.as_slice() else {
+            continue;
+        };
+        if call.arguments.len() != 4 {
+            continue;
+        }
+        if parameters.len() == 3
+            && calls_in_templates.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 2
+                    && matches!(observation.arguments.len(), 2 | 3)
+                    && observation
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| is_string_literal(argument.as_ref()))
+            })
+            && forwards_parameters_in_order(call, &parameters)
+            && is_boolean_value(call.arguments[3].as_ref(), false)
+        {
+            styles_by_helper
+                .entry(call.callee.clone())
+                .or_default()
+                .push(identity);
+        }
+        if parameters.len() == 2
+            && calls_in_templates.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 2
+                    && observation.arguments.len() == 2
+                    && observation
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| is_string_literal(argument.as_ref()))
+            })
+            && forwards_parameters_in_order(call, &parameters)
+            && is_nullish(call.arguments[2].as_ref(), definition.unresolved_ctxt)
+            && is_boolean_value(call.arguments[3].as_ref(), true)
+        {
+            classes_by_helper
+                .entry(call.callee.clone())
+                .or_default()
+                .push(identity);
+        }
+    }
+
+    let mut inferred = Vec::new();
+    for (helper, styles) in styles_by_helper {
+        let Some(classes) = classes_by_helper.get(&helper) else {
+            continue;
+        };
+        let ([style], [class]) = (styles.as_slice(), classes.as_slice()) else {
+            continue;
+        };
+        inferred.push(((*style).clone(), "ɵɵstyleProp"));
+        inferred.push(((*class).clone(), "ɵɵclassProp"));
+    }
+    inferred
+}
+
+fn infer_i18n_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut inferred = Vec::new();
+    for (identity, calls_in_templates) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        if parameters.len() != 3
+            || !calls_in_templates.iter().all(|observation| {
+                observation.usage == TemplateCallUsage::Effect
+                    && observation.phase == 1
+                    && matches!(observation.arguments.len(), 2 | 3)
+                    && observation
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                    && observation
+                        .arguments
+                        .get(1)
+                        .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+            })
+        {
+            continue;
+        }
+        let direct = direct_calls(definition);
+        let [start, end] = direct.as_slice() else {
+            continue;
+        };
+        if forwards_parameters(start, &parameters)
+            && end.arguments.is_empty()
+            && start.callee != end.callee
+            && start.callee != definition.identity
+            && end.callee != definition.identity
+        {
+            inferred.push((identity.clone(), "ɵɵi18n"));
+            inferred.push((start.callee.clone(), "ɵɵi18nStart"));
+            inferred.push((end.callee.clone(), "ɵɵi18nEnd"));
+        }
+    }
+
+    let apply_candidates = observations
+        .iter()
+        .filter_map(|(identity, calls)| {
+            let definition = function_index.unique(identity)?;
+            (plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
+                && contains_try_finally(&definition.body)
+                && !returns_identity(definition, &definition.identity)
+                && calls.iter().all(|observation| {
+                    observation.usage == TemplateCallUsage::Effect
+                        && observation.phase == 2
+                        && observation.arguments.len() == 1
+                        && is_nonnegative_integer(observation.arguments[0].as_ref())
+                }))
+            .then_some((identity, calls))
+        })
+        .collect::<Vec<_>>();
+    let exp_candidates = observations
+        .iter()
+        .filter_map(|(identity, calls)| {
+            let definition = function_index.unique(identity)?;
+            (plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
+                && returns_identity(definition, &definition.identity)
+                && calls.iter().all(|observation| {
+                    observation.usage == TemplateCallUsage::Effect
+                        && observation.phase == 2
+                        && observation.arguments.len() == 1
+                }))
+            .then_some((identity, calls))
+        })
+        .collect::<Vec<_>>();
+
+    for (apply, apply_calls) in apply_candidates {
+        let matching_expressions = exp_candidates
+            .iter()
+            .filter(|(_, expression_calls)| {
+                apply_calls.iter().all(|apply_call| {
+                    expression_calls.iter().any(|expression_call| {
+                        expression_call.view_id == apply_call.view_id
+                            && expression_call.call_order < apply_call.call_order
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let [matching_expression] = matching_expressions.as_slice() else {
+            continue;
+        };
+        inferred.push(((*matching_expression.0).clone(), "ɵɵi18nExp"));
+        inferred.push((apply.clone(), "ɵɵi18nApply"));
+    }
+
+    inferred
+}
+
+fn is_boolean_value(expression: &Expr, expected: bool) -> bool {
+    match strip_parentheses(expression) {
+        Expr::Lit(Lit::Bool(value)) => value.value == expected,
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => matches!(
+            strip_parentheses(unary.arg.as_ref()),
+            Expr::Lit(Lit::Num(number))
+                if (number.value == 0.0) == expected
+        ),
+        _ => false,
+    }
 }
 
 fn single_identity<'a>(
@@ -1721,13 +2181,31 @@ fn is_property_shape(
     }
 
     let calls = direct_calls(definition);
-    calls.len() >= 4
+    calls.len() >= 3
         && (calls.iter().any(|call| {
             call.arguments.len() >= 6 && forwards_parameters_in_order(call, &parameters)
         }) || calls.iter().any(|call| {
             is_member_call_named(call, "setProperty")
                 && forwards_parameter_dependencies_in_order(call, &parameters[..2])
         }))
+}
+
+fn is_attribute_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 4)
+        && returns_identity(definition, &definition.identity)
+        && direct_calls(definition).len() >= 4
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 2
+                && matches!(observation.arguments.len(), 2..=4)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+        })
 }
 
 fn is_embedded_template_shape(
@@ -1883,11 +2361,11 @@ fn is_reference_shape(
     let [slot] = parameters.as_slice() else {
         return false;
     };
-    (direct_calls(definition).len() >= 2
+    ((direct_calls(definition).len() >= 2 && !contains_throw_statement(&definition.body))
         || (loads_parameter_from_offset_member(definition, slot, 27)
             && exact_returned_identity(definition)
                 == Some(SymbolIdentity::LocalBinding(slot.clone()))
-            && contains_throw_statement(&definition.body)))
+            && !contains_throw_statement(&definition.body)))
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Initializer
                 && observation.phase == 2
@@ -1897,6 +2375,117 @@ fn is_reference_shape(
                     .first()
                     .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
         })
+}
+
+fn is_declare_let_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
+        && contains_string_literal(&definition.body, "NgLet")
+        && direct_calls(definition).len() >= 4
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && observation.arguments.len() == 1
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn is_store_let_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    let [value] = parameters.as_slice() else {
+        return false;
+    };
+    direct_calls(definition).iter().any(|call| {
+        call.arguments.len() >= 3 && forwards_parameters_in_order(call, std::slice::from_ref(value))
+    }) && exact_returned_identity(definition) == Some(SymbolIdentity::LocalBinding(value.clone()))
+        && !contains_throw_statement(&definition.body)
+        && observations.iter().all(|observation| {
+            matches!(
+                observation.usage,
+                TemplateCallUsage::Effect | TemplateCallUsage::Initializer
+            ) && observation.phase == 2
+                && observation.arguments.len() == 1
+        })
+}
+
+fn is_read_context_let_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    let [slot] = parameters.as_slice() else {
+        return false;
+    };
+    contains_throw_statement(&definition.body)
+        && (loads_parameter_from_offset_member(definition, slot, 27)
+            || direct_calls(definition).len() >= 2)
+        && exact_returned_identity(definition) == Some(SymbolIdentity::LocalBinding(slot.clone()))
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Initializer
+                && observation.phase == 2
+                && observation.arguments.len() == 1
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn is_direct_reference_candidate(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    let [slot] = parameters.as_slice() else {
+        return false;
+    };
+    direct_calls(definition).is_empty()
+        && returns_parameter_offset_member(definition, slot, 27)
+        && observations.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Initializer
+                && observation.phase == 2
+                && observation.arguments.len() == 1
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn returns_parameter_offset_member(
+    function: &RuntimeFunction,
+    parameter: &BindingKey,
+    offset: u64,
+) -> bool {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    !returns.expressions.is_empty()
+        && returns.expressions.iter().all(|expression| {
+            let expression = match strip_parentheses(expression.as_ref()) {
+                Expr::Seq(sequence) => sequence.exprs.last().map(Box::as_ref),
+                expression => Some(expression),
+            };
+            matches!(
+                expression,
+                Some(Expr::Member(member))
+                    if member_uses_parameter_offset(member, parameter, offset)
+            )
+        })
+        && !block_can_fall_through(&function.body)
 }
 
 fn loads_parameter_from_offset_member(
@@ -2023,7 +2612,7 @@ fn pipe_binding_shape(
 ) -> Option<&'static str> {
     let parameters = plain_parameter_bindings(definition)?;
     if !(3..=6).contains(&parameters.len())
-        || direct_calls(definition).len() < 4
+        || direct_calls(definition).len() < 3
         || !observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 2
@@ -2055,16 +2644,135 @@ fn pipe_binding_shape(
     })
 }
 
+fn infer_pure_function_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    struct Candidate {
+        identity: SymbolIdentity,
+        value_count: usize,
+        direct_callees: HashSet<SymbolIdentity>,
+    }
+
+    let mut candidates = Vec::new();
+    for (identity, calls) in observations {
+        let Some(first) = calls.first() else {
+            continue;
+        };
+        let argument_count = first.arguments.len();
+        if !(2..=10).contains(&argument_count)
+            || !calls.iter().all(|observation| {
+                observation.phase == 2
+                    && observation.usage == TemplateCallUsage::Effect
+                    && observation.arguments.len() == argument_count
+                    && observation
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                    && observation.arguments.get(1).is_some_and(|argument| {
+                        matches!(
+                            strip_parentheses(argument.as_ref()),
+                            Expr::Ident(_) | Expr::Member(_) | Expr::Fn(_) | Expr::Arrow(_)
+                        )
+                    })
+            })
+        {
+            continue;
+        }
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        if !(parameters.len() == argument_count || (argument_count == 6 && parameters.len() == 7)) {
+            continue;
+        }
+        let direct_callees = all_call_callees(definition);
+        let mut returns = ReturnExpressionCollector::default();
+        definition.body.visit_with(&mut returns);
+        if direct_callees.len() < 3 || returns.expressions.is_empty() {
+            continue;
+        }
+        candidates.push(Candidate {
+            identity: identity.clone(),
+            value_count: argument_count - 2,
+            direct_callees,
+        });
+    }
+
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidates.iter().any(|other| {
+                candidate.identity != other.identity
+                    && candidate.value_count != other.value_count
+                    && candidate
+                        .direct_callees
+                        .intersection(&other.direct_callees)
+                        .take(2)
+                        .count()
+                        >= 2
+            })
+        })
+        .filter_map(|candidate| {
+            pure_function_name(candidate.value_count).map(|name| (candidate.identity.clone(), name))
+        })
+        .collect()
+}
+
+fn all_call_callees(function: &RuntimeFunction) -> HashSet<SymbolIdentity> {
+    struct Collector {
+        unresolved_ctxt: SyntaxContext,
+        callees: HashSet<SymbolIdentity>,
+    }
+
+    impl Visit for Collector {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Some(identity) = symbol_identity(callee.as_ref(), self.unresolved_ctxt) {
+                    self.callees.insert(identity);
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        unresolved_ctxt: function.unresolved_ctxt,
+        callees: HashSet::new(),
+    };
+    function.body.visit_with(&mut collector);
+    collector.callees
+}
+
+fn pure_function_name(value_count: usize) -> Option<&'static str> {
+    Some(match value_count {
+        0 => "ɵɵpureFunction0",
+        1 => "ɵɵpureFunction1",
+        2 => "ɵɵpureFunction2",
+        3 => "ɵɵpureFunction3",
+        4 => "ɵɵpureFunction4",
+        5 => "ɵɵpureFunction5",
+        6 => "ɵɵpureFunction6",
+        7 => "ɵɵpureFunction7",
+        8 => "ɵɵpureFunction8",
+        _ => return None,
+    })
+}
+
 fn is_template_selection(expression: &Expr) -> bool {
     let expression = strip_parentheses(expression);
     let Expr::Cond(conditional) = expression else {
         return false;
     };
-    is_template_index(conditional.cons.as_ref())
-        && match strip_parentheses(conditional.alt.as_ref()) {
-            Expr::Cond(_) => is_template_selection(conditional.alt.as_ref()),
-            alternate => is_template_index(alternate),
-        }
+    [conditional.cons.as_ref(), conditional.alt.as_ref()]
+        .into_iter()
+        .all(|branch| is_template_index(branch) || is_template_selection(branch))
 }
 
 fn is_template_index(expression: &Expr) -> bool {
@@ -2109,7 +2817,28 @@ fn infer_text_interpolation_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut inferred = Vec::new();
+    text_interpolation_pairs(function_index, observations)
+        .into_iter()
+        .flat_map(|pair| {
+            [
+                (pair.text, "ɵɵtextInterpolate"),
+                (pair.text_one, "ɵɵtextInterpolate1"),
+            ]
+        })
+        .collect()
+}
+
+struct TextInterpolationPair {
+    text: SymbolIdentity,
+    text_one: SymbolIdentity,
+    helper: SymbolIdentity,
+}
+
+fn text_interpolation_pairs(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<TextInterpolationPair> {
+    let mut pairs = Vec::new();
     for (identity, calls_in_templates) in observations {
         if !calls_in_templates.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
@@ -2156,17 +2885,145 @@ fn infer_text_interpolation_family(
         if target_parameters.len() != 3
             || !returns_identity(target, &target.identity)
             || target_calls.len() < 2
-            || !target_calls.iter().any(|call| {
-                call.arguments.len() >= target_parameters.len()
-                    && forwards_parameters_in_order(call, &target_parameters)
-            })
         {
             continue;
         }
-        inferred.push((identity.clone(), "ɵɵtextInterpolate"));
-        inferred.push((target.identity.clone(), "ɵɵtextInterpolate1"));
+        let Some(helper) = target_calls.iter().find(|call| {
+            call.arguments.len() >= target_parameters.len()
+                && forwards_parameters_in_order(call, &target_parameters)
+        }) else {
+            continue;
+        };
+        pairs.push(TextInterpolationPair {
+            text: identity.clone(),
+            text_one: target.identity.clone(),
+            helper: helper.callee.clone(),
+        });
+    }
+    pairs
+}
+
+fn infer_expression_interpolation_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let pairs = text_interpolation_pairs(function_index, observations);
+    if pairs.is_empty() {
+        return Vec::new();
+    }
+    let helpers = pairs
+        .iter()
+        .map(|pair| pair.helper.clone())
+        .collect::<HashSet<_>>();
+    let helper_callees = helpers
+        .iter()
+        .filter_map(|helper| {
+            function_index.unique(helper).map(|definition| {
+                direct_calls(definition)
+                    .into_iter()
+                    .map(|call| call.callee)
+                    .collect::<HashSet<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut inferred = Vec::new();
+    for (identity, calls_in_templates) in observations {
+        if !calls_in_templates.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect && observation.phase == 2
+        }) {
+            continue;
+        }
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+
+        if calls_in_templates
+            .iter()
+            .all(|observation| observation.arguments.len() == 1)
+        {
+            let Some(parameters) = plain_parameter_bindings(definition) else {
+                continue;
+            };
+            if parameters.len() != 1 {
+                continue;
+            }
+            let direct_callees = direct_calls(definition)
+                .into_iter()
+                .map(|call| call.callee)
+                .collect::<HashSet<_>>();
+            let mut returns = ReturnExpressionCollector::default();
+            definition.body.visit_with(&mut returns);
+            if direct_callees.len() == 2
+                && matches!(
+                    returns.expressions.as_slice(),
+                    [expression] if matches!(strip_parentheses(expression.as_ref()), Expr::Cond(_))
+                )
+                && helper_callees
+                    .iter()
+                    .any(|helper| direct_callees.intersection(helper).take(2).count() == 2)
+            {
+                inferred.push((identity.clone(), "ɵɵinterpolate"));
+            }
+            continue;
+        }
+
+        if !calls_in_templates
+            .iter()
+            .all(|observation| matches!(observation.arguments.len(), 2 | 3))
+            || definition.params.len() != 3
+            || !is_empty_string_default(&definition.params[2])
+        {
+            continue;
+        }
+        let parameters = definition
+            .params
+            .iter()
+            .map(parameter_binding_with_default)
+            .collect::<Option<Vec<_>>>();
+        let Some(parameters) = parameters else {
+            continue;
+        };
+        let calls = direct_calls(definition);
+        let [call] = calls.as_slice() else {
+            continue;
+        };
+        if helpers.contains(&call.callee)
+            && call.arguments.len() == parameters.len() + 1
+            && forwards_parameters_in_order(call, &parameters)
+            && returned_call_callee(definition).as_ref() == Some(&call.callee)
+        {
+            inferred.push((identity.clone(), "ɵɵinterpolate1"));
+        }
     }
     inferred
+}
+
+fn parameter_binding_with_default(parameter: &Pat) -> Option<BindingKey> {
+    let parameter = match parameter {
+        Pat::Ident(binding) => return Some(binding_key(&binding.id)),
+        Pat::Assign(assignment) => assignment.left.as_ref(),
+        _ => return None,
+    };
+    let Pat::Ident(binding) = parameter else {
+        return None;
+    };
+    Some(binding_key(&binding.id))
+}
+
+fn returned_call_callee(function: &RuntimeFunction) -> Option<SymbolIdentity> {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    let [expression] = returns.expressions.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parentheses(expression.as_ref()) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    symbol_identity(callee.as_ref(), function.unresolved_ctxt)
 }
 
 fn is_empty_string_default(pattern: &Pat) -> bool {
@@ -2782,6 +3639,50 @@ fn infer_element_family(functions: &[RuntimeFunction]) -> Vec<(SymbolIdentity, &
         inferred.push((wrapper.identity.clone(), "ɵɵelement"));
         inferred.push((start.callee.clone(), "ɵɵelementStart"));
         inferred.push((end.callee.clone(), "ɵɵelementEnd"));
+    }
+    inferred
+}
+
+fn infer_element_container_family(
+    functions: &[RuntimeFunction],
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut by_identity: HashMap<&SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    for function in functions {
+        by_identity
+            .entry(&function.identity)
+            .or_default()
+            .push(function);
+    }
+
+    let mut inferred = Vec::new();
+    for wrapper in functions {
+        let Some(parameters) = plain_parameter_bindings(wrapper) else {
+            continue;
+        };
+        if parameters.len() != 3 || !returns_identity(wrapper, &wrapper.identity) {
+            continue;
+        }
+        let calls = direct_calls(wrapper);
+        let [start, end] = calls.as_slice() else {
+            continue;
+        };
+        let Some([start_definition]) = by_identity.get(&start.callee).map(Vec::as_slice) else {
+            continue;
+        };
+        if !forwards_parameters(start, &parameters)
+            || !end.arguments.is_empty()
+            || start.callee == end.callee
+            || start.callee == wrapper.identity
+            || end.callee == wrapper.identity
+            || !contains_string_literal(&start_definition.body, "ng-container")
+            || !has_unique_self_returning_arity(&by_identity, &start.callee, 3, true)
+            || !has_unique_self_returning_arity(&by_identity, &end.callee, 0, false)
+        {
+            continue;
+        }
+        inferred.push((wrapper.identity.clone(), "ɵɵelementContainer"));
+        inferred.push((start.callee.clone(), "ɵɵelementContainerStart"));
+        inferred.push((end.callee.clone(), "ɵɵelementContainerEnd"));
     }
     inferred
 }
