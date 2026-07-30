@@ -414,9 +414,27 @@ pub fn unpack_prepared_inputs_with_policy(
 #[doc(hidden)]
 pub fn unpack_prepared_inputs_with_policy_and_capture(
     inputs: Vec<PreparedUnpackInput>,
-    mut options: DecompileOptions,
+    options: DecompileOptions,
     raw: bool,
     scope_hoist_policy: ScopeHoistPolicy,
+    capture_pre_rewrite: bool,
+) -> Result<CapturedUnpackOutput> {
+    unpack_prepared_inputs_with_policies_and_capture(
+        inputs
+            .into_iter()
+            .map(|input| (input, scope_hoist_policy))
+            .collect(),
+        options,
+        raw,
+        capture_pre_rewrite,
+    )
+}
+
+#[doc(hidden)]
+pub fn unpack_prepared_inputs_with_policies_and_capture(
+    inputs: Vec<(PreparedUnpackInput, ScopeHoistPolicy)>,
+    mut options: DecompileOptions,
+    raw: bool,
     capture_pre_rewrite: bool,
 ) -> Result<CapturedUnpackOutput> {
     if inputs.is_empty() {
@@ -428,7 +446,7 @@ pub fn unpack_prepared_inputs_with_policy_and_capture(
     let mut modules = Vec::new();
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
-    for (input_index, input) in inputs.into_iter().enumerate() {
+    for (input_index, (input, scope_hoist_policy)) in inputs.into_iter().enumerate() {
         let input_id = PreparedInputId::from_index(input_index);
         let PreparedUnpackInput {
             filename,
