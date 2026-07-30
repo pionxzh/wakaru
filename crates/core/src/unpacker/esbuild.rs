@@ -80,6 +80,57 @@ pub(super) fn detect_from_module_with_source(
             filename_hints.as_ref(),
         )
     };
+
+    detect_from_prepared_factories(module, analysis_module, commonjs_helper_syms, factories, cm)
+}
+
+pub(super) fn detect_from_owned_factory_module_with_source(
+    mut module: Module,
+    source: Option<&str>,
+    cm: Lrc<SourceMap>,
+) -> Result<UnpackResult, Module> {
+    let helper_syms = collect_helper_syms(&module);
+    if helper_syms.is_empty() || !has_factory_detection_evidence(&module, &helper_syms) {
+        return Err(module);
+    }
+
+    let analysis_module = {
+        let span = tracing::info_span!("esbuild: clone and resolve owned candidate for analysis");
+        let _enter = span.enter();
+        let mut analysis = module.clone();
+        analysis.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+        analysis
+    };
+    let commonjs_helper_syms = collect_commonjs_helper_syms(&module);
+    let filename_hints = source.map(|source| {
+        let source_file = cm.lookup_source_file(module.span.lo);
+        PathCommentHints::new(source, source_file.start_pos.0)
+    });
+    let factories = collect_factories_owned(
+        &mut module,
+        &analysis_module,
+        &helper_syms,
+        &commonjs_helper_syms,
+        filename_hints.as_ref(),
+    );
+
+    Ok(detect_from_prepared_factories(
+        &module,
+        analysis_module,
+        commonjs_helper_syms,
+        factories,
+        cm,
+    )
+    .expect("owned factory evidence must produce an esbuild/Bun bundle"))
+}
+
+fn detect_from_prepared_factories(
+    module: &Module,
+    analysis_module: Module,
+    commonjs_helper_syms: HashSet<Atom>,
+    factories: Vec<Factory>,
+    cm: Lrc<SourceMap>,
+) -> Option<UnpackResult> {
     let helper_syms: HashSet<Atom> = factories
         .iter()
         .map(|factory| factory.helper_sym.clone())
@@ -147,6 +198,17 @@ pub(super) fn detect_from_module_with_source(
     // recovered module actually needs to own it.
     let top_level_decl_indices = collect_top_level_decl_indices(&analysis_module.body);
     let top_level_decl_binding_by_atom = atom_binding_map_from_keys(&top_level_decl_indices);
+    let helper_factory_syms: HashSet<Atom> = helper_syms
+        .iter()
+        .chain(factory_syms.iter())
+        .cloned()
+        .collect();
+    let top_level_decl_references = collect_top_level_decl_references(
+        &analysis_module.body,
+        &top_level_decl_indices,
+        &all_top_level_bindings,
+        &helper_factory_syms,
+    );
 
     struct PendingFactory {
         binding: BindingId,
@@ -163,19 +225,19 @@ pub(super) fn detect_from_module_with_source(
     for factory in factories {
         let filename = dedup_filename(&factory.filename, &mut global_seen);
 
-        // Collect which top-level bindings this factory's body references
-        // by visiting the resolved (analysis) body stmts.
-        let mut referenced_bindings = HashSet::new();
-        let mut write_bindings = HashSet::new();
-        for stmt in &factory.analysis_body_stmts {
-            let mut collector = TopLevelRefCollector {
-                top_level_bindings: &all_top_level_bindings,
-                references: HashSet::new(),
-            };
-            stmt.visit_with(&mut collector);
-            referenced_bindings.extend(collector.references.clone());
-            collect_write_bindings(stmt, &all_top_level_bindings, &mut write_bindings);
-        }
+        // Read the resolved body from the analysis module by location instead
+        // of retaining a second cloned body for every factory.
+        let (referenced_bindings, write_bindings) = collect_factory_analysis_bindings(
+            &analysis_module,
+            factory.analysis_location,
+            &all_top_level_bindings,
+        )
+        .unwrap_or_else(|| {
+            collect_factory_body_bindings(
+                FactoryBodyRef::Stmts(&factory.body_stmts),
+                &all_top_level_bindings,
+            )
+        });
 
         pending_factories.push(PendingFactory {
             binding: factory.binding,
@@ -228,11 +290,6 @@ pub(super) fn detect_from_module_with_source(
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
     // Mixed declarations can contain useful sibling helpers, for example
     // `var wrap = ..., __esm = ...`; filter at declarator granularity.
-    let helper_factory_syms: HashSet<Atom> = helper_syms
-        .iter()
-        .chain(factory_syms.iter())
-        .cloned()
-        .collect();
     let mut drop_unowned_helper_sibling_indices = HashSet::new();
     let mut entry_items = Vec::new();
     let mut analysis_entry_items = Vec::new();
@@ -255,6 +312,7 @@ pub(super) fn detect_from_module_with_source(
         entry_items.push(source_filtered);
         analysis_entry_items.push(analysis_filtered);
     }
+    drop(analysis_module);
 
     // Phase 5: split scope-hoisted modules out of the entry items.
     // Pass factory-referenced bindings so the extraction can expand exports
@@ -402,23 +460,20 @@ pub(super) fn detect_from_module_with_source(
     while changed {
         changed = false;
         for factory in &standalone_factories {
-            let owned_analysis_decl_items = factory_owned_analysis_decl_items(
-                &factory.filename,
-                &factory_owned_bindings,
-                &top_level_decl_indices,
-                &analysis_module.body,
-            );
-            for item in &owned_analysis_decl_items {
-                let mut collector = TopLevelRefCollector {
-                    top_level_bindings: &all_top_level_bindings,
-                    references: HashSet::new(),
-                };
-                item.visit_with(&mut collector);
-                for ref_binding in collector.references {
-                    if binding_to_filename.contains_key(&ref_binding)
+            let owned_bindings = factory_owned_bindings
+                .get(&factory.filename)
+                .cloned()
+                .unwrap_or_default();
+            for owned_binding in owned_bindings {
+                for ref_binding in top_level_decl_references
+                    .get(&owned_binding)
+                    .into_iter()
+                    .flatten()
+                {
+                    if binding_to_filename.contains_key(ref_binding)
                         || helper_syms.contains(&ref_binding.0)
                         || factory_syms.contains(&ref_binding.0)
-                        || !top_level_decl_indices.contains_key(&ref_binding)
+                        || !top_level_decl_indices.contains_key(ref_binding)
                     {
                         continue;
                     }
@@ -426,7 +481,7 @@ pub(super) fn detect_from_module_with_source(
                     factory_owned_bindings
                         .entry(factory.filename.clone())
                         .or_default()
-                        .insert(ref_binding);
+                        .insert(ref_binding.clone());
                     changed = true;
                 }
             }
@@ -510,22 +565,17 @@ pub(super) fn detect_from_module_with_source(
                 changed = false;
                 let owned_bindings: Vec<BindingId> = extra_owned_bindings.iter().cloned().collect();
                 for owned_binding in owned_bindings {
-                    let Some(index) = top_level_decl_indices.get(&owned_binding) else {
-                        continue;
-                    };
-                    let analysis_item = &analysis_module.body[*index];
-                    let mut collector = TopLevelRefCollector {
-                        top_level_bindings: &all_top_level_bindings,
-                        references: HashSet::new(),
-                    };
-                    analysis_item.visit_with(&mut collector);
-                    for ref_binding in collector.references {
-                        if extra_owned_bindings.contains(&ref_binding)
-                            || already_imported.contains(&ref_binding)
+                    for ref_binding in top_level_decl_references
+                        .get(&owned_binding)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if extra_owned_bindings.contains(ref_binding)
+                            || already_imported.contains(ref_binding)
                         {
                             continue;
                         }
-                        if let Some(source_filename) = binding_to_filename.get(&ref_binding) {
+                        if let Some(source_filename) = binding_to_filename.get(ref_binding) {
                             if *source_filename != module.filename {
                                 extra_imports
                                     .entry(source_filename.clone())
@@ -541,14 +591,14 @@ pub(super) fn detect_from_module_with_source(
                                     .or_default()
                                     .push(source_binding.0.clone());
                             }
-                        } else if external_imports.contains_key(&ref_binding) {
-                            extra_external_imports.insert(ref_binding);
+                        } else if external_imports.contains_key(ref_binding) {
+                            extra_external_imports.insert(ref_binding.clone());
                         } else if let Some(import_binding) =
                             external_import_by_atom.get(&ref_binding.0)
                         {
                             extra_external_imports.insert(import_binding.clone());
-                        } else if top_level_decl_indices.contains_key(&ref_binding) {
-                            extra_owned_bindings.insert(ref_binding);
+                        } else if top_level_decl_indices.contains_key(ref_binding) {
+                            extra_owned_bindings.insert(ref_binding.clone());
                             changed = true;
                         }
                     }
@@ -607,22 +657,32 @@ pub(super) fn detect_from_module_with_source(
                 .get(&module.filename)
                 .cloned()
                 .unwrap_or_default();
-            let mut extra_owned_items: Vec<(usize, ModuleItem)> = extra_owned_bindings
+            // Reference analysis is binding-granular, so emission must be too.
+            // Group first because multiple adopted bindings can share one
+            // mixed declaration; filtering each independently and deduping by
+            // item index would arbitrarily discard all but one binding.
+            let mut extra_owned_atoms_by_index: HashMap<usize, HashSet<Atom>> = HashMap::new();
+            for binding in extra_owned_bindings.into_iter().filter(|binding| {
+                module_factory_owned.contains(binding)
+                    || module_local_atoms
+                        .get(&module.filename)
+                        .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
+            }) {
+                if let Some(index) = top_level_decl_indices.get(&binding) {
+                    extra_owned_atoms_by_index
+                        .entry(*index)
+                        .or_default()
+                        .insert(binding.0);
+                }
+            }
+            let mut extra_owned_items: Vec<(usize, ModuleItem)> = extra_owned_atoms_by_index
                 .into_iter()
-                .filter(|binding| {
-                    module_factory_owned.contains(binding)
-                        || module_local_atoms
-                            .get(&module.filename)
-                            .is_none_or(|local_atoms| !local_atoms.contains(&binding.0))
-                })
-                .filter_map(|binding| {
-                    top_level_decl_indices
-                        .get(&binding)
-                        .map(|index| (*index, source_module_items[*index].clone()))
+                .filter_map(|(index, owned_atoms)| {
+                    filter_item_to_owned_bindings(&source_module_items[index], &owned_atoms)
+                        .map(|item| (index, item))
                 })
                 .collect();
             extra_owned_items.sort_by_key(|(index, _)| *index);
-            extra_owned_items.dedup_by_key(|(index, _)| *index);
             let body_items: Vec<ModuleItem> = import_items
                 .into_iter()
                 .chain(extra_owned_items.into_iter().map(|(_, item)| item))
@@ -652,12 +712,6 @@ pub(super) fn detect_from_module_with_source(
             &top_level_decl_indices,
             &module.body,
         );
-        let owned_analysis_decl_items = factory_owned_analysis_decl_items(
-            &factory.filename,
-            &factory_owned_bindings,
-            &top_level_decl_indices,
-            &analysis_module.body,
-        );
         let declared_owned_atoms: HashSet<Atom> = owned_decl_items
             .iter()
             .flat_map(module_item_declared_binding_ids)
@@ -670,13 +724,14 @@ pub(super) fn detect_from_module_with_source(
             .map(|(atom, _)| atom.clone())
             .collect();
         let mut extended_referenced_bindings = factory.referenced_bindings.clone();
-        for item in &owned_analysis_decl_items {
-            let mut collector = TopLevelRefCollector {
-                top_level_bindings: &all_top_level_bindings,
-                references: HashSet::new(),
-            };
-            item.visit_with(&mut collector);
-            extended_referenced_bindings.extend(collector.references);
+        for owned_binding in factory_owned_bindings
+            .get(&factory.filename)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(references) = top_level_decl_references.get(owned_binding) {
+                extended_referenced_bindings.extend(references.iter().cloned());
+            }
         }
 
         let mut import_items: Vec<ModuleItem> = Vec::new();
@@ -1018,6 +1073,31 @@ fn collect_top_level_decl_indices(items: &[ModuleItem]) -> HashMap<BindingId, us
     indices
 }
 
+fn collect_top_level_decl_references(
+    items: &[ModuleItem],
+    decl_indices: &HashMap<BindingId, usize>,
+    top_level_bindings: &HashSet<BindingId>,
+    ignored_atoms: &HashSet<Atom>,
+) -> HashMap<BindingId, HashSet<BindingId>> {
+    let mut references = HashMap::new();
+    for (binding, index) in decl_indices {
+        if ignored_atoms.contains(&binding.0) {
+            continue;
+        }
+        let owned_atoms = HashSet::from([binding.0.clone()]);
+        let Some(item) = filter_item_to_owned_bindings(&items[*index], &owned_atoms) else {
+            continue;
+        };
+        let mut collector = TopLevelRefCollector {
+            top_level_bindings,
+            references: HashSet::new(),
+        };
+        item.visit_with(&mut collector);
+        references.insert(binding.clone(), collector.references);
+    }
+    references
+}
+
 fn add_factory_atom_import(
     imports_by_filename: &mut HashMap<String, Vec<BindingId>>,
     current_filename: &str,
@@ -1062,10 +1142,16 @@ struct Factory {
     cjs_params: Option<CjsFactoryParams>,
     /// The statements inside the factory function body (unresolved — for emission).
     body_stmts: Vec<Stmt>,
-    /// The statements inside the factory function body (resolved — for reference collection).
-    analysis_body_stmts: Vec<Stmt>,
+    /// Location of the corresponding resolved declarator in the analysis AST.
+    analysis_location: FactoryLocation,
     /// Span of the factory's `var` declarator in the original bundle (provenance).
     span: Span,
+}
+
+#[derive(Clone, Copy)]
+struct FactoryLocation {
+    item_index: usize,
+    declarator_index: usize,
 }
 
 #[derive(Clone)]
@@ -1102,6 +1188,60 @@ fn collect_helper_syms(module: &Module) -> HashSet<Atom> {
         }
     }
     syms
+}
+
+fn has_factory_detection_evidence(module: &Module, helper_syms: &HashSet<Atom>) -> bool {
+    // Keep this gate aligned with `factory_shape_helper_sym`,
+    // `try_extract_factory`, and the `has_factories` acceptance check. The
+    // owned detector relies on this being a conservative precondition before
+    // it moves factory bodies and unwraps the final detection result.
+    let commonjs_helper_syms = collect_commonjs_helper_syms(module);
+    let mut factory_count = 0usize;
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Some(helper_sym) = factory_shape_helper_sym(decl, helper_syms) else {
+                continue;
+            };
+            factory_count += 1;
+            if commonjs_helper_syms.contains(&helper_sym) {
+                return true;
+            }
+        }
+    }
+    factory_count >= 5
+}
+
+fn factory_shape_helper_sym(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Option<Atom> {
+    // This preflight must stay no broader than both `try_extract_factory` and
+    // `take_factory_body`; the owned path treats a collected factory body as
+    // movable without another recoverable fallback.
+    let Pat::Ident(_) = &decl.name else {
+        return None;
+    };
+    let Expr::Call(call) = decl.init.as_deref()? else {
+        return None;
+    };
+    let helper_sym = call_target_helper_sym(call, helper_syms)?;
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+    if arg.spread.is_some() {
+        return None;
+    }
+    let accepted = match arg.expr.as_ref() {
+        Expr::Object(object) if object.props.len() == 1 => matches!(
+            object.props.first(),
+            Some(PropOrSpread::Prop(prop))
+                if matches!(prop.as_ref(), Prop::Method(method) if method.function.body.is_some())
+        ),
+        Expr::Arrow(_) => true,
+        Expr::Fn(function) => function.function.body.is_some(),
+        _ => false,
+    };
+    accepted.then_some(helper_sym)
 }
 
 fn collect_commonjs_helper_syms(module: &Module) -> HashSet<Atom> {
@@ -1265,17 +1405,28 @@ fn collect_factories(
     filename_hints: Option<&PathCommentHints<'_>>,
 ) -> Vec<Factory> {
     let mut factories = Vec::new();
-    for (item, analysis_item) in module.body.iter().zip(analysis_module.body.iter()) {
+    for (item_index, (item, analysis_item)) in module
+        .body
+        .iter()
+        .zip(analysis_module.body.iter())
+        .enumerate()
+    {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(analysis_var))) = analysis_item else {
             continue;
         };
-        for (decl, analysis_decl) in var.decls.iter().zip(analysis_var.decls.iter()) {
+        for (declarator_index, (decl, analysis_decl)) in
+            var.decls.iter().zip(analysis_var.decls.iter()).enumerate()
+        {
             if let Some(factory) = try_extract_factory(
                 decl,
                 analysis_decl,
+                FactoryLocation {
+                    item_index,
+                    declarator_index,
+                },
                 var.span.lo.0,
                 helper_syms,
                 commonjs_helper_syms,
@@ -1288,14 +1439,100 @@ fn collect_factories(
     factories
 }
 
+fn collect_factories_owned(
+    module: &mut Module,
+    analysis_module: &Module,
+    helper_syms: &HashSet<Atom>,
+    commonjs_helper_syms: &HashSet<Atom>,
+    filename_hints: Option<&PathCommentHints<'_>>,
+) -> Vec<Factory> {
+    let mut factories = Vec::new();
+    for (item_index, (item, analysis_item)) in module
+        .body
+        .iter_mut()
+        .zip(analysis_module.body.iter())
+        .enumerate()
+    {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(analysis_var))) = analysis_item else {
+            continue;
+        };
+        let decl_start_abs = var.span.lo.0;
+        for (declarator_index, (decl, analysis_decl)) in var
+            .decls
+            .iter_mut()
+            .zip(analysis_var.decls.iter())
+            .enumerate()
+        {
+            let Some(mut factory) = try_extract_factory(
+                decl,
+                analysis_decl,
+                FactoryLocation {
+                    item_index,
+                    declarator_index,
+                },
+                decl_start_abs,
+                helper_syms,
+                commonjs_helper_syms,
+                filename_hints,
+            ) else {
+                continue;
+            };
+            factory.body_stmts = take_factory_body(decl)
+                .expect("a structurally collected factory must retain a movable body");
+            factories.push(factory);
+        }
+    }
+    factories
+}
+
+fn take_factory_body(decl: &mut VarDeclarator) -> Option<Vec<Stmt>> {
+    // Keep accepted body shapes in lockstep with `factory_shape_helper_sym`
+    // and `try_extract_factory`.
+    let Expr::Call(call) = decl.init.as_deref_mut()? else {
+        return None;
+    };
+    let [arg] = call.args.as_mut_slice() else {
+        return None;
+    };
+    match arg.expr.as_mut() {
+        Expr::Object(obj) if obj.props.len() == 1 => {
+            let PropOrSpread::Prop(prop) = &mut obj.props[0] else {
+                return None;
+            };
+            let Prop::Method(method) = prop.as_mut() else {
+                return None;
+            };
+            Some(std::mem::take(&mut method.function.body.as_mut()?.stmts))
+        }
+        Expr::Arrow(arrow) => match arrow.body.as_mut() {
+            BlockStmtOrExpr::BlockStmt(block) => Some(std::mem::take(&mut block.stmts)),
+            BlockStmtOrExpr::Expr(expr) => {
+                let expr = std::mem::replace(expr, Box::new(Expr::Invalid(Default::default())));
+                Some(vec![Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr,
+                })])
+            }
+        },
+        Expr::Fn(fn_expr) => Some(std::mem::take(&mut fn_expr.function.body.as_mut()?.stmts)),
+        _ => None,
+    }
+}
+
 fn try_extract_factory(
     decl: &VarDeclarator,
     analysis_decl: &VarDeclarator,
+    analysis_location: FactoryLocation,
     decl_start_abs: u32,
     helper_syms: &HashSet<Atom>,
     commonjs_helper_syms: &HashSet<Atom>,
     filename_hints: Option<&PathCommentHints<'_>>,
 ) -> Option<Factory> {
+    // Keep accepted body shapes in lockstep with
+    // `factory_shape_helper_sym` and `take_factory_body`.
     let Pat::Ident(var_ident) = &decl.name else {
         return None;
     };
@@ -1320,12 +1557,6 @@ fn try_extract_factory(
         _ => return None,
     };
 
-    // Extract analysis (resolved) body stmts in parallel.
-    let analysis_arg = analysis_decl.init.as_ref().and_then(|init| match &**init {
-        Expr::Call(c) if c.args.len() == 1 => Some(&*c.args[0].expr),
-        _ => None,
-    });
-
     match arg {
         // Non-minified: __commonJS({ "src/foo.js"(exports, module) { … } })
         Expr::Object(obj) if obj.props.len() == 1 => {
@@ -1337,8 +1568,6 @@ fn try_extract_factory(
                         .or_else(|| hinted_filename.clone())
                         .unwrap_or_else(|| format!("{var_name}.js"));
                     let body_stmts = method.function.body.as_ref()?.stmts.clone();
-                    let analysis_body_stmts = extract_analysis_body_stmts_obj(analysis_arg)
-                        .unwrap_or_else(|| body_stmts.clone());
                     return Some(Factory {
                         helper_sym,
                         binding,
@@ -1348,7 +1577,7 @@ fn try_extract_factory(
                             .then(|| function_cjs_params(&method.function))
                             .flatten(),
                         body_stmts,
-                        analysis_body_stmts,
+                        analysis_location,
                         span: decl.span,
                     });
                 }
@@ -1359,12 +1588,6 @@ fn try_extract_factory(
         // Minified arrow: y(() => { … }) or y(() => expr)
         Expr::Arrow(arrow) => {
             let body_stmts = arrow_body_stmts(arrow);
-            let analysis_body_stmts = analysis_arg
-                .and_then(|a| match a {
-                    Expr::Arrow(aa) => Some(arrow_body_stmts(aa)),
-                    _ => None,
-                })
-                .unwrap_or_else(|| body_stmts.clone());
             let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
@@ -1375,7 +1598,7 @@ fn try_extract_factory(
                     .then(|| arrow_cjs_params(arrow))
                     .flatten(),
                 body_stmts,
-                analysis_body_stmts,
+                analysis_location,
                 span: decl.span,
             })
         }
@@ -1383,12 +1606,6 @@ fn try_extract_factory(
         // Minified function: m(function() { … })
         Expr::Fn(fn_expr) => {
             let body_stmts = fn_expr.function.body.as_ref()?.stmts.clone();
-            let analysis_body_stmts = analysis_arg
-                .and_then(|a| match a {
-                    Expr::Fn(af) => af.function.body.as_ref().map(|b| b.stmts.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| body_stmts.clone());
             let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
@@ -1399,7 +1616,7 @@ fn try_extract_factory(
                     .then(|| function_cjs_params(&fn_expr.function))
                     .flatten(),
                 body_stmts,
-                analysis_body_stmts,
+                analysis_location,
                 span: decl.span,
             })
         }
@@ -1408,21 +1625,78 @@ fn try_extract_factory(
     }
 }
 
-/// Extract resolved body stmts from an analysis object-form factory argument.
-fn extract_analysis_body_stmts_obj(analysis_arg: Option<&Expr>) -> Option<Vec<Stmt>> {
-    let Expr::Object(obj) = analysis_arg? else {
+enum FactoryBodyRef<'a> {
+    Stmts(&'a [Stmt]),
+    Expr(&'a Expr),
+}
+
+fn collect_factory_analysis_bindings(
+    analysis_module: &Module,
+    location: FactoryLocation,
+    top_level_bindings: &HashSet<BindingId>,
+) -> Option<(HashSet<BindingId>, HashSet<BindingId>)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) =
+        analysis_module.body.get(location.item_index)?
+    else {
         return None;
     };
-    if obj.props.len() != 1 {
+    let decl = var.decls.get(location.declarator_index)?;
+    let Expr::Call(call) = decl.init.as_deref()? else {
         return None;
+    };
+    let [arg] = call.args.as_slice() else {
+        return None;
+    };
+
+    let body = match arg.expr.as_ref() {
+        Expr::Object(obj) if obj.props.len() == 1 => {
+            let PropOrSpread::Prop(prop) = &obj.props[0] else {
+                return None;
+            };
+            let Prop::Method(method) = prop.as_ref() else {
+                return None;
+            };
+            FactoryBodyRef::Stmts(&method.function.body.as_ref()?.stmts)
+        }
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => FactoryBodyRef::Stmts(&block.stmts),
+            BlockStmtOrExpr::Expr(expr) => FactoryBodyRef::Expr(expr),
+        },
+        Expr::Fn(fn_expr) => FactoryBodyRef::Stmts(&fn_expr.function.body.as_ref()?.stmts),
+        _ => return None,
+    };
+
+    Some(collect_factory_body_bindings(body, top_level_bindings))
+}
+
+fn collect_factory_body_bindings(
+    body: FactoryBodyRef<'_>,
+    top_level_bindings: &HashSet<BindingId>,
+) -> (HashSet<BindingId>, HashSet<BindingId>) {
+    let mut references = TopLevelRefCollector {
+        top_level_bindings,
+        references: HashSet::new(),
+    };
+    let mut writes = HashSet::new();
+
+    match body {
+        FactoryBodyRef::Stmts(stmts) => {
+            for stmt in stmts {
+                stmt.visit_with(&mut references);
+                collect_write_bindings(stmt, top_level_bindings, &mut writes);
+            }
+        }
+        FactoryBodyRef::Expr(expr) => {
+            expr.visit_with(&mut references);
+            let stmt = Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(expr.clone()),
+            });
+            collect_write_bindings(&stmt, top_level_bindings, &mut writes);
+        }
     }
-    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
-        return None;
-    };
-    let swc_core::ecma::ast::Prop::Method(method) = &**prop else {
-        return None;
-    };
-    method.function.body.as_ref().map(|b| b.stmts.clone())
+
+    (references.references, writes)
 }
 
 fn arrow_cjs_params(arrow: &ArrowExpr) -> Option<CjsFactoryParams> {
@@ -1509,13 +1783,17 @@ fn filter_helper_factory_declarators(
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
         return Some(item.clone());
     };
+    if var_decl
+        .decls
+        .iter()
+        .all(|decl| is_helper_factory_declarator(decl, helper_factory_syms))
+    {
+        return None;
+    }
     let mut filtered = var_decl.clone();
-    filtered.decls.retain(|decl| {
-        !matches!(
-            &decl.name,
-            Pat::Ident(bi) if helper_factory_syms.contains(&bi.id.sym)
-        )
-    });
+    filtered
+        .decls
+        .retain(|decl| !is_helper_factory_declarator(decl, helper_factory_syms));
     if filtered.decls.is_empty() {
         None
     } else {
@@ -1530,12 +1808,17 @@ fn item_has_helper_factory_declarator(
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
         return false;
     };
-    var_decl.decls.iter().any(|decl| {
-        matches!(
-            &decl.name,
-            Pat::Ident(bi) if helper_factory_syms.contains(&bi.id.sym)
-        )
-    })
+    var_decl
+        .decls
+        .iter()
+        .any(|decl| is_helper_factory_declarator(decl, helper_factory_syms))
+}
+
+fn is_helper_factory_declarator(decl: &VarDeclarator, helper_factory_syms: &HashSet<Atom>) -> bool {
+    matches!(
+        &decl.name,
+        Pat::Ident(bi) if helper_factory_syms.contains(&bi.id.sym)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1831,10 +2114,6 @@ fn extract_scope_hoisted_modules(
 
     // Convert to Option<ModuleItem> so items can be moved out by index.
     let mut source_slots: Vec<Option<ModuleItem>> = source_items.into_iter().map(Some).collect();
-    let original_source_items: Vec<ModuleItem> = source_slots
-        .iter()
-        .map(|item| item.as_ref().expect("source slot should exist").clone())
-        .collect();
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
     let span = tracing::info_span!("esbuild: scope partition modules", count = boundaries.len());
@@ -2088,11 +2367,9 @@ fn extract_scope_hoisted_modules(
         }
     }
 
-    for (index, owned) in &owned_support_by_index {
-        let owned_atoms: HashSet<Atom> = owned.iter().map(|(atom, _)| atom.clone()).collect();
-        if let Some(item) = source_slots[*index].take() {
-            source_slots[*index] = filter_item_excluding_bindings(&item, owned, &owned_atoms);
-        }
+    let owned_support_source_items =
+        retain_owned_support_source_items(&mut source_slots, &owned_support_by_index);
+    for index in owned_support_by_index.keys() {
         if source_slots[*index].is_none() {
             consumed.insert(*index);
         }
@@ -2496,7 +2773,7 @@ fn extract_scope_hoisted_modules(
         for item in scope_owned_support_decl_items(
             &meta.owned_support_bindings,
             &decl_index_by_binding,
-            &original_source_items,
+            &owned_support_source_items,
         ) {
             if remaining_exports.is_empty() {
                 module_items.push(item);
@@ -3935,7 +4212,7 @@ fn factory_owned_decl_items(
 fn scope_owned_support_decl_items(
     owned: &HashSet<BindingId>,
     decl_index_by_binding: &HashMap<BindingId, usize>,
-    source_items: &[ModuleItem],
+    source_items: &HashMap<usize, ModuleItem>,
 ) -> Vec<ModuleItem> {
     if owned.is_empty() {
         return vec![];
@@ -3946,7 +4223,7 @@ fn scope_owned_support_decl_items(
         .filter_map(|binding| {
             decl_index_by_binding
                 .get(binding)
-                .map(|index| (*index, source_items[*index].clone()))
+                .and_then(|index| source_items.get(index).map(|item| (*index, item.clone())))
         })
         .collect();
     item_indices.sort_by_key(|(index, _)| *index);
@@ -3957,18 +4234,19 @@ fn scope_owned_support_decl_items(
         .collect()
 }
 
-fn factory_owned_analysis_decl_items(
-    filename: &str,
-    factory_owned_bindings: &HashMap<String, HashSet<BindingId>>,
-    top_level_decl_indices: &HashMap<BindingId, usize>,
-    analysis_items: &[ModuleItem],
-) -> Vec<ModuleItem> {
-    factory_owned_decl_items_from(
-        filename,
-        factory_owned_bindings,
-        top_level_decl_indices,
-        analysis_items,
-    )
+fn retain_owned_support_source_items(
+    source_slots: &mut [Option<ModuleItem>],
+    owned_support_by_index: &HashMap<usize, HashSet<BindingId>>,
+) -> HashMap<usize, ModuleItem> {
+    let mut originals = HashMap::with_capacity(owned_support_by_index.len());
+    for (index, owned) in owned_support_by_index {
+        let owned_atoms: HashSet<Atom> = owned.iter().map(|(atom, _)| atom.clone()).collect();
+        if let Some(item) = source_slots[*index].take() {
+            originals.insert(*index, item.clone());
+            source_slots[*index] = filter_item_excluding_bindings(&item, owned, &owned_atoms);
+        }
+    }
+    originals
 }
 
 fn factory_owned_decl_items_from(
@@ -4305,6 +4583,223 @@ mod tests {
             assert_eq!(by_name.get("first"), Some(&0));
             assert_eq!(by_name.get("second"), Some(&0));
             assert_eq!(by_name.get("third"), Some(&1));
+        });
+    }
+
+    #[test]
+    fn top_level_declaration_references_stay_binding_specific() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = super::super::parse_es_module(
+                "var first_source = 1, second_source = 2; \
+                 var first = first_source, second = second_source;",
+                "decl-references.js",
+                cm,
+            )
+            .expect("fixture should parse");
+            module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
+            let top_level_bindings = module
+                .body
+                .iter()
+                .flat_map(module_item_declared_binding_ids)
+                .collect::<HashSet<_>>();
+            let indices = collect_top_level_decl_indices(&module.body);
+            let references = collect_top_level_decl_references(
+                &module.body,
+                &indices,
+                &top_level_bindings,
+                &HashSet::new(),
+            );
+            let binding_named = |name: &str| {
+                top_level_bindings
+                    .iter()
+                    .find(|binding| binding.0 == *name)
+                    .cloned()
+                    .unwrap()
+            };
+
+            let first_references = &references[&binding_named("first")];
+            assert!(first_references.contains(&binding_named("first_source")));
+            assert!(!first_references.contains(&binding_named("second_source")));
+
+            let second_references = &references[&binding_named("second")];
+            assert!(second_references.contains(&binding_named("second_source")));
+            assert!(!second_references.contains(&binding_named("first_source")));
+        });
+    }
+
+    #[test]
+    fn support_item_retention_keeps_only_claimed_original_items() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = super::super::parse_es_module(
+                "var keep = 1, owned = 2; var untouched = 3;",
+                "support-items.js",
+                cm,
+            )
+            .expect("fixture should parse");
+            module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
+            let owned_binding = module_item_declared_binding_ids(&module.body[0])
+                .into_iter()
+                .find(|(name, _)| name == "owned")
+                .expect("owned binding should exist");
+            let owned = HashSet::from([owned_binding.clone()]);
+            let owned_by_index = HashMap::from([(0, owned.clone())]);
+            let mut source_slots = module.body.into_iter().map(Some).collect::<Vec<_>>();
+
+            let originals = retain_owned_support_source_items(&mut source_slots, &owned_by_index);
+
+            assert_eq!(originals.len(), 1);
+            assert!(originals.contains_key(&0));
+            assert!(!originals.contains_key(&1));
+            let remaining_names = module_item_declared_binding_ids(
+                source_slots[0]
+                    .as_ref()
+                    .expect("unclaimed sibling should remain"),
+            )
+            .into_iter()
+            .map(|(name, _)| name.to_string())
+            .collect::<HashSet<_>>();
+            assert_eq!(remaining_names, HashSet::from(["keep".to_string()]));
+
+            let recovered = scope_owned_support_decl_items(
+                &owned,
+                &HashMap::from([(owned_binding, 0)]),
+                &originals,
+            );
+            let recovered_names = recovered
+                .iter()
+                .flat_map(module_item_declared_binding_ids)
+                .map(|(name, _)| name.to_string())
+                .collect::<HashSet<_>>();
+            assert_eq!(recovered_names, HashSet::from(["owned".to_string()]));
+        });
+    }
+
+    #[test]
+    fn factory_analysis_bindings_are_read_from_the_resolved_ast_by_location() {
+        GLOBALS.set(&Default::default(), || {
+            let source = r#"
+var wrap = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports);
+var shared = 1, assigned = 0;
+var ignored = 1, value = wrap(() => assigned = shared);
+"#;
+            let cm: Lrc<SourceMap> = Default::default();
+            let module = super::super::parse_es_module(source, "factory-location.js", cm).unwrap();
+            let mut analysis_module = module.clone();
+            analysis_module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
+            let helper_syms = collect_helper_syms(&module);
+            let commonjs_helper_syms = collect_commonjs_helper_syms(&module);
+            let factories = collect_factories(
+                &module,
+                &analysis_module,
+                &helper_syms,
+                &commonjs_helper_syms,
+                None,
+            );
+            let factory = factories
+                .iter()
+                .find(|factory| factory.var_name == *"value")
+                .expect("factory in the second declarator should be collected");
+            let top_level_bindings = analysis_module
+                .body
+                .iter()
+                .flat_map(module_item_declared_binding_ids)
+                .collect::<HashSet<_>>();
+            let binding_named = |name: &str| {
+                top_level_bindings
+                    .iter()
+                    .find(|binding| binding.0 == *name)
+                    .cloned()
+                    .unwrap()
+            };
+
+            let (references, writes) = collect_factory_analysis_bindings(
+                &analysis_module,
+                factory.analysis_location,
+                &top_level_bindings,
+            )
+            .expect("resolved factory body should be found by location");
+
+            assert!(references.contains(&binding_named("shared")));
+            assert!(references.contains(&binding_named("assigned")));
+            assert_eq!(writes, HashSet::from([binding_named("assigned")]));
+        });
+    }
+
+    #[test]
+    fn owned_factory_detector_moves_bodies_without_changing_output() {
+        GLOBALS.set(&Default::default(), || {
+            let source = r#"
+var wrap = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports);
+var value = wrap((exports, module) => { module.exports = 42; });
+console.log(value());
+"#;
+            let cm: Lrc<SourceMap> = Default::default();
+            let module =
+                super::super::parse_es_module(source, "owned-factory.js", cm.clone()).unwrap();
+            let borrowed = detect_from_module_with_source(&module, Some(source), cm.clone())
+                .expect("borrowed detector should accept fixture");
+            let owned =
+                detect_from_owned_factory_module_with_source(module, Some(source), cm.clone())
+                    .expect("owned detector should accept fixture");
+            let borrowed_modules = borrowed
+                .modules
+                .into_iter()
+                .map(|module| (module.filename, module.code))
+                .collect::<Vec<_>>();
+            let owned_modules = owned
+                .modules
+                .into_iter()
+                .map(|module| (module.filename, module.code))
+                .collect::<Vec<_>>();
+            assert_eq!(owned_modules, borrowed_modules);
+
+            let rejected_source = "var y = (q, K) => () => q; var only = y(() => 1);";
+            let rejected_cm: Lrc<SourceMap> = Default::default();
+            let rejected_module = super::super::parse_es_module(
+                rejected_source,
+                "rejected-owned-factory.js",
+                rejected_cm.clone(),
+            )
+            .unwrap();
+            let before = emit_module_raw(&rejected_module, rejected_cm.clone()).unwrap();
+            let rejected = match detect_from_owned_factory_module_with_source(
+                rejected_module,
+                Some(rejected_source),
+                rejected_cm.clone(),
+            ) {
+                Ok(_) => panic!("one non-CommonJS factory is insufficient evidence"),
+                Err(rejected) => rejected,
+            };
+            let after = emit_module_raw(&rejected, rejected_cm).unwrap();
+            assert_eq!(after, before, "rejected candidates must not be mutated");
+        });
+    }
+
+    #[test]
+    fn entry_filter_drops_factory_only_declarations_and_keeps_mixed_siblings() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let module = super::super::parse_es_module(
+                "var factory = () => 1; var other_factory = () => 2, keep = 3;",
+                "entry-filter.js",
+                cm,
+            )
+            .expect("fixture should parse");
+            let factory_syms = HashSet::from([Atom::from("factory"), Atom::from("other_factory")]);
+
+            assert!(filter_helper_factory_declarators(&module.body[0], &factory_syms).is_none());
+            let filtered = filter_helper_factory_declarators(&module.body[1], &factory_syms)
+                .expect("mixed declaration should keep its non-factory sibling");
+            let remaining = module_item_declared_binding_ids(&filtered)
+                .into_iter()
+                .map(|(atom, _)| atom)
+                .collect::<HashSet<_>>();
+            assert_eq!(remaining, HashSet::from([Atom::from("keep")]));
         });
     }
 

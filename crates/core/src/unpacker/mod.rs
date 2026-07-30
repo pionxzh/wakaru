@@ -585,7 +585,7 @@ fn detect_parsed_source(
     }
 
     if let Some(mut result) = wrappers::try_detect_bun_compile_candidate(module, |candidate| {
-        detect_bundle_candidate(candidate, cm.clone(), source, false)
+        detect_owned_bun_candidate(candidate, cm.clone(), source)
     }) {
         result.chunk_ids = chunk_ids;
         return Some(result);
@@ -612,6 +612,69 @@ fn detect_parsed_source(
 }
 
 fn detect_bundle_candidate(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+    allow_runtime_entry: bool,
+) -> Option<DetectedBundle> {
+    if let Some(result) =
+        detect_bundle_candidate_before_esbuild(module, cm.clone(), source, allow_runtime_entry)
+    {
+        return Some(result);
+    }
+
+    let result = {
+        let span = tracing::info_span!("detect_esbuild");
+        let _enter = span.enter();
+        esbuild::detect_from_module_with_source(module, Some(source), cm.clone())
+    };
+    if result.is_some() {
+        return result.map(DetectedBundle::from_result);
+    }
+
+    let span = tracing::info_span!("detect_metro");
+    let _enter = span.enter();
+    metro::detect_from_module_prepared(module, cm)
+}
+
+fn detect_owned_bun_candidate(
+    candidate: Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+) -> Result<DetectedBundle, Module> {
+    if let Some(result) =
+        detect_bundle_candidate_before_esbuild(&candidate, cm.clone(), source, false)
+    {
+        return Ok(result);
+    }
+
+    let candidate = match esbuild::detect_from_owned_factory_module_with_source(
+        candidate,
+        Some(source),
+        cm.clone(),
+    ) {
+        Ok(result) => return Ok(DetectedBundle::from_result(result)),
+        Err(candidate) => candidate,
+    };
+
+    let result = {
+        let span = tracing::info_span!("detect_esbuild");
+        let _enter = span.enter();
+        esbuild::detect_from_module_with_source(&candidate, Some(source), cm.clone())
+    };
+    if let Some(result) = result {
+        return Ok(DetectedBundle::from_result(result));
+    }
+
+    let result = {
+        let span = tracing::info_span!("detect_metro");
+        let _enter = span.enter();
+        metro::detect_from_module_prepared(&candidate, cm)
+    };
+    result.ok_or(candidate)
+}
+
+fn detect_bundle_candidate_before_esbuild(
     module: &Module,
     cm: Lrc<SourceMap>,
     source: &str,
@@ -682,18 +745,7 @@ fn detect_bundle_candidate(
         return result.map(DetectedBundle::from_result);
     }
 
-    let result = {
-        let span = tracing::info_span!("detect_esbuild");
-        let _enter = span.enter();
-        esbuild::detect_from_module_with_source(module, Some(source), cm.clone())
-    };
-    if result.is_some() {
-        return result.map(DetectedBundle::from_result);
-    }
-
-    let span = tracing::info_span!("detect_metro");
-    let _enter = span.enter();
-    metro::detect_from_module_prepared(module, cm)
+    None
 }
 
 pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {

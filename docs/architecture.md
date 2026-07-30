@@ -55,9 +55,15 @@ recover thousands of inner factory and scope-hoisted modules.
 
 Standalone entry bodies can be tens of megabytes, so this handoff moves the
 wrapper body into the detector instead of cloning it, restoring the body if
-detection rejects the candidate. The esbuild/Bun detector likewise indexes
-top-level declaration items by position and clones an item only when a
-recovered module needs to own it; it must not retain one AST clone per binding.
+detection rejects the candidate. Once an esbuild/Bun factory shape is accepted,
+the detector moves unresolved factory bodies into their pending output modules
+while keeping the resolved analysis AST separate; emission must not reuse the
+resolved AST because that can change binding names and synthesized imports.
+Resolved support-declaration dependencies are reduced to compact binding sets,
+allowing the full analysis AST to be dropped before scope splitting and module
+emission. Top-level source declarations are indexed by position and cloned only
+when a recovered module needs to own them; the detector must not retain one AST
+clone per binding.
 
 This trailer-first parser is independent of the native executable format and
 does not execute the input. The public `wakaru::bun` API borrows exact content

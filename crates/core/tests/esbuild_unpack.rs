@@ -1307,6 +1307,62 @@ export { ns_writer };
     );
 }
 
+/// Merged factories adopt top-level declarations that their init bodies read.
+/// When the adopted binding shares a `var` statement with an unrelated
+/// declarator, only the adopted declarator belongs in the merged module.
+/// Emitting the sibling without following its dependencies can leave a
+/// dangling reference in the recovered module.
+#[test]
+fn merged_factory_filters_unowned_siblings_from_mixed_declaration() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var other_dep = { count: 0 };
+var seed_a = 1, seed_b = 2, wide_w = other_dep.count;
+var init_state = y(() => { shared = seed_a + seed_b; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_writer = {};
+__export(ns_writer, { read: () => read, write: () => write });
+var shared;
+function read() { return shared; }
+function write(value) { shared = value; }
+init_state();
+console.log(wide_w);
+export { ns_writer };
+"#;
+
+    let raw_pairs = expect_unpack_raw(bundle);
+    let writer_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function write"))
+        .expect("scope writer module should exist")
+        .1;
+    assert!(
+        writer_code.contains("var seed_a = 1, seed_b = 2")
+            && !writer_code.contains("wide_w")
+            && !writer_code.contains("other_dep"),
+        "merged module should emit all adopted declarators but not their sibling:\n{writer_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        entry_code.contains("other_dep") && entry_code.contains("wide_w = other_dep.count"),
+        "unowned sibling and its dependency should remain in entry:\n{entry_code}"
+    );
+}
+
 /// If a lazy init factory seeds mutable state written by multiple scope
 /// modules, those writer modules must merge into one synthetic module. Keeping
 /// them split would force at least one scope module to assign to an imported

@@ -29,7 +29,7 @@ pub(super) fn collect_unwrap_candidates(module: &Module) -> Vec<Module> {
 /// same parameter names still follows the plain-source fallback.
 pub(super) fn try_detect_bun_compile_candidate<T>(
     module: &mut Module,
-    mut detect: impl FnMut(&Module) -> Option<T>,
+    mut detect: impl FnMut(Module) -> Result<T, Module>,
 ) -> Option<T> {
     for item in &mut module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
@@ -41,9 +41,10 @@ pub(super) fn try_detect_bun_compile_candidate<T>(
         let body_span = body.span;
         let mut candidate = module_from_stmts(std::mem::take(&mut body.stmts));
         candidate.span = body_span;
-        if let Some(result) = detect(&candidate) {
-            return Some(result);
-        }
+        let candidate = match detect(candidate) {
+            Ok(result) => return Some(result),
+            Err(candidate) => candidate,
+        };
         body.stmts = candidate
             .body
             .into_iter()
@@ -300,14 +301,13 @@ mod tests {
             let mut rejected_body_len = 0;
             let rejected = try_detect_bun_compile_candidate(&mut module, |candidate| {
                 rejected_body_len = candidate.body.len();
-                None::<()>
+                Err::<(), _>(candidate)
             });
             assert!(rejected.is_none());
             assert_eq!(rejected_body_len, 2);
 
-            let accepted = try_detect_bun_compile_candidate(&mut module, |candidate| {
-                Some(candidate.body.len())
-            });
+            let accepted =
+                try_detect_bun_compile_candidate(&mut module, |candidate| Ok(candidate.body.len()));
             assert_eq!(accepted, Some(2), "rejected body should be restored");
         });
     }
