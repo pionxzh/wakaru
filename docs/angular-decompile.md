@@ -415,7 +415,9 @@ loop-local reference, and captured-view listener as a complete artifact.
 It also recovers a complete `@defer (on idle)` block with primary, loading,
 placeholder, and error views. A generated legacy fixture recovers complete
 `<ng-template [ngIf]>` and `<ng-template [ngForOf]>` forms while proving that
-the authored `*ngIf` / `*ngFor` shorthand is absent.
+the authored `*ngIf` / `*ngFor` shorthand is absent. Separate generated
+`prefetch on idle` and `hydrate on idle` components remain partial and prove
+that those helpers are not mislabeled as an ordinary `on idle` trigger.
 An assignment-backed derivative of that generated artifact proves the same
 nested views after their function declarations are mechanically lowered to
 stable predeclared assignments. Reassigning one of those bindings is a negative
@@ -429,7 +431,9 @@ Closure's inlined current-view capture, a restored listener, and a nested
 property binding as a complete artifact. A separate generated component
 recovers a complete deferred primary/placeholder pair, and the structural
 component recovers `@for` / `@empty`. Unproven pipe and projection operations
-remain explicit partial regions.
+remain explicit partial regions. Two additional minimally rooted components
+retain Closure-renamed prefetch-idle and hydrate-idle helpers as negative
+fixtures; neither is classified as the ordinary idle trigger.
 
 A supplementary private production corpus is reported only in aggregate. The
 current pass emitted 691 of 700 component candidates: 81 complete, 610 partial,

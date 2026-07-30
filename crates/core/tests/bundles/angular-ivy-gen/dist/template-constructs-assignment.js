@@ -1,7 +1,7 @@
 import { NgFor, NgIf, UpperCasePipe } from "@angular/common";
 import "@angular/core";
 import * as i0 from "@angular/core";
-var FixtureStructuralConstructsComponent_Conditional_1_Template, FixtureStructuralConstructsComponent_Conditional_2_Template, FixtureStructuralConstructsComponent_For_4_Template, FixtureStructuralConstructsComponent_ForEmpty_5_Template, FixtureDeferredConstructsComponent_Defer_1_Template, FixtureDeferredConstructsComponent_DeferLoading_2_Template, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, FixtureDeferredConstructsComponent_DeferError_4_Template, FixtureLegacyStructuralConstructsComponent_p_1_Template, FixtureLegacyStructuralConstructsComponent_span_2_Template;
+var FixtureStructuralConstructsComponent_Conditional_1_Template, FixtureStructuralConstructsComponent_Conditional_2_Template, FixtureStructuralConstructsComponent_For_4_Template, FixtureStructuralConstructsComponent_ForEmpty_5_Template, FixtureDeferredConstructsComponent_Defer_1_Template, FixtureDeferredConstructsComponent_DeferLoading_2_Template, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, FixtureDeferredConstructsComponent_DeferError_4_Template, FixturePrefetchIdleConstructsComponent_Defer_1_Template, FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureHydrateIdleConstructsComponent_Defer_1_Template, FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureLegacyStructuralConstructsComponent_p_1_Template, FixtureLegacyStructuralConstructsComponent_span_2_Template;
 const _c0 = [[["", "card-footer", ""]]], _c1 = ["[card-footer]"], _forTrack0 = ($index, $item) => $item.id;
 FixtureStructuralConstructsComponent_Conditional_1_Template = function (rf, ctx) {
     if (rf & 1 && (i0.\u0275\u0275domElementStart(0, "h2"), i0.\u0275\u0275text(1), i0.\u0275\u0275pipe(2, "uppercase"), i0.\u0275\u0275domElementEnd()), rf & 2) {
@@ -42,6 +42,18 @@ FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template = function (rf, c
 };
 FixtureDeferredConstructsComponent_DeferError_4_Template = function (rf, ctx) {
     rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275text(1, "Failed"), i0.\u0275\u0275domElementEnd());
+};
+FixturePrefetchIdleConstructsComponent_Defer_1_Template = function (rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1, "Prefetched content"), i0.\u0275\u0275domElementEnd());
+};
+FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template = function (rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "button", 0), i0.\u0275\u0275text(1, "Load prefetched content"), i0.\u0275\u0275domElementEnd());
+};
+FixtureHydrateIdleConstructsComponent_Defer_1_Template = function (rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "article"), i0.\u0275\u0275text(1, "Hydrated content"), i0.\u0275\u0275domElementEnd());
+};
+FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template = function (rf, ctx) {
+    rf & 1 && (i0.\u0275\u0275domElementStart(0, "button", 0), i0.\u0275\u0275text(1, "Load hydrated content"), i0.\u0275\u0275domElementEnd());
 };
 FixtureLegacyStructuralConstructsComponent_p_1_Template = function (rf, ctx) {
     rf & 1 && (i0.\u0275\u0275elementStart(0, "p"), i0.\u0275\u0275text(1, "Legacy visible"), i0.\u0275\u0275elementEnd());
@@ -92,6 +104,22 @@ class FixtureDeferredConstructsComponent {
             rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureDeferredConstructsComponent_Defer_1_Template, 2, 1)(2, FixtureDeferredConstructsComponent_DeferLoading_2_Template, 2, 0)(3, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, 2, 0)(4, FixtureDeferredConstructsComponent_DeferError_4_Template, 2, 0), i0.\u0275\u0275defer(5, 1, null, 2, 3, 4), i0.\u0275\u0275deferOnIdle(), i0.\u0275\u0275domElementEnd());
         }, encapsulation: 2 });
 }
+class FixturePrefetchIdleConstructsComponent {
+    static \u0275fac = function (__ngFactoryType__) {
+        return new (__ngFactoryType__ || FixturePrefetchIdleConstructsComponent)();
+    };
+    static \u0275cmp = i0.\u0275\u0275defineComponent({ type: FixturePrefetchIdleConstructsComponent, selectors: [["fixture-prefetch-idle-constructs"]], decls: 5, vars: 0, consts: [["type", "button"]], template: function (rf, ctx) {
+            rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixturePrefetchIdleConstructsComponent_Defer_1_Template, 2, 0)(2, FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template, 2, 0), i0.\u0275\u0275defer(3, 1, null, null, 2), i0.\u0275\u0275deferOnInteraction(0, -1), i0.\u0275\u0275deferPrefetchOnIdle(), i0.\u0275\u0275domElementEnd());
+        }, encapsulation: 2 });
+}
+class FixtureHydrateIdleConstructsComponent {
+    static \u0275fac = function (__ngFactoryType__) {
+        return new (__ngFactoryType__ || FixtureHydrateIdleConstructsComponent)();
+    };
+    static \u0275cmp = i0.\u0275\u0275defineComponent({ type: FixtureHydrateIdleConstructsComponent, selectors: [["fixture-hydrate-idle-constructs"]], decls: 5, vars: 0, consts: [["type", "button"]], template: function (rf, ctx) {
+            rf & 1 && (i0.\u0275\u0275domElementStart(0, "section"), i0.\u0275\u0275domTemplate(1, FixtureHydrateIdleConstructsComponent_Defer_1_Template, 2, 0)(2, FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template, 2, 0), i0.\u0275\u0275enableIncrementalHydrationRuntime(), i0.\u0275\u0275defer(3, 1, null, null, 2, null, null, null, null, 1), i0.\u0275\u0275deferHydrateOnIdle(), i0.\u0275\u0275deferOnInteraction(0, -1), i0.\u0275\u0275domElementEnd());
+        }, encapsulation: 2 });
+}
 class FixtureLegacyStructuralConstructsComponent {
     visible = !0;
     items = ["First", "Second"];
@@ -102,4 +130,4 @@ class FixtureLegacyStructuralConstructsComponent {
             rf & 1 && (i0.\u0275\u0275elementStart(0, "section"), i0.\u0275\u0275template(1, FixtureLegacyStructuralConstructsComponent_p_1_Template, 2, 0, "p", 0)(2, FixtureLegacyStructuralConstructsComponent_span_2_Template, 2, 1, "span", 1), i0.\u0275\u0275elementEnd()), rf & 2 && (i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngIf", ctx.visible), i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngForOf", ctx.items));
         }, dependencies: [NgIf, NgFor], encapsulation: 2 });
 }
-export { FixtureDeferredConstructsComponent, FixtureFlatBindingsComponent, FixtureLegacyStructuralConstructsComponent, FixtureStructuralConstructsComponent };
+export { FixtureDeferredConstructsComponent, FixtureFlatBindingsComponent, FixtureHydrateIdleConstructsComponent, FixtureLegacyStructuralConstructsComponent, FixturePrefetchIdleConstructsComponent, FixtureStructuralConstructsComponent };

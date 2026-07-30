@@ -434,6 +434,7 @@ fn recover_scoped_styles(style: &str) -> String {
 fn indent_template_literal(value: &str, spaces: usize) -> String {
     let indent = " ".repeat(spaces);
     value
+        .replace('\\', "\\\\")
         .replace('`', "\\`")
         .replace("${", "\\${")
         .lines()
@@ -449,4 +450,17 @@ fn quoted_js_string(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r");
     format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::indent_template_literal;
+
+    #[test]
+    fn escapes_backslashes_before_template_interpolation_markers() {
+        assert_eq!(
+            indent_template_literal(r"\${globalThis.injected = true}`", 0),
+            r"\\\${globalThis.injected = true}\`"
+        );
+    }
 }
