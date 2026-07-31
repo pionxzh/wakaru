@@ -536,9 +536,8 @@ fn arrow_require_with_array_table_recovers_entry() {
 
 #[test]
 fn fn_expr_require_with_object_table_recovers_entry() {
-    // Object containers are accepted on shape alone (no lifecycle plan), so
-    // entry extraction falls back to the loose locate — which must understand
-    // the same candidate shapes as detection, including a var-bound function
+    // Object containers use the same lifecycle proof as arrays, and the
+    // require-function planner must understand a var-bound function
     // expression.
     let source = r#"
 (() => {
@@ -563,6 +562,89 @@ fn fn_expr_require_with_object_table_recovers_entry() {
     assert!(
         entry.contains("./module-1.js"),
         "fn-expr require startup must be recovered via the loose locate, got:\n{entry}"
+    );
+}
+
+#[test]
+fn ordinary_function_map_object_is_not_webpack5() {
+    // Analytics-style scripts carry small object-literal method tables inside
+    // a large IIFE. A function-valued object alone is not a webpack module
+    // table without webpack's cache/invoke/return require lifecycle.
+    let source = r#"
+(function () {
+    var handlers = {
+        track: function (a, b, c) {
+            return dispatcher.track(a, b, c);
+        }
+    };
+    function Registry() {
+        this.entries = {};
+    }
+    var dispatcher = new Registry();
+    window.api = handlers;
+})();
+"#;
+
+    let pairs = expect_unpack(source, "app.js");
+    assert!(
+        !pairs
+            .iter()
+            .any(|(name, _)| name.starts_with("module-") || name == "entry.js"),
+        "ordinary function map must not unpack as webpack5, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn directly_invoked_require_marks_called_module_as_entry() {
+    // Some webpack/minifier combinations inline the entire require runtime as
+    // the final IIFE and invoke it with the entry id. That function body is
+    // runtime machinery, not a synthetic entry module.
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    !function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(!output.has_errors(), "{:?}", output.warnings);
+    let pairs = &output.modules;
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the genuine webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "entry.js"),
+        "the require runtime body must not become entry.js, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert!(
+        output
+            .provenance
+            .iter()
+            .any(|module| module.filename == "module-1.js" && module.is_entry),
+        "the directly supplied module id must be marked as entry: {:?}",
+        output.provenance
     );
 }
 

@@ -321,9 +321,8 @@ fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<Dete
         })
         .collect();
 
-    // Guard against arbitrary top-level `var xs = [function(a){}]` arrays:
-    // require a webpack require function for the container. (The IIFE path
-    // relies on the wrapper itself as the signal.) The plan is reused by
+    // Guard against arbitrary top-level function tables: require a proven
+    // webpack require lifecycle for the container. The plan is reused by
     // entry extraction below.
     let require_plan = plan_webpack_require_fn(&stmts, &modules_sym)?;
 
@@ -505,12 +504,12 @@ impl<'a> Webpack5ModulesContainer<'a> {
 /// enclosing function's parameter captured by a closure) is a different
 /// identity and never mistaken for the table.
 ///
-/// Candidates are the region-level function declarations webpack emits its
-/// require function as (see [`region_fn_candidates`]). The returned plan says
-/// *which statement* declares it and under *what name* — entry extraction
-/// consumes the same plan instead of re-discovering the require function with
-/// a different (weaker) model, so a bundle can never be detected via one
-/// shape and then lose its entry because extraction only knew another.
+/// Candidates are the region-level declarations and directly invoked
+/// functions webpack emits its require lifecycle as (see
+/// [`region_fn_candidates`]). The returned plan carries either its declaration
+/// boundary or the directly supplied entry id. Entry extraction consumes the
+/// same plan instead of rediscovering the require function with a weaker
+/// model.
 fn plan_webpack_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<RequireFnPlan> {
     // Cheap symbol-level early-out before cloning + resolving the region.
     if !region_invokes_table(stmts, modules_sym) {
@@ -523,19 +522,24 @@ fn plan_webpack_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<Require
     region_fn_candidates(&probe_stmts)
         .into_iter()
         .find(|candidate| body_is_webpack_require(&candidate.excluded, candidate.body, &table_id))
-        .map(|candidate| RequireFnPlan {
-            stmt_idx: candidate.stmt_idx,
-            sym: candidate.sym,
+        .map(|candidate| match candidate.kind {
+            RegionFnCandidateKind::Declared(sym) => RequireFnPlan::Declared {
+                stmt_idx: candidate.stmt_idx,
+                sym,
+            },
+            RegionFnCandidateKind::DirectEntry(entry_id) => RequireFnPlan::DirectEntry { entry_id },
         })
 }
 
-/// Where the bootstrap region declares its require function: the statement
-/// index and the binding name. Statement indices refer to the region the plan
-/// was computed for; [`resolve_probe`] clones statements in order, so indices
-/// from a probed clone are valid for the original region.
-struct RequireFnPlan {
-    stmt_idx: usize,
-    sym: Atom,
+/// How the bootstrap exposes its proven webpack require lifecycle.
+enum RequireFnPlan {
+    /// A region-level declaration followed by a separate startup program.
+    /// Statement indices refer to the probed region; [`resolve_probe`] clones
+    /// statements in order, so they are valid for the original region.
+    Declared { stmt_idx: usize, sym: Atom },
+    /// A require function invoked directly with the entry module id:
+    /// `!function require(id) { ... }(entryId)`.
+    DirectEntry { entry_id: String },
 }
 
 /// Resolved [`Id`] of the region-level `var` declarator binding `sym`.
@@ -670,25 +674,28 @@ fn is_module_object_literal(expr: &Expr) -> bool {
     }
 }
 
-/// A region-level function declaration: the only shapes webpack (and the
-/// minifiers run over its output) emits the require function as — a function
-/// declaration, or a `var`-bound function expression or arrow
-/// (`var require = function (id) { ... }`).
+enum RegionFnCandidateKind {
+    Declared(Atom),
+    DirectEntry(String),
+}
+
+/// A region-level require-function candidate. Webpack emits either a function
+/// declaration / variable-bound function or a function expression invoked
+/// directly with the entry module id.
 struct RegionFnCandidate<'a> {
-    /// Index of the declaring statement in the region.
+    /// Index of the candidate statement in the region.
     stmt_idx: usize,
-    /// The region-level binding the function is reachable under.
-    sym: Atom,
+    kind: RegionFnCandidateKind,
     /// Caller-facing bindings: parameters and, for a named function
     /// expression, its self-binding. Neither may carry the creation fact.
     excluded: HashSet<Id>,
     body: &'a [Stmt],
 }
 
-/// Collect the region-level function declarations of `stmts`, in order. Both
-/// detection ([`plan_webpack_require_fn`]) and loose entry-extraction
-/// discovery ([`find_webpack5_require_fn`]) draw candidates from here, so the
-/// set of require-function shapes they understand cannot drift apart.
+/// Collect region-level require-function candidates from `stmts`, in order.
+/// Detection ([`plan_webpack_require_fn`]) and loose entry-extraction discovery
+/// ([`find_webpack5_require_fn`]) draw declared candidates from here, so their
+/// supported declaration shapes cannot drift apart.
 fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
     let mut candidates = Vec::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
@@ -703,7 +710,7 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                 }
                 candidates.push(RegionFnCandidate {
                     stmt_idx,
-                    sym: fn_decl.ident.sym.clone(),
+                    kind: RegionFnCandidateKind::Declared(fn_decl.ident.sym.clone()),
                     excluded,
                     body: &body.stmts,
                 });
@@ -730,7 +737,7 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                             }
                             candidates.push(RegionFnCandidate {
                                 stmt_idx,
-                                sym: binding.id.sym.clone(),
+                                kind: RegionFnCandidateKind::Declared(binding.id.sym.clone()),
                                 excluded,
                                 body: &body.stmts,
                             });
@@ -745,7 +752,7 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                             }
                             candidates.push(RegionFnCandidate {
                                 stmt_idx,
-                                sym: binding.id.sym.clone(),
+                                kind: RegionFnCandidateKind::Declared(binding.id.sym.clone()),
                                 excluded,
                                 body: &body.stmts,
                             });
@@ -754,10 +761,78 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(candidate) = directly_invoked_require_candidate(stmt_idx, stmt) {
+                    candidates.push(candidate);
+                }
+            }
         }
     }
     candidates
+}
+
+fn directly_invoked_require_candidate(
+    stmt_idx: usize,
+    stmt: &Stmt,
+) -> Option<RegionFnCandidate<'_>> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let call = match strip_parens(expr) {
+        Expr::Call(call) => call,
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
+            let Expr::Call(call) = strip_parens(&unary.arg) else {
+                return None;
+            };
+            call
+        }
+        _ => return None,
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let entry_id = module_id_literal(&call.args[0].expr)?;
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+
+    let mut excluded = HashSet::new();
+    let body = match strip_parens(callee) {
+        Expr::Fn(fn_expr) => {
+            for param in &fn_expr.function.params {
+                collect_pat_binding_ids(&param.pat, &mut excluded);
+            }
+            if let Some(self_ident) = &fn_expr.ident {
+                excluded.insert(self_ident.to_id());
+            }
+            &fn_expr.function.body.as_ref()?.stmts
+        }
+        Expr::Arrow(arrow) => {
+            for pat in &arrow.params {
+                collect_pat_binding_ids(pat, &mut excluded);
+            }
+            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+                return None;
+            };
+            &body.stmts
+        }
+        _ => return None,
+    };
+
+    Some(RegionFnCandidate {
+        stmt_idx,
+        kind: RegionFnCandidateKind::DirectEntry(entry_id),
+        excluded,
+        body,
+    })
+}
+
+fn module_id_literal(expr: &Expr) -> Option<String> {
+    match strip_parens(expr) {
+        Expr::Lit(Lit::Num(number)) => Some(format!("{}", number.value as i64)),
+        Expr::Lit(Lit::Str(string)) => Some(string.value.as_str().unwrap_or("unknown").to_string()),
+        _ => None,
+    }
 }
 
 /// Whether one function body is a webpack require function: some binding is
@@ -1290,9 +1365,9 @@ fn extract_webpack5_modules(
     extract_webpack5_modules_with_plan(bootstrap_body, cm, None)
 }
 
-/// `require_plan`, when the caller already gated the region (the top-level
-/// no-IIFE path), is reused for both the array-container gate and entry
-/// extraction instead of resolving the region again.
+/// `require_plan`, when the caller already gated the region, is reused for
+/// container validation and entry extraction instead of resolving the region
+/// again.
 fn extract_webpack5_modules_with_plan(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     cm: Lrc<SourceMap>,
@@ -1312,13 +1387,10 @@ fn extract_webpack5_modules_with_plan(
             let Some((container, modules_sym)) = extract_webpack_modules_container(var_decl) else {
                 continue;
             };
-            // An array of functions is ambiguous with ordinary code, so require
-            // the defining relationship: a webpack require function for the
-            // table (`modules[id](module, ...)`). Object containers are keyed by
-            // explicit module ids and, inside the IIFE wrapper, are signal
-            // enough on their own.
-            if matches!(container, Webpack5ModulesContainer::Array { .. }) && require_plan.is_none()
-            {
+            // Function-valued arrays and objects both occur in ordinary
+            // programs. Require webpack's defining cache/invoke/return
+            // lifecycle tied to this table before destructively extracting it.
+            if require_plan.is_none() {
                 match plan_webpack_require_fn(&bootstrap_body.stmts, &modules_sym) {
                     Some(plan) => require_plan = Some(plan),
                     None => continue,
@@ -1375,9 +1447,17 @@ fn extract_webpack5_modules_with_plan(
         }
     }
 
-    // Check for trailing IIFE entry point
-    let has_synthetic_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body)
-    {
+    let direct_entry_id = match require_plan.as_ref() {
+        Some(RequireFnPlan::DirectEntry { entry_id }) => Some(entry_id.clone()),
+        _ => None,
+    };
+
+    // Check for a trailing IIFE entry point. A directly invoked require
+    // lifecycle is runtime machinery; its call argument identifies the real
+    // entry module and its body must never be materialized as entry.js.
+    let has_synthetic_entry = if direct_entry_id.is_some() {
+        false
+    } else if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
         let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
         let code = emit_webpack5_entry_module(
             entry_body,
@@ -1406,7 +1486,8 @@ fn extract_webpack5_modules_with_plan(
     // Fallback: scan bootstrap for entry-module startup calls, then for an
     // inline startup section (`var __webpack_exports__ = {};` + entry code).
     if !has_synthetic_entry {
-        if let Some(entry_id) = find_ncc_direct_entry(bootstrap_body)
+        if let Some(entry_id) = direct_entry_id
+            .or_else(|| find_ncc_direct_entry(bootstrap_body))
             .or_else(|| find_require_s_entry(bootstrap_body))
             .or_else(|| find_require_o_entry(bootstrap_body))
         {
@@ -1625,11 +1706,11 @@ fn extract_webpack5_inline_startup(
     modules_sym: &Atom,
     require_plan: Option<&RequireFnPlan>,
 ) -> Option<Webpack5InlineStartup> {
-    // Reuse the detection plan when the region was already gated; otherwise
-    // (object containers, which detection accepts on shape alone) locate the
-    // require function loosely — same candidate shapes, weaker content check.
+    // Reuse the lifecycle plan that gated detection. Keep the loose fallback
+    // for callers that do not already carry a plan.
     let (require_idx, require_sym) = match require_plan {
-        Some(plan) => (plan.stmt_idx, plan.sym.clone()),
+        Some(RequireFnPlan::Declared { stmt_idx, sym }) => (*stmt_idx, sym.clone()),
+        Some(RequireFnPlan::DirectEntry { .. }) => return None,
         None => find_webpack5_require_fn(&bootstrap_body.stmts, modules_sym)?,
     };
 
@@ -1980,12 +2061,15 @@ fn find_webpack5_require_fn(stmts: &[Stmt], modules_sym: &Atom) -> Option<(usize
     region_fn_candidates(stmts)
         .into_iter()
         .find_map(|candidate| {
+            let RegionFnCandidateKind::Declared(sym) = candidate.kind else {
+                return None;
+            };
             let mut finder = SymUsageFinder {
                 sym: modules_sym,
                 found: false,
             };
             candidate.body.visit_with(&mut finder);
-            finder.found.then_some((candidate.stmt_idx, candidate.sym))
+            finder.found.then_some((candidate.stmt_idx, sym))
         })
 }
 

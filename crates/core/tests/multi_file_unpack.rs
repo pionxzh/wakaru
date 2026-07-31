@@ -154,7 +154,14 @@ fn webpack5_multi_file_rewrites_unambiguous_numeric_chunk_id() {
       module.exports = "entry";
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__.e = function(id) { return Promise.resolve(id); };
   __webpack_require__.t = function(value) { return value; };
   (() => {
@@ -217,7 +224,14 @@ fn webpack5_multi_file_raw_rewrites_unambiguous_numeric_chunk_id() {
       module.exports = "entry";
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__.e = function(id) { return Promise.resolve(id); };
   __webpack_require__.t = function(value) { return value; };
   (() => {
@@ -504,7 +518,14 @@ fn webpack5_multi_file_rewrites_unambiguous_bare_require_across_inputs() {
       module.exports = other;
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__(20);
 })();
 "#;
@@ -558,7 +579,14 @@ fn webpack5_multi_file_raw_rewrites_unambiguous_bare_require_across_inputs() {
       module.exports = other;
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__(20);
 })();
 "#;
@@ -621,7 +649,14 @@ fn webpack5_multi_file_rewrites_bare_require_across_nested_chunk_directories() {
       module.exports = other;
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__(20);
 })();
 "#;
@@ -715,7 +750,14 @@ fn webpack5_multi_file_does_not_rewrite_duplicate_numeric_ids() {
     let entry = r#"
 (() => {
   var __webpack_modules__ = ({});
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__.t = function(value) { return value; };
   (() => {
     const load = __webpack_require__.t.bind(__webpack_require__, 529, 19);
@@ -783,7 +825,14 @@ fn webpack5_multi_file_does_not_rewrite_duplicate_bare_require_ids() {
       module.exports = other;
     }
   });
-  function __webpack_require__(id) { return {}; }
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
   __webpack_require__(20);
 })();
 "#;
