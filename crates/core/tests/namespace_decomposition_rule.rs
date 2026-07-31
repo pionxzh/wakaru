@@ -192,6 +192,28 @@ const p = createStore(u, applyMiddleware(d));
 }
 
 #[test]
+fn reserved_export_name_uses_safe_import_alias() {
+    let target_facts = facts_for(
+        r#"
+const value = 1;
+export { value as in };
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-2.js", target_facts);
+
+    let input = r#"
+import r from "./module-2.js";
+console.log(r.in);
+"#;
+    let expected = r#"
+import { in as in_1 } from "./module-2.js";
+console.log(in_1);
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected);
+}
+
+#[test]
 fn namespace_bare_access_prevents_decomposition() {
     // `Object.keys(r)` is a bare usage — the namespace object itself is needed,
     // so decomposition isn't safe.

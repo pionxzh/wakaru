@@ -23,6 +23,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
+use crate::js_names::is_reserved_binding_name;
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
@@ -215,7 +216,7 @@ fn find_decomposition_candidates(
                 continue;
             }
             let is_own_binding = *prop == local_sym;
-            let has_collision = existing_bindings.contains(prop);
+            let has_collision = existing_bindings.contains(prop) || is_reserved_binding_name(prop);
             if !is_own_binding && has_collision {
                 let alias = synthesize_alias(prop, &existing_bindings);
                 existing_bindings.insert(alias.clone());
