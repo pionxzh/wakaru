@@ -4,11 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
     BindingIdent, ClassDecl, ForInStmt, ForOfStmt, ForStmt, ImportDecl, ImportSpecifier,
-    ObjectPatProp, Pat, VarDecl, VarDeclKind,
+    ModuleItem, ObjectPatProp, Pat, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use super::io::{parse_js_with_recovery, ParseDiagnostic};
+use super::io::{parse_js_with_recovery, parse_script_with_recovery, ParseDiagnostic};
 use super::types::{UnpackWarning, UnpackWarningKind};
 
 pub(super) fn collect_tdz_warnings(
@@ -184,22 +184,43 @@ pub(super) fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarn
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         match parse_js_with_recovery(code, filename, cm) {
-            Ok(parsed) => parsed
-                .recoverable_errors
-                .into_iter()
-                .map(|error| {
-                    UnpackWarning::new(
+            Ok(parsed) if parsed.recoverable_errors.is_empty() => Vec::new(),
+            Ok(parsed)
+                if parsed
+                    .module
+                    .body
+                    .iter()
+                    .any(|item| matches!(item, ModuleItem::ModuleDecl(_))) =>
+            {
+                output_parse_warnings(parsed.recoverable_errors, filename)
+            }
+            Ok(parsed) => match parse_script_with_recovery(code, filename, Default::default()) {
+                Ok(errors) => output_parse_warnings(errors, filename),
+                Err(_) => output_parse_warnings(parsed.recoverable_errors, filename),
+            },
+            Err(module_error) => {
+                match parse_script_with_recovery(code, filename, Default::default()) {
+                    Ok(errors) => output_parse_warnings(errors, filename),
+                    Err(_) => vec![UnpackWarning::new(
                         filename,
-                        UnpackWarningKind::OutputParseRecovered,
-                        format!("emitted output parse recovered from parser error: {error}"),
-                    )
-                })
-                .collect(),
-            Err(e) => vec![UnpackWarning::new(
-                filename,
-                UnpackWarningKind::OutputParseFailed,
-                format!("emitted output failed to parse: {e}"),
-            )],
+                        UnpackWarningKind::OutputParseFailed,
+                        format!("emitted output failed to parse: {module_error}"),
+                    )],
+                }
+            }
         }
     })
+}
+
+fn output_parse_warnings(errors: Vec<ParseDiagnostic>, filename: &str) -> Vec<UnpackWarning> {
+    errors
+        .into_iter()
+        .map(|error| {
+            UnpackWarning::new(
+                filename,
+                UnpackWarningKind::OutputParseRecovered,
+                format!("emitted output parse recovered from parser error: {error}"),
+            )
+        })
+        .collect()
 }

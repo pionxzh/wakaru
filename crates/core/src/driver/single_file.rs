@@ -364,6 +364,57 @@ mod tests {
     }
 
     #[test]
+    fn diagnostics_verify_sloppy_output_as_script_when_no_module_syntax_exists() {
+        for (filename, source) in [
+            ("with.js", "with (scope) { value = key; }"),
+            (
+                "arguments.js",
+                "function read(arguments) { return arguments.value; }",
+            ),
+            ("delete.js", "delete removable;"),
+        ] {
+            let output = decompile(
+                source,
+                DecompileOptions {
+                    diagnostics: true,
+                    filename: filename.to_string(),
+                    ..Default::default()
+                },
+            )
+            .expect("sloppy script should decompile");
+            assert!(
+                !output.warnings.iter().any(|warning| matches!(
+                    warning.kind,
+                    UnpackWarningKind::OutputParseRecovered | UnpackWarningKind::OutputParseFailed
+                )),
+                "valid sloppy-script output must not be rejected as a strict module: {:?}",
+                output.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostics_keep_module_output_under_strict_source_goal() {
+        let output = decompile(
+            "export const marker = 1; with (scope) { value = key; }",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "strict-module.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("recovered module parse should still emit diagnostics");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == UnpackWarningKind::OutputParseRecovered),
+            "module syntax must keep strict-mode parse validation: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
     fn emit_source_map_off_by_default() {
         let output = decompile("const x = 1;", DecompileOptions::default())
             .expect("decompile should succeed");

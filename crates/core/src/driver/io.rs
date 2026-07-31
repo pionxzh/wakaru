@@ -91,6 +91,51 @@ pub(super) fn parse_js_with_recovery_owned(
     }
 }
 
+pub(super) fn parse_script_with_recovery(
+    source: &str,
+    filename: &str,
+    cm: Lrc<SourceMap>,
+) -> Result<Vec<ParseDiagnostic>> {
+    let syntax = detect_syntax(filename);
+    let fm = cm.new_source_file(
+        FileName::Custom(filename.to_string()).into(),
+        source.to_string(),
+    );
+
+    let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let parsed = match panic::catch_unwind(AssertUnwindSafe(|| parser.parse_script())) {
+        Ok(result) => result,
+        Err(_) => return Err(anyhow!("SWC parser panicked on {filename}")),
+    };
+    let parser_errors: Vec<ParseDiagnostic> = parser
+        .take_errors()
+        .into_iter()
+        .map(|error| {
+            let loc = cm.lookup_char_pos(error.span().lo());
+            ParseDiagnostic {
+                filename: filename.to_string(),
+                line: loc.line,
+                column: loc.col_display + 1,
+                message: format!("{:?}", error.kind()),
+            }
+        })
+        .collect();
+
+    match (parsed, parser_errors.is_empty()) {
+        (Ok(_), _) => Ok(parser_errors),
+        (Err(error), true) => Err(anyhow!("failed to parse {filename}: {error:?}")),
+        (Err(error), false) => Err(anyhow!(
+            "failed to parse {filename}: {error:?}; {}",
+            parser_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+    }
+}
+
 pub(super) fn print_js(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
     let mut output = Vec::new();
 
