@@ -364,6 +364,57 @@ export { F as y };
 }
 
 #[test]
+fn export_const_alias_claim_does_not_free_specifier_edge() {
+    // The Pattern A plan `z → LongerName` wins the real binding `z`, so the
+    // planner rejects the alias edge `h → Other` that resolves to `z`. The
+    // prepass must not predict `h` as freed, or `F → h` duplicates `h`.
+    let input = r#"
+const z = () => 1;
+const h = z;
+const F = () => 2;
+export const LongerName = z;
+export { h as Other };
+export { F as h };
+"#;
+    let expected = r#"
+export const LongerName = () => 1;
+const h = LongerName;
+const F = () => 2;
+export { h as Other };
+export { F as h };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn getter_namespace_claim_does_not_free_specifier_edge() {
+    // The Pattern C getter plan `z → tlong` claims the target name `tlong`,
+    // so the planner rejects the specifier edge `nnn → tlong`. The prepass
+    // must not predict `nnn` as freed, or `F → nnn` duplicates `nnn`.
+    let input = r#"
+const z = () => 1;
+const w = () => 2;
+const nnn = () => 3;
+const F = () => 4;
+export const ns = { get tlong() { return z; }, get wlong() { return w; } };
+export { nnn as tlong };
+export { F as nnn };
+"#;
+    let expected = r#"
+const tlong = () => 1;
+const wlong = () => 2;
+const nnn = () => 3;
+const F = () => 4;
+export const ns = { get tlong() { return tlong; }, get wlong() { return wlong; } };
+export { nnn as tlong };
+export { F as nnn };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn shadowed_edge_does_not_mark_name_as_freed() {
     // `x→longName` is ineligible (shadowing), so `x` is NOT freed.
     // `i→x` must not proceed — it would create a duplicate `x`.

@@ -255,6 +255,12 @@ fn compute_freed_names(
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
     module_names: &HashSet<Atom>,
 ) -> HashSet<Atom> {
+    // Pattern A (`export const X = z`) and Pattern C (getter namespaces) also
+    // claim real bindings and target names; the planner honors them first and
+    // rejects a specifier edge competing for the same binding or name.
+    let (claimed_sources, claimed_targets) =
+        collect_competing_claims(module, binding_infos, module_names);
+
     // Step 1: collect eligible rename edges (orig → exported).
     // Only include edges that the planner would actually accept: the exported
     // name must not be shorter than the orig, and the orig binding must not
@@ -293,6 +299,13 @@ fn compute_freed_names(
                         continue;
                     }
                     if rename_causes_shadowing(module, &info.id, &exported.sym) {
+                        continue;
+                    }
+                    // A pattern plan claiming the same real binding or target
+                    // name wins in the planner; this edge cannot be predicted
+                    // to execute, so its orig must not be treated as freed.
+                    if claimed_sources.contains(&info.id) || claimed_targets.contains(&exported.sym)
+                    {
                         continue;
                     }
                     rename_edges.insert(orig.sym.clone(), exported.sym.clone());
@@ -362,6 +375,74 @@ fn compute_freed_names(
     }
 
     freed
+}
+
+/// Real bindings and target names that Pattern A (`export const X = z`) and
+/// Pattern C (exported getter namespace) plans will claim.
+///
+/// The prepass may not predict a specifier rename that competes with one of
+/// these claims: the planner accepts the pattern plan and rejects the
+/// specifier edge (`plan.old == info.id` / `target_name_already_planned`), so
+/// treating the specifier's orig as freed would plan a later rename into a
+/// still-occupied name. Order-dependent planner checks are deliberately not
+/// mirrored — over-approximating the claims only shrinks the freed set, which
+/// suppresses renames but can never produce a duplicate declaration.
+fn collect_competing_claims(
+    module: &Module,
+    binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+    module_names: &HashSet<Atom>,
+) -> (HashSet<BindingId>, HashSet<Atom>) {
+    let mut claimed_sources = HashSet::new();
+    let mut claimed_targets = HashSet::new();
+    for item in &module.body {
+        if let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            decl: Decl::Var(var),
+            ..
+        })) = item
+        {
+            if var.decls.len() == 1 {
+                if let (Pat::Ident(id), Some(init)) = (&var.decls[0].name, &var.decls[0].init) {
+                    if let Expr::Ident(init_id) = init.as_ref() {
+                        let Some(info) = binding_infos.get(&init_id.sym) else {
+                            continue;
+                        };
+                        if info.id != (init_id.sym.clone(), init_id.ctxt) || info.exported {
+                            continue;
+                        }
+                        let new_name = id.id.sym.clone();
+                        if new_name != info.id.0
+                            && !is_reserved_binding_name(&new_name)
+                            && !name_is_import_binding(&new_name, module_names, binding_infos)
+                            && !rename_causes_shadowing(module, &info.id, &new_name)
+                        {
+                            claimed_sources.insert(info.id.clone());
+                            claimed_targets.insert(new_name);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(getters) = extract_exported_getter_namespace(item) {
+            for (getter_name, local_id) in getters {
+                let Some(info) = binding_infos.get(&local_id.0) else {
+                    continue;
+                };
+                if info.id != local_id || info.exported {
+                    continue;
+                }
+                if getter_name != info.id.0
+                    && getter_name.len() >= info.id.0.len()
+                    && !is_reserved_binding_name(&getter_name)
+                    && !name_is_import_binding(&getter_name, module_names, binding_infos)
+                    && !rename_causes_shadowing(module, &info.id, &getter_name)
+                {
+                    claimed_sources.insert(info.id.clone());
+                    claimed_targets.insert(getter_name);
+                }
+            }
+        }
+    }
+    (claimed_sources, claimed_targets)
 }
 
 fn name_is_import_binding(
