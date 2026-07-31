@@ -18,6 +18,7 @@ import {
   ɵɵanimateLeave,
   ɵɵanimateLeaveListener,
   ɵɵattribute,
+  ɵɵclassMap,
   ɵɵclassProp,
   ɵɵconditionalCreate,
   ɵɵdeclareLet,
@@ -49,6 +50,7 @@ import {
   ɵɵresetView,
   ɵɵrestoreView,
   ɵɵstoreLet,
+  ɵɵstyleMap,
   ɵɵstyleProp,
   ɵɵtextInterpolate2,
   ɵɵtwoWayBindingSet,
@@ -141,7 +143,9 @@ class StructuralHydrateIdleCardComponent {}
       #action
       type="button"
       [attr.aria-label]="label"
+      [class]="classes"
       [class.active]="active"
+      [style]="styles"
       [style.width.px]="width"
     >
       Bound content
@@ -151,7 +155,9 @@ class StructuralHydrateIdleCardComponent {}
 })
 class StructuralBindingCardComponent {
   label = 'Bound label';
+  classes = 'bound primary';
   active = true;
+  styles = 'color: rebeccapurple';
   width = 120;
 }
 
@@ -547,6 +553,7 @@ producerGlobal.__wakaruStructuralRuntime = [
   ɵɵanimateLeave,
   ɵɵanimateLeaveListener,
   ɵɵattribute,
+  ɵɵclassMap,
   ɵɵclassProp,
   ɵɵconditionalCreate,
   ɵɵdeclareLet,
@@ -577,6 +584,7 @@ producerGlobal.__wakaruStructuralRuntime = [
   ɵɵresetView,
   ɵɵrestoreView,
   ɵɵstoreLet,
+  ɵɵstyleMap,
   ɵɵstyleProp,
   ɵɵtextInterpolate2,
   ɵɵtwoWayBindingSet,
