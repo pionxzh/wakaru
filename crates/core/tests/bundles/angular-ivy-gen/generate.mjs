@@ -321,6 +321,7 @@ for (const contractName of [
 for (const excludedRole of [
   'ɵɵelementStart',
   'ɵɵtext',
+  'ɵɵariaProperty',
   'ɵɵproperty',
   'ɵɵclassMap',
   'ɵɵstyleMap',
