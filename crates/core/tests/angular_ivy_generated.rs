@@ -16,6 +16,7 @@ const TEMPLATE_CONSTRUCTS: &str =
     include_str!("bundles/angular-ivy-gen/dist/template-constructs.js");
 const TEMPLATE_CONSTRUCTS_ASSIGNMENT: &str =
     include_str!("bundles/angular-ivy-gen/dist/template-constructs-assignment.js");
+const ANGULAR_19_COMPAT: &str = include_str!("bundles/angular-ivy-compat-gen/dist/angular-19.js");
 
 fn assert_production_artifact(source: &str) {
     assert!(!source.contains("ɵsetClassMetadata"));
@@ -87,6 +88,39 @@ fn recovers_components_from_angular_cli_production_chunks() {
         .source
         .contains("<span card-extra>Projected content</span>"));
     assert!(by_selector.contains_key("fixture-lazy-card"));
+}
+
+#[test]
+fn recovers_angular_19_full_aot_compatibility_fixture() {
+    assert_production_artifact(ANGULAR_19_COMPAT);
+    assert!(!ANGULAR_19_COMPAT.contains("<button"));
+
+    let recovered =
+        recover_angular_components_from_js(ANGULAR_19_COMPAT, AngularRecoveryOptions::default())
+            .expect("pinned Angular 19 full-AOT output should parse");
+    let [component] = recovered.as_slice() else {
+        panic!("expected one Angular 19 component, got {}", recovered.len());
+    };
+
+    assert_eq!(component.selector, "compat-card");
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("(click)=\"select()\""));
+    assert!(component.source.contains("[disabled]=\"disabled\""));
+    assert!(component.source.contains("[attr.aria-label]=\"label\""));
+    assert!(component.source.contains("[class.active]=\"active\""));
+    assert!(component.source.contains("[style.width.px]=\"width\""));
+    assert!(component.source.contains("@if (visible) {"));
+    assert!(component.source.contains("@else {"));
+    assert!(component
+        .source
+        .contains("@for (item of items; track item.id) {"));
+    assert!(component.source.contains("@empty {"));
 }
 
 #[test]
