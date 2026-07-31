@@ -15,6 +15,7 @@ use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
@@ -469,6 +470,7 @@ impl VisitMut for UnEsm {
         // Rename conflicting locals before building exports. The export
         // expression can reference a conflicting module-level local, so apply
         // binding-id renames to both kept items and export expressions.
+        let mut used_export_binding_names = all_declared_names.clone();
         if !export_names.is_empty() {
             let mut used_names = all_declared_names.clone();
             used_names.extend(export_names.iter().cloned());
@@ -503,6 +505,17 @@ impl VisitMut for UnEsm {
                     }
                 }
             }
+            used_export_binding_names.extend(renames.into_iter().map(|rename| rename.new));
+        }
+
+        for item in &classified {
+            if let Classified::CjsExport {
+                kind: CjsExportKind::Named { name, .. },
+                ..
+            } = item
+            {
+                used_export_binding_names.insert(name.clone());
+            }
         }
 
         // Build final module body
@@ -516,7 +529,11 @@ impl VisitMut for UnEsm {
                     if drop_set.contains(&idx) {
                         new_body.extend(build_dropped_export_side_effect_items(span, kind));
                     } else {
-                        new_body.extend(build_export_items(span, kind));
+                        new_body.extend(build_export_items(
+                            span,
+                            kind,
+                            &mut used_export_binding_names,
+                        ));
                     }
                 }
                 Classified::Keep(item) => {
@@ -1515,7 +1532,11 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
     }
 }
 
-fn build_export_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
+fn build_export_items(
+    span: Span,
+    kind: CjsExportKind,
+    used_names: &mut HashSet<Atom>,
+) -> Vec<ModuleItem> {
     match kind {
         CjsExportKind::EsModuleFlag => vec![],
         CjsExportKind::ModuleExportsDefault { expr } => vec![ModuleItem::ModuleDecl(
@@ -1586,6 +1607,37 @@ fn build_export_items(span: Span, kind: CjsExportKind) -> Vec<ModuleItem> {
                         },
                     ))]
                 }
+            } else if is_reserved_binding_name(&name) {
+                let local = make_ident(fresh_prefixed_name(&name, used_names));
+                vec![
+                    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                        span,
+                        ctxt: Default::default(),
+                        kind: VarDeclKind::Var,
+                        declare: false,
+                        decls: vec![VarDeclarator {
+                            span: DUMMY_SP,
+                            name: Pat::Ident(BindingIdent {
+                                id: local.clone(),
+                                type_ann: None,
+                            }),
+                            init: Some(expr),
+                            definite: false,
+                        }],
+                    })))),
+                    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+                        span,
+                        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                            span: DUMMY_SP,
+                            orig: ModuleExportName::Ident(local),
+                            exported: Some(ModuleExportName::Ident(make_ident(name))),
+                            is_type_only: false,
+                        })],
+                        src: None,
+                        type_only: false,
+                        with: None,
+                    })),
+                ]
             } else {
                 // export const name = expr
                 vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {

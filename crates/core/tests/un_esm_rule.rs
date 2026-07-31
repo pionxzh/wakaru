@@ -901,6 +901,26 @@ exports.a = function(x) { return b + x; };
 }
 
 #[test]
+fn reserved_named_export_uses_safe_local_binding() {
+    let input = r#"
+exports.eval = function(source) {
+    return eval(source);
+};
+exports.in = 1;
+"#;
+    let expected = r#"
+var _eval = function(source) {
+    return eval(source);
+};
+export { _eval as eval };
+var _in = 1;
+export { _in as in };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn compound_exports_assignment_in_var_decl() {
     // var s = exports.history = expr → split into var s = expr + export { s as history }
     let input = r#"
