@@ -70,6 +70,10 @@ the primary JavaScript modules. See rustdoc for everything else.
   detection and processing implementation.
 - Return `InputReceipt` from `UnpackJob::push` so detection progress is
   available during intake.
+- Keep module mode, recovery, diagnostics, and source-map behavior job-wide,
+  while allowing an intake call to override unmatched-input and scope-hoist
+  policies for one input. This lets explicit files and directory candidates
+  share one cross-module job without sharing the same detection policy.
 - Evaluate `UnmatchedInput::Error` at `finish`, preserving operation-level
   failure semantics while keeping the job usable after every successful push.
 - Represent heuristic scope-hoist recovery as
