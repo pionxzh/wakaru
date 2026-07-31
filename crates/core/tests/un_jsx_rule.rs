@@ -40,6 +40,54 @@ const type = React.createElement(Component, null).type;
 }
 
 #[test]
+fn keeps_paren_wrapped_create_element_used_as_member_object() {
+    // Parens cannot rescue `(<X/>).type`: the fixer strips redundant parens
+    // later in the pipeline, degrading it to invalid `<X/>.type`.
+    let input = r#"
+const type = (React.createElement(Component, null)).type;
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert!(
+        !output.contains('<'),
+        "paren-wrapped member object must not become JSX: {output}"
+    );
+}
+
+#[test]
+fn still_converts_arguments_of_preserved_member_object_call() {
+    let input = r#"
+const type = React.createElement(Outer, null, React.createElement(Inner, null)).type;
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert!(
+        output.contains("React.createElement(Outer"),
+        "member-object root call must stay a call: {output}"
+    );
+    assert!(
+        output.contains("<Inner"),
+        "nested children must still convert: {output}"
+    );
+}
+
+#[test]
+fn keeps_create_element_in_callee_new_and_tag_positions() {
+    // A JSX element cannot stand as a callee, `new` callee, or template tag.
+    let input = r#"
+const a = React.createElement(Component, null)();
+const b = new (React.createElement(Component, null))();
+const c = React.createElement(Component, null)`text`;
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert!(
+        !output.contains('<'),
+        "callee/new/tag positions must not become JSX: {output}"
+    );
+}
+
+#[test]
 fn minimal_does_not_convert_create_element_to_jsx() {
     let input = r#"
 function fn() {

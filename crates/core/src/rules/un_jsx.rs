@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
     JSXAttrValue, JSXClosingElement, JSXClosingFragment, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
     JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit,
-    Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind,
-    VarDeclarator,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, Number,
+    ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str, TaggedTpl,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -576,6 +576,21 @@ impl UnJsx {
 
         is_automatic_pragma(pragma) || is_jsxish_props_container(props_expr)
     }
+
+    /// Visit `expr` without converting its paren-transitive root call: the
+    /// caller sits in a syntactic position where a JSX element cannot appear,
+    /// and parens cannot rescue it because the fixer strips redundant ones.
+    fn visit_keeping_root_call(&mut self, expr: &mut Expr) {
+        let mut root: &mut Expr = expr;
+        while let Expr::Paren(paren) = root {
+            root = &mut paren.expr;
+        }
+        if matches!(root, Expr::Call(_)) {
+            root.visit_mut_children_with(self);
+        } else {
+            root.visit_mut_with(self);
+        }
+    }
 }
 
 impl VisitMut for UnJsx {
@@ -602,9 +617,38 @@ impl VisitMut for UnJsx {
             return;
         }
         // JSX cannot be emitted directly as a member object (`<X/>.type`).
-        // Visit the object's children but leave its root call untouched.
-        member.obj.visit_mut_children_with(self);
+        // Parens do not help: the fixer strips a redundant `(<X/>)` later.
+        self.visit_keeping_root_call(&mut member.obj);
         member.prop.visit_mut_with(self);
+    }
+
+    fn visit_mut_new_expr(&mut self, new_expr: &mut NewExpr) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        // JSX cannot be a `new` callee (`new <X/>()`).
+        self.visit_keeping_root_call(&mut new_expr.callee);
+        new_expr.args.visit_mut_with(self);
+    }
+
+    fn visit_mut_callee(&mut self, callee: &mut Callee) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        // JSX cannot be called directly (`<X/>()`).
+        match callee {
+            Callee::Expr(expr) => self.visit_keeping_root_call(expr),
+            _ => callee.visit_mut_children_with(self),
+        }
+    }
+
+    fn visit_mut_tagged_tpl(&mut self, tagged: &mut TaggedTpl) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        // JSX cannot be a template tag (`<X/>\`\``).
+        self.visit_keeping_root_call(&mut tagged.tag);
+        tagged.tpl.visit_mut_with(self);
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
