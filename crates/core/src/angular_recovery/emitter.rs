@@ -5,9 +5,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, EqIgnoreSpan, SourceMap, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Class, ClassDecl,
-    ClassMember, Decl, Expr, ExprOrSpread, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ClassMember, ClassMethod, Decl, Expr, ExprOrSpread, Ident, IdentName, KeyValueProp, Lit,
+    MemberExpr, MemberProp, MethodKind, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -15,7 +16,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::artifact::{expression_references, ArtifactSupportPlan};
 use super::roles::{AngularClassApi, AngularQueryOwner, IvyInstruction, IvyRoleTable};
 use super::syntax::{binding_key, member_prop_name, prop_name, BindingKey};
-use super::template::RecoveredTemplate;
+use super::template::{RecoveredListenerMethod, RecoveredTemplate};
 use super::ComponentQueryMetadata;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 
@@ -36,6 +37,7 @@ pub(super) struct ModuleComponentEmitInput<'a> {
     pub(super) styles: &'a [String],
     pub(super) class: &'a Class,
     pub(super) template_source: &'a str,
+    pub(super) listener_methods: &'a [RecoveredListenerMethod],
     pub(super) dependencies: &'a [String],
     pub(super) angular_imports: &'a [AngularClassApi],
 }
@@ -61,6 +63,7 @@ pub(super) fn emit_component_source(
             styles: input.styles,
             class: input.class,
             template_source: &input.template.source,
+            listener_methods: &input.template.listener_methods,
             dependencies: input.dependencies,
             angular_imports: input.angular_imports,
         },
@@ -98,6 +101,7 @@ pub(super) fn emit_angular_module_source(
                 styles: component.styles,
                 class: component.class,
                 template_source: component.template_source,
+                listener_methods: component.listener_methods,
                 dependencies: component.dependencies,
                 angular_imports: component.angular_imports,
             },
@@ -154,6 +158,11 @@ fn component_source_fragment(
     cm: Lrc<SourceMap>,
 ) -> Result<String> {
     let mut class = Box::new(input.class.clone());
+    let template_source = materialize_listener_methods(
+        class.as_mut(),
+        input.template_source,
+        input.listener_methods,
+    );
     if !renames.is_empty() {
         rename_bindings(class.as_mut(), renames);
     }
@@ -164,7 +173,7 @@ fn component_source_fragment(
     metadata.push_str(&quoted_js_string(input.selector));
     metadata.push_str(",\n");
     metadata.push_str("  template: `\n");
-    metadata.push_str(&indent_template_literal(input.template_source, 4));
+    metadata.push_str(&indent_template_literal(&template_source, 4));
     metadata.push_str("\n  `,\n");
     if !input.styles.is_empty() {
         metadata.push_str("  styles: [\n");
@@ -184,6 +193,62 @@ fn component_source_fragment(
 
     metadata.push_str(&class_source);
     Ok(metadata)
+}
+
+fn materialize_listener_methods(
+    class: &mut Class,
+    template_source: &str,
+    methods: &[RecoveredListenerMethod],
+) -> String {
+    if methods.is_empty() {
+        return template_source.to_string();
+    }
+
+    // Listener methods carry evidence-context bindings so module-level Closure
+    // renames can still reach their helper references. Attaching them here,
+    // after support planning, avoids mixing those bindings into readable-class
+    // root discovery.
+    let mut occupied_names = IdentifierNameCollector::default();
+    class.visit_with(&mut occupied_names);
+    occupied_names
+        .names
+        .extend(class.body.iter().filter_map(|member| {
+            let name = match member {
+                ClassMember::Method(method) => prop_name(&method.key),
+                ClassMember::ClassProp(property) => prop_name(&property.key),
+                ClassMember::AutoAccessor(accessor) => {
+                    let swc_core::ecma::ast::Key::Public(key) = &accessor.key else {
+                        return None;
+                    };
+                    prop_name(key)
+                }
+                _ => None,
+            };
+            name.map(Atom::from)
+        }));
+    let mut template_source = template_source.to_string();
+    for method in methods {
+        let mut name = method.preferred_name.clone();
+        let mut suffix = 2usize;
+        while occupied_names.names.contains(&Atom::from(name.as_str())) {
+            name = format!("{}{}", method.preferred_name, suffix);
+            suffix += 1;
+        }
+        occupied_names.names.insert(Atom::from(name.as_str()));
+        template_source = template_source.replace(&method.placeholder, &name);
+        class.body.push(ClassMember::Method(ClassMethod {
+            span: DUMMY_SP,
+            key: PropName::Ident(IdentName::new(Atom::from(name.as_str()), DUMMY_SP)),
+            function: Box::new(method.function.clone()),
+            kind: MethodKind::Method,
+            is_static: false,
+            accessibility: None,
+            is_abstract: false,
+            is_optional: false,
+            is_override: false,
+        }));
+    }
+    template_source
 }
 
 pub(super) fn clean_component_class(
@@ -816,9 +881,9 @@ pub(super) fn print_template_expression_with_aliases(
     print_expression(&expression, cm)
 }
 
-struct TemplateExpressionAliasResolver<'a> {
-    aliases: &'a HashMap<BindingKey, Box<Expr>>,
-    active: HashSet<BindingKey>,
+pub(super) struct TemplateExpressionAliasResolver<'a> {
+    pub(super) aliases: &'a HashMap<BindingKey, Box<Expr>>,
+    pub(super) active: HashSet<BindingKey>,
 }
 
 impl VisitMut for TemplateExpressionAliasResolver<'_> {

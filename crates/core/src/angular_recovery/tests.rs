@@ -4325,6 +4325,308 @@ fn recovers_optional_chain_temps_in_restored_listeners() {
 }
 
 #[test]
+fn synthesizes_a_class_method_for_structured_restored_listener_statements() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const finalize = (value) => value;
+
+        class StructuredListenerComponent {
+            current() {}
+            prepare(value) {}
+            commit(value) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: StructuredListenerComponent,
+                selectors: [["structured-listener"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            const component = core.ɵɵrestoreView(savedView);
+                            const result = component.current();
+                            if (result) {
+                                let temporary;
+                                temporary = component.prepare(result);
+                                component.commit(finalize(temporary));
+                            }
+                            return core.ɵɵresetView();
+                        });
+                        core.ɵɵtext(1, "Commit");
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("structured restored listener should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"(click)="recoveredClick()""#));
+    assert!(component.source.contains("recoveredClick() {"));
+    assert!(component.source.contains("const result = this.current();"));
+    assert!(component.source.contains("if (result) {"));
+    assert!(component.source.contains("let temporary;"));
+    assert!(component
+        .source
+        .contains("temporary = this.prepare(result);"));
+    assert!(component
+        .source
+        .contains("this.commit(finalize(temporary));"));
+    assert!(component
+        .source
+        .contains("const finalize = (value)=>value;"));
+    assert!(!component.source.contains("ɵɵrestoreView"));
+    assert!(!component.source.contains("ɵɵresetView"));
+    assert_typescript_parses(&component.source);
+}
+
+#[test]
+fn passes_event_and_view_locals_to_a_synthesized_listener_method() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const trackItem = ($index, item) => item.id;
+
+        function RowTemplate(renderFlags, context) {
+            if (renderFlags & 1) {
+                const savedView = core.ɵɵgetCurrentView();
+                core.ɵɵelementStart(0, "button");
+                core.ɵɵlistener("click", function(event) {
+                    const item = core.ɵɵrestoreView(savedView).$implicit;
+                    const component = core.ɵɵnextContext();
+                    event = component.normalize(event);
+                    const accepted = component.prepare(item, event);
+                    if (accepted) {
+                        component.commit(item);
+                    }
+                    return core.ɵɵresetView(accepted);
+                });
+                core.ɵɵtext(1);
+                core.ɵɵelementEnd();
+            }
+            if (renderFlags & 2) {
+                const item = context.$implicit;
+                core.ɵɵadvance();
+                core.ɵɵtextInterpolate(item.label);
+            }
+        }
+
+        class ScopedListenerComponent {
+            items = [];
+            normalize(event) {}
+            prepare(item, event) {}
+            commit(item) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ScopedListenerComponent,
+                selectors: [["scoped-listener"]],
+                template: function(renderFlags, component) {
+                    if (renderFlags & 1) {
+                        core.ɵɵrepeaterCreate(
+                            0,
+                            RowTemplate,
+                            2,
+                            1,
+                            "button",
+                            null,
+                            trackItem
+                        );
+                    }
+                    if (renderFlags & 2) {
+                        core.ɵɵrepeater(component.items);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("listener method parameters should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"(click)="recoveredClick($event, item)""#));
+    assert!(component.source.contains("recoveredClick($event, item) {"));
+    assert!(component
+        .source
+        .contains("$event = this.normalize($event);"));
+    assert!(component
+        .source
+        .contains("const accepted = this.prepare(item, $event);"));
+    assert!(component.source.contains("this.commit(item);"));
+    assert!(component.source.contains("return accepted;"));
+    assert_typescript_parses(&component.source);
+}
+
+#[test]
+fn preserves_shadowed_listener_bindings_and_avoids_method_name_collisions() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class ShadowedListenerComponent {
+            current() {}
+            recoveredClick() {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ShadowedListenerComponent,
+                selectors: [["shadowed-listener"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            const component = core.ɵɵrestoreView(savedView);
+                            const result = component.current();
+                            if (result) {
+                                const component = {
+                                    commit() {},
+                                };
+                                component.commit();
+                            }
+                            return core.ɵɵresetView();
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("shadowed listener bindings should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"(click)="recoveredClick2()""#));
+    assert!(component.source.contains("recoveredClick2() {"));
+    assert!(component.source.contains("const result = this.current();"));
+    assert!(component.source.contains("const component = {"));
+    assert!(component.source.contains("component.commit();"));
+    assert!(!component.source.contains("this.commit();"));
+    assert_typescript_parses(&component.source);
+}
+
+#[test]
+fn materializes_a_reassigned_ivy_alias_as_a_method_local() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class ReassignedAliasComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ReassignedAliasComponent,
+                selectors: [["reassigned-alias"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            let local = core.ɵɵrestoreView(savedView);
+                            local = {
+                                commit(value) {
+                                    console.log(value);
+                                },
+                            };
+                            local.commit("value");
+                            return core.ɵɵresetView();
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("reassigned Ivy aliases should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"(click)="recoveredClick()""#));
+    assert!(component.source.contains("let local = this;"));
+    assert!(component.source.contains("local = {"));
+    assert!(component.source.contains("local.commit(\"value\");"));
+    assert!(!component.source.contains("this.commit(\"value\");"));
+    assert_typescript_parses(&component.source);
+}
+
+#[test]
+fn rejects_control_flow_outside_the_structured_listener_subset() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class LoopListenerComponent {
+            items = [];
+            select(item) {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: LoopListenerComponent,
+                selectors: [["loop-listener"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            const component = core.ɵɵrestoreView(savedView);
+                            const items = component.items;
+                            for (const item of items) {
+                                component.select(item);
+                            }
+                            return core.ɵɵresetView();
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("unsupported listener control flow should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵlistener")
+            && issue.detail.as_deref().is_some_and(|detail| {
+                detail.contains("unsupported structured listener statement: for-of")
+            })
+    }));
+    assert!(!component.source.contains("recoveredClick"));
+}
+
+#[test]
 fn recovers_structural_i18n_regions_with_nested_elements() {
     let source = r#"
         import * as core from "@angular/core";
