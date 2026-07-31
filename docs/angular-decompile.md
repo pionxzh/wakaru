@@ -44,9 +44,9 @@ Initial recovery covers:
 - element, text, `<ng-container>`, and static-attribute creation instructions,
   including HTML, SVG, and MathML namespace transitions;
 - text interpolation;
-- property, attribute, class, and style bindings, including whole-class/style
-  maps, expression interpolation, and compiler-hoisted pure object/array
-  literals;
+- property, attribute, directive-aware ARIA, class, and style bindings,
+  including whole-class/style maps, expression interpolation, and
+  compiler-hoisted pure object/array literals;
 - event listeners, including ordered effects and bounded statement recovery in
   restored nested-view handlers;
 - proven `[(property)]` pairs from `ɵɵtwoWayListener`,
@@ -317,6 +317,15 @@ that wrapper is also observed as a one-argument update-phase effect; the
 opposite family member may be unobserved in templates but must still exist as
 structural evidence. Recovered calls render as `[class]="..."` and
 `[style]="..."`.
+
+Angular's `ɵɵariaProperty` is kept distinct from `ɵɵattribute`: it first
+offers the binding to directive inputs and falls back to a DOM attribute only
+when no input accepts it. A Closure-renamed helper is therefore inferred only
+when it is a self-returning two-parameter update helper observed exclusively
+with literal `aria-*` names, forwards both parameters through a distinct input
+path, and also reaches the same attribute writer as a separately proven
+four-parameter attribute helper. Recovered calls render as `[aria-*]`, not
+`[attr.aria-*]`; name and arity alone are intentionally insufficient.
 
 Expression interpolation roles are paired with the already-proven text
 interpolation family and their exact parameter-forwarding behavior. Closure-
@@ -594,9 +603,9 @@ embedded-template, conditional, property, optimized repeater, defer, and idle
 trigger role inference from runtime behavior. It also proves parent-context
 traversal, the paired restore/reset view-state helpers, selector matrices,
 attribute/class/style property and whole-map bindings, `<ng-container>`,
-bounded i18n, pure literal bindings, `@let`, and HTML/SVG/MathML namespace
-transitions without retaining their public role names. One generated
-conditional component exercises
+directive-aware ARIA bindings, bounded i18n, pure literal bindings, `@let`,
+and HTML/SVG/MathML namespace transitions without retaining their public role
+names. One generated conditional component exercises
 Closure's inlined current-view capture, a restored listener, and a nested
 property binding as a complete artifact. A separate generated component
 recovers a complete deferred primary/placeholder pair, and the structural
@@ -638,8 +647,9 @@ claimed from private data.
 
 A second, smaller four-script local production corpus now emits all 120
 component candidates: 75 complete, 45 partial, and none rejected. It renders
-7,935 of 8,012 observed runtime calls, with 49 unsupported and 29 malformed
+7,941 of 8,012 observed runtime calls, with 43 unsupported and 29 malformed
 calls reported, and all four module-oriented artifacts parse as TypeScript.
+Six Closure-renamed `ɵɵariaProperty` calls become directive-aware bindings.
 The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
 with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are
 not treated as a strict coverage comparison across those milestones because
@@ -647,8 +657,8 @@ newly reachable child views and corrected failed-view accounting changed what
 the analyzer observes.
 
 Remaining partial regions in that smaller corpus are concentrated in
-ICU/sub-template i18n and unresolved i18n targets, restored-listener control
-flow outside the bounded statement subset, projection selector/attribute
+ICU/sub-template i18n and unresolved i18n targets, update-block scratch-variable
+dataflow beyond the bounded expression subset, projection selector/attribute
 metadata that cannot be tied to a declared slot, and newer signal-form runtime
 hooks without an authored-template equivalent. None of those operations is
 consumed based on a corpus-specific minified callee name. They remain typed

@@ -17,6 +17,7 @@ import {
   ɵɵanimateEnterListener,
   ɵɵanimateLeave,
   ɵɵanimateLeaveListener,
+  ɵɵariaProperty,
   ɵɵattribute,
   ɵɵclassMap,
   ɵɵclassProp,
@@ -135,9 +136,18 @@ class StructuralPrefetchIdleCardComponent {}
 })
 class StructuralHydrateIdleCardComponent {}
 
+@Directive({
+  selector: '[structuralAriaTarget]',
+  standalone: true,
+})
+class StructuralAriaTargetDirective {
+  ariaLabel = input('', { alias: 'aria-label' });
+}
+
 @Component({
   selector: 'structural-binding-card',
   standalone: true,
+  imports: [StructuralAriaTargetDirective],
   template: `
     <button
       #action
@@ -150,7 +160,7 @@ class StructuralHydrateIdleCardComponent {}
     >
       Bound content
     </button>
-    <span>{{ action.disabled }}</span>
+    <span structuralAriaTarget [aria-label]="label">{{ action.disabled }}</span>
   `,
 })
 class StructuralBindingCardComponent {
@@ -552,6 +562,7 @@ producerGlobal.__wakaruStructuralRuntime = [
   ɵɵanimateEnterListener,
   ɵɵanimateLeave,
   ɵɵanimateLeaveListener,
+  ɵɵariaProperty,
   ɵɵattribute,
   ɵɵclassMap,
   ɵɵclassProp,
