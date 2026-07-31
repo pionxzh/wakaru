@@ -362,6 +362,67 @@ fn partial_var_export_preserves_declarator_order() {
 }
 
 #[test]
+fn executable_partition_does_not_create_a_global_singleton_cycle() {
+    const REGION_COUNT: usize = 64;
+    let mut input = String::from("import { external } from \"./dep.js\";\n");
+    for region in 0..REGION_COUNT {
+        input.push_str(&format!(
+            r#"
+                class Type{region} {{}}
+                const left{region} = {region};
+                function readLeft{region}() {{ return left{region} + external; }}
+                const right{region} = {region};
+                function readRight{region}() {{ return right{region}; }}
+                function make{region}() {{ return new Type{region}(); }}
+                const value{region} = make{region}();
+            "#
+        ));
+    }
+    input.push_str("export { ");
+    for region in 0..REGION_COUNT {
+        input.push_str(&format!("value{region}, "));
+    }
+    input.push_str("};");
+
+    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
+        .expect("inspection mode should split independent regions");
+    let executable = split_scope_hoisted(&input).expect("executable mode should split");
+
+    assert_eq!(
+        inspection.modules.len(),
+        REGION_COUNT * 3 + 1,
+        "fixture should expose three clusters per region plus the entry"
+    );
+    assert_eq!(
+        executable.modules.len(),
+        inspection.modules.len(),
+        "independent singleton roots must not be folded into one entry that makes their clusters cyclic"
+    );
+
+    let entry = executable
+        .modules
+        .iter()
+        .find(|module| module.is_entry)
+        .expect("export declaration should remain in the entry");
+    for class_name in ["Type0", "Type63"] {
+        assert!(
+            !entry.code.contains(&format!("class {class_name}")),
+            "singleton class {class_name} should be assigned to a local cluster:\n{}",
+            entry.code
+        );
+    }
+
+    let result_modules = ["value0 =", "value63 ="].map(|needle| {
+        executable
+            .modules
+            .iter()
+            .position(|module| module.code.contains(needle))
+            .unwrap_or_else(|| panic!("missing result declaration {needle}"))
+    });
+    assert_ne!(result_modules[0], result_modules[1]);
+}
+
+#[test]
 fn cluster_cycle_merge_preserves_original_initialization_order() {
     // Folding small roots into the synthetic entry can create a cluster-level
     // cycle even though the original item graph is acyclic. If emitted as two
