@@ -42,6 +42,21 @@ function render(U) {
 }
 
 #[test]
+fn jsx_component_alias_skips_ambiguous_shared_source_name() {
+    // Two JSX-only aliases of the same lowercase source would both choose `J`
+    // if the source-derived target were treated as unique.
+    let input = r#"
+const V = j;
+const W = j;
+function render() {
+  return <><V /><W /></>;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn object_destructuring_rename_shorthand() {
     // { key: alias } where alias ≤2 chars → rename alias→key and convert to shorthand
     let input = r#"

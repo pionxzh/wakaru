@@ -2541,9 +2541,22 @@ fn jsx_component_alias_rename_module(module: &mut Module) {
     let mut classifier = JsxComponentAliasClassifier::new(collector.aliases);
     module.visit_with(&mut classifier);
 
+    let eligible: Vec<_> = classifier
+        .states
+        .into_iter()
+        .filter(|(_, state)| state.other_uses == 0 && state.jsx_uses > 0)
+        .collect();
+    let mut target_counts = HashMap::new();
+    for (_, state) in &eligible {
+        *target_counts.entry(state.target.clone()).or_insert(0usize) += 1;
+    }
+
     let mut renames = Vec::new();
-    for (bid, state) in classifier.states {
-        if state.other_uses > 0 || state.jsx_uses == 0 {
+    for (bid, state) in eligible {
+        // A source-derived name is not discriminative when multiple aliases
+        // would choose it. Renaming any of them would either collide or make
+        // the result depend on HashMap iteration order.
+        if target_counts.get(state.target.as_str()) != Some(&1) {
             continue;
         }
         if collector
