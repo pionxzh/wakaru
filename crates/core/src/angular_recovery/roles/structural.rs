@@ -456,6 +456,11 @@ impl StructuralRoleEvidence {
             &by_identity,
         ));
         inferred.extend(infer_namespace_family(&function_index, &by_identity));
+        inferred.extend(infer_styling_map_family(
+            &self.functions,
+            &function_index,
+            &by_identity,
+        ));
         inferred.extend(infer_styling_property_family(&function_index, &by_identity));
         inferred.extend(infer_i18n_role_family(&function_index, &by_identity));
         let two_way_roles = infer_two_way_role_family(&function_index, &by_identity);
@@ -2610,6 +2615,85 @@ fn infer_styling_property_family(
         };
         inferred.push(((*style).clone(), "ɵɵstyleProp"));
         inferred.push(((*class).clone(), "ɵɵclassProp"));
+    }
+    inferred
+}
+
+fn infer_styling_map_family(
+    functions: &[RuntimeFunction],
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut styles_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::new();
+    let mut classes_by_helper = HashMap::<SymbolIdentity, Vec<(&SymbolIdentity, bool)>>::new();
+    let mut seen = HashSet::new();
+
+    for function in functions {
+        let identity = &function.identity;
+        if !seen.insert(identity) {
+            continue;
+        }
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        let [value] = parameters.as_slice() else {
+            continue;
+        };
+        let observed = observations
+            .get(identity)
+            .is_some_and(|calls_in_templates| {
+                !calls_in_templates.is_empty()
+                    && calls_in_templates.iter().all(|observation| {
+                        observation.usage == TemplateCallUsage::Effect
+                            && observation.phase == 2
+                            && observation.arguments.len() == 1
+                    })
+            });
+        let direct = direct_calls(definition);
+        let [call] = direct.as_slice() else {
+            continue;
+        };
+        if call.callee == definition.identity
+            || call.arguments.len() != 4
+            || !expression_is_binding(call.arguments[2].as_ref(), value)
+            || symbol_identity(call.arguments[0].as_ref(), definition.unresolved_ctxt).is_none()
+            || symbol_identity(call.arguments[1].as_ref(), definition.unresolved_ctxt).is_none()
+        {
+            continue;
+        }
+        if is_boolean_value(call.arguments[3].as_ref(), false) {
+            styles_by_helper
+                .entry(call.callee.clone())
+                .or_default()
+                .push((identity, observed));
+        }
+        if is_boolean_value(call.arguments[3].as_ref(), true) {
+            classes_by_helper
+                .entry(call.callee.clone())
+                .or_default()
+                .push((identity, observed));
+        }
+    }
+
+    let mut inferred = Vec::new();
+    for (helper, styles) in styles_by_helper {
+        let Some(classes) = classes_by_helper.get(&helper) else {
+            continue;
+        };
+        let ([(style, style_observed)], [(class, class_observed)]) =
+            (styles.as_slice(), classes.as_slice())
+        else {
+            continue;
+        };
+        if *style_observed {
+            inferred.push(((*style).clone(), "ɵɵstyleMap"));
+        }
+        if *class_observed {
+            inferred.push(((*class).clone(), "ɵɵclassMap"));
+        }
     }
     inferred
 }
