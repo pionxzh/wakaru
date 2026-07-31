@@ -324,6 +324,46 @@ const longer = 2;
 }
 
 #[test]
+fn alias_resolved_ineligible_edge_does_not_mark_name_as_freed() {
+    // `z → C` resolves through `z = HComponent`. Renaming the real binding
+    // `HComponent → C` is ineligible because it shortens the name, so `z`
+    // remains occupied and `F → z` must not create a duplicate declaration.
+    let input = r#"
+const F = () => 1;
+const HComponent = () => 2;
+const z = HComponent;
+export { F as z };
+export { z as C };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn losing_alias_edge_for_shared_real_binding_does_not_free_name() {
+    // Both aliases resolve to `A`, but only the first rename can win. The
+    // rejected `y → Other` edge must not mark `y` as free for `F → y`.
+    let input = r#"
+const A = () => 1;
+const x = A;
+const y = A;
+const F = () => 2;
+export { x as LongName };
+export { y as Other };
+export { F as y };
+"#;
+    let expected = r#"
+export const LongName = () => 1;
+const y = LongName;
+const F = () => 2;
+export { y as Other };
+export { F as y };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn shadowed_edge_does_not_mark_name_as_freed() {
     // `x→longName` is ineligible (shadowing), so `x` is NOT freed.
     // `i→x` must not proceed — it would create a duplicate `x`.

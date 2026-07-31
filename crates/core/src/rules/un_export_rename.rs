@@ -260,6 +260,7 @@ fn compute_freed_names(
     // name must not be shorter than the orig, and the orig binding must not
     // already be an `export` declaration.
     let mut rename_edges: HashMap<Atom, Atom> = HashMap::new();
+    let mut edge_sources: HashMap<Atom, BindingId> = HashMap::new();
     for item in &module.body {
         if let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
             specifiers,
@@ -274,12 +275,14 @@ fn compute_freed_names(
                     ..
                 }) = spec
                 {
-                    if orig.sym == exported.sym || exported.sym.len() < orig.sym.len() {
-                        continue;
-                    }
-                    let Some(info) = binding_infos.get(&orig.sym) else {
+                    let Some(orig_info) = binding_infos.get(&orig.sym) else {
                         continue;
                     };
+                    let (info, old_name, _) =
+                        resolve_to_real_binding(orig_info, &orig.sym, module, binding_infos);
+                    if old_name == exported.sym || exported.sym.len() < old_name.len() {
+                        continue;
+                    }
                     if info.exported {
                         continue;
                     }
@@ -293,6 +296,7 @@ fn compute_freed_names(
                         continue;
                     }
                     rename_edges.insert(orig.sym.clone(), exported.sym.clone());
+                    edge_sources.insert(orig.sym.clone(), info.id.clone());
                 }
             }
         }
@@ -306,6 +310,25 @@ fn compute_freed_names(
         *target_counts.entry(target.clone()).or_default() += 1;
     }
     rename_edges.retain(|_, target| target_counts.get(target).copied().unwrap_or(0) <= 1);
+
+    // Multiple aliases can resolve to one real binding, but the planner
+    // accepts at most one rename for that binding. We cannot treat every
+    // losing alias as removed, so none of their names are predictably freed.
+    let mut source_counts: HashMap<BindingId, usize> = HashMap::new();
+    for source in rename_edges
+        .keys()
+        .filter_map(|name| edge_sources.get(name))
+    {
+        *source_counts.entry(source.clone()).or_default() += 1;
+    }
+    rename_edges.retain(|name, _| {
+        edge_sources
+            .get(name)
+            .and_then(|source| source_counts.get(source))
+            .copied()
+            .unwrap_or(0)
+            <= 1
+    });
 
     // Step 2: for each edge, follow the chain to see if it terminates at a free
     // name.  Mark all names along successful chains as freed.
