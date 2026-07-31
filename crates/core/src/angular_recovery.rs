@@ -41,8 +41,8 @@ use roles::{
 };
 use syntax::{binding_key, member_prop_name, prop_name, string_lit, wtf8_to_string, BindingKey};
 use template::{
-    call_chain, ivy_template_score, recover_template, TemplateFunctionTable,
-    TemplateRecoveryContext,
+    call_chain, ivy_template_score, recover_template, RecoveredListenerMethod,
+    TemplateFunctionTable, TemplateRecoveryContext,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +283,7 @@ struct RecoveredModuleComponentDraft {
     styles: Vec<String>,
     class: Box<Class>,
     template_source: String,
+    listener_methods: Vec<RecoveredListenerMethod>,
     readable_class_roots: HashSet<BindingKey>,
     template_roots: HashSet<BindingKey>,
     dependencies: Vec<Box<Expr>>,
@@ -621,6 +622,7 @@ fn recover_prepared_modules(
                 styles: descriptor.styles.clone(),
                 class: class.clone(),
                 template_source: recovered_template.source.clone(),
+                listener_methods: recovered_template.listener_methods.clone(),
                 readable_class_roots: class_roots,
                 template_roots,
                 dependencies: descriptor.dependencies.clone(),
@@ -991,6 +993,7 @@ fn emit_recovered_angular_module(
             styles: &draft.styles,
             class: &draft.class,
             template_source: &draft.template_source,
+            listener_methods: &draft.listener_methods,
             dependencies,
             angular_imports: &draft.angular_imports,
         })

@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
+use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, Ident, Lit, MemberProp, Module,
-    ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, Ident, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, ThisExpr,
+    UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -13,8 +15,10 @@ use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::{RewriteLevel, UnOptionalChaining};
 
-use super::artifact::expression_references;
-use super::emitter::{handler_expression, print_template_expression_with_aliases};
+use super::artifact::{expression_references, function_references};
+use super::emitter::{
+    handler_expression, print_template_expression_with_aliases, TemplateExpressionAliasResolver,
+};
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{
     binding_key, member_prop_name, prop_name, string_lit, wtf8_to_string, BindingKey,
@@ -30,6 +34,17 @@ pub(super) struct RecoveredTemplate {
     pub(super) stats: AngularTemplateRecoveryStats,
     pub(super) unknown_runtime_call_shapes: Vec<AngularUnknownRuntimeCallShape>,
     pub(super) artifact_references: HashSet<BindingKey>,
+    pub(super) listener_methods: Vec<RecoveredListenerMethod>,
+}
+
+#[derive(Clone)]
+pub(super) struct RecoveredListenerMethod {
+    // This remains in the evidence AST's binding domain through support-root
+    // discovery. The emitter attaches it to a cloned readable class only after
+    // those roots have been resolved.
+    pub(super) placeholder: String,
+    pub(super) preferred_name: String,
+    pub(super) function: Function,
 }
 
 #[derive(Default)]
@@ -294,6 +309,7 @@ struct TemplateProgram {
     ancestor_contexts: Vec<ViewContextScope>,
     local_context_bindings: HashMap<BindingKey, HashMap<String, String>>,
     let_alias_hints: Vec<ViewLetAliasHint>,
+    listener_methods: Vec<RecoveredListenerMethod>,
 }
 
 impl TemplateProgram {
@@ -752,6 +768,7 @@ pub(super) fn recover_template(
         stats: program.stats,
         unknown_runtime_call_shapes,
         artifact_references: program.artifact_references,
+        listener_methods: program.listener_methods,
     })
 }
 
@@ -2756,9 +2773,808 @@ struct RecoveredViewHandler {
     runtime_calls: usize,
     artifact_references: HashSet<BindingKey>,
     let_alias_hints: Vec<ViewLetAliasHint>,
+    listener_method: Option<RecoveredListenerMethod>,
 }
 
 fn recover_view_listener_handler(
+    handler: &Expr,
+    event: &str,
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+    program: &TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<Option<RecoveredViewHandler>, String> {
+    match recover_inline_view_listener_handler(
+        handler,
+        tree,
+        ancestor_references,
+        program,
+        environment,
+    ) {
+        Ok(recovered) => Ok(recovered),
+        Err(_) => recover_structured_view_listener_handler(
+            handler,
+            event,
+            tree,
+            ancestor_references,
+            program,
+            environment,
+        ),
+    }
+}
+
+struct StructuredListenerState {
+    // Lexical identity comes from SWC SyntaxContexts. Context depth is a
+    // separate Angular view cursor and must not be used as a JS scope model.
+    component_contexts: HashSet<BindingKey>,
+    local_names: HashMap<BindingKey, String>,
+    local_context_bindings: HashMap<BindingKey, HashMap<String, String>>,
+    expression_aliases: HashMap<BindingKey, Box<Expr>>,
+    let_alias_hints: Vec<ViewLetAliasHint>,
+    binding_uses: BindingUseIndex,
+    next_parameter_marker: usize,
+    runtime_calls: usize,
+    context_depth: usize,
+}
+
+fn recover_structured_view_listener_handler(
+    handler: &Expr,
+    event: &str,
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+    program: &TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<Option<RecoveredViewHandler>, String> {
+    let Some(original_block) = handler_block(handler) else {
+        return Ok(None);
+    };
+    if !original_block.stmts.iter().any(|statement| {
+        statement_restore_view_call(statement, environment)
+            .is_some_and(|call| is_instruction_call(call, IvyInstruction::RestoreView, environment))
+    }) {
+        return Ok(None);
+    }
+
+    let handler = normalize_listener_optional_chaining(handler, environment.unresolved_ctxt);
+    let Some(block) = handler_block(handler.as_ref()) else {
+        return Ok(None);
+    };
+    let mut state = StructuredListenerState {
+        component_contexts: program.component_contexts.clone(),
+        local_names: program.local_reference_names.clone(),
+        local_context_bindings: program.local_context_bindings.clone(),
+        expression_aliases: HashMap::new(),
+        let_alias_hints: Vec::new(),
+        binding_uses: BindingUseIndex::collect_stmts(&block.stmts),
+        next_parameter_marker: 0,
+        runtime_calls: 0,
+        context_depth: 0,
+    };
+    if let Some(event_binding) = handler_event_binding(handler.as_ref()) {
+        state
+            .local_names
+            .insert(event_binding, "$event".to_string());
+    }
+
+    let mut statements = Vec::new();
+    let mut saw_reset_return = false;
+    for (statement_index, statement) in block.stmts.iter().enumerate() {
+        match statement {
+            Stmt::Decl(Decl::Var(declaration)) => {
+                let mut declarators = Vec::new();
+                for declarator in &declaration.decls {
+                    if let Some(declarator) = lower_structured_listener_declarator(
+                        declarator,
+                        tree,
+                        ancestor_references,
+                        program,
+                        environment,
+                        &mut state,
+                    )? {
+                        declarators.push(declarator);
+                    }
+                }
+                let mut declaration = declaration.as_ref().clone();
+                declaration.decls = declarators;
+                if !declaration.decls.is_empty() {
+                    statements.push(Stmt::Decl(Decl::Var(Box::new(declaration))));
+                }
+            }
+            Stmt::Expr(expression) => {
+                if lower_structured_listener_expression(
+                    expression,
+                    program,
+                    environment,
+                    &mut state,
+                )? {
+                    statements.push(statement.clone());
+                }
+            }
+            Stmt::Return(ReturnStmt {
+                arg: Some(returned),
+                ..
+            }) => {
+                if block.stmts[statement_index + 1..]
+                    .iter()
+                    .any(|statement| !matches!(statement, Stmt::Empty(_)))
+                {
+                    return Err("ɵɵresetView return is not the final handler statement".to_string());
+                }
+                if saw_reset_return {
+                    return Err("multiple handler returns".to_string());
+                }
+                lower_structured_listener_return(
+                    returned.as_ref(),
+                    environment,
+                    &mut state,
+                    &mut statements,
+                )?;
+                saw_reset_return = true;
+            }
+            Stmt::If(_) | Stmt::Block(_) => {
+                validate_structured_listener_statement(statement, environment)?;
+                statements.push(statement.clone());
+            }
+            Stmt::Empty(_) => {}
+            _ => {
+                return Err(format!(
+                    "unsupported structured listener statement: {}",
+                    statement_kind(statement)
+                ));
+            }
+        }
+    }
+    if !saw_reset_return {
+        return Err("restored handler has no ɵɵresetView return".to_string());
+    }
+
+    let mut body = block.clone();
+    body.stmts = statements;
+    if !state.expression_aliases.is_empty() {
+        body.visit_mut_with(&mut TemplateExpressionAliasResolver {
+            aliases: &state.expression_aliases,
+            active: HashSet::new(),
+        });
+    }
+    let mut occupied_names = ListenerBindingNameCollector::default();
+    body.visit_with(&mut occupied_names);
+    let mut binding_rewriter = ListenerMethodBindingRewriter {
+        component_contexts: &state.component_contexts,
+        local_names: &state.local_names,
+        local_contexts: &state.local_context_bindings,
+        occupied_names: occupied_names.names,
+        parameters: Vec::new(),
+        parameters_by_template_name: HashMap::new(),
+    };
+    body.visit_mut_with(&mut binding_rewriter);
+    binding_rewriter
+        .parameters
+        .sort_by_key(|parameter| parameter.template_name != "$event");
+    let template_arguments = binding_rewriter
+        .parameters
+        .iter()
+        .map(|parameter| parameter.template_name.clone())
+        .collect::<Vec<_>>();
+    let params = binding_rewriter
+        .parameters
+        .into_iter()
+        .map(|parameter| Param {
+            span: DUMMY_SP,
+            decorators: Vec::new(),
+            pat: Pat::Ident(BindingIdent {
+                id: parameter.identifier,
+                type_ann: None,
+            }),
+        })
+        .collect();
+    let function = Function {
+        params,
+        decorators: Vec::new(),
+        span: block.span,
+        ctxt: block.ctxt,
+        body: Some(body),
+        is_generator: false,
+        is_async: false,
+        type_params: None,
+        return_type: None,
+    };
+    let placeholder = format!(
+        "__wakaru_listener_{}_{}__",
+        program.view_id,
+        program.listener_methods.len()
+    );
+    let source = format!("{placeholder}({})", template_arguments.join(", "));
+    let artifact_references = function_references(&function);
+    Ok(Some(RecoveredViewHandler {
+        source,
+        runtime_calls: state.runtime_calls,
+        artifact_references,
+        let_alias_hints: state.let_alias_hints,
+        listener_method: Some(RecoveredListenerMethod {
+            placeholder,
+            preferred_name: recovered_listener_method_name(event),
+            function,
+        }),
+    }))
+}
+
+fn preserve_reassigned_listener_alias(
+    declarator: &VarDeclarator,
+    initializer: Box<Expr>,
+) -> Option<VarDeclarator> {
+    let mut declarator = declarator.clone();
+    declarator.init = Some(initializer);
+    Some(declarator)
+}
+
+fn listener_parameter_marker(
+    name: String,
+    span: Span,
+    state: &mut StructuredListenerState,
+) -> Box<Expr> {
+    let marker = Ident::new(
+        Atom::from(format!(
+            "__wakaru_listener_parameter_{}",
+            state.next_parameter_marker
+        )),
+        span,
+        SyntaxContext::empty(),
+    );
+    state.next_parameter_marker += 1;
+    state.local_names.insert(binding_key(&marker), name);
+    Box::new(Expr::Ident(marker))
+}
+
+fn lower_structured_listener_declarator(
+    declarator: &VarDeclarator,
+    tree: &TemplateTree,
+    ancestor_references: &[ReferenceScope],
+    program: &TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    state: &mut StructuredListenerState,
+) -> std::result::Result<Option<VarDeclarator>, String> {
+    let Pat::Ident(binding) = &declarator.name else {
+        if declarator
+            .init
+            .as_deref()
+            .is_some_and(|initializer| contains_runtime_call(initializer, environment))
+        {
+            return Err("unsupported Ivy runtime call in listener-local declaration".to_string());
+        }
+        return Ok(Some(declarator.clone()));
+    };
+    let Some(initializer) = declarator.init.as_deref() else {
+        return Ok(Some(declarator.clone()));
+    };
+
+    if let Some(call) = restored_view_call(initializer, environment) {
+        let Some(property) = restored_view_property(initializer) else {
+            return Err("restored view has no context property".to_string());
+        };
+        let argument_lists = validated_single_call(call, "ɵɵrestoreView")?;
+        let [saved_view] = argument_lists[0] else {
+            return Err("ɵɵrestoreView expected one saved view".to_string());
+        };
+        let Expr::Ident(saved_view) = strip_parentheses(saved_view.expr.as_ref()) else {
+            return Err("ɵɵrestoreView saved view is not an identifier".to_string());
+        };
+        if !program.saved_views.contains(&binding_key(saved_view)) {
+            return Err("ɵɵrestoreView does not reference a captured view".to_string());
+        }
+        let name = if property == "$implicit"
+            || program.implicit_view_context_properties.contains(&property)
+        {
+            program
+                .repeater_item_name
+                .clone()
+                .unwrap_or_else(|| recovered_view_alias_name(binding.id.sym.as_ref(), "item"))
+        } else if !is_likely_generated_alias(&property) {
+            to_valid_identifier_name(&property)
+        } else {
+            return Err(format!(
+                "unsupported restored view context property {property}"
+            ));
+        };
+        let binding_key = binding_key(&binding.id);
+        state.runtime_calls += 1;
+        state.context_depth = 0;
+        if state.binding_uses.has_direct_write(&binding_key) {
+            let initializer = listener_parameter_marker(name, binding.id.span, state);
+            return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+        }
+        state.local_names.insert(binding_key, name);
+        return Ok(None);
+    }
+
+    if let Some((alias, context_hop)) = next_context_member_alias(initializer, environment)? {
+        let destination_depth = state.context_depth.saturating_add(context_hop);
+        let Expr::Ident(property) = alias.as_ref() else {
+            return Err("ɵɵnextContext member alias is not an identifier".to_string());
+        };
+        let binding_key = binding_key(&binding.id);
+        let reassigned = state.binding_uses.has_direct_write(&binding_key);
+        let mut reassigned_initializer = None;
+        match program.context_scope_at_depth(destination_depth) {
+            Some(scope) if !scope.is_component => {
+                let Some(name) = program.context_property_name_for_binding(
+                    destination_depth,
+                    property.sym.as_ref(),
+                    &binding_key,
+                ) else {
+                    return Err(format!(
+                        "unsupported restored view context property {}",
+                        property.sym
+                    ));
+                };
+                if reassigned {
+                    reassigned_initializer =
+                        Some(listener_parameter_marker(name, property.span, state));
+                } else {
+                    state.local_names.insert(binding_key, name);
+                }
+            }
+            _ => {
+                let name = program
+                    .context_property_name_for_binding(
+                        destination_depth,
+                        property.sym.as_ref(),
+                        &binding_key,
+                    )
+                    .unwrap_or_else(|| to_valid_identifier_name(property.sym.as_ref()));
+                let initializer = Box::new(Expr::Member(MemberExpr {
+                    span: property.span,
+                    obj: Box::new(Expr::This(ThisExpr {
+                        span: property.span,
+                    })),
+                    prop: MemberProp::Ident(swc_core::ecma::ast::IdentName::new(
+                        name.into(),
+                        property.span,
+                    )),
+                }));
+                if reassigned {
+                    reassigned_initializer = Some(initializer);
+                } else {
+                    state.expression_aliases.insert(binding_key, initializer);
+                }
+            }
+        }
+        state.runtime_calls += 1;
+        state.context_depth = destination_depth;
+        if let Some(initializer) = reassigned_initializer {
+            return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+        }
+        return Ok(None);
+    }
+
+    if let Some(slot) = inlined_reference_slot(initializer) {
+        let Some(name) =
+            reference_name_at_depth(tree, ancestor_references, state.context_depth, slot)
+        else {
+            return Err(format!(
+                "no inlined local reference at slot {slot} in context depth {}",
+                state.context_depth
+            ));
+        };
+        let binding_key = binding_key(&binding.id);
+        if state.binding_uses.has_direct_write(&binding_key) {
+            let initializer = listener_parameter_marker(name, binding.id.span, state);
+            return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+        }
+        state.local_names.insert(binding_key, name);
+        return Ok(None);
+    }
+
+    if let Expr::Call(call) = strip_parentheses(initializer) {
+        if is_instruction_call(call, IvyInstruction::ReadContextLet, environment) {
+            let argument_lists = validated_single_call(call, "ɵɵreadContextLet")?;
+            let [slot] = argument_lists[0] else {
+                return Err("ɵɵreadContextLet expected one let slot".to_string());
+            };
+            let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
+                return Err("ɵɵreadContextLet slot is not numeric".to_string());
+            };
+            let name = recovered_let_name(Some(binding.id.sym.as_ref()), slot);
+            state.let_alias_hints.push(ViewLetAliasHint {
+                context_depth: state.context_depth,
+                slot,
+                name: name.clone(),
+            });
+            state.runtime_calls += 1;
+            let binding_key = binding_key(&binding.id);
+            if state.binding_uses.has_direct_write(&binding_key) {
+                let initializer = listener_parameter_marker(name, binding.id.span, state);
+                return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+            }
+            state.local_names.insert(binding_key, name);
+            return Ok(None);
+        }
+        if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+            validate_restore_view_call(call, program)?;
+            state.runtime_calls += 1;
+            state.context_depth = 0;
+            let binding_key = binding_key(&binding.id);
+            if state.binding_uses.has_direct_write(&binding_key) {
+                return Ok(preserve_reassigned_listener_alias(
+                    declarator,
+                    Box::new(Expr::This(ThisExpr {
+                        span: binding.id.span,
+                    })),
+                ));
+            }
+            state.component_contexts.insert(binding_key);
+            return Ok(None);
+        }
+        if is_instruction_call(call, IvyInstruction::Reference, environment)
+            || is_reference_candidate_call(call, environment)
+        {
+            let argument_lists = validated_single_call(call, "ɵɵreference")?;
+            let [slot] = argument_lists[0] else {
+                return Err("ɵɵreference expected one slot".to_string());
+            };
+            let Some(slot) = numeric_expr(slot.expr.as_ref()) else {
+                return Err("ɵɵreference slot is not numeric".to_string());
+            };
+            let Some(name) =
+                reference_name_at_depth(tree, ancestor_references, state.context_depth, slot)
+            else {
+                return Err(format!(
+                    "no local reference at slot {slot} in context depth {}",
+                    state.context_depth
+                ));
+            };
+            state.runtime_calls += 1;
+            let binding_key = binding_key(&binding.id);
+            if state.binding_uses.has_direct_write(&binding_key) {
+                let initializer = listener_parameter_marker(name, binding.id.span, state);
+                return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+            }
+            state.local_names.insert(binding_key, name);
+            return Ok(None);
+        }
+        if is_instruction_call(call, IvyInstruction::NextContext, environment) {
+            let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
+            let Some(context_hop) = context_hop(&argument_lists) else {
+                return Err("ɵɵnextContext has unexpected context-depth arguments".to_string());
+            };
+            let destination_depth = state.context_depth.saturating_add(context_hop);
+            let binding_key = binding_key(&binding.id);
+            let reassigned = state.binding_uses.has_direct_write(&binding_key);
+            let mut reassigned_initializer = None;
+            match program.context_scope_at_depth(destination_depth) {
+                Some(scope) if scope.is_component => {
+                    if reassigned {
+                        reassigned_initializer = Some(Box::new(Expr::This(ThisExpr {
+                            span: binding.id.span,
+                        })));
+                    } else {
+                        state.component_contexts.insert(binding_key);
+                    }
+                }
+                Some(scope) if !scope.local_properties.is_empty() => {
+                    if reassigned {
+                        return Err("reassigned non-component view context alias is unsupported"
+                            .to_string());
+                    }
+                    state
+                        .local_context_bindings
+                        .insert(binding_key, scope.local_properties);
+                }
+                Some(_) if reassigned => {
+                    return Err(
+                        "reassigned non-component view context alias is unsupported".to_string()
+                    );
+                }
+                Some(_) => {}
+                None => {
+                    if reassigned {
+                        reassigned_initializer = Some(Box::new(Expr::This(ThisExpr {
+                            span: binding.id.span,
+                        })));
+                    } else {
+                        state.component_contexts.insert(binding_key);
+                    }
+                }
+            }
+            state.runtime_calls += 1;
+            state.context_depth = destination_depth;
+            if let Some(initializer) = reassigned_initializer {
+                return Ok(preserve_reassigned_listener_alias(declarator, initializer));
+            }
+            return Ok(None);
+        }
+    }
+
+    if contains_runtime_call(initializer, environment) {
+        return Err("unsupported Ivy runtime call in listener-local declaration".to_string());
+    }
+    Ok(Some(declarator.clone()))
+}
+
+fn lower_structured_listener_expression(
+    expression: &ExprStmt,
+    program: &TemplateProgram,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    state: &mut StructuredListenerState,
+) -> std::result::Result<bool, String> {
+    if let Expr::Call(call) = strip_parentheses(expression.expr.as_ref()) {
+        if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+            validate_restore_view_call(call, program)?;
+            state.runtime_calls += 1;
+            state.context_depth = 0;
+            return Ok(false);
+        }
+        if is_instruction_call(call, IvyInstruction::NextContext, environment) {
+            let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
+            let Some(context_hop) = context_hop(&argument_lists) else {
+                return Err("ɵɵnextContext has unexpected context-depth arguments".to_string());
+            };
+            state.runtime_calls += 1;
+            state.context_depth = state.context_depth.saturating_add(context_hop);
+            return Ok(false);
+        }
+        if is_instruction_call(call, IvyInstruction::ReadContextLet, environment) {
+            let argument_lists = validated_single_call(call, "ɵɵreadContextLet")?;
+            let [slot] = argument_lists[0] else {
+                return Err("ɵɵreadContextLet expected one let slot".to_string());
+            };
+            if numeric_expr(slot.expr.as_ref()).is_none() {
+                return Err("ɵɵreadContextLet slot is not numeric".to_string());
+            }
+            state.runtime_calls += 1;
+            return Ok(false);
+        }
+    }
+    if contains_runtime_call(expression.expr.as_ref(), environment) {
+        return Err("unsupported Ivy runtime call in restored handler expression".to_string());
+    }
+    Ok(true)
+}
+
+fn lower_structured_listener_return(
+    returned: &Expr,
+    environment: &TemplateRecoveryEnvironment<'_>,
+    state: &mut StructuredListenerState,
+    statements: &mut Vec<Stmt>,
+) -> std::result::Result<(), String> {
+    let returned = strip_parentheses(returned);
+    let (effects, reset_expression) = match returned {
+        Expr::Seq(sequence) => {
+            let Some((reset_expression, effects)) = sequence.exprs.split_last() else {
+                return Err("restored handler return is empty".to_string());
+            };
+            (effects, reset_expression.as_ref())
+        }
+        returned => (&[][..], returned),
+    };
+    let Expr::Call(call) = strip_parentheses(reset_expression) else {
+        return Err("restored handler return is not ɵɵresetView".to_string());
+    };
+    if !is_instruction_call(call, IvyInstruction::ResetView, environment) {
+        return Err("restored handler return is not ɵɵresetView".to_string());
+    }
+    let argument_lists = validated_single_call(call, "ɵɵresetView")?;
+    let action = match argument_lists[0] {
+        [] => None,
+        [returned] => Some(returned.expr.as_ref()),
+        _ => return Err("ɵɵresetView expected at most one return value".to_string()),
+    };
+    for effect in effects {
+        if contains_runtime_call(effect.as_ref(), environment) {
+            return Err("unsupported Ivy runtime call in restored handler expression".to_string());
+        }
+        statements.push(Stmt::Expr(ExprStmt {
+            span: effect.span(),
+            expr: effect.clone(),
+        }));
+    }
+    if let Some(action) = action {
+        if contains_runtime_call(action, environment) {
+            return Err("unsupported Ivy runtime call in restored handler expression".to_string());
+        }
+        statements.push(Stmt::Return(ReturnStmt {
+            span: action.span(),
+            arg: Some(Box::new(action.clone())),
+        }));
+    }
+    state.runtime_calls += 1;
+    Ok(())
+}
+
+fn validate_structured_listener_statement(
+    statement: &Stmt,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> std::result::Result<(), String> {
+    match statement {
+        Stmt::Block(block) => {
+            for statement in &block.stmts {
+                validate_structured_listener_statement(statement, environment)?;
+            }
+            Ok(())
+        }
+        Stmt::If(statement) => {
+            if contains_runtime_call(statement.test.as_ref(), environment) {
+                return Err(
+                    "unsupported Ivy runtime call in structured listener condition".to_string(),
+                );
+            }
+            validate_structured_listener_statement(statement.cons.as_ref(), environment)?;
+            if let Some(alternate) = &statement.alt {
+                validate_structured_listener_statement(alternate.as_ref(), environment)?;
+            }
+            Ok(())
+        }
+        Stmt::Decl(Decl::Var(declaration)) => {
+            if declaration.decls.iter().any(|declarator| {
+                declarator
+                    .init
+                    .as_deref()
+                    .is_some_and(|initializer| contains_runtime_call(initializer, environment))
+            }) {
+                return Err(
+                    "unsupported Ivy runtime call in listener-local declaration".to_string()
+                );
+            }
+            Ok(())
+        }
+        Stmt::Expr(expression) => {
+            if contains_runtime_call(expression.expr.as_ref(), environment) {
+                return Err(
+                    "unsupported Ivy runtime call in restored handler expression".to_string(),
+                );
+            }
+            Ok(())
+        }
+        Stmt::Empty(_) => Ok(()),
+        _ => Err(format!(
+            "unsupported structured listener statement: {}",
+            statement_kind(statement)
+        )),
+    }
+}
+
+#[derive(Default)]
+struct ListenerBindingNameCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for ListenerBindingNameCollector {
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.names.insert(binding.id.sym.clone());
+    }
+}
+
+struct ListenerMethodParameter {
+    template_name: String,
+    identifier: Ident,
+}
+
+struct ListenerMethodBindingRewriter<'a> {
+    component_contexts: &'a HashSet<BindingKey>,
+    local_names: &'a HashMap<BindingKey, String>,
+    local_contexts: &'a HashMap<BindingKey, HashMap<String, String>>,
+    occupied_names: HashSet<Atom>,
+    parameters: Vec<ListenerMethodParameter>,
+    parameters_by_template_name: HashMap<String, Ident>,
+}
+
+impl VisitMut for ListenerMethodBindingRewriter<'_> {
+    fn visit_mut_assign_expr(&mut self, assignment: &mut AssignExpr) {
+        assignment.right.visit_mut_with(self);
+        if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &mut assignment.left {
+            let key = binding_key(&binding.id);
+            if let Some(name) = self.local_names.get(&key).cloned() {
+                binding.id = self.parameter_for(&name, binding.id.span);
+            }
+            return;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let Expr::Ident(object) = member.obj.as_ref() else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let MemberProp::Ident(property) = &member.prop else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let Some(name) = self.local_context_name(object, property) else {
+            assignment.left.visit_mut_children_with(self);
+            return;
+        };
+        let identifier = self.parameter_for(&name, property.span);
+        assignment.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+            id: identifier,
+            type_ann: None,
+        }));
+    }
+
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if let Expr::Member(member) = expression {
+            if let (Expr::Ident(object), MemberProp::Ident(property)) =
+                (member.obj.as_ref(), &member.prop)
+            {
+                if let Some(name) = self.local_context_name(object, property) {
+                    *expression = Expr::Ident(self.parameter_for(&name, property.span));
+                    return;
+                }
+            }
+        }
+        if let Expr::Ident(identifier) = expression {
+            let key = binding_key(identifier);
+            if self.component_contexts.contains(&key) {
+                *expression = Expr::This(ThisExpr {
+                    span: identifier.span,
+                });
+                return;
+            }
+            if let Some(name) = self.local_names.get(&key).cloned() {
+                *identifier = self.parameter_for(&name, identifier.span);
+                return;
+            }
+        }
+        expression.visit_mut_children_with(self);
+    }
+}
+
+impl ListenerMethodBindingRewriter<'_> {
+    fn local_context_name(
+        &self,
+        object: &Ident,
+        property: &swc_core::ecma::ast::IdentName,
+    ) -> Option<String> {
+        self.local_contexts
+            .get(&binding_key(object))
+            .and_then(|properties| properties.get(property.sym.as_ref()))
+            .cloned()
+    }
+
+    fn parameter_for(&mut self, template_name: &str, span: Span) -> Ident {
+        if let Some(identifier) = self.parameters_by_template_name.get(template_name) {
+            return identifier.clone();
+        }
+        let base = to_valid_identifier_name(template_name);
+        let mut name = base.clone();
+        let mut suffix = 2usize;
+        while self.occupied_names.contains(&Atom::from(name.as_str())) {
+            name = format!("{base}{suffix}");
+            suffix += 1;
+        }
+        self.occupied_names.insert(Atom::from(name.as_str()));
+        let identifier = Ident::new(Atom::from(name.as_str()), span, SyntaxContext::empty());
+        self.parameters_by_template_name
+            .insert(template_name.to_string(), identifier.clone());
+        self.parameters.push(ListenerMethodParameter {
+            template_name: template_name.to_string(),
+            identifier: identifier.clone(),
+        });
+        identifier
+    }
+}
+
+fn recovered_listener_method_name(event: &str) -> String {
+    let mut suffix = String::new();
+    let mut capitalize = true;
+    for character in event.chars() {
+        if !character.is_alphanumeric() {
+            capitalize = true;
+            continue;
+        }
+        if capitalize {
+            suffix.extend(character.to_uppercase());
+            capitalize = false;
+        } else {
+            suffix.push(character);
+        }
+    }
+    if suffix.is_empty() {
+        suffix.push_str("Event");
+    }
+    to_valid_identifier_name(&format!("recovered{suffix}"))
+}
+
+fn recover_inline_view_listener_handler(
     handler: &Expr,
     tree: &TemplateTree,
     ancestor_references: &[ReferenceScope],
@@ -2783,6 +3599,7 @@ fn recover_view_listener_handler(
         return Ok(None);
     };
 
+    let binding_uses = BindingUseIndex::collect_stmts(&block.stmts);
     let mut component_contexts = program.component_contexts.clone();
     let mut local_names = program.local_reference_names.clone();
     let mut local_context_bindings = program.local_context_bindings.clone();
@@ -2804,10 +3621,15 @@ fn recover_view_listener_handler(
                     let Pat::Ident(binding) = &declarator.name else {
                         return Err("expected identifier aliases".to_string());
                     };
+                    let alias_binding = binding_key(&binding.id);
+                    let alias_is_reassigned = binding_uses.has_direct_write(&alias_binding);
                     let Some(initializer) = declarator.init.as_deref() else {
                         return Err("view alias has no initializer".to_string());
                     };
                     if let Some(call) = restored_view_call(initializer, environment) {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let Some(property) = restored_view_property(initializer) else {
                             return Err("restored view has no context property".to_string());
                         };
@@ -2837,7 +3659,7 @@ fn recover_view_listener_handler(
                                 "unsupported restored view context property {property}"
                             ));
                         };
-                        local_names.insert(binding_key(&binding.id), name);
+                        local_names.insert(alias_binding, name);
                         runtime_calls += 1;
                         context_depth = 0;
                         continue;
@@ -2846,14 +3668,16 @@ fn recover_view_listener_handler(
                     if let Some((alias, context_hop)) =
                         next_context_member_alias(initializer, environment)?
                     {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let destination_depth = context_depth.saturating_add(context_hop);
-                        let binding_key = binding_key(&binding.id);
                         let alias = match alias.as_ref() {
                             Expr::Ident(property) => program
                                 .context_property_name_for_binding(
                                     destination_depth,
                                     property.sym.as_ref(),
-                                    &binding_key,
+                                    &alias_binding,
                                 )
                                 .map(|name| {
                                     Box::new(Expr::Ident(Ident::new(
@@ -2865,13 +3689,16 @@ fn recover_view_listener_handler(
                                 .unwrap_or(alias),
                             _ => alias,
                         };
-                        expression_aliases.insert(binding_key, alias);
+                        expression_aliases.insert(alias_binding, alias);
                         runtime_calls += 1;
                         context_depth = destination_depth;
                         continue;
                     }
 
                     if let Some(slot) = inlined_reference_slot(initializer) {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let Some(name) =
                             reference_name_at_depth(tree, ancestor_references, context_depth, slot)
                         else {
@@ -2879,7 +3706,7 @@ fn recover_view_listener_handler(
                                 "no inlined local reference at slot {slot} in context depth {context_depth}"
                             ));
                         };
-                        local_names.insert(binding_key(&binding.id), name);
+                        local_names.insert(alias_binding, name);
                         continue;
                     }
 
@@ -2887,6 +3714,9 @@ fn recover_view_listener_handler(
                         return Err("unsupported view-local alias initializer".to_string());
                     };
                     if is_instruction_call(call, IvyInstruction::ReadContextLet, environment) {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let argument_lists = validated_single_call(call, "ɵɵreadContextLet")?;
                         let [slot] = argument_lists[0] else {
                             return Err("ɵɵreadContextLet expected one let slot".to_string());
@@ -2895,7 +3725,7 @@ fn recover_view_listener_handler(
                             return Err("ɵɵreadContextLet slot is not numeric".to_string());
                         };
                         let name = recovered_let_name(Some(binding.id.sym.as_ref()), slot);
-                        local_names.insert(binding_key(&binding.id), name.clone());
+                        local_names.insert(alias_binding, name.clone());
                         let_alias_hints.push(ViewLetAliasHint {
                             context_depth,
                             slot,
@@ -2905,8 +3735,11 @@ fn recover_view_listener_handler(
                         continue;
                     }
                     if is_instruction_call(call, IvyInstruction::RestoreView, environment) {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         validate_restore_view_call(call, program)?;
-                        component_contexts.insert(binding_key(&binding.id));
+                        component_contexts.insert(alias_binding);
                         runtime_calls += 1;
                         context_depth = 0;
                         continue;
@@ -2914,6 +3747,9 @@ fn recover_view_listener_handler(
                     if is_instruction_call(call, IvyInstruction::Reference, environment)
                         || is_reference_candidate_call(call, environment)
                     {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let argument_lists = validated_single_call(call, "ɵɵreference")?;
                         let [slot] = argument_lists[0] else {
                             return Err("ɵɵreference expected one slot".to_string());
@@ -2928,11 +3764,14 @@ fn recover_view_listener_handler(
                                 "no local reference at slot {slot} in context depth {context_depth}"
                             ));
                         };
-                        local_names.insert(binding_key(&binding.id), name);
+                        local_names.insert(alias_binding, name);
                         runtime_calls += 1;
                         continue;
                     }
                     if is_instruction_call(call, IvyInstruction::NextContext, environment) {
+                        if alias_is_reassigned {
+                            return Err("view alias is reassigned".to_string());
+                        }
                         let argument_lists = validated_single_call(call, "ɵɵnextContext")?;
                         let Some(context_hop) = context_hop(&argument_lists) else {
                             return Err(
@@ -2942,15 +3781,15 @@ fn recover_view_listener_handler(
                         let destination_depth = context_depth.saturating_add(context_hop);
                         match program.context_scope_at_depth(destination_depth) {
                             Some(scope) if scope.is_component => {
-                                component_contexts.insert(binding_key(&binding.id));
+                                component_contexts.insert(alias_binding);
                             }
                             Some(scope) if !scope.local_properties.is_empty() => {
                                 local_context_bindings
-                                    .insert(binding_key(&binding.id), scope.local_properties);
+                                    .insert(alias_binding, scope.local_properties);
                             }
                             Some(_) => {}
                             None => {
-                                component_contexts.insert(binding_key(&binding.id));
+                                component_contexts.insert(alias_binding);
                             }
                         }
                         runtime_calls += 1;
@@ -3136,6 +3975,7 @@ fn recover_view_listener_handler(
         runtime_calls,
         artifact_references,
         let_alias_hints,
+        listener_method: None,
     }))
 }
 
@@ -4278,19 +5118,28 @@ fn apply_create_instruction(
             };
             let expression = match recover_view_listener_handler(
                 handler.as_ref(),
+                &event,
                 tree,
                 ancestor_references,
                 program,
                 environment,
             ) {
                 Ok(Some(recovered)) => {
-                    program.stats.runtime_calls_observed += recovered.runtime_calls;
-                    program.stats.rendered_instruction_calls += recovered.runtime_calls;
-                    program
-                        .artifact_references
-                        .extend(recovered.artifact_references);
-                    program.let_alias_hints.extend(recovered.let_alias_hints);
-                    recovered.source
+                    let RecoveredViewHandler {
+                        source,
+                        runtime_calls,
+                        artifact_references,
+                        let_alias_hints,
+                        listener_method,
+                    } = recovered;
+                    program.stats.runtime_calls_observed += runtime_calls;
+                    program.stats.rendered_instruction_calls += runtime_calls;
+                    program.artifact_references.extend(artifact_references);
+                    program.let_alias_hints.extend(let_alias_hints);
+                    if let Some(listener_method) = listener_method {
+                        program.listener_methods.push(listener_method);
+                    }
+                    source
                 }
                 Ok(None) => {
                     let Ok(expression) = handler_expression(
@@ -5736,6 +6585,7 @@ fn merge_template_program(parent: &mut TemplateProgram, child: TemplateProgram) 
         aggregate.1 += runtime_calls;
     }
     parent.artifact_references.extend(child.artifact_references);
+    parent.listener_methods.extend(child.listener_methods);
 }
 
 fn apply_conditional_instruction(

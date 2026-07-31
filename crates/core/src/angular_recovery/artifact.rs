@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, Class, ClassDecl, Decl, Expr, Ident, ImportSpecifier, Module, ModuleDecl,
-    ModuleItem, Pat, Stmt, VarDecl,
+    BindingIdent, Class, ClassDecl, Decl, Expr, FnDecl, Function, Ident, ImportSpecifier, Module,
+    ModuleDecl, ModuleItem, Pat, Stmt, VarDecl,
 };
 
 use super::syntax::{binding_key, BindingKey};
@@ -315,6 +315,19 @@ pub(super) fn expression_references(expression: &Expr) -> HashSet<BindingKey> {
             definite: false,
         }],
     }))));
+    item_references(&item)
+}
+
+pub(super) fn function_references(function: &Function) -> HashSet<BindingKey> {
+    let item = ModuleItem::Stmt(Stmt::Decl(Decl::Fn(FnDecl {
+        ident: Ident::new(
+            Atom::from("__wakaru_listener"),
+            DUMMY_SP,
+            SyntaxContext::empty(),
+        ),
+        declare: false,
+        function: Box::new(function.clone()),
+    })));
     item_references(&item)
 }
 

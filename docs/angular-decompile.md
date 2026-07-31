@@ -46,7 +46,8 @@ Initial recovery covers:
 - text interpolation;
 - property, attribute, class, and style bindings, including expression
   interpolation and compiler-hoisted pure object/array literals;
-- event listeners, including ordered effects in restored nested-view handlers;
+- event listeners, including ordered effects and bounded statement recovery in
+  restored nested-view handlers;
 - proven `[(property)]` pairs from `ɵɵtwoWayListener`,
   `ɵɵtwoWayBindingSet`, and `ɵɵtwoWayProperty`, including restored-view
   targets;
@@ -339,9 +340,24 @@ Closure scratch declarations such as
 `let t; (t = component.target()) == null ? void 0 : t.nativeElement` while
 leaving the original Ivy evidence unchanged. Loose `== null` forms inherit the
 standard `no_document_all` assumption documented in
-`docs/rewrite-assumptions.md`. Arbitrary multi-statement application logic and
-devirtualized helper calls are not flattened into template expressions; those
-handlers remain explicit partial regions.
+`docs/rewrite-assumptions.md`.
+
+When the remaining handler is not a valid Angular action expression, Wakaru
+can lower a bounded statement subset into a synthesized component method. The
+subset covers ordinary variable declarations, expression statements, nested
+blocks, `if` / `else`, and one final `ɵɵresetView` return. The template passes
+only the `$event`, local-reference, `@let`, and repeater values that the method
+actually reads; proven component contexts become `this`. SWC binding identity
+keeps same-spelling nested locals distinct. If Closure reuses an Ivy alias
+binding for an application value, direct-write evidence causes that alias to
+be materialized as a real method local instead of being substituted past the
+write.
+
+Loops, `switch`, `try`, early returns, runtime plumbing inside application
+branches, and other control flow outside that subset remain explicit partial
+regions. Ordinary devirtualized application helpers may remain Closure-named
+inside a synthesized method; recovery preserves their calls and artifact
+dependencies without claiming an erased authored name.
 
 ### Performance and profiling
 
@@ -590,9 +606,11 @@ multi-level `@let` / `@for` / `@if` listener with a local reference, structural
 i18n element markers, selected and default projection fallbacks, signal-backed
 two-way binding, and static/dynamic animation bindings plus a listener. The
 minimally rooted `ADVANCED` profile recovers corresponding Closure-renamed
-families without exporting their canonical helper names. Authored component
-field names erased by Closure remain erased, but their class/template uses stay
-consistent.
+families without exporting their canonical helper names. Its nested listener
+also contains Closure-inlined application locals and a reused view-alias
+binding, proving collision-safe synthesized method emission. Authored
+component field names erased by Closure remain erased, but their class/template
+uses stay consistent.
 
 A supplementary private production corpus is reported only in aggregate. The
 current pass emitted 691 of 700 component candidates: 81 complete, 610 partial,
@@ -608,8 +626,8 @@ defer correctness remains established by the generated fixtures rather than
 claimed from private data.
 
 A second, smaller four-script local production corpus now emits all 120
-component candidates: 68 complete, 52 partial, and none rejected. It renders
-7,897 of 7,992 observed runtime calls, with 61 unsupported and 35 malformed
+component candidates: 70 complete, 50 partial, and none rejected. It renders
+7,921 of 8,010 observed runtime calls, with 61 unsupported and 29 malformed
 calls reported, and all four module-oriented artifacts parse as TypeScript.
 The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
 with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are
@@ -618,13 +636,13 @@ newly reachable child views and corrected failed-view accounting changed what
 the analyzer observes.
 
 Remaining partial regions in that smaller corpus are concentrated in
-ICU/sub-template i18n and unresolved i18n targets, less common restored-listener
-statement and alias forms, projection selector/attribute metadata that cannot
-be tied to a declared slot, newer signal-form runtime hooks without an
-authored-template equivalent, and ordinary application declarations or calls.
-None of those operations is consumed based on a corpus-specific minified
-callee name. They remain typed diagnostics until a generic runtime contract
-and generated producer fixture justify recovery.
+ICU/sub-template i18n and unresolved i18n targets, restored-listener control
+flow outside the bounded statement subset, projection selector/attribute
+metadata that cannot be tied to a declared slot, and newer signal-form runtime
+hooks without an authored-template equivalent. None of those operations is
+consumed based on a corpus-specific minified callee name. They remain typed
+diagnostics until a generic runtime contract and generated producer fixture
+justify recovery.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
