@@ -6298,6 +6298,169 @@ fn reconstructs_selector_flags_and_rejects_incomplete_rows() {
 }
 
 #[test]
+fn recovers_class_and_style_map_bindings() {
+    let source = r#"
+        import {
+            ɵɵclassMap as classMap,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+            ɵɵstyleMap as styleMap,
+        } from "@angular/core";
+
+        class StylingMapComponent {
+            classes = "primary raised";
+            styles = "color: rebeccapurple";
+
+            static compiled = define({
+                type: StylingMapComponent,
+                selectors: [["styling-map"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        classMap(context.classes);
+                        styleMap(context.styles);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("styling map instructions should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[class]="classes""#));
+    assert!(component.source.contains(r#"[style]="styles""#));
+}
+
+#[test]
+fn infers_closure_renamed_class_map_with_unobserved_style_pair() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.element = function(index, name, attrs) {
+            createElement(index, name, attrs);
+            return runtime.element;
+        };
+        runtime.checkStylingMap = function(setKey, parse, value, isClass) {};
+        runtime.styleMap = function(value) {
+            runtime.checkStylingMap(
+                runtime.setStyle,
+                runtime.parseStyle,
+                value,
+                false
+            );
+        };
+        runtime.classMap = function(value) {
+            runtime.checkStylingMap(
+                runtime.setClass,
+                runtime.parseClass,
+                value,
+                true
+            );
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelement": runtime.element,
+        };
+
+        class RenamedStylingMapComponent {
+            classes = "primary raised";
+            styles = "color: rebeccapurple";
+
+            static compiled = runtime.component({
+                type: RenamedStylingMapComponent,
+                selectors: [["renamed-styling-map"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        runtime.classMap(context.classes);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed styling map family should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[class]="classes""#));
+}
+
+#[test]
+fn does_not_infer_a_styling_map_from_a_lone_boolean_wrapper() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.element = function(index, name, attrs) {
+            createElement(index, name, attrs);
+            return runtime.element;
+        };
+        runtime.lookalike = function(value) {
+            runtime.unknownHelper(
+                runtime.firstCallback,
+                runtime.secondCallback,
+                value,
+                true
+            );
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelement": runtime.element,
+        };
+
+        class LoneWrapperComponent {
+            value = "primary";
+
+            static compiled = runtime.component({
+                type: LoneWrapperComponent,
+                selectors: [["lone-wrapper"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        runtime.lookalike(context.value);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("lone wrapper fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(!component.source.contains(r#"[class]="value""#));
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction));
+}
+
+#[test]
 fn infers_container_i18n_and_binding_families_from_renamed_runtime_shapes() {
     let source = r#"
         runtime.component = function(definition) {

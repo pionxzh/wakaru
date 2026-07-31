@@ -44,8 +44,9 @@ Initial recovery covers:
 - element, text, `<ng-container>`, and static-attribute creation instructions,
   including HTML, SVG, and MathML namespace transitions;
 - text interpolation;
-- property, attribute, class, and style bindings, including expression
-  interpolation and compiler-hoisted pure object/array literals;
+- property, attribute, class, and style bindings, including whole-class/style
+  maps, expression interpolation, and compiler-hoisted pure object/array
+  literals;
 - event listeners, including ordered effects and bounded statement recovery in
   restored nested-view handlers;
 - proven `[(property)]` pairs from `ɵɵtwoWayListener`,
@@ -307,6 +308,15 @@ member. A surviving HTML helper or Closure-inlined `state.namespace = null`
 assignment is consumed only against that exact target. Namespace operations do
 not produce standalone template syntax; their effect is represented by the
 recovered `<svg>`, `<math>`, and following HTML elements.
+
+Closure-renamed whole-class and whole-style map helpers are inferred as a
+family. Both must be unique one-argument wrappers around the same internal
+styling-map helper, forward their value into the same argument position, and
+carry opposite class/style discriminator values. A role is consumed only when
+that wrapper is also observed as a one-argument update-phase effect; the
+opposite family member may be unobserved in templates but must still exist as
+structural evidence. Recovered calls render as `[class]="..."` and
+`[style]="..."`.
 
 Expression interpolation roles are paired with the already-proven text
 interpolation family and their exact parameter-forwarding behavior. Closure-
@@ -583,9 +593,10 @@ The minimally rooted `ADVANCED` profile proves interpolation, chained
 embedded-template, conditional, property, optimized repeater, defer, and idle
 trigger role inference from runtime behavior. It also proves parent-context
 traversal, the paired restore/reset view-state helpers, selector matrices,
-attribute/class/style bindings, `<ng-container>`, bounded i18n, pure literal
-bindings, `@let`, and HTML/SVG/MathML namespace transitions without retaining
-their public role names. One generated conditional component exercises
+attribute/class/style property and whole-map bindings, `<ng-container>`,
+bounded i18n, pure literal bindings, `@let`, and HTML/SVG/MathML namespace
+transitions without retaining their public role names. One generated
+conditional component exercises
 Closure's inlined current-view capture, a restored listener, and a nested
 property binding as a complete artifact. A separate generated component
 recovers a complete deferred primary/placeholder pair, and the structural
@@ -626,8 +637,8 @@ defer correctness remains established by the generated fixtures rather than
 claimed from private data.
 
 A second, smaller four-script local production corpus now emits all 120
-component candidates: 70 complete, 50 partial, and none rejected. It renders
-7,921 of 8,010 observed runtime calls, with 61 unsupported and 29 malformed
+component candidates: 75 complete, 45 partial, and none rejected. It renders
+7,935 of 8,012 observed runtime calls, with 49 unsupported and 29 malformed
 calls reported, and all four module-oriented artifacts parse as TypeScript.
 The pre-hardening baseline emitted 117 of 120 candidates, only 17 complete,
 with 1,038 unsupported and 223 malformed calls. Runtime-call denominators are

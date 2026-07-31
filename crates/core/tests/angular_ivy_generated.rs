@@ -166,6 +166,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         "ɵɵanimateEnterListener",
         "ɵɵanimateLeave",
         "ɵɵanimateLeaveListener",
+        "ɵɵclassMap",
         "ɵɵclassProp",
         "ɵɵtext",
         "ɵɵtextInterpolate",
@@ -195,6 +196,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         "ɵɵresetView",
         "ɵɵrestoreView",
         "ɵɵstoreLet",
+        "ɵɵstyleMap",
         "ɵɵstyleProp",
         "ɵɵtwoWayBindingSet",
         "ɵɵtwoWayListener",
@@ -332,7 +334,13 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
         .contains("[style.width.px]=\"width\""));
     assert!(by_selector["structural-binding-card"]
         .source
+        .contains("[style]=\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
         .contains("[class.active]=\"active\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("[class]=\""));
     assert!(by_selector["structural-binding-card"]
         .source
         .contains("[attr.aria-label]=\"label\""));
