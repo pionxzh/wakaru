@@ -456,6 +456,7 @@ impl StructuralRoleEvidence {
             &by_identity,
         ));
         inferred.extend(infer_namespace_family(&function_index, &by_identity));
+        inferred.extend(infer_aria_property_family(&function_index, &by_identity));
         inferred.extend(infer_styling_map_family(
             &self.functions,
             &function_index,
@@ -4205,6 +4206,73 @@ fn is_advance_shape(
                     .first()
                     .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
         })
+}
+
+fn infer_aria_property_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations_by_identity: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut attribute_write_targets = HashSet::new();
+    for (identity, observations) in observations_by_identity {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        if !is_attribute_shape(definition, observations) {
+            continue;
+        }
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        for call in direct_calls(definition) {
+            if forwards_parameter_dependencies_in_order(&call, &parameters[..2]) {
+                attribute_write_targets.insert(call.callee);
+            }
+        }
+    }
+    if attribute_write_targets.is_empty() {
+        return Vec::new();
+    }
+
+    observations_by_identity
+        .iter()
+        .filter_map(|(identity, observations)| {
+            let definition = function_index.unique(identity)?;
+            let parameters = plain_parameter_bindings(definition)?;
+            if parameters.len() != 2
+                || !returns_identity(definition, &definition.identity)
+                || !observations.iter().all(|observation| {
+                    matches!(
+                        observation.usage,
+                        TemplateCallUsage::Effect | TemplateCallUsage::Initializer
+                    ) && observation.phase == 2
+                        && observation.arguments.len() == 2
+                        && observation
+                            .arguments
+                            .first()
+                            .and_then(|argument| string_literal_value(argument.as_ref()))
+                            .is_some_and(|name| name.starts_with("aria-"))
+                })
+            {
+                return None;
+            }
+
+            let forwarded_targets = direct_calls(definition)
+                .into_iter()
+                .filter(|call| {
+                    forwards_parameter_dependencies_in_order(call, parameters.as_slice())
+                })
+                .map(|call| call.callee)
+                .collect::<HashSet<_>>();
+            let has_attribute_fallback = forwarded_targets
+                .iter()
+                .any(|target| attribute_write_targets.contains(target));
+            let has_distinct_input_path = forwarded_targets
+                .iter()
+                .any(|target| !attribute_write_targets.contains(target));
+            (has_attribute_fallback && has_distinct_input_path)
+                .then(|| (identity.clone(), "ɵɵariaProperty"))
+        })
+        .collect()
 }
 
 fn is_property_shape(
