@@ -419,15 +419,27 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-complex-listener"]
         .source
         .contains("@for (item of items; track item.id) {"));
-    assert!(by_selector["structural-complex-listener"]
-        .source
-        .contains("(click)=\"console.log(button, item, value); active = !1\""));
-    assert!(by_selector["structural-complex-listener"]
-        .source
-        .contains("{{ item.label }}"));
-    assert!(!by_selector["structural-complex-listener"]
-        .source
-        .contains("$implicit"));
+    let complex_listener = &by_selector["structural-complex-listener"].source;
+    assert!(
+        complex_listener.contains("(click)=\"recoveredClick(button, item, value)\""),
+        "{complex_listener}"
+    );
+    for expected in [
+        "recoveredClick(button, item, value) {",
+        "var c = button;",
+        "button: c",
+        "item: item",
+        "label: value",
+        "c.label = item.label",
+        "return this.active = !1;",
+        "{{ item.label }}",
+    ] {
+        assert!(
+            complex_listener.contains(expected),
+            "missing {expected:?}:\n{complex_listener}"
+        );
+    }
+    assert!(!complex_listener.contains("$implicit"));
     assert_eq!(
         by_selector["structural-i18n-region"].completeness,
         AngularRecoveryCompleteness::Complete,

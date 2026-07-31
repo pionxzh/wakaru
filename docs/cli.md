@@ -247,6 +247,9 @@ filenames. Closure loader dependencies are not treated as ESM evidence.
 
 Complete artifacts contain only supported template regions. Partial artifacts
 preserve unsupported Ivy instructions explicitly instead of guessing.
+Restored listeners that contain bounded declarations or `if` / `else`
+application logic may be represented as collision-safe synthesized component
+methods, with the template passing `$event` and proven view locals explicitly.
 With `--diagnostics`, Wakaru also reports component-candidate accounting and
 rendered, unsupported, and malformed Ivy runtime-call totals. The most frequent
 unknown calls are summarized by render phase and invocation arity. This makes
