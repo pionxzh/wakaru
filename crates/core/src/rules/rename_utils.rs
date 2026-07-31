@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
@@ -82,8 +84,26 @@ pub struct RenameShadowIndex {
     forbidden_names_by_binding: HashMap<BindingId, HashSet<Atom>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static RENAME_SHADOW_INDEX_BUILDS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_rename_shadow_index_build_count() {
+    RENAME_SHADOW_INDEX_BUILDS.with(|builds| builds.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn rename_shadow_index_build_count() -> usize {
+    RENAME_SHADOW_INDEX_BUILDS.with(Cell::get)
+}
+
 impl RenameShadowIndex {
     pub fn for_bindings(module: &Module, bindings: &HashSet<BindingId>) -> Self {
+        #[cfg(test)]
+        RENAME_SHADOW_INDEX_BUILDS.with(|builds| builds.set(builds.get() + 1));
+
         struct ScopeFrame {
             declared_names: HashSet<Atom>,
             referenced_bindings: HashSet<BindingId>,
@@ -298,12 +318,6 @@ pub fn collect_top_level_binding_infos(module: &Module) -> HashMap<Atom, TopLeve
     }
 
     infos
-}
-
-pub fn rename_causes_shadowing(module: &Module, old: &BindingId, new_name: &Atom) -> bool {
-    let mut bindings = HashSet::new();
-    bindings.insert(old.clone());
-    RenameShadowIndex::for_bindings(module, &bindings).rename_causes_shadowing(old, new_name)
 }
 
 /// Returns true when replacing references to `old` with an identifier named
