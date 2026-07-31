@@ -9,8 +9,8 @@ use swc_core::ecma::ast::{
     JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
     JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, Number,
-    ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str, TaggedTpl,
-    VarDecl, VarDeclKind, VarDeclarator,
+    ObjectLit, OptCall, Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str,
+    TaggedTpl, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -640,6 +640,16 @@ impl VisitMut for UnJsx {
             Callee::Expr(expr) => self.visit_keeping_root_call(expr),
             _ => callee.visit_mut_children_with(self),
         }
+    }
+
+    fn visit_mut_opt_call(&mut self, call: &mut OptCall) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        // Optional calls carry their callee directly, not through `Callee`:
+        // JSX cannot be optionally called either (`<X/>?.()`).
+        self.visit_keeping_root_call(&mut call.callee);
+        call.args.visit_mut_with(self);
     }
 
     fn visit_mut_tagged_tpl(&mut self, tagged: &mut TaggedTpl) {

@@ -72,6 +72,21 @@ const type = React.createElement(Outer, null, React.createElement(Inner, null)).
 }
 
 #[test]
+fn keeps_create_element_in_optional_call_position() {
+    // `value?.()` is an OptCall, not a CallExpr callee, so it needs its own
+    // guard: `<X/>?.()` is invalid.
+    let input = r#"
+const a = React.createElement(Component, null)?.();
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert!(
+        !output.contains('<'),
+        "optional-call position must not become JSX: {output}"
+    );
+}
+
+#[test]
 fn keeps_create_element_in_callee_new_and_tag_positions() {
     // A JSX element cannot stand as a callee, `new` callee, or template tag.
     let input = r#"
