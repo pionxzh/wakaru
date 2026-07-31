@@ -322,6 +322,8 @@ for (const excludedRole of [
   'ɵɵelementStart',
   'ɵɵtext',
   'ɵɵproperty',
+  'ɵɵclassMap',
+  'ɵɵstyleMap',
   'ɵɵconditional',
   'ɵɵdeclareLet',
   'ɵɵdefer',

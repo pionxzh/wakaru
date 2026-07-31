@@ -1138,7 +1138,9 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::TextInterpolate8
                     | IvyInstruction::Property
                     | IvyInstruction::Attribute
+                    | IvyInstruction::ClassMap
                     | IvyInstruction::ClassProp
+                    | IvyInstruction::StyleMap
                     | IvyInstruction::StyleProp => 1,
                     IvyInstruction::DefineComponent
                     | IvyInstruction::ViewQuerySignal
@@ -2645,7 +2647,9 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::TextInterpolate8
                 | IvyInstruction::Property
                 | IvyInstruction::Attribute
+                | IvyInstruction::ClassMap
                 | IvyInstruction::ClassProp
+                | IvyInstruction::StyleMap
                 | IvyInstruction::StyleProp
                 | IvyInstruction::TwoWayProperty
                 | IvyInstruction::Conditional
@@ -6306,6 +6310,59 @@ fn apply_update_instruction(
                 return Ok(());
             }
         }
+        IvyInstruction::ClassMap | IvyInstruction::StyleMap => {
+            let Some(&node) = tree.index_to_node.get(&tree.cursor) else {
+                record_missing_target(
+                    call,
+                    &format!("no element at cursor {}", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            if !matches!(
+                tree.nodes[node].kind,
+                TemplateNodeKind::Element { .. } | TemplateNodeKind::EmbeddedView { .. }
+            ) {
+                record_missing_target(
+                    call,
+                    &format!("cursor {} does not reference an element", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            let [value] = call.args.as_slice() else {
+                record_malformed_instruction(
+                    call,
+                    "expected one styling map value",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            let Ok(expression) = recover_template_expression(value.as_ref(), program, environment)
+            else {
+                record_malformed_instruction(
+                    call,
+                    "styling map expression could not be printed",
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            };
+            tree.add_attribute(
+                node,
+                TemplateAttribute {
+                    name: match call.instruction {
+                        IvyInstruction::ClassMap => "[class]".to_string(),
+                        IvyInstruction::StyleMap => "[style]".to_string(),
+                        _ => unreachable!(),
+                    },
+                    value: Some(expression),
+                },
+            );
+        }
         IvyInstruction::Property
         | IvyInstruction::Attribute
         | IvyInstruction::ClassProp
@@ -8201,7 +8258,9 @@ impl TemplateTree {
                 | IvyInstruction::TextInterpolate8
                 | IvyInstruction::Property
                 | IvyInstruction::Attribute
+                | IvyInstruction::ClassMap
                 | IvyInstruction::ClassProp
+                | IvyInstruction::StyleMap
                 | IvyInstruction::StyleProp
                 | IvyInstruction::TwoWayProperty
                 | IvyInstruction::Repeater
