@@ -2534,6 +2534,76 @@ function myFunc() {
 }
 
 #[test]
+fn bail_on_async_to_gen_when_regenerator_decode_rolls_back() {
+    // Real Babel output can pass the shallow wrap-shape precheck while the
+    // state-machine decoder correctly rolls back after an unsupported jump
+    // remains. The async wrapper must remain intact instead of panicking.
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function init() {
+  return _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
+    return regeneratorRuntime.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            if (supports()) {
+              _context.next = 2;
+              break;
+            }
+            return _context.abrupt("return", Promise.resolve(true));
+          case 2:
+            if (!loading) {
+              _context.next = 4;
+              break;
+            }
+            return _context.abrupt("return", pending);
+          case 4:
+            if (existing) {
+              _context.next = 12;
+              break;
+            }
+            _context.next = 9;
+            return create();
+          case 9:
+            existing = _context.sent;
+            pending = null;
+            loading = false;
+          case 12:
+            return _context.abrupt("return", existing);
+          case 13:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }))();
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("regeneratorRuntime.wrap"),
+        "unsupported state machine should be preserved, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function init"),
+        "unsupported state machine must not be partially recovered, got:\n{output}"
+    );
+}
+
+#[test]
 fn no_remove_unrelated_mark_calls() {
     // var marker = tracker.mark(doSideEffect()) should NOT be removed
     let input = r#"

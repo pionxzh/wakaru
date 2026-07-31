@@ -3839,19 +3839,16 @@ fn try_transform_async_to_generator(
         None => return false,
     };
 
-    // Pre-check: validate the pattern is extractable before removing the stmt.
-    if !can_extract_async_to_gen(&body.stmts[return_idx], generator_helpers) {
+    // Extract from a clone so a decoder rollback leaves the original return
+    // statement intact.
+    let Some(mut inner_stmts) = extract_async_to_gen_body(
+        body.stmts[return_idx].clone(),
+        async_to_gen_callees,
+        generator_helpers,
+    ) else {
         return false;
-    }
-
-    let ret_stmt = body.stmts.remove(return_idx);
-    let inner_stmts =
-        match extract_async_to_gen_body(ret_stmt, async_to_gen_callees, generator_helpers) {
-            Some(s) => s,
-            None => unreachable!("can_extract_async_to_gen passed but extract failed"),
-        };
-
-    let mut inner_stmts = inner_stmts;
+    };
+    body.stmts.remove(return_idx);
     replace_yield_with_await(&mut inner_stmts);
 
     body.stmts.splice(return_idx..return_idx, inner_stmts);
@@ -3864,82 +3861,6 @@ fn is_async_to_gen_return(stmt: &Stmt, async_to_gen_callees: &AsyncToGenCallees)
     };
     let Some(arg) = &ret.arg else { return false };
     is_async_to_gen_call(arg, async_to_gen_callees)
-}
-
-/// Non-destructive check: can we extract the async body from this statement?
-/// Validates the same conditions as extract_async_to_gen_body without consuming the AST.
-fn can_extract_async_to_gen(stmt: &Stmt, generator_helpers: &[BindingKey]) -> bool {
-    let Stmt::Return(ret) = stmt else {
-        return false;
-    };
-    let Some(arg) = &ret.arg else { return false };
-    let Expr::Call(outer_call) = arg.as_ref() else {
-        return false;
-    };
-    // Outer IIFE must have no arguments
-    if !outer_call.args.is_empty() {
-        return false;
-    }
-    let Some(outer_callee) = outer_call.callee.as_expr() else {
-        return false;
-    };
-    let Expr::Call(inner_call) = outer_callee.as_ref() else {
-        return false;
-    };
-    if inner_call.args.len() != 1 {
-        return false;
-    }
-    let gen_fn = &inner_call.args[0].expr;
-    match gen_fn.as_ref() {
-        Expr::Fn(fn_expr) => {
-            // Inner generator must have no params
-            if !fn_expr.function.params.is_empty() {
-                return false;
-            }
-            if fn_expr.function.is_generator {
-                return true;
-            }
-            // Non-generator: must contain either regenerator.wrap or SWC's
-            // _ts_generator state machine.
-            fn_expr.function.body.as_ref().is_some_and(|body| {
-                body.stmts
-                    .iter()
-                    .any(|s| is_regenerator_wrap_return(s) && !has_nested_control_flow_in_stmt(s))
-                    || {
-                        let mut body = body.clone();
-                        try_transform_ts_generator_body(&mut body, generator_helpers)
-                    }
-            })
-        }
-        Expr::Call(mark_call) => {
-            // regeneratorRuntime.mark(function _callee() { ... })
-            let Some(callee) = mark_call.callee.as_expr() else {
-                return false;
-            };
-            let Expr::Member(member) = callee.as_ref() else {
-                return false;
-            };
-            if !is_mark_prop(&member.prop) || mark_call.args.len() != 1 {
-                return false;
-            }
-            let Expr::Fn(fn_expr) = mark_call.args[0].expr.as_ref() else {
-                return false;
-            };
-            if !fn_expr.function.params.is_empty() {
-                return false;
-            }
-            fn_expr.function.body.as_ref().is_some_and(|body| {
-                body.stmts
-                    .iter()
-                    .any(|s| is_regenerator_wrap_return(s) && !has_nested_control_flow_in_stmt(s))
-                    || {
-                        let mut body = body.clone();
-                        try_transform_ts_generator_body(&mut body, generator_helpers)
-                    }
-            })
-        }
-        _ => false,
-    }
 }
 
 /// Check for `_asyncToGenerator(fn)()` — IIFE pattern with scope-aware matching
