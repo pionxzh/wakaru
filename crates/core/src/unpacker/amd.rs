@@ -334,17 +334,24 @@ fn module_from_factory_parts(
 }
 
 fn rewrite_terminal_return(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
-    let Some(last) = stmts.last_mut() else {
+    let Some(return_index) = stmts.iter().rposition(|stmt| !is_hoist_only_var(stmt)) else {
         return stmts;
     };
-    let Stmt::Return(return_stmt) = last else {
+    let Stmt::Return(return_stmt) = &mut stmts[return_index] else {
         return stmts;
     };
     let Some(arg) = return_stmt.arg.take() else {
         return stmts;
     };
-    *last = module_exports_stmt(arg);
+    stmts[return_index] = module_exports_stmt(arg);
     stmts
+}
+
+fn is_hoist_only_var(stmt: &Stmt) -> bool {
+    let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+        return false;
+    };
+    var_decl.kind == VarDeclKind::Var && var_decl.decls.iter().all(|decl| decl.init.is_none())
 }
 
 fn dependency_stmts(

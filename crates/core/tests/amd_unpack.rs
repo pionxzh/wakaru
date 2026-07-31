@@ -105,6 +105,44 @@ define(["./dep"], function(dep) {
 }
 
 #[test]
+fn terminal_return_before_hoist_only_vars_becomes_module_export() {
+    let source = r#"
+define([], function() {
+  return buildLibrary();
+  var internalState, cachedValue;
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert_eq!(raw.len(), 1);
+    assert!(
+        raw[0].1.contains("module.exports = buildLibrary();")
+            && raw[0].1.contains("var internalState, cachedValue;")
+            && !raw[0].1.contains("return buildLibrary();"),
+        "a return followed only by hoist-only vars is still terminal:\n{}",
+        raw[0].1
+    );
+}
+
+#[test]
+fn return_before_initialized_var_is_not_treated_as_terminal() {
+    let source = r#"
+define([], function() {
+  return buildLibrary();
+  var unexpectedEffect = initialize();
+});
+"#;
+
+    let raw = raw_pairs(source);
+    assert!(
+        raw[0].1.contains("return buildLibrary();")
+            && raw[0].1.contains("unexpectedEffect = initialize()"),
+        "rewriting must not make an unreachable initializer execute:\n{}",
+        raw[0].1
+    );
+}
+
+#[test]
 fn empty_amd_define_is_not_unpacked() {
     let source = "define();";
     let raw = raw_pairs(source);
