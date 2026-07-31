@@ -264,7 +264,16 @@ class StructuralComplexListenerComponent {
     _item: { id: number; label: string },
     _displayLabel: string,
   ): void {
-    console.log(_button, _item, _displayLabel);
+    const payload = {
+      button: _button,
+      item: _item,
+      label: _displayLabel,
+    };
+    console.log(payload);
+    if (_item.label) {
+      payload.label = _item.label;
+    }
+    console.log(payload);
   }
 }
 
