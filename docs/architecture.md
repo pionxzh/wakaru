@@ -177,7 +177,12 @@ bundle format. Synthetic clusters that form an import cycle are merged before
 normal emission so the recovered ESM graph preserves the original single-file
 initialization order. Internally, the splitter first builds a scope-hoist plan
 containing the finest useful clusters and their reference graph, then selects
-an emission policy. `--unpack=inspect` renders that plan recursively without
+an emission policy. When one synthetic entry would otherwise turn a substantial
+part of a large plan into a single cyclic component, executable rendering first
+merges the underlying root SCCs and assigns singleton roots to contiguous
+regions of a stable topological order; the final SCC merge still protects
+initialization order. Small plans retain the established clustering behavior.
+`--unpack=inspect` renders the original fine-grained plan recursively without
 merging cyclic components; its finer module graph is for static inspection and
 may not execute.
 

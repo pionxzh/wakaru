@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Spanned, GLOBALS};
@@ -14,6 +15,8 @@ use super::{
 };
 
 const MIN_DECLARATIONS: usize = 10;
+const PATHOLOGICAL_ENTRY_SCC_MIN_CLUSTERS: usize = 64;
+const PATHOLOGICAL_ENTRY_SCC_MIN_FRACTION_DENOMINATOR: usize = 4;
 
 /// Selects how a completed scope-hoist plan is rendered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,6 +67,7 @@ fn split_from_module(
 struct ScopeHoistPlan {
     items: Vec<TopLevelItem>,
     graph: ReferenceGraph,
+    roots: Vec<Cluster>,
     clusters: Vec<Cluster>,
 }
 
@@ -87,10 +91,12 @@ fn analyze_scope_hoist(body: &[ModuleItem]) -> Option<ScopeHoistPlan> {
     merge_cross_item_writes(&graph, &mut uf);
 
     // Phase 4: extract the finest useful clusters and identify the entry.
-    let clusters = extract_clusters(&items, &mut uf);
+    let roots = extract_root_clusters(&items, &mut uf);
+    let clusters = extract_inspection_clusters(&items, &roots);
     (clusters.len() >= 2).then_some(ScopeHoistPlan {
         items,
         graph,
+        roots,
         clusters,
     })
 }
@@ -101,16 +107,29 @@ fn render_scope_hoist_plan(
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
 ) -> Option<UnpackResult> {
+    let ScopeHoistPlan {
+        items,
+        graph,
+        roots,
+        clusters,
+    } = plan;
     let clusters = match render_mode {
-        ScopeHoistRenderMode::Executable => merge_cyclic_clusters(plan.clusters, &plan.graph),
-        ScopeHoistRenderMode::Inspect => plan.clusters,
+        ScopeHoistRenderMode::Executable => {
+            let clusters = if has_pathological_entry_scc(&clusters, &graph) {
+                extract_executable_clusters(&items, &graph, roots)
+            } else {
+                clusters
+            };
+            merge_cyclic_clusters(clusters, &graph)
+        }
+        ScopeHoistRenderMode::Inspect => clusters,
     };
     if clusters.len() < 2 {
         return None;
     }
 
     // Phase 5: emit modules.
-    let modules = emit_clusters(body, &plan.items, clusters, cm);
+    let modules = emit_clusters(body, &items, clusters, cm);
     Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::ScopeHoisted,
@@ -171,7 +190,14 @@ fn debug_clusters(source: &str) -> Vec<(Vec<String>, bool)> {
         let graph = build_reference_graph(&items);
         let mut uf = UnionFind::new(items.len());
         apply_merge_signals(&items, &graph, &mut uf);
-        let clusters = merge_cyclic_clusters(extract_clusters(&items, &mut uf), &graph);
+        let roots = extract_root_clusters(&items, &mut uf);
+        let inspection_clusters = extract_inspection_clusters(&items, &roots);
+        let clusters = if has_pathological_entry_scc(&inspection_clusters, &graph) {
+            extract_executable_clusters(&items, &graph, roots)
+        } else {
+            inspection_clusters
+        };
+        let clusters = merge_cyclic_clusters(clusters, &graph);
         clusters
             .iter()
             .map(|c| {
@@ -1161,26 +1187,42 @@ struct Cluster {
     is_entry: bool,
 }
 
-fn extract_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> {
-    let min_cluster_decls = 2;
-
-    // Group items by cluster root.
+fn extract_root_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> {
     let mut root_to_indices: HashMap<usize, Vec<usize>> = HashMap::new();
     for i in 0..items.len() {
         root_to_indices.entry(uf.find(i)).or_default().push(i);
     }
 
-    let mut clusters: Vec<Cluster> = root_to_indices
+    let mut roots: Vec<Cluster> = root_to_indices
         .into_values()
-        .map(|mut indices| {
-            indices.sort();
+        .map(|mut item_indices| {
+            item_indices.sort_unstable();
+            let decl_count = item_indices
+                .iter()
+                .filter(|&&item_index| !items[item_index].declared_names.is_empty())
+                .count();
+            let has_module_decl = item_indices
+                .iter()
+                .any(|&item_index| items[item_index].is_module_decl);
+            let has_declarationless_item = item_indices
+                .iter()
+                .any(|&item_index| items[item_index].declared_names.is_empty());
             Cluster {
-                item_indices: indices,
-                is_entry: false,
+                item_indices,
+                // Declarationless effects and native module declarations must
+                // remain reachable through the executable entry. Singleton
+                // declarations are optional entry material and are repartitioned
+                // below instead of being marked here.
+                is_entry: has_module_decl || (decl_count < 2 && has_declarationless_item),
             }
         })
         .collect();
-    clusters.sort_by_key(|c| c.item_indices[0]);
+    roots.sort_by_key(|cluster| cluster.item_indices[0]);
+    roots
+}
+
+fn extract_inspection_clusters(items: &[TopLevelItem], roots: &[Cluster]) -> Vec<Cluster> {
+    let min_cluster_decls = 2;
 
     // Classify: clusters with enough declarations are "module clusters".
     // Small clusters (< min_cluster_decls declarations) and clusters with
@@ -1188,7 +1230,7 @@ fn extract_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> 
     let mut entry_indices: Vec<usize> = Vec::new();
     let mut module_clusters: Vec<Cluster> = Vec::new();
 
-    for cluster in clusters {
+    for cluster in roots {
         let decl_count = cluster
             .item_indices
             .iter()
@@ -1200,9 +1242,12 @@ fn extract_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> 
             .any(|&i| items[i].is_module_decl);
 
         if has_module_decl || decl_count < min_cluster_decls {
-            entry_indices.extend(cluster.item_indices);
+            entry_indices.extend(cluster.item_indices.iter().copied());
         } else {
-            module_clusters.push(cluster);
+            module_clusters.push(Cluster {
+                item_indices: cluster.item_indices.clone(),
+                is_entry: false,
+            });
         }
     }
 
@@ -1224,6 +1269,189 @@ fn extract_clusters(items: &[TopLevelItem], uf: &mut UnionFind) -> Vec<Cluster> 
     module_clusters
 }
 
+/// Build executable clusters without contracting every singleton declaration
+/// into one global entry.
+///
+/// Root SCCs are merged first. The resulting condensation graph is a DAG, so
+/// assigning singleton SCCs to the nearest established module in one stable
+/// topological order creates contiguous DAG regions and cannot introduce a
+/// cycle between those module regions. Module declarations and declarationless
+/// effects remain in the entry; the normal SCC merge below still handles any
+/// cycle involving that mandatory entry material.
+fn extract_executable_clusters(
+    items: &[TopLevelItem],
+    graph: &ReferenceGraph,
+    roots: Vec<Cluster>,
+) -> Vec<Cluster> {
+    let root_graph = build_cluster_graph(&roots, graph);
+    let mut atoms: Vec<Cluster> = strongly_connected_components(&root_graph)
+        .into_iter()
+        .map(|component| {
+            let mut item_indices = Vec::new();
+            let mut is_entry = false;
+            for root_index in component {
+                item_indices.extend(roots[root_index].item_indices.iter().copied());
+                is_entry |= roots[root_index].is_entry;
+            }
+            item_indices.sort_unstable();
+            Cluster {
+                item_indices,
+                is_entry,
+            }
+        })
+        .collect();
+    atoms.sort_by_key(|atom| atom.item_indices[0]);
+
+    let atom_graph = build_cluster_graph(&atoms, graph);
+    let Some(topo_order) = stable_topological_order(&atoms, &atom_graph) else {
+        // SCC contraction should always produce a DAG. Preserve correctness if
+        // that invariant is ever violated by falling back to one source-ordered
+        // executable component.
+        let mut item_indices = (0..items.len()).collect::<Vec<_>>();
+        item_indices.sort_unstable();
+        return vec![Cluster {
+            item_indices,
+            is_entry: true,
+        }];
+    };
+
+    let mut anchors: Vec<(usize, Cluster)> = Vec::new();
+    let mut singleton_atoms: Vec<(usize, Vec<usize>)> = Vec::new();
+    let mut entry_indices = Vec::new();
+    for (topo_position, atom_index) in topo_order.into_iter().enumerate() {
+        let atom = &atoms[atom_index];
+        let decl_count = atom
+            .item_indices
+            .iter()
+            .filter(|&&item_index| !items[item_index].declared_names.is_empty())
+            .count();
+        if atom.is_entry {
+            entry_indices.extend(atom.item_indices.iter().copied());
+        } else if decl_count == 1 {
+            singleton_atoms.push((topo_position, atom.item_indices.clone()));
+        } else {
+            anchors.push((
+                topo_position,
+                Cluster {
+                    item_indices: atom.item_indices.clone(),
+                    is_entry: false,
+                },
+            ));
+        }
+    }
+
+    if anchors.is_empty() {
+        entry_indices.extend(
+            singleton_atoms
+                .into_iter()
+                .flat_map(|(_, item_indices)| item_indices),
+        );
+        entry_indices.sort_unstable();
+        return vec![Cluster {
+            item_indices: entry_indices,
+            is_entry: true,
+        }];
+    }
+
+    // Preserve an executable entry when the old small-root policy would have
+    // supplied one but the source has no declarationless or module-declaration
+    // root. The latest singleton is the closest available approximation of
+    // trailing startup/export state in a flat scope-hoisted file.
+    if entry_indices.is_empty() && !singleton_atoms.is_empty() {
+        let entry_atom_index = singleton_atoms
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, (_, item_indices))| item_indices.last().copied().unwrap_or(0))
+            .map(|(index, _)| index)
+            .expect("non-empty singleton atoms checked above");
+        let (_, item_indices) = singleton_atoms.swap_remove(entry_atom_index);
+        entry_indices.extend(item_indices);
+    }
+
+    for (topo_position, item_indices) in singleton_atoms {
+        let anchor_index = (0..anchors.len())
+            .min_by_key(|&anchor_index| {
+                (
+                    topo_position.abs_diff(anchors[anchor_index].0),
+                    anchor_index,
+                )
+            })
+            .expect("non-empty anchors checked above");
+        anchors[anchor_index].1.item_indices.extend(item_indices);
+    }
+
+    let mut clusters = anchors
+        .into_iter()
+        .map(|(_, mut cluster)| {
+            cluster.item_indices.sort_unstable();
+            cluster
+        })
+        .collect::<Vec<_>>();
+    if !entry_indices.is_empty() {
+        entry_indices.sort_unstable();
+        clusters.push(Cluster {
+            item_indices: entry_indices,
+            is_entry: true,
+        });
+    }
+    clusters.sort_by_key(|cluster| cluster.item_indices[0]);
+    clusters
+}
+
+fn stable_topological_order(clusters: &[Cluster], graph: &[HashSet<usize>]) -> Option<Vec<usize>> {
+    let mut indegree = vec![0usize; graph.len()];
+    for targets in graph {
+        for &target in targets {
+            indegree[target] += 1;
+        }
+    }
+
+    let mut ready = BinaryHeap::new();
+    for (cluster_index, &degree) in indegree.iter().enumerate() {
+        if degree == 0 {
+            ready.push(Reverse((
+                clusters[cluster_index].item_indices[0],
+                cluster_index,
+            )));
+        }
+    }
+
+    let mut order = Vec::with_capacity(graph.len());
+    while let Some(Reverse((_, cluster_index))) = ready.pop() {
+        order.push(cluster_index);
+        for &target in &graph[cluster_index] {
+            indegree[target] -= 1;
+            if indegree[target] == 0 {
+                ready.push(Reverse((clusters[target].item_indices[0], target)));
+            }
+        }
+    }
+
+    (order.len() == graph.len()).then_some(order)
+}
+
+/// Detect when the synthetic entry turns a substantial part of a large plan into
+/// one component. Small SCCs keep the established clustering behavior.
+fn has_pathological_entry_scc(clusters: &[Cluster], graph: &ReferenceGraph) -> bool {
+    if clusters.len() < PATHOLOGICAL_ENTRY_SCC_MIN_CLUSTERS {
+        return false;
+    }
+
+    let cluster_graph = build_cluster_graph(clusters, graph);
+    strongly_connected_components(&cluster_graph)
+        .into_iter()
+        .any(|component| {
+            component.len() >= PATHOLOGICAL_ENTRY_SCC_MIN_CLUSTERS
+                && component
+                    .len()
+                    .saturating_mul(PATHOLOGICAL_ENTRY_SCC_MIN_FRACTION_DENOMINATOR)
+                    >= clusters.len()
+                && component
+                    .iter()
+                    .any(|&cluster_index| clusters[cluster_index].is_entry)
+        })
+}
+
 /// Merge import cycles created by cluster extraction before imports are emitted.
 ///
 /// Small item clusters are folded into one synthetic entry. That contraction can
@@ -1235,25 +1463,7 @@ fn merge_cyclic_clusters(clusters: Vec<Cluster>, graph: &ReferenceGraph) -> Vec<
         return clusters;
     }
 
-    let mut item_to_cluster = vec![usize::MAX; graph.references.len()];
-    for (cluster_index, cluster) in clusters.iter().enumerate() {
-        for &item_index in &cluster.item_indices {
-            item_to_cluster[item_index] = cluster_index;
-        }
-    }
-
-    let mut cluster_graph = vec![HashSet::new(); clusters.len()];
-    for (cluster_index, cluster) in clusters.iter().enumerate() {
-        for &item_index in &cluster.item_indices {
-            for &target_item in &graph.references[item_index] {
-                let target_cluster = item_to_cluster[target_item];
-                if target_cluster != usize::MAX && target_cluster != cluster_index {
-                    cluster_graph[cluster_index].insert(target_cluster);
-                }
-            }
-        }
-    }
-
+    let cluster_graph = build_cluster_graph(&clusters, graph);
     let components = strongly_connected_components(&cluster_graph);
     if components.iter().all(|component| component.len() == 1) {
         return clusters;
@@ -1275,6 +1485,28 @@ fn merge_cyclic_clusters(clusters: Vec<Cluster>, graph: &ReferenceGraph) -> Vec<
     }
     merged.sort_by_key(|cluster| cluster.item_indices[0]);
     merged
+}
+
+fn build_cluster_graph(clusters: &[Cluster], graph: &ReferenceGraph) -> Vec<HashSet<usize>> {
+    let mut item_to_cluster = vec![usize::MAX; graph.references.len()];
+    for (cluster_index, cluster) in clusters.iter().enumerate() {
+        for &item_index in &cluster.item_indices {
+            item_to_cluster[item_index] = cluster_index;
+        }
+    }
+
+    let mut cluster_graph = vec![HashSet::new(); clusters.len()];
+    for (cluster_index, cluster) in clusters.iter().enumerate() {
+        for &item_index in &cluster.item_indices {
+            for &target_item in &graph.references[item_index] {
+                let target_cluster = item_to_cluster[target_item];
+                if target_cluster != usize::MAX && target_cluster != cluster_index {
+                    cluster_graph[cluster_index].insert(target_cluster);
+                }
+            }
+        }
+    }
+    cluster_graph
 }
 
 /// Iterative Kosaraju traversal, avoiding recursion for large scope-hoisted files.
