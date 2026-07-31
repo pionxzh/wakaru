@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "declaration": false,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "isolatedModules": false,
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "outDir": "./target",
+    "rootDir": "./src",
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "types": []
+  },
+  "angularCompilerOptions": {
+    "compilationMode": "full",
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": ["./src/compat.component.ts"]
+}
