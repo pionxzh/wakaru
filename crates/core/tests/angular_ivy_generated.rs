@@ -161,6 +161,7 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert_production_artifact(CLOSURE_ADVANCED_STRUCTURAL);
     assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
     for omitted_role in [
+        "ɵɵariaProperty",
         "ɵɵattribute",
         "ɵɵanimateEnter",
         "ɵɵanimateEnterListener",
@@ -344,6 +345,9 @@ fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert!(by_selector["structural-binding-card"]
         .source
         .contains("[attr.aria-label]=\"label\""));
+    assert!(by_selector["structural-binding-card"]
+        .source
+        .contains("[aria-label]=\""));
     assert!(by_selector["structural-binding-card"]
         .source
         .contains("#action"));
