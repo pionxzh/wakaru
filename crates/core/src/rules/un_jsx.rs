@@ -597,6 +597,16 @@ impl VisitMut for UnJsx {
         }
     }
 
+    fn visit_mut_member_expr(&mut self, member: &mut MemberExpr) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        // JSX cannot be emitted directly as a member object (`<X/>.type`).
+        // Visit the object's children but leave its root call untouched.
+        member.obj.visit_mut_children_with(self);
+        member.prop.visit_mut_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if self.level < RewriteLevel::Standard {
             return;

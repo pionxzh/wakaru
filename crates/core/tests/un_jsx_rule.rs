@@ -29,6 +29,17 @@ function fn() {
 }
 
 #[test]
+fn keeps_create_element_used_as_member_object() {
+    let input = r#"
+const type = React.createElement(Component, null).type;
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert!(output.contains(".type"), "member access was lost: {output}");
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn minimal_does_not_convert_create_element_to_jsx() {
     let input = r#"
 function fn() {
