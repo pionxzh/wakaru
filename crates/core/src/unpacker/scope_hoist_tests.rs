@@ -38,6 +38,29 @@ fn two_group_fixture(b1: &str) -> String {
     .join("\n")
 }
 
+fn pathological_entry_fixture(region_count: usize) -> String {
+    let mut input = String::from("import { external } from \"./dep.js\";\n");
+    for region in 0..region_count {
+        input.push_str(&format!(
+            r#"
+                class Type{region} {{}}
+                const left{region} = {region};
+                function readLeft{region}() {{ return left{region} + external; }}
+                const right{region} = {region};
+                function readRight{region}() {{ return right{region}; }}
+                function make{region}() {{ return new Type{region}(); }}
+                const value{region} = make{region}();
+            "#
+        ));
+    }
+    input.push_str("export { ");
+    for region in 0..region_count {
+        input.push_str(&format!("value{region}, "));
+    }
+    input.push_str("};");
+    input
+}
+
 fn assert_splits(source: &str, reason: &str) {
     let n = count_modules(source);
     assert!(n >= 2, "{reason}, got {n} modules");
@@ -364,25 +387,7 @@ fn partial_var_export_preserves_declarator_order() {
 #[test]
 fn executable_partition_does_not_create_a_global_singleton_cycle() {
     const REGION_COUNT: usize = 64;
-    let mut input = String::from("import { external } from \"./dep.js\";\n");
-    for region in 0..REGION_COUNT {
-        input.push_str(&format!(
-            r#"
-                class Type{region} {{}}
-                const left{region} = {region};
-                function readLeft{region}() {{ return left{region} + external; }}
-                const right{region} = {region};
-                function readRight{region}() {{ return right{region}; }}
-                function make{region}() {{ return new Type{region}(); }}
-                const value{region} = make{region}();
-            "#
-        ));
-    }
-    input.push_str("export { ");
-    for region in 0..REGION_COUNT {
-        input.push_str(&format!("value{region}, "));
-    }
-    input.push_str("};");
+    let input = pathological_entry_fixture(REGION_COUNT);
 
     let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
         .expect("inspection mode should split independent regions");
@@ -420,6 +425,24 @@ fn executable_partition_does_not_create_a_global_singleton_cycle() {
             .unwrap_or_else(|| panic!("missing result declaration {needle}"))
     });
     assert_ne!(result_modules[0], result_modules[1]);
+}
+
+#[test]
+fn emission_relation_planning_scales_with_symbols_not_cluster_product() {
+    const REGION_COUNT: usize = 64;
+    let input = pathological_entry_fixture(REGION_COUNT);
+
+    reset_emit_relation_symbol_probe_count();
+    let result = split_scope_hoisted(&input).expect("fixture should split");
+    let probes = emit_relation_symbol_probe_count();
+
+    assert_eq!(result.modules.len(), REGION_COUNT * 3 + 1);
+    assert!(
+        probes <= result.modules.len() * 16,
+        "emission should index cross-cluster symbols instead of probing every cluster pair; \
+         observed {probes} symbol probes for {} modules",
+        result.modules.len()
+    );
 }
 
 #[test]

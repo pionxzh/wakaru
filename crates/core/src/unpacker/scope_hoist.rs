@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
@@ -17,6 +19,26 @@ use super::{
 const MIN_DECLARATIONS: usize = 10;
 const PATHOLOGICAL_ENTRY_SCC_MIN_CLUSTERS: usize = 64;
 const PATHOLOGICAL_ENTRY_SCC_MIN_FRACTION_DENOMINATOR: usize = 4;
+
+#[cfg(test)]
+thread_local! {
+    static EMIT_RELATION_SYMBOL_PROBES: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_emit_relation_symbol_probe_count() {
+    EMIT_RELATION_SYMBOL_PROBES.with(|probes| probes.set(0));
+}
+
+#[cfg(test)]
+fn emit_relation_symbol_probe_count() -> usize {
+    EMIT_RELATION_SYMBOL_PROBES.with(Cell::get)
+}
+
+#[cfg(test)]
+fn record_emit_relation_symbol_probe() {
+    EMIT_RELATION_SYMBOL_PROBES.with(|probes| probes.set(probes.get() + 1));
+}
 
 /// Selects how a completed scope-hoist plan is rendered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1643,7 +1665,11 @@ fn emit_clusters(
                 .iter()
                 .filter(|name| !dynamic_require_helpers.contains(*name))
                 .filter(|name| !esbuild_to_esm_helpers.contains(*name))
-                .filter(|name| other_decls.contains(*name))
+                .filter(|name| {
+                    #[cfg(test)]
+                    record_emit_relation_symbol_probe();
+                    other_decls.contains(*name)
+                })
                 .cloned()
                 .collect();
             if needed.is_empty() {
@@ -1660,11 +1686,13 @@ fn emit_clusters(
                 continue;
             }
             for name in &cluster_declared[ci] {
-                if !dynamic_require_helpers.contains(name)
-                    && !esbuild_to_esm_helpers.contains(name)
-                    && other_refs.contains(name)
+                if !dynamic_require_helpers.contains(name) && !esbuild_to_esm_helpers.contains(name)
                 {
-                    exported.insert(name.clone());
+                    #[cfg(test)]
+                    record_emit_relation_symbol_probe();
+                    if other_refs.contains(name) {
+                        exported.insert(name.clone());
+                    }
                 }
             }
         }
