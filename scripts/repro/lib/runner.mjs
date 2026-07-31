@@ -501,7 +501,27 @@ function runWakaru(source, name, tmpRoot, rewriteLevel, wakaruArgs = []) {
   return runWakaruArgs(["--level", rewriteLevel, ...wakaruArgs, input]);
 }
 
+export function parseReproJobs(value, optionName = "WAKARU_REPRO_JOBS") {
+  if (!/^\d+$/.test(value ?? "")) {
+    throw new Error(`${optionName} requires a positive integer`);
+  }
+  const jobs = Number(value);
+  if (!Number.isSafeInteger(jobs) || jobs < 1) {
+    throw new Error(`${optionName} requires a positive integer`);
+  }
+  return jobs;
+}
+
 function defaultConcurrency() {
+  // WAKARU_REPRO_JOBS caps every asynchronous pool in the matrix flow. All
+  // asynchronous wakaru children run inside those pools; the remaining CLI
+  // calls are synchronous and occur only after earlier pools are awaited.
+  // collect-stats also runs matrices sequentially, so a value of 1 bounds the
+  // entire harness to one wakaru process.
+  const configuredJobs = process.env.WAKARU_REPRO_JOBS;
+  if (configuredJobs !== undefined) {
+    return parseReproJobs(configuredJobs);
+  }
   return Math.max(1, Math.min(16, (cpus().length || 4) - 2));
 }
 

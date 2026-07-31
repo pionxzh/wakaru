@@ -8,15 +8,32 @@
 // Usage:
 //   node scripts/repro/collect-stats.mjs            # update stats.json
 //   node scripts/repro/collect-stats.mjs --check     # exit non-zero if stats.json is stale
+//   node scripts/repro/collect-stats.mjs --jobs 1    # cap harness concurrency
+//                                                    # (1 = at most one wakaru
+//                                                    # process at any time)
 
 import { execSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseReproJobs } from "./lib/runner.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, "../..");
 const statsPath = join(scriptDir, "stats.json");
+
+// --jobs N caps runPool concurrency in every matrix (children inherit the
+// environment; matrices themselves already run sequentially via spawnSync).
+const jobsFlagIndex = process.argv.indexOf("--jobs");
+if (jobsFlagIndex !== -1) {
+  try {
+    const jobs = parseReproJobs(process.argv[jobsFlagIndex + 1], "--jobs");
+    process.env.WAKARU_REPRO_JOBS = String(jobs);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
 
 const matrices = [
   "array-spread-rest",
