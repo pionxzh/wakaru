@@ -1137,6 +1137,7 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::TextInterpolate7
                     | IvyInstruction::TextInterpolate8
                     | IvyInstruction::Property
+                    | IvyInstruction::AriaProperty
                     | IvyInstruction::Attribute
                     | IvyInstruction::ClassMap
                     | IvyInstruction::ClassProp
@@ -2646,6 +2647,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::TextInterpolate7
                 | IvyInstruction::TextInterpolate8
                 | IvyInstruction::Property
+                | IvyInstruction::AriaProperty
                 | IvyInstruction::Attribute
                 | IvyInstruction::ClassMap
                 | IvyInstruction::ClassProp
@@ -6364,6 +6366,7 @@ fn apply_update_instruction(
             );
         }
         IvyInstruction::Property
+        | IvyInstruction::AriaProperty
         | IvyInstruction::Attribute
         | IvyInstruction::ClassProp
         | IvyInstruction::StyleProp => {
@@ -6383,6 +6386,22 @@ fn apply_update_instruction(
                 record_missing_target(
                     call,
                     &format!("cursor {} does not reference an element", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            if call.instruction == IvyInstruction::AriaProperty
+                && (call.args.len() != 2
+                    || !call
+                        .args
+                        .first()
+                        .and_then(|argument| string_lit(argument.as_ref()))
+                        .is_some_and(|name| name.starts_with("aria-")))
+            {
+                record_malformed_instruction(
+                    call,
+                    "expected an ARIA name and one binding value",
                     &mut program.issues,
                     &mut program.stats,
                 );
@@ -6417,7 +6436,7 @@ fn apply_update_instruction(
                 return Ok(());
             };
             let prefix = match call.instruction {
-                IvyInstruction::Property => "",
+                IvyInstruction::Property | IvyInstruction::AriaProperty => "",
                 IvyInstruction::Attribute => "attr.",
                 IvyInstruction::ClassProp => "class.",
                 IvyInstruction::StyleProp => "style.",
@@ -8257,6 +8276,7 @@ impl TemplateTree {
                 | IvyInstruction::TextInterpolate7
                 | IvyInstruction::TextInterpolate8
                 | IvyInstruction::Property
+                | IvyInstruction::AriaProperty
                 | IvyInstruction::Attribute
                 | IvyInstruction::ClassMap
                 | IvyInstruction::ClassProp
