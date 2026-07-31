@@ -1595,6 +1595,74 @@ fn strongly_connected_components(graph: &[HashSet<usize>]) -> Vec<Vec<usize>> {
 // Phase 5: Emit modules
 // ---------------------------------------------------------------------------
 
+struct ClusterSymbolLinks {
+    imports_by_consumer: Vec<Vec<(usize, Vec<Atom>)>>,
+    exports_by_producer: Vec<HashSet<Atom>>,
+}
+
+fn build_cluster_symbol_links(
+    cluster_declared: &[HashSet<Atom>],
+    cluster_referenced: &[HashSet<Atom>],
+    dynamic_require_helpers: &HashSet<Atom>,
+    esbuild_to_esm_helpers: &HashSet<Atom>,
+) -> ClusterSymbolLinks {
+    let mut declaring_clusters: HashMap<Atom, Vec<usize>> = HashMap::new();
+    for (cluster_index, declared_names) in cluster_declared.iter().enumerate() {
+        for name in declared_names {
+            declaring_clusters
+                .entry(name.clone())
+                .or_default()
+                .push(cluster_index);
+        }
+    }
+
+    let mut imports_by_consumer = (0..cluster_referenced.len())
+        .map(|_| HashMap::<usize, Vec<Atom>>::new())
+        .collect::<Vec<_>>();
+    let mut exports_by_producer = vec![HashSet::new(); cluster_declared.len()];
+
+    for (consumer_index, referenced_names) in cluster_referenced.iter().enumerate() {
+        for name in referenced_names {
+            if dynamic_require_helpers.contains(name) || esbuild_to_esm_helpers.contains(name) {
+                continue;
+            }
+
+            #[cfg(test)]
+            record_emit_relation_symbol_probe();
+            let Some(producer_indices) = declaring_clusters.get(name) else {
+                continue;
+            };
+            for &producer_index in producer_indices {
+                if producer_index == consumer_index {
+                    continue;
+                }
+                imports_by_consumer[consumer_index]
+                    .entry(producer_index)
+                    .or_default()
+                    .push(name.clone());
+                exports_by_producer[producer_index].insert(name.clone());
+            }
+        }
+    }
+
+    let imports_by_consumer = imports_by_consumer
+        .into_iter()
+        .map(|by_producer| {
+            let mut links = by_producer.into_iter().collect::<Vec<_>>();
+            for (_, names) in &mut links {
+                names.sort();
+            }
+            links.sort_by_key(|(producer_index, _)| *producer_index);
+            links
+        })
+        .collect();
+
+    ClusterSymbolLinks {
+        imports_by_consumer,
+        exports_by_producer,
+    }
+}
+
 fn emit_clusters(
     body: &[ModuleItem],
     items: &[TopLevelItem],
@@ -1627,6 +1695,13 @@ fn emit_clusters(
         })
         .collect();
 
+    let mut symbol_links = build_cluster_symbol_links(
+        &cluster_declared,
+        &cluster_referenced,
+        &dynamic_require_helpers,
+        &esbuild_to_esm_helpers,
+    );
+
     // Assign final filenames first so synthesized imports point at the same
     // paths the caller will write. Chunk names are derived from minified
     // bindings, so collisions are common in scope-concatenated packages.
@@ -1655,47 +1730,13 @@ fn emit_clusters(
             ));
         }
 
-        // Synthesize imports: for each other cluster that declares names
-        // this cluster references, emit `import { ... } from './chunk.js'`.
-        for (oi, other_decls) in cluster_declared.iter().enumerate() {
-            if oi == ci {
-                continue;
-            }
-            let mut needed: Vec<Atom> = cluster_referenced[ci]
-                .iter()
-                .filter(|name| !dynamic_require_helpers.contains(*name))
-                .filter(|name| !esbuild_to_esm_helpers.contains(*name))
-                .filter(|name| {
-                    #[cfg(test)]
-                    record_emit_relation_symbol_probe();
-                    other_decls.contains(*name)
-                })
-                .cloned()
-                .collect();
-            if needed.is_empty() {
-                continue;
-            }
-            needed.sort();
-            module_items.push(make_named_import_stmt(&needed, &filenames[oi]));
+        // Synthesize imports from the indexed cross-cluster symbol links.
+        for (producer_index, needed) in &symbol_links.imports_by_consumer[ci] {
+            module_items.push(make_named_import_stmt(needed, &filenames[*producer_index]));
         }
 
         // Collect which names this cluster should export.
-        let mut exported: HashSet<Atom> = HashSet::new();
-        for (oi, other_refs) in cluster_referenced.iter().enumerate() {
-            if oi == ci {
-                continue;
-            }
-            for name in &cluster_declared[ci] {
-                if !dynamic_require_helpers.contains(name) && !esbuild_to_esm_helpers.contains(name)
-                {
-                    #[cfg(test)]
-                    record_emit_relation_symbol_probe();
-                    if other_refs.contains(name) {
-                        exported.insert(name.clone());
-                    }
-                }
-            }
-        }
+        let mut exported = std::mem::take(&mut symbol_links.exports_by_producer[ci]);
 
         // Original body items, with exported declarations promoted to
         // `export function ...` / `export const ...` / `export class ...`.
