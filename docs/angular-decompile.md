@@ -578,6 +578,13 @@ through Closure Compiler `ADVANCED`. A second minimally rooted `ADVANCED`
 profile retains only the canonical component-definition role; all template
 instruction roles remain Closure-renamed.
 
+An independently pinned Angular 19.2.25 full-AOT fixture under
+`crates/core/tests/bundles/angular-ivy-compat-gen/` verifies ordinary Angular
+compatibility without sharing the Angular 22 or Closure toolchain. It covers a
+listener, property/attribute/class/style bindings, interpolation, `@if` /
+`@else`, and `@for` / `@empty` as a complete artifact. This keeps framework
+version compatibility separate from Closure-specific structural inference.
+
 The original Angular, `SIMPLE`, and fully rooted `ADVANCED` producer forms
 recover all three component definitions with non-empty inline templates.
 Covered regions include element structure, static text, interpolation, event
