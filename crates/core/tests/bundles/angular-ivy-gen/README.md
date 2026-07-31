@@ -25,13 +25,13 @@ The pinned Angular CLI application produces:
   packaging.
 
 The source deliberately exercises element structure, static attributes, text
-and expression interpolation, listeners, property/attribute/class/style
-bindings, nested `@if` / `@else` embedded views, `@let`, pure literal
-expressions, HTML/SVG/MathML namespace switches, content projection, local
-template references, pipe bindings, selector matrices, component styles, and a
-cross-chunk component. The generated files contain production Ivy definitions;
-they do not contain `ɵsetClassMetadata` or a copy of the original HTML template
-literal.
+and expression interpolation, listeners, property/attribute bindings,
+class/style property and whole-map bindings, nested `@if` / `@else` embedded
+views, `@let`, pure literal expressions, HTML/SVG/MathML namespace switches,
+content projection, local template references, pipe bindings, selector
+matrices, component styles, and a cross-chunk component. The generated files
+contain production Ivy definitions; they do not contain `ɵsetClassMetadata` or
+a copy of the original HTML template literal.
 
 `src/isolated/template-constructs.component.ts` is compiled directly with the
 pinned Angular compiler in full AOT mode, then passed through esbuild syntax
@@ -102,12 +102,13 @@ parameter-forwarding behavior.
 
 The structural components require Closure-renamed roles to be recovered from
 runtime contracts and template use. They cover conditional and property
-instructions; attribute/class/style families; `<ng-container>` and bounded
-i18n; pure literal expressions; `@let`; HTML/SVG/MathML namespace switches;
-optimized repeater and defer families; signal query APIs and an optional-chain
-listener; view-local listener aliases; structural i18n; projection fallbacks;
-and two-way/animation binding families. One conditional view has a captured
-listener and parent-context property binding. The nested complex listener
+instructions; attribute/class/style property and whole-map families;
+`<ng-container>` and bounded i18n; pure literal expressions; `@let`;
+HTML/SVG/MathML namespace switches; optimized repeater and defer families;
+signal query APIs and an optional-chain listener; view-local listener aliases;
+structural i18n; projection fallbacks; and two-way/animation binding families.
+One conditional view has a captured listener and parent-context property
+binding. The nested complex listener
 contains Closure-inlined application locals and reuses a local-reference alias,
 so recovery must emit a synthesized class method without substituting through
 the later write.
