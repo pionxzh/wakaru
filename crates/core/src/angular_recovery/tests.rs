@@ -6461,6 +6461,253 @@ fn does_not_infer_a_styling_map_from_a_lone_boolean_wrapper() {
 }
 
 #[test]
+fn recovers_canonical_aria_property_bindings() {
+    let source = r#"
+        import {
+            ɵɵariaProperty as ariaProperty,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class AriaPropertyComponent {
+            label = "Reader";
+
+            static compiled = define({
+                type: AriaPropertyComponent,
+                selectors: [["aria-property"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        ariaProperty("aria-label", context.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("canonical aria property fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[aria-label]="label""#));
+    assert!(!component.source.contains("[attr.aria-label]"));
+}
+
+#[test]
+fn rejects_malformed_canonical_aria_property_bindings() {
+    let source = r#"
+        import {
+            ɵɵariaProperty as ariaProperty,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+        } from "@angular/core";
+
+        class MalformedAriaPropertyComponent {
+            label = "Reader";
+
+            static compiled = define({
+                type: MalformedAriaPropertyComponent,
+                selectors: [["malformed-aria-property"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        ariaProperty("title", context.label);
+                        ariaProperty("aria-label", context.label, sanitize);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("malformed canonical aria property fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert_eq!(component.stats.malformed_instruction_calls, 2);
+    assert!(!component.source.contains("[title]"));
+    assert!(!component.source.contains("[aria-label]"));
+    assert!(component.issues.iter().all(|issue| {
+        issue.kind == AngularRecoveryIssueKind::MalformedInstruction
+            && issue.instruction.as_deref() == Some("ɵɵariaProperty")
+    }));
+}
+
+#[test]
+fn infers_closure_renamed_aria_property_from_input_and_attribute_fallbacks() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.element = function(index, name, attrs) {
+            createElement(index, name, attrs);
+            return runtime.element;
+        };
+        runtime.attribute = function(name, value, sanitizer, namespace) {
+            const view = currentView();
+            const binding = nextBinding();
+            if (bindingChanged(view, binding, value)) {
+                const node = selectedNode();
+                const element = nativeNode(node, view);
+                runtime.writeAttribute(
+                    view.renderer,
+                    element,
+                    namespace,
+                    node.value,
+                    name,
+                    value,
+                    sanitizer
+                );
+            }
+            return runtime.attribute;
+        };
+        runtime.aria = function(name, value) {
+            const view = currentView();
+            const binding = nextBinding();
+            if (bindingChanged(view, binding, value)) {
+                const definition = currentDefinition();
+                const node = selectedNode();
+                if (runtime.writeInputs(node, definition, view, name, value)) {
+                    markDirty(view, node);
+                } else {
+                    const element = nativeNode(node, view);
+                    runtime.writeAttribute(
+                        view.renderer,
+                        element,
+                        null,
+                        node.value,
+                        name,
+                        value,
+                        null
+                    );
+                }
+            }
+            return runtime.aria;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelement": runtime.element,
+        };
+
+        class RenamedAriaPropertyComponent {
+            label = "Reader";
+
+            static compiled = runtime.component({
+                type: RenamedAriaPropertyComponent,
+                selectors: [["renamed-aria-property"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        runtime.attribute("data-reader", context.label);
+                        runtime.aria("aria-label", context.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-renamed aria property fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"[attr.data-reader]="label""#));
+    assert!(component.source.contains(r#"[aria-label]="label""#));
+}
+
+#[test]
+fn does_not_infer_aria_property_from_an_attribute_only_wrapper() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return Object.assign({}, definition);
+        };
+        runtime.element = function(index, name, attrs) {
+            createElement(index, name, attrs);
+            return runtime.element;
+        };
+        runtime.attribute = function(name, value, sanitizer, namespace) {
+            currentView();
+            nextBinding();
+            selectedNode();
+            runtime.writeAttribute(
+                runtime.renderer,
+                runtime.node,
+                namespace,
+                runtime.nodeValue,
+                name,
+                value,
+                sanitizer
+            );
+            return runtime.attribute;
+        };
+        runtime.lookalike = function(name, value) {
+            runtime.writeAttribute(
+                runtime.renderer,
+                runtime.node,
+                null,
+                runtime.nodeValue,
+                name,
+                value,
+                null
+            );
+            return runtime.lookalike;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelement": runtime.element,
+        };
+
+        class AriaLookalikeComponent {
+            label = "Reader";
+
+            static compiled = runtime.component({
+                type: AriaLookalikeComponent,
+                selectors: [["aria-lookalike"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        runtime.attribute("data-reader", context.label);
+                        runtime.lookalike("aria-label", context.label);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("aria property lookalike fixture should parse");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(!component.source.contains(r#"[aria-label]="label""#));
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction));
+}
+
+#[test]
 fn infers_container_i18n_and_binding_families_from_renamed_runtime_shapes() {
     let source = r#"
         runtime.component = function(definition) {
