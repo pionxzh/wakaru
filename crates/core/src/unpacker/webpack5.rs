@@ -6,9 +6,9 @@ use swc_core::common::{
 };
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
-    Callee, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget, Stmt,
-    Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
+    Callee, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr,
+    SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
@@ -757,6 +757,13 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                                 body: &body.stmts,
                             });
                         }
+                        // `var lib = function require(id) { ... }(entryId)` —
+                        // a library build binding the entry's exports.
+                        Expr::Call(call) => {
+                            if let Some(candidate) = require_candidate_from_call(stmt_idx, call) {
+                                candidates.push(candidate);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -778,16 +785,27 @@ fn directly_invoked_require_candidate(
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
-    let call = match strip_parens(expr) {
-        Expr::Call(call) => call,
-        Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
-            let Expr::Call(call) = strip_parens(&unary.arg) else {
-                return None;
-            };
-            call
-        }
-        _ => return None,
-    };
+    let call = direct_invoke_call(expr)?;
+    require_candidate_from_call(stmt_idx, call)
+}
+
+/// Unwrap a directly invoked require expression to its call. Besides the bare
+/// and `!`-prefixed statement forms, `output.library` builds consume the
+/// entry's exports — `window.lib = function require(id) { ... }(entryId)` —
+/// so assignment right-hand sides are unwrapped too.
+fn direct_invoke_call(expr: &Expr) -> Option<&CallExpr> {
+    match strip_parens(expr) {
+        Expr::Call(call) => Some(call),
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => match strip_parens(&unary.arg) {
+            Expr::Call(call) => Some(call),
+            _ => None,
+        },
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => direct_invoke_call(&assign.right),
+        _ => None,
+    }
+}
+
+fn require_candidate_from_call(stmt_idx: usize, call: &CallExpr) -> Option<RegionFnCandidate<'_>> {
     if call.args.len() != 1 || call.args[0].spread.is_some() {
         return None;
     }
@@ -838,7 +856,10 @@ fn module_id_literal(expr: &Expr) -> Option<String> {
 /// Whether one function body is a webpack require function: some binding is
 /// created locally via a module-cache write (`m = cache[id] = {exports: {}}`),
 /// passed to the module-table invocation indexed by the same `id` binding,
-/// and has its `.exports` returned (see [`plan_webpack_require_fn`]).
+/// and has its `.exports` returned (see [`plan_webpack_require_fn`]). The
+/// invocation may be direct (`table[id](...)`, with or without `.call`) or
+/// through the `interceptModuleExecution` factory holder of HMR builds
+/// (`{ factory: table[id] }` invoked as `holder.factory.call(...)`).
 /// Nested function scopes are not descended into, so facts from an unrelated
 /// inner function cannot combine to look like a require function.
 ///
@@ -874,6 +895,7 @@ fn body_is_webpack_require(excluded: &HashSet<Id>, stmts: &[Stmt], table_id: &Id
         local_modules: HashMap::new(),
         table_call_args: HashSet::new(),
         returned_exports_objs: HashSet::new(),
+        factory_holders: HashMap::new(),
     };
     stmts.visit_with(&mut scanner);
     scanner.local_modules.iter().any(|(module, cache_index)| {
@@ -1008,6 +1030,21 @@ impl Visit for TableInvocationFinder<'_> {
             self.found = true;
         }
     }
+
+    // webpack's `interceptModuleExecution` runtime (HMR builds) never calls
+    // the table directly: it reads `factory: table[id]` into an options
+    // object and invokes `execOptions.factory.call(...)`. Accept a computed
+    // table read stored as an object-literal property value as potential
+    // invocation evidence; the full scanner still has to join it with the
+    // cache-write and exports-return facts.
+    fn visit_key_value_prop(&mut self, kv: &KeyValueProp) {
+        kv.visit_children_with(self);
+        if let Some((base, _)) = computed_index_parts(strip_parens(&kv.value)) {
+            if base.sym == *self.modules_sym {
+                self.found = true;
+            }
+        }
+    }
 }
 
 struct RequireBodyScanner<'a> {
@@ -1028,9 +1065,82 @@ struct RequireBodyScanner<'a> {
     table_call_args: HashSet<(Id, Id)>,
     /// Bindings whose `.exports` member a return statement yields.
     returned_exports_objs: HashSet<Id>,
+    /// (holder binding, property name) pairs holding a factory read from the
+    /// table — `var execOptions = { factory: table[id], ... }` — mapped to
+    /// the resolved identity of the index binding `id`. webpack's
+    /// `interceptModuleExecution` runtime (HMR builds) invokes the factory
+    /// through this indirection instead of calling the table directly.
+    factory_holders: HashMap<(Id, Atom), Id>,
 }
 
 impl RequireBodyScanner<'_> {
+    /// Record `(holder, prop) → index` pairs for object-literal properties
+    /// reading a factory out of the table: `{ factory: table[id], ... }`.
+    fn record_factory_holders(&mut self, holder: &Id, init: &Expr) {
+        let Expr::Object(object) = strip_parens(init) else {
+            return;
+        };
+        for prop in &object.props {
+            let PropOrSpread::Prop(prop) = prop else {
+                continue;
+            };
+            let Prop::KeyValue(kv) = prop.as_ref() else {
+                continue;
+            };
+            let name = match &kv.key {
+                PropName::Ident(ident) => ident.sym.clone(),
+                PropName::Str(s) => match s.value.as_str() {
+                    Some(value) => Atom::from(value),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let Some((base, index)) = computed_index_parts(strip_parens(&kv.value)) else {
+                continue;
+            };
+            if base.to_id() != *self.table_id {
+                continue;
+            }
+            let Expr::Ident(index_ident) = index else {
+                continue;
+            };
+            self.factory_holders
+                .insert((holder.clone(), name), index_ident.to_id());
+        }
+    }
+
+    /// If `call` invokes a recorded factory holder — `holder.prop(...)` or
+    /// `holder.prop.call(...)` — return the table index it was read with.
+    fn factory_invocation_index(&self, call: &CallExpr) -> Option<Id> {
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(member) = strip_parens(callee) else {
+            return None;
+        };
+        if let Some(index) = self.holder_prop_index(member) {
+            return Some(index);
+        }
+        if matches!(&member.prop, MemberProp::Ident(p) if p.sym.as_ref() == "call") {
+            if let Expr::Member(inner) = strip_parens(&member.obj) {
+                return self.holder_prop_index(inner);
+            }
+        }
+        None
+    }
+
+    fn holder_prop_index(&self, member: &MemberExpr) -> Option<Id> {
+        let Expr::Ident(holder) = strip_parens(&member.obj) else {
+            return None;
+        };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return None;
+        };
+        self.factory_holders
+            .get(&(holder.to_id(), prop.sym.clone()))
+            .cloned()
+    }
+
     fn record_table_call_args<'a>(&mut self, index: Id, args: impl Iterator<Item = &'a Expr>) {
         for arg in args {
             match strip_parens(arg) {
@@ -1065,6 +1175,7 @@ impl Visit for RequireBodyScanner<'_> {
                 if let Some(cache_index) = module_object_cache_index(init) {
                     self.local_modules.insert(binding.id.to_id(), cache_index);
                 }
+                self.record_factory_holders(&binding.id.to_id(), init);
             }
         }
     }
@@ -1089,6 +1200,7 @@ impl Visit for RequireBodyScanner<'_> {
             if let Some(cache_index) = module_object_cache_index(&assign.right) {
                 self.local_modules.insert(binding.id.to_id(), cache_index);
             }
+            self.record_factory_holders(&binding.id.to_id(), &assign.right);
         }
     }
 
@@ -1111,6 +1223,19 @@ impl Visit for RequireBodyScanner<'_> {
                     );
                 }
             }
+        }
+        // The `interceptModuleExecution` runtime invokes the factory through
+        // a recorded holder (`execOptions.factory.call(...)`) instead of
+        // calling the table directly. The holder is declared before this
+        // invocation in every webpack emission, so recording during the same
+        // in-order traversal is sufficient.
+        if let Some(index) = self.factory_invocation_index(call) {
+            self.record_table_call_args(
+                index,
+                call.args
+                    .iter()
+                    .filter_map(|arg| arg.spread.is_none().then_some(arg.expr.as_ref())),
+            );
         }
     }
 

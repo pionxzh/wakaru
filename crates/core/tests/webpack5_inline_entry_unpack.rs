@@ -649,6 +649,124 @@ fn directly_invoked_require_marks_called_module_as_entry() {
 }
 
 #[test]
+fn assigned_directly_invoked_require_marks_called_module_as_entry() {
+    // `output.library` builds consume the entry's exports: the directly
+    // invoked require runtime appears as an assignment right-hand side.
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    window.lib = function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the genuine webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "entry.js"),
+        "the require runtime body must not become entry.js, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn var_bound_directly_invoked_require_marks_called_module_as_entry() {
+    // The same library form can bind the entry's exports to a local.
+    let source = r#"
+(() => {
+    var modules = {
+        1: (module, exports) => {
+            exports.value = 42;
+        }
+    };
+    var cache = {};
+    var lib = function require(id) {
+        var cached = cache[id];
+        if (cached !== undefined) return cached.exports;
+        var module = cache[id] = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, require);
+        return module.exports;
+    }(1);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    assert!(
+        pairs.iter().any(|(name, _)| name == "module-1.js"),
+        "the genuine webpack module must be extracted, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert!(
+        !pairs.iter().any(|(name, _)| name == "entry.js"),
+        "the require runtime body must not become entry.js, got {:?}",
+        pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn intercept_module_execution_runtime_is_webpack5() {
+    // HMR builds require `interceptModuleExecution`: the factory is read from
+    // the table into an options object and invoked through it — the table is
+    // never called directly. The lifecycle gate must join the facts through
+    // that indirection.
+    let source = r#"
+(() => {
+    var __webpack_modules__ = {
+        100: (module, exports, __webpack_require__) => {
+            module.exports = __webpack_require__(200);
+        },
+        200: (module) => {
+            module.exports = 7;
+        }
+    };
+    var __webpack_module_cache__ = {};
+    function __webpack_require__(moduleId) {
+        var cachedModule = __webpack_module_cache__[moduleId];
+        if (cachedModule !== undefined) {
+            return cachedModule.exports;
+        }
+        var module = __webpack_module_cache__[moduleId] = { exports: {} };
+        var execOptions = {
+            id: moduleId,
+            module: module,
+            factory: __webpack_modules__[moduleId],
+            require: __webpack_require__
+        };
+        __webpack_require__.i.forEach(function (handler) { handler(execOptions); });
+        module = execOptions.module;
+        execOptions.factory.call(module.exports, module, module.exports, execOptions.require);
+        return module.exports;
+    }
+    __webpack_require__.i = [];
+    var __webpack_exports__ = __webpack_require__(100);
+})();
+"#;
+
+    let pairs = expect_unpack(source, "bundle.js");
+    for expected in ["module-100.js", "module-200.js"] {
+        assert!(
+            pairs.iter().any(|(name, _)| name == expected),
+            "HMR intercept runtime must still unpack {expected}, got {:?}",
+            pairs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn eager_only_startup_recovers_entry() {
     // webpack 5's eager `import()` startup has no direct require call — only
     // `Promise.resolve().then(r.bind(r, 1))`. The startup gate must count a
