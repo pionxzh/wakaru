@@ -4634,6 +4634,142 @@ fn rejects_a_reassigned_assignment_backed_nested_view_function() {
 }
 
 #[test]
+fn infers_optimized_projection_family_and_rejects_unpaired_lookalikes() {
+    let source = r#"
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.projectionDef = function(selectors) {
+            const host = currentView()[15][5];
+            if (!host.projection) {
+                const heads = host.projection = function createBuckets(length, value) {
+                    const buckets = [];
+                    for (let index = 0; index < length; index++) {
+                        buckets.push(value);
+                    }
+                    return buckets;
+                }(selectors ? selectors.length : 1, null);
+                const tails = heads.slice();
+                let child = host.child;
+                while (child !== null) {
+                    const slot = selectors ? matchSelector(child, selectors) : 0;
+                    if (slot !== null) {
+                        if (tails[slot]) {
+                            tails[slot].projectionNext = child;
+                        } else {
+                            heads[slot] = child;
+                        }
+                        tails[slot] = child;
+                    }
+                    child = child.next;
+                }
+            }
+        };
+        runtime.projection = function(index, selector = 0, attributes) {
+            const view = currentView();
+            const definition = currentDefinition();
+            const node = createProjectionNode(
+                definition,
+                27 + index,
+                16,
+                null,
+                attributes || null
+            );
+            if (node.projection === null) {
+                node.projection = selector;
+            }
+            finishNode();
+            if ((!view[6] || isHydrating()) && !(node.flags & 32)) {
+                (function renderProjection(definition, view, node) {
+                    appendProjectedNodes(definition, view, node);
+                })(definition, view, node);
+            }
+        };
+        runtime.definitionLookalike = function(value) {
+            first(value);
+            second();
+            third();
+        };
+        runtime.projectionLookalike = function(index, selector = 0, attributes) {
+            first(index);
+            second(selector);
+            third(attributes);
+            fourth();
+            fifth();
+            sixth();
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+        };
+
+        class OptimizedProjectionComponent {
+            static compiled = runtime.define({
+                type: OptimizedProjectionComponent,
+                selectors: [["optimized-projection"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.projectionDef();
+                        runtime.start(0, "section");
+                        runtime.projection(1);
+                        runtime.end();
+                    }
+                },
+            });
+        }
+
+        class ProjectionLookalikeComponent {
+            static compiled = runtime.define({
+                type: ProjectionLookalikeComponent,
+                selectors: [["projection-lookalike"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.definitionLookalike();
+                        runtime.projectionLookalike(0);
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("optimized projection helpers should remain analyzable");
+    let projection = report
+        .components
+        .iter()
+        .find(|component| component.selector == "optimized-projection")
+        .expect("the optimized projection component should recover");
+    let lookalike = report
+        .components
+        .iter()
+        .find(|component| component.selector == "projection-lookalike")
+        .expect("the projection lookalike should remain visible");
+
+    assert_eq!(
+        projection.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        projection.issues,
+        projection.source,
+    );
+    assert!(projection
+        .source
+        .contains("<section>\n      <ng-content />\n    </section>"));
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
 fn recovers_projection_local_references_and_pipe_bindings() {
     let source = r#"
         import * as core from "@angular/core";
