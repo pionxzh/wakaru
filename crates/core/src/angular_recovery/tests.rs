@@ -1,4 +1,5 @@
 use super::*;
+use crate::facts::{ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap};
 
 const PRODUCTION_COMPONENT: &str = r#"
 import * as core from "@angular/core";
@@ -1494,6 +1495,136 @@ fn follows_named_esm_symbol_edges_across_production_chunks() {
 }
 
 #[test]
+fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() {
+    let runtime = r#"
+        function Ea(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        }
+        function start(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return start;
+        }
+        function end() {
+            leaveNode();
+            return end;
+        }
+        function element(index, name, attrs, refs) {
+            start(index, name, attrs, refs);
+            end();
+            return element;
+        }
+    "#;
+    let component = r#"
+        var core = load("./runtime.js");
+        class FactCard {}
+        FactCard.compiled = core.VBU({
+            type: FactCard,
+            selectors: [["fact-transport-card"]],
+            template(renderFlags) {
+                if (renderFlags & 1) {
+                    core.nrm(0, "article");
+                }
+            },
+            dependencies: [],
+            styles: [],
+        });
+    "#;
+    let views = [
+        AngularModuleView {
+            filename: "runtime.js",
+            evidence_source: runtime,
+            readable_source: runtime,
+        },
+        AngularModuleView {
+            filename: "component.js",
+            evidence_source: component,
+            readable_source: component,
+        },
+    ];
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "runtime.js",
+        ModuleFacts {
+            exports: vec![
+                ExportFact {
+                    exported: "VBU".into(),
+                    local: Some("Ea".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "nrm".into(),
+                    local: Some("element".into()),
+                    kind: ExportKind::Named,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    facts.insert(
+        "component.js",
+        ModuleFacts {
+            imports: vec![ImportFact {
+                local: "core".into(),
+                source: "./runtime.js".into(),
+                kind: ImportKind::Default,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let report = analyze_angular_components_from_module_views_with_facts(
+        &views,
+        &facts,
+        AngularRecoveryOptions::default(),
+    )
+    .expect("fact-backed module views should parse");
+
+    assert_eq!(report.components.len(), 1);
+    assert_eq!(
+        report.components[0].completeness,
+        AngularRecoveryCompleteness::Complete
+    );
+    assert!(report.components[0].source.contains("<article></article>"));
+
+    facts.insert(
+        "runtime.js",
+        ModuleFacts {
+            exports: vec![
+                ExportFact {
+                    exported: "VBU".into(),
+                    local: Some("Ea".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "VBU".into(),
+                    local: Some("element".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "nrm".into(),
+                    local: Some("element".into()),
+                    kind: ExportKind::Named,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    let ambiguous = analyze_angular_components_from_module_views_with_facts(
+        &views,
+        &facts,
+        AngularRecoveryOptions::default(),
+    )
+    .expect("ambiguous fact-backed module views should still parse");
+    assert!(ambiguous.components.is_empty());
+}
+
+#[test]
 fn parallel_preparation_keeps_same_named_module_bindings_distinct() {
     let runtime = r#"
         function define(definition) {
@@ -2147,6 +2278,65 @@ fn infers_text_listener_and_advance_from_runtime_and_template_shapes() {
         .source
         .contains("<button (click)=\"select()\">Choose</button>"));
     assert!(!recovered[0].source.contains("unknown-runtime-instruction"));
+}
+
+#[test]
+fn infers_template_roles_when_render_flag_operands_are_commuted() {
+    let source = r#"
+        runtime.component = function(definition) {
+            return noSideEffects(() => Object.assign({}, baseDefinition, {
+                type: definition.type,
+                selectors: definition.selectors,
+                template: definition.template,
+                dependencies: definition.dependencies,
+                styles: definition.styles,
+            }));
+        };
+        runtime.start = function(index, name, attrs, refs) {
+            createNode(index, name, attrs, refs);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.text = function(index, value = "") {
+            createText(index, value);
+        };
+        runtime.next = function(delta = 1) {
+            selectIndex(currentIndex() + delta);
+        };
+
+        class CommutedFlagsCard {
+            static compiled = runtime.component({
+                type: CommutedFlagsCard,
+                selectors: [["commuted-flags-card"]],
+                template: function(renderFlags) {
+                    if (1 & renderFlags) {
+                        runtime.start(0, "p");
+                        runtime.text(1, "Ready");
+                        runtime.end();
+                    }
+                    if (2 & renderFlags) {
+                        runtime.next();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("commuted render-flag tests should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        recovered[0].issues,
+        recovered[0].source,
+    );
+    assert!(recovered[0].source.contains("<p>Ready</p>"));
 }
 
 #[test]

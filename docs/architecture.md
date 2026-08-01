@@ -322,8 +322,9 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    edges (`InterfacePlan`: a provider a consumer writes to stays CommonJS,
    unless its only export is one `module.exports = v` every write lands on;
    a member read of such a provider reads its default import),
-   run `UnEsm`, then run the webpack factory-IIFE recovery on a clone of
-   that barrier AST and extract import/export facts from it (Phase 1b).
+   run `UnEsm`, then run the webpack factory-IIFE recovery, without its
+   readability-only binding renames, on a clone of that barrier AST and
+   extract import/export facts from it (Phase 1b).
    Unless `UnEsm` left an ES module with no CommonJS the late recovery can
    convert, the clone first runs the steps Phase 2 runs before its late
    recovery that need no other module (the registry range after `UnEsm`,
@@ -376,7 +377,11 @@ because that pass operates on emitted module text.
 The optional pre-rewrite evidence view is also format-neutral. Enabling it does
 not make the driver assign Angular, Vue, or other framework meaning; it only
 preserves the compiler shapes that a root artifact analyzer requested. The
-normal JavaScript output continues through the same rule pipeline.
+normal JavaScript output continues through the same rule pipeline. For modules
+whose evidence view survives, root capture also exposes a filtered, final-name
+snapshot of the generic Stage-2 transport facts. Artifact analyzers can derive
+evidence-side symbol equivalences from that snapshot without placing framework
+roles in the driver or fact system.
 
 ## File structure
 

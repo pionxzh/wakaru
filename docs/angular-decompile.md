@@ -139,6 +139,16 @@ conflicting role makes the whole group ambiguous rather than selecting one
 side. This is the same generic workspace operation regardless of how a module
 was produced.
 
+Bundled inputs add one earlier form of the same transport proof. Root unpacking
+retains its generic Stage-2 import/export facts alongside the pre-rewrite view.
+The Angular workspace adapts those facts into evidence-side symbol edges. If a
+runtime fact records `exported: VBU, local: Ea` and a consumer fact records the
+namespace-like binding `core`, the workspace can establish `core.VBU ≡ Ea`
+even though final JavaScript has already become a named ESM import. Structural
+analysis may then prove that `Ea` is `DefineComponent`. Neither the unpacker nor
+the fact map stores that Ivy conclusion, and ambiguous or missing local
+bindings produce no edge.
+
 Descriptor property names may also be renamed. Recovery therefore prefers a
 known canonical key when available, then classifies a value from structural
 evidence:
@@ -156,13 +166,16 @@ Root recovery uses two views of the same generic module set:
 
 1. After format-specific extraction and numeric-edge normalization, capture a
    pre-rewrite evidence view only when Angular recovery is requested.
-2. Run the ordinary Wakaru pipeline and finalize normal JavaScript without an
+2. At the ordinary Stage-2 barrier, retain the generic import/export fact
+   snapshot without readability-only binding renames.
+3. Run the ordinary Wakaru pipeline and finalize normal JavaScript without an
    Ivy-dependent rewrite.
-3. Build the Ivy role table and component/template IR from the evidence view.
-4. Match each proven component to a unique finalized class binding in the same
+4. Project proven fact transport edges into the evidence workspace, then build
+   the Ivy role table and component/template IR from that evidence view.
+5. Match each proven component to a unique finalized class binding in the same
    module. Use that readable class body when the match is unambiguous; otherwise
    retain the evidence class.
-5. Emit artifacts independently from the JavaScript modules.
+6. Emit artifacts independently from the JavaScript modules.
 
 This split is required because an ordinary readability rule can erase useful
 compiler evidence. For example, `ObjectAssignSpread` changes a descriptor
@@ -172,16 +185,19 @@ result is better JavaScript, but no longer proves the same structural
 shape. Capturing evidence once avoids teaching the Ivy analyzer every shape
 created by every later Wakaru rule.
 
-The evidence sidecar is generic source keyed by the final module filename. The
-driver does not import Angular types or assign roles, and every unpacker still
-uses the same path. The current implementation materializes and reparses the
-two views only when recovery is enabled. The independent evidence and readable
-parses run in parallel while sharing one SWC `Globals` identity domain; this
-keeps `SyntaxContext` values distinct across the complete module workspace.
-Parser source maps are not retained after resolution because artifact printing
-uses the recovered AST rather than source-position lookups. Retaining resolved
-ASTs and a stable cross-stage origin ID would remove the remaining reparse cost
-later, but would require a larger cross-stage ownership contract.
+The evidence sidecar and retained transport facts are generic data keyed by the
+final module filename. The driver does not import Angular types or assign
+roles, and every unpacker still uses the same path. Facts are retained only for
+surviving modules with a corresponding evidence view, preventing a stale fact
+binding from being applied to a readable fallback. The current implementation
+materializes and reparses the two views only when recovery is enabled. The
+independent evidence and readable parses run in parallel while sharing one SWC
+`Globals` identity domain; this keeps `SyntaxContext` values distinct across
+the complete module workspace. Parser source maps are not retained after
+resolution because artifact printing uses the recovered AST rather than
+source-position lookups. Retaining resolved ASTs and a stable cross-stage
+origin ID would remove the remaining reparse cost later, but would require a
+larger cross-stage ownership contract.
 
 Standalone recovery receives one source view and therefore parses it once,
 matching the convenience API boundary documented in [public-api.md](public-api.md).

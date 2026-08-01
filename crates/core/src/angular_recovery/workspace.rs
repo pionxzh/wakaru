@@ -5,12 +5,13 @@ use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, Class, Decl, DefaultDecl, ExportSpecifier, Expr,
     ExprOrSpread, ForHead, ForInStmt, ForOfStmt, Function, Ident, ImportSpecifier, MemberProp,
-    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, UnaryExpr,
-    UnaryOp, UpdateExpr,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::facts::{ImportKind, ModuleFacts, ModuleFactsMap};
 
 use super::syntax::{binding_key, member_prop_name, BindingKey};
 use super::PreparedAngularModule;
@@ -144,6 +145,235 @@ pub(super) fn collect_esm_symbol_aliases(
     }
 
     aliases
+}
+
+/// Reconstruct binding equivalences from the generic Stage-2 transport facts
+/// captured by root unpacking.
+///
+/// The evidence view intentionally predates ESM recovery, so a namespace such
+/// as `var core = require("./runtime")` is still ordinary JavaScript there.
+/// Stage-2 facts prove that the same top-level binding became an import and
+/// that an exported public name refers to a particular provider local. This
+/// adapter projects only those transport relationships; Ivy meaning is added
+/// later by the role table.
+pub(super) fn collect_fact_symbol_aliases(
+    modules: &[PreparedAngularModule],
+    facts: &ModuleFactsMap,
+) -> Vec<WorkspaceSymbolAlias> {
+    let lookup = ModuleLookup::new(modules);
+    let bindings = modules
+        .iter()
+        .map(|module| TopLevelBindingIndex::collect(&module.module))
+        .collect::<Vec<_>>();
+    let exports = modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| {
+            facts
+                .get(&module.filename)
+                .map(|facts| fact_export_symbols(facts, &bindings[index]))
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let mut aliases = Vec::new();
+
+    for (module_index, module) in modules.iter().enumerate() {
+        let Some(module_facts) = facts.get(&module.filename) else {
+            continue;
+        };
+        for import in &module_facts.imports {
+            let Some(local) = bindings[module_index].unique(&import.local) else {
+                continue;
+            };
+            let Some(target_index) = lookup.resolve(&module.filename, import.source.as_ref())
+            else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::Default => {
+                    record_fact_import_alias(
+                        &mut aliases,
+                        WorkspaceSymbol::Binding(local.clone()),
+                        "default",
+                        &exports[target_index],
+                    );
+                    record_fact_namespace_aliases(&mut aliases, &local, &exports[target_index]);
+                }
+                ImportKind::Named(imported) => record_fact_import_alias(
+                    &mut aliases,
+                    WorkspaceSymbol::Binding(local),
+                    imported.as_ref(),
+                    &exports[target_index],
+                ),
+                ImportKind::Namespace => {
+                    record_fact_namespace_aliases(&mut aliases, &local, &exports[target_index])
+                }
+            }
+        }
+    }
+
+    aliases
+}
+
+fn record_fact_namespace_aliases(
+    aliases: &mut Vec<WorkspaceSymbolAlias>,
+    local: &BindingKey,
+    exports: &HashMap<Atom, WorkspaceSymbol>,
+) {
+    for (exported, target) in exports {
+        aliases.push(WorkspaceSymbolAlias {
+            left: WorkspaceSymbol::Member {
+                object: local.clone(),
+                property: exported.clone(),
+            },
+            right: target.clone(),
+        });
+    }
+}
+
+fn record_fact_import_alias(
+    aliases: &mut Vec<WorkspaceSymbolAlias>,
+    local: WorkspaceSymbol,
+    imported: &str,
+    exports: &HashMap<Atom, WorkspaceSymbol>,
+) {
+    let Some(target) = exports.get(&Atom::from(imported)) else {
+        return;
+    };
+    aliases.push(WorkspaceSymbolAlias {
+        left: local,
+        right: target.clone(),
+    });
+}
+
+fn fact_export_symbols(
+    facts: &ModuleFacts,
+    bindings: &TopLevelBindingIndex,
+) -> HashMap<Atom, WorkspaceSymbol> {
+    let mut exports = HashMap::<Atom, Option<WorkspaceSymbol>>::new();
+    for export in &facts.exports {
+        let Some(local) = export
+            .local
+            .as_ref()
+            .and_then(|local| bindings.unique(local))
+        else {
+            continue;
+        };
+        let symbol = WorkspaceSymbol::Binding(local);
+        exports
+            .entry(export.exported.clone())
+            .and_modify(|existing| {
+                if existing.as_ref() != Some(&symbol) {
+                    *existing = None;
+                }
+            })
+            .or_insert(Some(symbol));
+    }
+    exports
+        .into_iter()
+        .filter_map(|(exported, symbol)| symbol.map(|symbol| (exported, symbol)))
+        .collect()
+}
+
+#[derive(Default)]
+struct TopLevelBindingIndex {
+    bindings: HashMap<Atom, HashSet<BindingKey>>,
+}
+
+impl TopLevelBindingIndex {
+    fn collect(module: &swc_core::ecma::ast::Module) -> Self {
+        let mut index = Self::default();
+        for item in &module.body {
+            match item {
+                ModuleItem::Stmt(Stmt::Decl(declaration)) => index.record_decl(declaration),
+                ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                    for specifier in &import.specifiers {
+                        let local = match specifier {
+                            ImportSpecifier::Named(named) => &named.local,
+                            ImportSpecifier::Default(default) => &default.local,
+                            ImportSpecifier::Namespace(namespace) => &namespace.local,
+                        };
+                        index.record_ident(local);
+                    }
+                }
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                    index.record_decl(&export.decl);
+                }
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(default)) => {
+                    match &default.decl {
+                        DefaultDecl::Class(class) => {
+                            if let Some(ident) = &class.ident {
+                                index.record_ident(ident);
+                            }
+                        }
+                        DefaultDecl::Fn(function) => {
+                            if let Some(ident) = &function.ident {
+                                index.record_ident(ident);
+                            }
+                        }
+                        DefaultDecl::TsInterfaceDecl(_) => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        index
+    }
+
+    fn unique(&self, name: &Atom) -> Option<BindingKey> {
+        let candidates = self.bindings.get(name)?;
+        let mut candidates = candidates.iter();
+        let binding = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
+        Some(binding.clone())
+    }
+
+    fn record_decl(&mut self, declaration: &Decl) {
+        match declaration {
+            Decl::Class(class) => self.record_ident(&class.ident),
+            Decl::Fn(function) => self.record_ident(&function.ident),
+            Decl::Var(variable) => {
+                for declaration in &variable.decls {
+                    self.record_pattern(&declaration.name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn record_pattern(&mut self, pattern: &Pat) {
+        match pattern {
+            Pat::Ident(binding) => self.record_ident(&binding.id),
+            Pat::Array(array) => {
+                for element in array.elems.iter().flatten() {
+                    self.record_pattern(element);
+                }
+            }
+            Pat::Object(object) => {
+                for property in &object.props {
+                    match property {
+                        ObjectPatProp::KeyValue(key_value) => {
+                            self.record_pattern(key_value.value.as_ref());
+                        }
+                        ObjectPatProp::Assign(assign) => self.record_ident(&assign.key.id),
+                        ObjectPatProp::Rest(rest) => self.record_pattern(rest.arg.as_ref()),
+                    }
+                }
+            }
+            Pat::Assign(assign) => self.record_pattern(assign.left.as_ref()),
+            Pat::Rest(rest) => self.record_pattern(rest.arg.as_ref()),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+
+    fn record_ident(&mut self, ident: &Ident) {
+        self.bindings
+            .entry(ident.sym.clone())
+            .or_default()
+            .insert(binding_key(ident));
+    }
 }
 
 fn record_import_alias(
