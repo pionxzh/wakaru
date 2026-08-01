@@ -10,6 +10,7 @@ use crate::output::{
 pub(crate) fn recover_artifacts(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
+    module_facts: Option<&wakaru_core::ModuleFactsMap>,
     recovery: crate::RecoveryOptions,
     diagnostics: bool,
 ) -> (Vec<ArtifactOutput>, Vec<Diagnostic>) {
@@ -17,7 +18,7 @@ pub(crate) fn recover_artifacts(
         return (Vec::new(), Vec::new());
     }
 
-    match recover_angular_modules(modules, pre_rewrite_modules) {
+    match recover_angular_modules(modules, pre_rewrite_modules, module_facts) {
         Ok((artifacts, stats, unknown_runtime_call_shapes)) => {
             let unknown_shape_summary =
                 format_unknown_runtime_call_shapes(&unknown_runtime_call_shapes);
@@ -71,6 +72,7 @@ pub(crate) fn recover_artifacts(
 fn recover_angular_modules(
     modules: &[ModuleOutput],
     pre_rewrite_modules: &[(String, String)],
+    module_facts: Option<&wakaru_core::ModuleFactsMap>,
 ) -> anyhow::Result<(
     Vec<ArtifactOutput>,
     wakaru_core::AngularRecoveryStats,
@@ -104,10 +106,18 @@ fn recover_angular_modules(
             readable_source: module.code.as_str(),
         })
         .collect::<Vec<_>>();
-    let report = wakaru_core::analyze_angular_components_from_module_views(
-        &views,
-        wakaru_core::AngularRecoveryOptions::default(),
-    )?;
+    let report = if let Some(module_facts) = module_facts {
+        wakaru_core::analyze_angular_components_from_module_views_with_facts(
+            &views,
+            module_facts,
+            wakaru_core::AngularRecoveryOptions::default(),
+        )?
+    } else {
+        wakaru_core::analyze_angular_components_from_module_views(
+            &views,
+            wakaru_core::AngularRecoveryOptions::default(),
+        )?
+    };
 
     let mut seen = modules
         .iter()
