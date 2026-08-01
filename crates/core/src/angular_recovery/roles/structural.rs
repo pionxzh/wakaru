@@ -93,6 +93,25 @@ impl StructuralRoleEvidence {
         inferred
     }
 
+    pub(super) fn infer_listener_target_roles(&self) -> Vec<(SymbolIdentity, &'static str)> {
+        self.functions
+            .iter()
+            .filter_map(|function| {
+                let name =
+                    if returns_parameter_member_path(function, &["ownerDocument", "defaultView"]) {
+                        "ɵɵresolveWindow"
+                    } else if returns_parameter_member_path(function, &["ownerDocument", "body"]) {
+                        "ɵɵresolveBody"
+                    } else if returns_parameter_member_path(function, &["ownerDocument"]) {
+                        "ɵɵresolveDocument"
+                    } else {
+                        return None;
+                    };
+                Some((function.identity.clone(), name))
+            })
+            .collect()
+    }
+
     fn propagate_class_api_aliases(
         &self,
         inferred: Vec<(SymbolIdentity, &'static str)>,
@@ -1259,6 +1278,61 @@ fn expression_contains_binding(expression: &Expr, expected: &BindingKey) -> bool
     };
     expression.visit_with(&mut finder);
     finder.found
+}
+
+fn block_contains_binding(block: &BlockStmt, expected: &BindingKey) -> bool {
+    struct Finder<'a> {
+        expected: &'a BindingKey,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, identifier: &swc_core::ecma::ast::Ident) {
+            if binding_key(identifier) == *self.expected {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        expected,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+fn returns_parameter_member_path(function: &RuntimeFunction, path: &[&str]) -> bool {
+    let Some(parameters) = plain_parameter_bindings(function) else {
+        return false;
+    };
+    let [parameter] = parameters.as_slice() else {
+        return false;
+    };
+    let [Stmt::Return(ReturnStmt {
+        arg: Some(expression),
+        ..
+    })] = function.body.stmts.as_slice()
+    else {
+        return false;
+    };
+    expression_is_parameter_member_path(expression.as_ref(), parameter, path)
+}
+
+fn expression_is_parameter_member_path(
+    expression: &Expr,
+    parameter: &BindingKey,
+    path: &[&str],
+) -> bool {
+    let expression = strip_parentheses(expression);
+    let Some((property, parent_path)) = path.split_last() else {
+        return expression_is_binding(expression, parameter);
+    };
+    let Expr::Member(member) = expression else {
+        return false;
+    };
+    member_prop_name(&member.prop).as_deref() == Some(*property)
+        && expression_is_parameter_member_path(member.obj.as_ref(), parameter, parent_path)
 }
 
 fn expression_has_member_on_binding(
@@ -4172,16 +4246,16 @@ fn is_listener_shape(
     definition: &RuntimeFunction,
     observations: &[TemplateCallObservation],
 ) -> bool {
-    definition.params.len() == 3
-        && definition
-            .params
-            .iter()
-            .all(|parameter| matches!(parameter, Pat::Ident(_)))
-        && returns_identity(definition, &definition.identity)
-        && observations.iter().all(|observation| {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    if !matches!(parameters.len(), 3 | 4)
+        || !returns_identity(definition, &definition.identity)
+        || observations.is_empty()
+        || !observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 1
-                && matches!(observation.arguments.len(), 2 | 3)
+                && matches!(observation.arguments.len(), 2..=4)
                 && observation
                     .arguments
                     .first()
@@ -4189,6 +4263,21 @@ fn is_listener_shape(
                 && observation.arguments.get(1).is_some_and(|argument| {
                     matches!(argument.as_ref(), Expr::Fn(_) | Expr::Arrow(_))
                 })
+        })
+    {
+        return false;
+    }
+    if parameters.len() == 3 {
+        return true;
+    }
+
+    !block_contains_binding(&definition.body, &parameters[2])
+        && direct_calls(definition).iter().any(|call| {
+            call.callee != definition.identity
+                && call.arguments.len() == 7
+                && expression_is_binding(call.arguments[4].as_ref(), &parameters[0])
+                && expression_is_binding(call.arguments[5].as_ref(), &parameters[1])
+                && expression_is_binding(call.arguments[6].as_ref(), &parameters[3])
         })
 }
 
