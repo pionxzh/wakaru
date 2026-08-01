@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::facts::ModuleFactsMap;
 use crate::rules::RewriteLevel;
 use crate::unpacker::BundleFormat;
 
@@ -156,6 +157,12 @@ pub struct UnpackOutput {
 pub struct CapturedUnpackOutput {
     pub output: PreparedUnpackOutput,
     pub pre_rewrite_modules: Vec<(String, String)>,
+    /// Post-Stage-2 transport facts for the surviving captured modules.
+    ///
+    /// Keys and relative sources use the same final filenames as `output` and
+    /// `pre_rewrite_modules`. Framework artifact analyzers may use these facts
+    /// to project their own semantic evidence across proven module edges.
+    pub module_facts: ModuleFactsMap,
 }
 
 /// Byte-range provenance for one unpacked module.

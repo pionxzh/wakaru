@@ -631,6 +631,7 @@ pub fn unpack_prepared_inputs_with_policies_and_capture(
         CapturedUnpackOutput {
             output: emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?,
             pre_rewrite_modules: Vec::new(),
+            module_facts: Default::default(),
         }
     } else {
         unpack_multi_module_with_plan_and_capture(

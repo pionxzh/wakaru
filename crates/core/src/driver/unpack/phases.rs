@@ -25,6 +25,7 @@ use super::super::unpack_cycles::collect_import_cycle_warnings;
 use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
+    rewrite_module_fact_sources,
 };
 use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
@@ -345,6 +346,13 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
             // `module`. When the AST will be reused (no-sourcemap path), clone
             // before recovering for facts. When it won't be reused (sourcemap
             // path discards `module`), recover in place and skip the clone.
+            // Readability-only renames are intentionally disabled here: export
+            // names are separate fact fields, while local names must stay in
+            // the binding domain shared with the optional evidence view.
+            let fact_recovery_options = LateEsmRecoveryOptions {
+                smart_rename: false,
+                export_rename: false,
+            };
             let (mut facts, prepared) = if can_reuse_phase1_ast {
                 let mut facts_module = module.clone();
                 {
@@ -354,7 +362,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
                         &mut facts_module,
                         unresolved_mark,
                         RewriteLevel::Standard,
-                        LateEsmRecoveryOptions::default(),
+                        fact_recovery_options,
                     );
                 }
                 let facts = collect_module_facts(&facts_module);
@@ -367,7 +375,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
                         &mut module,
                         unresolved_mark,
                         RewriteLevel::Standard,
-                        LateEsmRecoveryOptions::default(),
+                        fact_recovery_options,
                     );
                 }
                 let facts = collect_module_facts(&module);
@@ -745,6 +753,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
         .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
         .collect();
     let mut pre_rewrite_modules = Vec::new();
+    let mut captured_module_facts = ModuleFactsMap::new();
     for (final_filename, _) in &modules {
         let provisional = reverse_rename
             .get(final_filename.as_str())
@@ -763,6 +772,12 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
         // it could prove a stale cross-module edge under the recovered name.
         if let Some(source) = remapped {
             pre_rewrite_modules.push((final_filename.clone(), source));
+            if let Some(mut facts) = module_facts.get(provisional).cloned() {
+                if !rename_map.is_empty() {
+                    rewrite_module_fact_sources(&mut facts, provisional, &rename_map);
+                }
+                captured_module_facts.insert(final_filename, facts);
+            }
         }
     }
     let modules = modules
@@ -792,6 +807,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
 
     Ok(CapturedUnpackOutput {
         pre_rewrite_modules,
+        module_facts: captured_module_facts,
         output: PreparedUnpackOutput {
             modules,
             warnings,

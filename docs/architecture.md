@@ -459,8 +459,9 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    enabled, materialize an optional generic evidence view after those exact
    normalizations and before the readability registry. Then run the rule
    registry through `UnEsm`, clone that barrier AST for webpack factory-IIFE
-   fact recovery, and extract import/export facts. Retain the pre-recovery AST
-   together with its `Globals` and unresolved mark.
+   fact recovery, preserve its pre-readability local binding names, and extract
+   import/export facts. Retain the pre-recovery AST together with its `Globals`
+   and unresolved mark.
 2. **Phase 2 (parallel):** Resume the retained Phase 1 AST → cross-module late
    pass (re-export consolidation, namespace decomposition, fact-aware helper
    recovery) → run the registry range resuming after `UnEsm`, through `UnReturn` →
@@ -492,7 +493,11 @@ because that pass operates on emitted module text.
 The optional pre-rewrite evidence view is also format-neutral. Enabling it does
 not make the driver assign Angular, Vue, or other framework meaning; it only
 preserves the compiler shapes that a root artifact analyzer requested. The
-normal JavaScript output continues through the same rule pipeline.
+normal JavaScript output continues through the same rule pipeline. For modules
+whose evidence view survives, root capture also exposes a filtered, final-name
+snapshot of the generic Stage-2 transport facts. Artifact analyzers can derive
+evidence-side symbol equivalences from that snapshot without placing framework
+roles in the driver or fact system.
 
 ## File structure
 
