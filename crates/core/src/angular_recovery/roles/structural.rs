@@ -509,7 +509,12 @@ impl StructuralRoleEvidence {
         ));
         inferred.extend(infer_defer_role_family(&function_index, &by_identity));
         inferred.extend(infer_repeater_role_family(&function_index, &by_identity));
-        inferred.extend(infer_view_state_role_family(&self.functions, modules));
+        inferred.extend(infer_view_state_role_family(
+            &self.functions,
+            modules,
+            &self.integer_constants,
+            roles,
+        ));
         inferred.extend(infer_pure_function_family(&function_index, &by_identity));
         for (identity, observations) in &by_identity {
             if specialized_identities.contains(identity) {
@@ -3823,9 +3828,11 @@ fn contains_member_property(block: &BlockStmt, expected: &str) -> bool {
 fn infer_view_state_role_family(
     functions: &[RuntimeFunction],
     modules: &[PreparedAngularModule],
+    integer_constants: &HashMap<BindingKey, u64>,
+    roles: &IvyRoleTable,
 ) -> Vec<(SymbolIdentity, &'static str)> {
-    let mut restores_by_state: HashMap<SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
-    let mut resets_by_state: HashMap<SymbolIdentity, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut restores_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::new();
+    let mut resets_by_state: HashMap<ValuePath, Vec<&RuntimeFunction>> = HashMap::new();
     for function in functions {
         let Some(parameters) = plain_parameter_bindings(function) else {
             continue;
@@ -3833,7 +3840,7 @@ fn infer_view_state_role_family(
         let [parameter] = parameters.as_slice() else {
             continue;
         };
-        if returns_parameter_index(function, parameter, 8) {
+        if returns_parameter_index(function, parameter, 8, integer_constants) {
             if let Some(state) = single_assigned_member(function, AssignedValue::Binding(parameter))
             {
                 restores_by_state.entry(state).or_default().push(function);
@@ -3866,9 +3873,13 @@ fn infer_view_state_role_family(
             .iter()
             .filter(|function| {
                 function.params.is_empty()
-                    && exact_returned_identity(function)
-                        .is_some_and(|returned| same_member_object(&returned, &state))
-                    && uses_capture_restore_flow(modules, &function.identity, &restore.identity)
+                    && returns_current_view_from_state_object(function, functions, &state, roles)
+                    && uses_capture_restore_flow(
+                        modules,
+                        &function.identity,
+                        &restore.identity,
+                        roles,
+                    )
             })
             .collect::<Vec<_>>();
         if let [getter] = getters.as_slice() {
@@ -3878,40 +3889,83 @@ fn infer_view_state_role_family(
     inferred
 }
 
-fn same_member_object(left: &SymbolIdentity, right: &SymbolIdentity) -> bool {
-    match (left, right) {
-        (
-            SymbolIdentity::LocalMember {
-                object: left_object,
-                ..
-            },
-            SymbolIdentity::LocalMember {
-                object: right_object,
-                ..
-            },
-        ) => left_object == right_object,
-        (
-            SymbolIdentity::GlobalMember {
-                object: left_object,
-                ..
-            },
-            SymbolIdentity::GlobalMember {
-                object: right_object,
-                ..
-            },
-        ) => left_object == right_object,
-        _ => false,
+fn returns_current_view_from_state_object(
+    function: &RuntimeFunction,
+    functions: &[RuntimeFunction],
+    state: &ValuePath,
+    roles: &IvyRoleTable,
+) -> bool {
+    if exact_returned_value_path(function)
+        .is_some_and(|returned| same_value_path_object(&returned, state))
+    {
+        return true;
     }
+    let Some(callee) = exact_zero_argument_returned_call_callee(function) else {
+        return false;
+    };
+    let mut targets = functions
+        .iter()
+        .filter(|candidate| roles.identities_equivalent(&candidate.identity, &callee));
+    let Some(target) = targets.next() else {
+        return false;
+    };
+    targets.next().is_none()
+        && target.params.is_empty()
+        && exact_returned_value_path(target)
+            .is_some_and(|returned| same_value_path_object(&returned, state))
+}
+
+fn exact_zero_argument_returned_call_callee(function: &RuntimeFunction) -> Option<SymbolIdentity> {
+    let expression = single_top_level_return_expression(&function.body)?;
+    let Expr::Call(call) = strip_parentheses(expression) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    symbol_identity(callee.as_ref(), function.unresolved_ctxt)
+}
+
+fn same_value_path_object(left: &ValuePath, right: &ValuePath) -> bool {
+    let (Some((_, left_object)), Some((_, right_object))) =
+        (left.properties.split_last(), right.properties.split_last())
+    else {
+        return false;
+    };
+    left.root == right.root && left_object == right_object
+}
+
+fn exact_returned_value_path(function: &RuntimeFunction) -> Option<ValuePath> {
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    let mut path = None;
+    for expression in returns.expressions {
+        let expression = match strip_parentheses(expression.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.last()?.as_ref(),
+            expression => expression,
+        };
+        let current = value_path(expression)?;
+        if path.as_ref().is_some_and(|existing| existing != &current) {
+            return None;
+        }
+        path = Some(current);
+    }
+    path
 }
 
 fn uses_capture_restore_flow(
     modules: &[PreparedAngularModule],
     getter: &SymbolIdentity,
     restore: &SymbolIdentity,
+    roles: &IvyRoleTable,
 ) -> bool {
     struct Collector<'a> {
         getter: &'a SymbolIdentity,
         restore: &'a SymbolIdentity,
+        roles: &'a IvyRoleTable,
         unresolved_ctxt: SyntaxContext,
         captures: HashSet<BindingKey>,
         restored: HashSet<BindingKey>,
@@ -3925,7 +3979,9 @@ fn uses_capture_restore_flow(
                 if call_chain(call).is_some_and(|(root, argument_lists)| {
                     argument_lists.len() == 1
                         && argument_lists[0].is_empty()
-                        && symbol_identity(root, self.unresolved_ctxt).as_ref() == Some(self.getter)
+                        && symbol_identity(root, self.unresolved_ctxt).is_some_and(|identity| {
+                            self.roles.identities_equivalent(&identity, self.getter)
+                        })
                 }) {
                     self.captures.insert(binding_key(&binding.id));
                 }
@@ -3935,8 +3991,9 @@ fn uses_capture_restore_flow(
 
         fn visit_call_expr(&mut self, call: &CallExpr) {
             if let Some((root, argument_lists)) = call_chain(call) {
-                if symbol_identity(root, self.unresolved_ctxt).as_ref() == Some(self.restore)
-                    && argument_lists.len() == 1
+                if symbol_identity(root, self.unresolved_ctxt).is_some_and(|identity| {
+                    self.roles.identities_equivalent(&identity, self.restore)
+                }) && argument_lists.len() == 1
                     && argument_lists[0].len() == 1
                 {
                     if let Expr::Ident(saved_view) =
@@ -3954,6 +4011,7 @@ fn uses_capture_restore_flow(
         let mut collector = Collector {
             getter,
             restore,
+            roles,
             unresolved_ctxt: prepared.unresolved_ctxt,
             captures: HashSet::new(),
             restored: HashSet::new(),
@@ -3975,11 +4033,10 @@ enum AssignedValue<'a> {
 fn single_assigned_member(
     function: &RuntimeFunction,
     value: AssignedValue<'_>,
-) -> Option<SymbolIdentity> {
+) -> Option<ValuePath> {
     struct Collector<'a> {
         value: AssignedValue<'a>,
-        unresolved_ctxt: SyntaxContext,
-        targets: HashSet<SymbolIdentity>,
+        targets: HashSet<ValuePath>,
     }
 
     impl Visit for Collector<'_> {
@@ -4003,10 +4060,8 @@ fn single_assigned_member(
                 ),
             };
             if matches_value {
-                if let Some(identity) =
-                    symbol_identity(&Expr::Member(member.clone()), self.unresolved_ctxt)
-                {
-                    self.targets.insert(identity);
+                if let Some(path) = value_path(&Expr::Member(member.clone())) {
+                    self.targets.insert(path);
                 }
             }
             assignment.visit_children_with(self);
@@ -4019,7 +4074,6 @@ fn single_assigned_member(
 
     let mut collector = Collector {
         value,
-        unresolved_ctxt: function.unresolved_ctxt,
         targets: HashSet::new(),
     };
     function.body.visit_with(&mut collector);
@@ -4032,6 +4086,7 @@ fn returns_parameter_index(
     function: &RuntimeFunction,
     parameter: &BindingKey,
     expected_index: u64,
+    integer_constants: &HashMap<BindingKey, u64>,
 ) -> bool {
     let mut returns = ReturnExpressionCollector::default();
     function.body.visit_with(&mut returns);
@@ -4047,7 +4102,7 @@ fn returns_parameter_index(
             return false;
         };
         binding_key(object) == *parameter
-            && computed_member_index(&member.prop) == Some(expected_index)
+            && computed_slot(&member.prop, integer_constants) == Some(expected_index)
     })
 }
 
@@ -4564,7 +4619,7 @@ fn is_next_context_shape(
             || nested_iife)
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct ValuePath {
     root: BindingKey,
     properties: Vec<Atom>,
