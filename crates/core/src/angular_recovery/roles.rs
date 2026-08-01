@@ -713,6 +713,18 @@ impl IvyRoleTable {
         self.alias_group_by_symbol.get(identity).copied()
     }
 
+    pub(super) fn identities_equivalent(
+        &self,
+        left: &SymbolIdentity,
+        right: &SymbolIdentity,
+    ) -> bool {
+        left == right
+            || matches!(
+                (self.alias_group_index(left), self.alias_group_index(right)),
+                (Some(left_group), Some(right_group)) if left_group == right_group
+            )
+    }
+
     pub(super) fn instruction_for_callee(
         &self,
         callee: &Callee,
