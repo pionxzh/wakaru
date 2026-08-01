@@ -28,6 +28,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use crate::facts::ModuleFactsMap;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
 use crate::rules::rename_utils::BindingRename;
 use artifact::{class_references, dependency_binding, ArtifactSymbolTable};
@@ -367,7 +368,7 @@ pub fn analyze_angular_components_from_modules(
                 .map(|source| GLOBALS.set(&globals, || prepare_module(source)))
                 .collect::<Result<Vec<_>>>()?
         };
-        recover_prepared_modules(&modules, None)
+        recover_prepared_modules(&modules, None, None)
     })
 }
 
@@ -387,6 +388,29 @@ pub fn recover_angular_modules_from_module_views(
 
 pub fn analyze_angular_components_from_module_views(
     views: &[AngularModuleView<'_>],
+    options: AngularRecoveryOptions,
+) -> Result<AngularRecoveryReport> {
+    analyze_angular_components_from_module_views_impl(views, None, options)
+}
+
+/// Analyze paired module views while projecting semantic evidence through a
+/// generic post-Stage-2 module transport graph.
+///
+/// This lockstep integration surface is used by the root unpack operation.
+/// Standalone callers should normally use
+/// [`analyze_angular_components_from_module_views`].
+#[doc(hidden)]
+pub fn analyze_angular_components_from_module_views_with_facts(
+    views: &[AngularModuleView<'_>],
+    module_facts: &ModuleFactsMap,
+    options: AngularRecoveryOptions,
+) -> Result<AngularRecoveryReport> {
+    analyze_angular_components_from_module_views_impl(views, Some(module_facts), options)
+}
+
+fn analyze_angular_components_from_module_views_impl(
+    views: &[AngularModuleView<'_>],
+    module_facts: Option<&ModuleFactsMap>,
     _options: AngularRecoveryOptions,
 ) -> Result<AngularRecoveryReport> {
     let globals = Globals::new();
@@ -425,13 +449,14 @@ pub fn analyze_angular_components_from_module_views(
         };
         let evidence_modules = evidence_modules?;
         let readable_modules = readable_modules?;
-        recover_prepared_modules(&evidence_modules, Some(&readable_modules))
+        recover_prepared_modules(&evidence_modules, Some(&readable_modules), module_facts)
     })
 }
 
 fn recover_prepared_modules(
     evidence_modules: &[PreparedAngularModule],
     readable_modules: Option<&[PreparedAngularModule]>,
+    module_facts: Option<&ModuleFactsMap>,
 ) -> Result<AngularRecoveryReport> {
     let recovery_span = tracing::info_span!(
         "angular: recover prepared modules",
@@ -442,7 +467,7 @@ fn recover_prepared_modules(
     let roles = {
         let span = tracing::info_span!("angular: infer Ivy roles");
         let _enter = span.enter();
-        IvyRoleTable::collect(evidence_modules)
+        IvyRoleTable::collect(evidence_modules, module_facts)
     };
     let (evidence_artifact_symbols, readable_artifact_symbols, readable_classes) = {
         let span = tracing::info_span!("angular: index artifact symbols");

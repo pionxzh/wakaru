@@ -29,6 +29,7 @@ pub mod vue_template;
 
 pub use angular_recovery::{
     analyze_angular_components_from_js, analyze_angular_components_from_module_views,
+    analyze_angular_components_from_module_views_with_facts,
     analyze_angular_components_from_modules, recover_angular_components_from_js,
     recover_angular_components_from_module_views, recover_angular_components_from_modules,
     recover_angular_modules_from_js, recover_angular_modules_from_module_views,
