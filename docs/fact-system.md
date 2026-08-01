@@ -45,6 +45,7 @@ Phase 1 (per module, parallel):
     collect raw CommonJS default-object / callable-property facts
     rule range through UnEsm
     clone barrier AST → recover webpack factory IIFE ESM shapes
+                      → skip readability-only binding renames
     collect_module_facts(&facts_clone)                ← pure AST → facts
     retain original barrier AST + Globals + unresolved mark
 
@@ -61,6 +62,13 @@ Phase 2 (per module, parallel):
     registry rule range resuming after UnEsm, through UnReturn
     targeted late cleanup/recovery
 ```
+
+The facts clone deliberately does not run `SmartRename` or `UnExportRename`.
+Those passes improve emitted names but are unnecessary for transport proof and
+would sever the local-binding spelling shared with an optional pre-rewrite
+evidence view. Public export names are still recorded independently, so a fact
+can retain `exported: VBU, local: Ea` even when final JavaScript later prints
+`export function VBU(...)`.
 
 The normal no-source-map path runs the through-`UnEsm` range once. The retained
 AST crosses the barrier together with the exact `Globals` and unresolved mark
@@ -164,6 +172,13 @@ CommonJS references, computed or multiple candidates, mismatched locals
 values, and nested switches. Direct eval disables both recoveries. Synthetic
 recursive children do not inherit the key facts, and `--raw` continues to
 expose the detector's extracted factory body unchanged.
+
+When a root artifact analyzer requests pre-rewrite module views, the driver
+also retains an immutable snapshot of these same generic facts. It filters the
+snapshot to modules whose evidence view survived and remaps module keys and
+relative sources into the final filename namespace. This snapshot is an
+integration handoff, not a second fact phase; normal Phase 2 rules continue to
+read the provisional-name map at the barrier.
 
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
@@ -269,6 +284,12 @@ fact available to consumers.
   scope-hoisted CommonJS wrappers, a separate provider-side fact proves that
   the imported zero-argument factory returns the registered helper namespace;
   consumer-side property spelling alone is never sufficient.
+- **Framework artifact workspaces** — may adapt the retained root snapshot into
+  binding-equivalence edges between pre-rewrite module views. For example, a
+  recovered namespace-like import plus a proven target export can establish
+  `core.VBU ≡ Ea`. The fact system supplies only transport identity; the
+  framework analyzer decides whether `Ea` has any Angular, Vue, or other
+  semantic role.
 
 ## Adding a new fact-reading rule
 
@@ -310,6 +331,7 @@ normal constructor.
 - No speculative facts ("this might be an X"). A fact holds iff the normalized
   post-Stage-2 AST says it does, or the narrow pre-`UnEsm` collector proves the
   exact raw CommonJS assignment shape.
+- No framework roles or evidence conclusions in `ModuleFactsMap`.
 
 Rules that need heavier semantic conclusions (e.g. "this namespace projection
 is always equivalent to a direct import binding") should derive them inside the

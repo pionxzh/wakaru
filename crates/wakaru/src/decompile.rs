@@ -54,6 +54,7 @@ pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOu
             let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
                 std::slice::from_ref(&module),
                 &pre_rewrite_modules,
+                None,
                 options.recovery(),
                 options.diagnostics(),
             );

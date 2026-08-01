@@ -231,6 +231,7 @@ impl UnpackJob {
 
         let mut modules = Vec::new();
         let mut pre_rewrite_modules = Vec::new();
+        let mut module_facts = wakaru_core::ModuleFactsMap::new();
         let mut diagnostics = Vec::new();
         if !processed.is_empty() {
             let processed_meta = processed
@@ -246,6 +247,7 @@ impl UnpackJob {
             );
             modules = converted.modules;
             pre_rewrite_modules = converted.pre_rewrite_modules;
+            module_facts = converted.module_facts;
             diagnostics = converted.diagnostics;
         }
 
@@ -253,6 +255,7 @@ impl UnpackJob {
         let (artifacts, recovery_diagnostics) = crate::artifacts::recover_artifacts(
             &modules,
             &pre_rewrite_modules,
+            Some(&module_facts),
             self.options.recovery(),
             self.options.diagnostics(),
         );
@@ -366,6 +369,7 @@ fn core_scope_hoist_policy_for_mode(
 struct ConvertedOutput {
     modules: Vec<ModuleOutput>,
     pre_rewrite_modules: Vec<(String, String)>,
+    module_facts: wakaru_core::ModuleFactsMap,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -380,6 +384,7 @@ fn convert_core_output(
     let wakaru_core::driver::CapturedUnpackOutput {
         output,
         pre_rewrite_modules,
+        module_facts,
     } = captured;
     let only_input = (processed.len() == 1).then_some(processed[0].id);
     let failed: HashSet<&str> = output
@@ -479,6 +484,7 @@ fn convert_core_output(
     ConvertedOutput {
         modules,
         pre_rewrite_modules,
+        module_facts,
         diagnostics,
     }
 }
@@ -647,6 +653,79 @@ mod tests {
             shared._DumpException(error);
           }
         }).call(this, this.localSuite);
+    "#;
+    const WEBPACK_ANGULAR_RENAMED_RUNTIME_FIXTURE: &str = r#"
+        (() => {
+          var __webpack_modules__ = ({
+            1: ((__unused_webpack_module, exports, __webpack_require__) => {
+              __webpack_require__.r(exports);
+              __webpack_require__.d(exports, {
+                VBU: () => Ea,
+                nrm: () => element
+              });
+              function Ea(definition) {
+                return noSideEffects(() => Object.assign({}, baseDefinition, {
+                  type: definition.type,
+                  selectors: definition.selectors,
+                  template: definition.template,
+                  dependencies: definition.dependencies,
+                  styles: definition.styles
+                }));
+              }
+              function elementStart(index, name, attrs, refs) {
+                createNode(index, name, attrs, refs);
+                return elementStart;
+              }
+              function elementEnd() {
+                leaveNode();
+                return elementEnd;
+              }
+              function element(index, name, attrs, refs) {
+                elementStart(index, name, attrs, refs);
+                elementEnd();
+                return element;
+              }
+            }),
+            2: ((__unused_webpack_module, exports, __webpack_require__) => {
+              __webpack_require__.r(exports);
+              __webpack_require__.d(exports, { Card: () => Card });
+              var core = __webpack_require__(1);
+              class Card {
+                static compiled = core.VBU({
+                  type: Card,
+                  selectors: [["fact-card"]],
+                  template(renderFlags) {
+                    if (renderFlags & 1) {
+                      core.nrm(0, "article");
+                    }
+                  },
+                  dependencies: [],
+                  styles: []
+                });
+              }
+            })
+          });
+          var __webpack_module_cache__ = {};
+          function __webpack_require__(moduleId) {
+            var module = __webpack_module_cache__[moduleId];
+            if (module !== undefined) return module.exports;
+            module = __webpack_module_cache__[moduleId] = { exports: {} };
+            __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+            return module.exports;
+          }
+          __webpack_require__.d = (exports, definition) => {
+            for (var key in definition) {
+              if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+                Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+              }
+            }
+          };
+          __webpack_require__.o = (object, property) => Object.prototype.hasOwnProperty.call(object, property);
+          __webpack_require__.r = (exports) => {
+            Object.defineProperty(exports, "__esModule", { value: true });
+          };
+          __webpack_require__(2);
+        })();
     "#;
     const METRO_FIXTURE: &str = r#"
         __d(function(global, require, importDefault, importAll, module, exports, dependencyMap) {
@@ -892,6 +971,33 @@ mod tests {
             .artifacts
             .iter()
             .any(|artifact| artifact.code.contains("selector: \"fixture-lazy-card\"")));
+    }
+
+    #[test]
+    fn angular_recovery_uses_stage_two_facts_for_renamed_webpack_runtime_exports() {
+        let output = unpack(
+            vec![Source::new(
+                "renamed-angular-runtime.js",
+                WEBPACK_ANGULAR_RENAMED_RUNTIME_FIXTURE,
+            )],
+            UnpackOptions::default()
+                .with_mode(UnpackMode::Strict)
+                .with_recovery(crate::RecoveryOptions::default().with_angular_components(true)),
+        )
+        .expect("renamed Angular webpack runtime should unpack");
+
+        let artifact = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.code.contains("selector: \"fact-card\""))
+            .unwrap_or_else(|| {
+                panic!(
+                    "fact-backed Angular artifact was not recovered\nmodules: {:#?}\ndiagnostics: {:#?}",
+                    output.modules, output.diagnostics
+                )
+            });
+        assert_eq!(artifact.status, crate::ArtifactStatus::Complete);
+        assert!(artifact.code.contains("<article></article>"));
     }
 
     #[test]
