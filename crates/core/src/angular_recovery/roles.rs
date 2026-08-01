@@ -32,6 +32,32 @@ pub(super) enum AngularClassApi {
     ViewChildren,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AngularListenerTarget {
+    Window,
+    Document,
+    Body,
+}
+
+impl AngularListenerTarget {
+    fn from_export_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "ɵɵresolveWindow" => Self::Window,
+            "ɵɵresolveDocument" => Self::Document,
+            "ɵɵresolveBody" => Self::Body,
+            _ => return None,
+        })
+    }
+
+    pub(super) fn template_name(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Document => "document",
+            Self::Body => "body",
+        }
+    }
+}
+
 impl AngularClassApi {
     fn from_export_name(name: &str) -> Option<Self> {
         Some(match name {
@@ -445,6 +471,9 @@ impl IvyRoleTable {
         for (identity, name) in structural_evidence.infer_ivy_roles() {
             table.record_mapping(identity, name.to_string());
         }
+        for (identity, name) in structural_evidence.infer_listener_target_roles() {
+            table.record_mapping(identity, name.to_string());
+        }
         for (identity, name) in structural_evidence.infer_class_api_roles() {
             table.record_mapping(identity, name.to_string());
         }
@@ -811,6 +840,15 @@ impl IvyRoleTable {
     ) -> Option<IvyInstruction> {
         self.ivy_name_for_expr(expr, unresolved_ctxt)
             .and_then(|name| IvyInstruction::from_export_name(&name))
+    }
+
+    pub(super) fn listener_target_for_expr(
+        &self,
+        expr: &Expr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> Option<AngularListenerTarget> {
+        self.ivy_name_for_expr(expr, unresolved_ctxt)
+            .and_then(|name| AngularListenerTarget::from_export_name(&name))
     }
 
     pub(super) fn ivy_name_for_expr(

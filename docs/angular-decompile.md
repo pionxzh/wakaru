@@ -305,6 +305,17 @@ merely normalized is not listener evidence. Template use must then be a static
 string, zero-argument binding thunk, or handler function of the corresponding
 kind. This deliberately leaves marker-free or ambiguous wrappers unknown.
 
+Global event targets are recovered only from a canonical Angular export or a
+one-parameter resolver whose complete body returns exactly
+`element.ownerDocument`, `element.ownerDocument.defaultView`, or
+`element.ownerDocument.body`. These render as `(document:event)`,
+`(window:event)`, and `(body:event)`. The legacy four-parameter listener wrapper
+is accepted only when its event, handler, and target parameters are forwarded
+to the corresponding tail positions of the seven-argument internal listener
+call, its capture parameter is unused, and the wrapper returns itself. A
+non-false capture value or an unproven resolver remains an explicit partial
+recovery rather than being misrepresented as a local event.
+
 Constant-table recovery accepts either a direct component-local array or a
 unique factory whose complete return behavior proves that it produces the
 array. Entries are resolved independently, so one opaque value does not discard
