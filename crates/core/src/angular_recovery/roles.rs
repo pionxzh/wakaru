@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 use super::syntax::{binding_key, member_prop_name, wtf8_to_string, BindingKey};
 use super::workspace::{WorkspaceSymbol, WorkspaceSymbolAlias};
 use super::PreparedAngularModule;
+use crate::facts::ModuleFactsMap;
 
 mod structural;
 
@@ -421,7 +422,10 @@ pub(super) struct IvyRoleTable {
 }
 
 impl IvyRoleTable {
-    pub(super) fn collect(modules: &[PreparedAngularModule]) -> Self {
+    pub(super) fn collect(
+        modules: &[PreparedAngularModule],
+        module_facts: Option<&ModuleFactsMap>,
+    ) -> Self {
         let mut table = Self::default();
         for prepared in modules {
             table.collect_imports(&prepared.module);
@@ -447,7 +451,13 @@ impl IvyRoleTable {
         for (identity, role) in structural_evidence.infer_query_initializer_roles() {
             table.record_query_initializer_role(identity, role);
         }
-        let aliases = super::workspace::collect_esm_symbol_aliases(modules);
+        let mut aliases = super::workspace::collect_esm_symbol_aliases(modules);
+        if let Some(module_facts) = module_facts {
+            aliases.extend(super::workspace::collect_fact_symbol_aliases(
+                modules,
+                module_facts,
+            ));
+        }
         table.install_aliases(&aliases);
         table.propagate_aliases();
         for (identity, name) in structural_evidence.infer_template_roles(modules, &table) {
