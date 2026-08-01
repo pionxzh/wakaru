@@ -510,6 +510,9 @@ impl StructuralRoleEvidence {
             if is_advance_shape(definition, observations) {
                 matches.push("ɵɵadvance");
             }
+            if is_property_interpolate_shape(definition, observations) {
+                matches.push("ɵɵpropertyInterpolate");
+            }
             if is_property_shape(definition, observations) {
                 matches.push("ɵɵproperty");
             }
@@ -4305,6 +4308,44 @@ fn is_property_shape(
             is_member_call_named(call, "setProperty")
                 && forwards_parameter_dependencies_in_order(call, &parameters[..2])
         }))
+}
+
+fn is_property_interpolate_shape(
+    definition: &RuntimeFunction,
+    observations: &[TemplateCallObservation],
+) -> bool {
+    let Some(parameters) = plain_parameter_bindings(definition) else {
+        return false;
+    };
+    if parameters.len() != 3
+        || !returns_identity(definition, &definition.identity)
+        || observations.is_empty()
+        || !observations.iter().all(|observation| {
+            matches!(
+                observation.usage,
+                TemplateCallUsage::Effect | TemplateCallUsage::Initializer
+            ) && observation.phase == 2
+                && matches!(observation.arguments.len(), 2 | 3)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_string_literal(argument.as_ref()))
+        })
+    {
+        return false;
+    }
+
+    let calls = direct_calls(definition);
+    let [call] = calls.as_slice() else {
+        return false;
+    };
+    call.callee != definition.identity
+        && call.arguments.len() == 5
+        && expression_is_binding(call.arguments[0].as_ref(), &parameters[0])
+        && is_empty_string_literal(call.arguments[1].as_ref())
+        && expression_is_binding(call.arguments[2].as_ref(), &parameters[1])
+        && is_empty_string_literal(call.arguments[3].as_ref())
+        && expression_is_binding(call.arguments[4].as_ref(), &parameters[2])
 }
 
 fn is_attribute_shape(

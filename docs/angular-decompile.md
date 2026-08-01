@@ -364,6 +364,16 @@ start/end markers and interpolation placeholders; ICU expressions,
 sub-template opcodes, unbalanced markers, and ambiguous message factories
 remain partial.
 
+The base `ɵɵpropertyInterpolate` instruction is also distinct from an ordinary
+property binding because interpolation stringifies its value. A Closure-
+renamed wrapper is classified only when its three parameters are forwarded in
+order to one five-argument continuation with literal empty prefix and suffix
+arguments, the wrapper returns its own identity, and all observed calls have
+the matching update-phase shape. Recovered calls use authored-looking
+`name="{{ expression }}"` syntax, preserving interpolation semantics. The
+numbered multi-value property-interpolation variants remain unsupported until
+their continuation family can be proven independently.
+
 Each recovered render function owns its node cursor, reference slots, context
 depth, aliases, and listener operations. Entering an embedded view snapshots
 the already-proven ancestor reference scopes rather than flattening their
