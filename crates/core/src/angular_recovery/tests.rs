@@ -2344,6 +2344,249 @@ fn infers_text_listener_and_advance_from_runtime_and_template_shapes() {
 }
 
 #[test]
+fn recovers_canonical_global_listener_targets() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+            "ɵɵresolveWindow": runtime.windowTarget,
+            "ɵɵresolveDocument": runtime.documentTarget,
+            "ɵɵresolveBody": runtime.bodyTarget,
+        };
+
+        class CanonicalGlobalListenerComponent {
+            resize() {}
+            selectionChanged() {}
+            bodyScrolled() {}
+
+            static compiled = runtime.component({
+                type: CanonicalGlobalListenerComponent,
+                selectors: [["canonical-global-listener"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.listener(
+                            "resize",
+                            () => context.resize(),
+                            runtime.windowTarget
+                        );
+                        runtime.listener(
+                            "selectionchange",
+                            () => context.selectionChanged(),
+                            runtime.documentTarget
+                        );
+                        runtime.listener(
+                            "scroll",
+                            () => context.bodyScrolled(),
+                            runtime.bodyTarget
+                        );
+                        runtime.end();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("canonical global listener targets should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        recovered[0].issues,
+        recovered[0].source,
+    );
+    assert!(recovered[0].source.contains(
+        r#"<button (window:resize)="resize()" (document:selectionchange)="selectionChanged()" (body:scroll)="bodyScrolled()"></button>"#
+    ));
+}
+
+#[test]
+fn does_not_render_an_unproven_listener_target_as_a_local_event() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+        };
+
+        class UnknownListenerTargetComponent {
+            resize() {}
+
+            static compiled = runtime.component({
+                type: UnknownListenerTargetComponent,
+                selectors: [["unknown-listener-target"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.listener(
+                            "resize",
+                            () => context.resize(),
+                            runtime.unknownTarget
+                        );
+                        runtime.end();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("unknown listener targets should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnsupportedInstruction
+            && issue
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("not a proven Angular global target"))
+    }));
+    assert!(!component.source.contains("(resize)="));
+}
+
+#[test]
+fn infers_legacy_listener_and_global_targets_and_rejects_used_capture_lookalikes() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+        };
+        runtime.listener = function(eventName, handler, capture, target) {
+            const view = currentView();
+            const definition = currentDefinition();
+            const node = currentNode();
+            listenInternal(
+                definition,
+                view,
+                view.renderer,
+                node,
+                eventName,
+                handler,
+                target
+            );
+            return runtime.listener;
+        };
+        runtime.lookalike = function(eventName, handler, capture, target) {
+            const view = currentView();
+            const definition = currentDefinition();
+            const node = currentNode();
+            listenInternal(
+                definition,
+                view,
+                view.renderer,
+                node,
+                eventName,
+                handler,
+                capture
+            );
+            return runtime.lookalike;
+        };
+        runtime.windowTarget = function(element) {
+            return element.ownerDocument.defaultView;
+        };
+        runtime.documentTarget = function(element) {
+            return element.ownerDocument;
+        };
+        runtime.bodyTarget = function(element) {
+            return element.ownerDocument.body;
+        };
+
+        class LegacyGlobalListenerComponent {
+            select() {}
+            resize() {}
+            selectionChanged() {}
+            bodyScrolled() {}
+
+            static compiled = runtime.component({
+                type: LegacyGlobalListenerComponent,
+                selectors: [["legacy-global-listener"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.listener("click", () => context.select())(
+                            "resize",
+                            () => context.resize(),
+                            false,
+                            runtime.windowTarget
+                        );
+                        runtime.listener(
+                            "selectionchange",
+                            () => context.selectionChanged(),
+                            false,
+                            runtime.documentTarget
+                        );
+                        runtime.listener(
+                            "scroll",
+                            () => context.bodyScrolled(),
+                            false,
+                            runtime.bodyTarget
+                        );
+                        runtime.end();
+                    }
+                },
+            });
+        }
+
+        class LegacyListenerLookalikeComponent {
+            select() {}
+
+            static compiled = runtime.component({
+                type: LegacyListenerLookalikeComponent,
+                selectors: [["legacy-listener-lookalike"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button");
+                        runtime.lookalike(
+                            "click",
+                            () => context.select(),
+                            false,
+                            runtime.windowTarget
+                        );
+                        runtime.end();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("legacy listener targets should be analyzed");
+    let listener = report
+        .components
+        .iter()
+        .find(|component| component.selector == "legacy-global-listener")
+        .expect("the legacy listener component should recover");
+    let lookalike = report
+        .components
+        .iter()
+        .find(|component| component.selector == "legacy-listener-lookalike")
+        .expect("the used-capture lookalike should remain visible");
+
+    assert_eq!(
+        listener.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        listener.issues,
+        listener.source,
+    );
+    assert!(listener.source.contains(
+        r#"<button (click)="select()" (window:resize)="resize()" (document:selectionchange)="selectionChanged()" (body:scroll)="bodyScrolled()"></button>"#
+    ));
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
 fn infers_template_roles_when_render_flag_operands_are_commuted() {
     let source = r#"
         runtime.component = function(definition) {
@@ -2654,6 +2897,14 @@ fn recovers_canonical_property_interpolation() {
     assert!(recovered[0]
         .source
         .contains("<a title=\"{{ title }}\"></a>"));
+    let stats = recovered[0].stats;
+    assert_eq!(
+        stats.runtime_calls_observed,
+        stats.rendered_instruction_calls
+            + stats.unsupported_runtime_calls
+            + stats.malformed_instruction_calls,
+        "every property-interpolation runtime call should be accounted for",
+    );
 }
 
 #[test]
@@ -2735,6 +2986,14 @@ fn infers_empty_affix_property_interpolation_and_rejects_reordered_lookalikes() 
         inferred.source,
     );
     assert!(inferred.source.contains("<img src=\"{{ source }}\" />"));
+    let stats = inferred.stats;
+    assert_eq!(
+        stats.runtime_calls_observed,
+        stats.rendered_instruction_calls
+            + stats.unsupported_runtime_calls
+            + stats.malformed_instruction_calls,
+        "structurally inferred property interpolation should retain call accounting",
+    );
     assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
     assert!(lookalike
         .source
