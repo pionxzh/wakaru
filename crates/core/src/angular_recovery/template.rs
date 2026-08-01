@@ -21,7 +21,8 @@ use super::emitter::{
 };
 use super::roles::{IvyInstruction, IvyRoleTable};
 use super::syntax::{
-    binding_key, member_prop_name, prop_name, string_lit, wtf8_to_string, BindingKey,
+    binding_key, member_prop_name, prop_name, render_flag_mask, string_lit, wtf8_to_string,
+    BindingKey,
 };
 use super::{
     AngularRecoveryIssue, AngularRecoveryIssueKind, AngularRecoverySourceRange,
@@ -2736,22 +2737,6 @@ fn strip_parentheses(mut expression: &Expr) -> &Expr {
         expression = parenthesized.expr.as_ref();
     }
     expression
-}
-
-fn render_flag_mask(expression: &Expr, render_flags: &BindingKey) -> Option<u8> {
-    let Expr::Bin(binary) = expression else {
-        return None;
-    };
-    if binary.op != BinaryOp::BitAnd {
-        return None;
-    }
-    let (Expr::Ident(ident), Expr::Lit(Lit::Num(mask))) =
-        (binary.left.as_ref(), binary.right.as_ref())
-    else {
-        return None;
-    };
-    (binding_key(ident) == *render_flags && (mask.value == 1.0 || mask.value == 2.0))
-        .then_some(mask.value as u8)
 }
 
 pub(super) fn call_chain(call: &CallExpr) -> Option<(&Expr, Vec<&[ExprOrSpread]>)> {
