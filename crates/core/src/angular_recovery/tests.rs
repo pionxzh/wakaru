@@ -1536,6 +1536,10 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
             setProperty(name, value, sanitizer);
             return property;
         }
+        function propertyInterpolate(name, value, sanitizer) {
+            return interpolateProperty(name, "", value, "", sanitizer),
+                propertyInterpolate;
+        }
         const publicRuntime = { "ɵɵproperty": property };
         void publicRuntime;
     "#;
@@ -1552,6 +1556,7 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
                 if (renderFlags & 2) {
                     const parent = core.XpG();
                     core.Y8G("title", parent.title);
+                    core.FS9("id", parent.id);
                 }
             },
             dependencies: [],
@@ -1595,6 +1600,11 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
                     local: Some("property".into()),
                     kind: ExportKind::Named,
                 },
+                ExportFact {
+                    exported: "FS9".into(),
+                    local: Some("propertyInterpolate".into()),
+                    kind: ExportKind::Named,
+                },
             ],
             ..Default::default()
         },
@@ -1628,7 +1638,7 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
     );
     assert!(report.components[0]
         .source
-        .contains(r#"<article [title]="title"></article>"#));
+        .contains(r#"<article [title]="title" id="{{ id }}"></article>"#));
 
     facts.insert(
         "runtime.js",
@@ -1657,6 +1667,11 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
                 ExportFact {
                     exported: "Y8G".into(),
                     local: Some("property".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "FS9".into(),
+                    local: Some("propertyInterpolate".into()),
                     kind: ExportKind::Named,
                 },
             ],
@@ -2586,6 +2601,140 @@ fn infers_a_specialized_property_from_an_ordered_renderer_write() {
         property.source,
     );
     assert!(property.source.contains("[disabled]=\"disabled\""));
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
+fn recovers_canonical_property_interpolation() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵpropertyInterpolate": runtime.propertyInterpolation,
+        };
+
+        class CanonicalPropertyInterpolationComponent {
+            title = "Welcome";
+
+            static compiled = runtime.component({
+                type: CanonicalPropertyInterpolationComponent,
+                selectors: [["canonical-property-interpolation"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "a");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.propertyInterpolation(
+                            "title",
+                            context.title,
+                            sanitizeHtml
+                        );
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("canonical property interpolation should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        recovered[0].issues,
+        recovered[0].source,
+    );
+    assert!(recovered[0]
+        .source
+        .contains("<a title=\"{{ title }}\"></a>"));
+}
+
+#[test]
+fn infers_empty_affix_property_interpolation_and_rejects_reordered_lookalikes() {
+    let source = r#"
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.component,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+        };
+        runtime.propertyInterpolation = function(name, value, sanitizer) {
+            return writeInterpolatedProperty(name, "", value, "", sanitizer),
+                runtime.propertyInterpolation;
+        };
+        runtime.lookalike = function(name, value, sanitizer) {
+            return writeInterpolatedProperty(name, "", sanitizer, "", value),
+                runtime.lookalike;
+        };
+
+        class InferredPropertyInterpolationComponent {
+            source = "/image.png";
+
+            static compiled = runtime.component({
+                type: InferredPropertyInterpolationComponent,
+                selectors: [["inferred-property-interpolation"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "img");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.propertyInterpolation(
+                            "src",
+                            context.source,
+                            sanitizeUrl
+                        );
+                    }
+                },
+            });
+        }
+
+        class PropertyInterpolationLookalikeComponent {
+            source = "/image.png";
+
+            static compiled = runtime.component({
+                type: PropertyInterpolationLookalikeComponent,
+                selectors: [["property-interpolation-lookalike"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        runtime.start(0, "img");
+                        runtime.end();
+                    }
+                    if (rf & 2) {
+                        runtime.lookalike("src", context.source, sanitizeUrl);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("optimized property interpolation wrappers should be analyzed");
+    let inferred = report
+        .components
+        .iter()
+        .find(|component| component.selector == "inferred-property-interpolation")
+        .expect("the inferred property interpolation component should recover");
+    let lookalike = report
+        .components
+        .iter()
+        .find(|component| component.selector == "property-interpolation-lookalike")
+        .expect("the reordered lookalike should remain visible");
+
+    assert_eq!(
+        inferred.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        inferred.issues,
+        inferred.source,
+    );
+    assert!(inferred.source.contains("<img src=\"{{ source }}\" />"));
     assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
     assert!(lookalike
         .source
