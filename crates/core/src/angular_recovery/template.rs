@@ -1137,6 +1137,7 @@ pub(super) fn ivy_template_score(
                     | IvyInstruction::TextInterpolate6
                     | IvyInstruction::TextInterpolate7
                     | IvyInstruction::TextInterpolate8
+                    | IvyInstruction::PropertyInterpolate
                     | IvyInstruction::Property
                     | IvyInstruction::AriaProperty
                     | IvyInstruction::Attribute
@@ -2647,6 +2648,7 @@ fn instruction_supported_in_phase(instruction: IvyInstruction, phase: u8) -> boo
                 | IvyInstruction::TextInterpolate6
                 | IvyInstruction::TextInterpolate7
                 | IvyInstruction::TextInterpolate8
+                | IvyInstruction::PropertyInterpolate
                 | IvyInstruction::Property
                 | IvyInstruction::AriaProperty
                 | IvyInstruction::Attribute
@@ -6350,7 +6352,8 @@ fn apply_update_instruction(
                 },
             );
         }
-        IvyInstruction::Property
+        IvyInstruction::PropertyInterpolate
+        | IvyInstruction::Property
         | IvyInstruction::AriaProperty
         | IvyInstruction::Attribute
         | IvyInstruction::ClassProp
@@ -6371,6 +6374,17 @@ fn apply_update_instruction(
                 record_missing_target(
                     call,
                     &format!("cursor {} does not reference an element", tree.cursor),
+                    &mut program.issues,
+                    &mut program.stats,
+                );
+                return Ok(());
+            }
+            if call.instruction == IvyInstruction::PropertyInterpolate
+                && !matches!(call.args.len(), 2 | 3)
+            {
+                record_malformed_instruction(
+                    call,
+                    "expected a property name, interpolation value, and optional sanitizer",
                     &mut program.issues,
                     &mut program.stats,
                 );
@@ -6420,6 +6434,16 @@ fn apply_update_instruction(
                 );
                 return Ok(());
             };
+            if call.instruction == IvyInstruction::PropertyInterpolate {
+                tree.add_attribute(
+                    node,
+                    TemplateAttribute {
+                        name: name.to_string(),
+                        value: Some(format!("{{{{ {expression} }}}}")),
+                    },
+                );
+                return Ok(());
+            }
             let prefix = match call.instruction {
                 IvyInstruction::Property | IvyInstruction::AriaProperty => "",
                 IvyInstruction::Attribute => "attr.",
@@ -8260,6 +8284,7 @@ impl TemplateTree {
                 | IvyInstruction::TextInterpolate6
                 | IvyInstruction::TextInterpolate7
                 | IvyInstruction::TextInterpolate8
+                | IvyInstruction::PropertyInterpolate
                 | IvyInstruction::Property
                 | IvyInstruction::AriaProperty
                 | IvyInstruction::Attribute
