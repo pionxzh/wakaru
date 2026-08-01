@@ -268,9 +268,15 @@ compiled parent/context slot traversal. A member-valued creation-phase
 declaration is treated as an inlined current-view capture only when the same
 binding is later passed to a proven restore helper inside that view. The member
 shape alone is not semantic evidence, and ambiguous helper pairs remain
-unknown. When the getter call survives, its zero-argument function must return
-a member of the same state object and the captured result must flow to the
-proven restore helper before it receives the `ɵɵgetCurrentView` role.
+unknown. Closure's nested-IIFE form is also supported when both wrappers
+forward the depth unchanged, the inner loop decrements that depth while
+traversing one stable parent slot, writes the traversed view back to the same
+binding-aware state path, and returns a distinct context slot. This admits
+local paths such as `state.frame.currentView` and symbolic slot constants
+without depending on their minified names. When the getter call survives, its
+zero-argument function must return a member of the same state object and the
+captured result must flow to the proven restore helper before it receives the
+`ɵɵgetCurrentView` role.
 
 Closure can similarly specialize `ɵɵreference(slot)` around a view-slot read.
 The specialized form is accepted only with proven update-phase initializer

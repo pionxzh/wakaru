@@ -1519,6 +1519,25 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
             end();
             return element;
         }
+        const contextSlot = 8;
+        const parentSlot = 14;
+        function ky(depth = 1) {
+            return function readContext(depth) {
+                return (runtime.state.context = function walkParents(depth, view) {
+                    for (; depth > 0;) {
+                        view = view[parentSlot];
+                        depth--;
+                    }
+                    return view;
+                }(depth, runtime.state.context))[contextSlot];
+            }(depth);
+        }
+        function property(name, value, sanitizer) {
+            setProperty(name, value, sanitizer);
+            return property;
+        }
+        const publicRuntime = { "ɵɵproperty": property };
+        void publicRuntime;
     "#;
     let component = r#"
         var core = load("./runtime.js");
@@ -1529,6 +1548,10 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
             template(renderFlags) {
                 if (renderFlags & 1) {
                     core.nrm(0, "article");
+                }
+                if (renderFlags & 2) {
+                    const parent = core.XpG();
+                    core.Y8G("title", parent.title);
                 }
             },
             dependencies: [],
@@ -1562,6 +1585,16 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
                     local: Some("element".into()),
                     kind: ExportKind::Named,
                 },
+                ExportFact {
+                    exported: "XpG".into(),
+                    local: Some("ky".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "Y8G".into(),
+                    local: Some("property".into()),
+                    kind: ExportKind::Named,
+                },
             ],
             ..Default::default()
         },
@@ -1588,9 +1621,14 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
     assert_eq!(report.components.len(), 1);
     assert_eq!(
         report.components[0].completeness,
-        AngularRecoveryCompleteness::Complete
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        report.components[0].issues,
+        report.components[0].source,
     );
-    assert!(report.components[0].source.contains("<article></article>"));
+    assert!(report.components[0]
+        .source
+        .contains(r#"<article [title]="title"></article>"#));
 
     facts.insert(
         "runtime.js",
@@ -1609,6 +1647,16 @@ fn projects_only_unambiguous_fact_transport_edges_into_the_evidence_workspace() 
                 ExportFact {
                     exported: "nrm".into(),
                     local: Some("element".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "XpG".into(),
+                    local: Some("ky".into()),
+                    kind: ExportKind::Named,
+                },
+                ExportFact {
+                    exported: "Y8G".into(),
+                    local: Some("property".into()),
                     kind: ExportKind::Named,
                 },
             ],
@@ -5506,6 +5554,122 @@ fn infers_closure_renamed_namespace_switches() {
     assert!(component.source.contains("<math>"));
     assert!(component.source.contains("<mi>x</mi>"));
     assert!(component.source.contains("<p>HTML</p>"));
+}
+
+#[test]
+fn infers_optimized_nested_iife_next_context_helper() {
+    let source = r#"
+        const runtime = {
+            state: { context: null },
+            other: { value: null },
+        };
+        runtime.define = function(definition) { return definition; };
+        runtime.element = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.element;
+        };
+        runtime.property = function(name, value, sanitizer) {
+            setProperty(name, value, sanitizer);
+            return runtime.property;
+        };
+        const contextSlot = 8;
+        const parentSlot = 14;
+        let mutableContextSlot = 8;
+        mutableContextSlot = 8;
+        runtime.parent = function(depth = 1) {
+            return function readContext(depth) {
+                return (runtime.state.context = function walkParents(depth, view) {
+                    for (; depth > 0;) {
+                        view = view[parentSlot];
+                        depth--;
+                    }
+                    return view;
+                }(depth, runtime.state.context))[contextSlot];
+            }(depth);
+        };
+        runtime.lookalike = function(depth = 1) {
+            return function readValue(depth) {
+                return (runtime.other.value = function walkValues(depth, value) {
+                    while (depth > 0) {
+                        value = value[parentSlot];
+                        depth--;
+                    }
+                    return value;
+                }(depth, runtime.other.value))[mutableContextSlot];
+            }(depth);
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelement": runtime.element,
+            "ɵɵproperty": runtime.property,
+        };
+
+        class OptimizedContextComponent {
+            title = "Parent";
+
+            static compiled = runtime.define({
+                type: OptimizedContextComponent,
+                selectors: [["optimized-context"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "div");
+                    }
+                    if (renderFlags & 2) {
+                        const parent = runtime.parent();
+                        runtime.property("title", parent.title);
+                    }
+                },
+            });
+        }
+
+        class ContextLookalikeComponent {
+            static compiled = runtime.define({
+                type: ContextLookalikeComponent,
+                selectors: [["context-lookalike"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.element(0, "div");
+                    }
+                    if (renderFlags & 2) {
+                        const value = runtime.lookalike();
+                        runtime.property("id", value.id);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("optimized next-context fixture should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "optimized-context")
+        .expect("the optimized context component should recover");
+    let lookalike = recovered
+        .iter()
+        .find(|component| component.selector == "context-lookalike")
+        .expect("the context lookalike should remain visible");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains(r#"<div [title]="title"></div>"#));
+    assert!(!component.source.contains("runtime.parent"));
+    assert_eq!(
+        lookalike.completeness,
+        AngularRecoveryCompleteness::Partial,
+        "issues: {:#?}\n{}",
+        lookalike.issues,
+        lookalike.source,
+    );
+    assert!(lookalike.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction
+            && issue.actual_callee.as_deref() == Some("runtime.lookalike")
+    }));
 }
 
 #[test]
