@@ -6867,6 +6867,113 @@ fn rejects_unchecked_closure_slot_loads_as_references() {
 }
 
 #[test]
+fn infers_wrapped_reference_candidates_only_with_proven_local_slots() {
+    let source = r#"
+        const referenceOffset = 25;
+        const wrongOffset = 24;
+
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name, attributes, references) {
+            createNode(index, name, attributes, references);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.property = function(name, value, sanitizer) {
+            setProperty(name, value, sanitizer);
+            return runtime.property;
+        };
+        runtime.loadSlot = function(view, index) {
+            return view[index];
+        };
+        runtime.reference = function(slot) {
+            return runtime.loadSlot(function currentContextView() {
+                return runtime.frame.contextLView;
+            }(), referenceOffset + slot);
+        };
+        runtime.wrongReference = function(slot) {
+            return runtime.loadSlot(function currentContextView() {
+                return runtime.frame.contextLView;
+            }(), wrongOffset + slot);
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵproperty": runtime.property,
+        };
+
+        class WrappedReferenceComponent {
+            static compiled = runtime.define({
+                type: WrappedReferenceComponent,
+                selectors: [["wrapped-reference"]],
+                consts: [["action", ""]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button", null, 0);
+                        runtime.end();
+                    }
+                    if (renderFlags & 2) {
+                        const action = runtime.reference(1);
+                        runtime.property("title", action.title);
+                    }
+                },
+            });
+        }
+
+        class WrongWrappedReferenceComponent {
+            static compiled = runtime.define({
+                type: WrongWrappedReferenceComponent,
+                selectors: [["wrong-wrapped-reference"]],
+                consts: [["action", ""]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.start(0, "button", null, 0);
+                        runtime.end();
+                    }
+                    if (renderFlags & 2) {
+                        const action = runtime.wrongReference(1);
+                        runtime.property("title", action.title);
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("wrapped reference candidates should remain analyzable");
+    let reference = report
+        .components
+        .iter()
+        .find(|component| component.selector == "wrapped-reference")
+        .expect("the wrapped reference component should recover");
+    let wrong = report
+        .components
+        .iter()
+        .find(|component| component.selector == "wrong-wrapped-reference")
+        .expect("the wrong-offset reference component should remain visible");
+
+    assert_eq!(
+        reference.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        reference.issues,
+        reference.source,
+    );
+    assert!(reference
+        .source
+        .contains(r#"<button #action [title]="action.title"></button>"#));
+    assert_eq!(wrong.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(wrong.issues.iter().any(|issue| {
+        issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction
+            && issue.actual_callee.as_deref() == Some("runtime.wrongReference")
+    }));
+}
+
+#[test]
 fn rejects_an_unknown_runtime_effect_inside_a_restored_listener() {
     let source = r#"
         import * as core from "@angular/core";
