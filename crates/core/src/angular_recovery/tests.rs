@@ -6256,6 +6256,244 @@ fn infers_closure_view_state_helpers_and_an_inlined_current_view_capture() {
 }
 
 #[test]
+fn infers_symbolic_view_state_slots_and_one_hop_current_view_wrappers() {
+    let source = r#"
+        const contextSlot = 8;
+        const parentSlot = 14;
+
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.listener = function(name, handler, target) {
+            addListener(name, handler, target);
+            return runtime.listener;
+        };
+        runtime.template = function(index, view, decls, vars, tag) {
+            createTemplate(index, view, decls, vars, tag);
+            return runtime.template;
+        };
+        runtime.conditional = function(index) {
+            selectTemplate(index);
+        };
+        runtime.readView = function() {
+            return runtime.frame.lView;
+        };
+        runtime.captureView = function() {
+            return runtime.readView();
+        };
+        runtime.restore = function(view) {
+            return runtime.frame.contextLView = view, view[contextSlot];
+        };
+        runtime.reset = function(value) {
+            return runtime.frame.contextLView = null, value;
+        };
+        runtime.next = function(depth = 1) {
+            return function readContext(depth) {
+                return (runtime.frame.contextLView = function walkParents(depth, view) {
+                    while (depth > 0) {
+                        view = view[parentSlot];
+                        depth--;
+                    }
+                    return view;
+                }(depth, runtime.frame.contextLView))[contextSlot];
+            }(depth);
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+            "ɵɵtemplate": runtime.template,
+            "ɵɵconditional": runtime.conditional,
+            "ɵɵnextContext": runtime.next,
+        };
+
+        function ConditionalButton(renderFlags) {
+            if (renderFlags & 1) {
+                const savedView = runtime.captureView();
+                runtime.start(0, "button");
+                runtime.listener("click", function() {
+                    runtime.restore(savedView);
+                    const parent = runtime.next();
+                    return runtime.reset(parent.select());
+                });
+                runtime.end();
+            }
+        }
+
+        class SymbolicViewStateComponent {
+            static compiled = runtime.define({
+                type: SymbolicViewStateComponent,
+                selectors: [["symbolic-view-state"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        runtime.template(0, ConditionalButton, 1, 0, "button");
+                    }
+                    if (renderFlags & 2) {
+                        runtime.conditional(context.visible ? 0 : -1);
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("symbolic view-state helpers should remain structurally recoverable");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (visible) {"));
+    assert!(
+        component
+            .source
+            .contains(r#"<button (click)="select()"></button>"#),
+        "{}",
+        component.source,
+    );
+    assert!(!component.source.contains("runtime."));
+}
+
+#[test]
+fn bridges_fact_aliases_when_proving_view_state_capture_flow() {
+    let runtime = r#"
+        const contextSlot = 8;
+        const frame = runtime.frame;
+
+        function define(definition) { return definition; }
+        function start(index, name) {
+            createNode(index, name);
+            return start;
+        }
+        function end() {
+            leaveNode();
+            return end;
+        }
+        function listener(name, handler, target) {
+            addListener(name, handler, target);
+            return listener;
+        }
+        function readView() {
+            return frame.lView;
+        }
+        function captureView() {
+            return readView();
+        }
+        function restore(view) {
+            return frame.contextLView = view, view[contextSlot];
+        }
+        function reset(value) {
+            return frame.contextLView = null, value;
+        }
+        const publicRuntime = {
+            "ɵɵdefineComponent": define,
+            "ɵɵelementStart": start,
+            "ɵɵelementEnd": end,
+            "ɵɵlistener": listener,
+        };
+        void publicRuntime;
+    "#;
+    let component = r#"
+        var core = load("./runtime.js");
+
+        class FactViewStateComponent {}
+        FactViewStateComponent.compiled = core.VBU({
+            type: FactViewStateComponent,
+            selectors: [["fact-view-state"]],
+            template(renderFlags, context) {
+                if (renderFlags & 1) {
+                    const savedView = core.RV6();
+                    core.j7E(0, "button");
+                    core.bIt("click", function() {
+                        core.eBV(savedView);
+                        return core.Njj(context.select());
+                    });
+                    core.DZA();
+                }
+            },
+        });
+    "#;
+    let views = [
+        AngularModuleView {
+            filename: "runtime.js",
+            evidence_source: runtime,
+            readable_source: runtime,
+        },
+        AngularModuleView {
+            filename: "component.js",
+            evidence_source: component,
+            readable_source: component,
+        },
+    ];
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "runtime.js",
+        ModuleFacts {
+            exports: [
+                ("VBU", "define"),
+                ("j7E", "start"),
+                ("DZA", "end"),
+                ("bIt", "listener"),
+                ("RV6", "captureView"),
+                ("eBV", "restore"),
+                ("Njj", "reset"),
+            ]
+            .into_iter()
+            .map(|(exported, local)| ExportFact {
+                exported: exported.into(),
+                local: Some(local.into()),
+                kind: ExportKind::Named,
+            })
+            .collect(),
+            ..Default::default()
+        },
+    );
+    facts.insert(
+        "component.js",
+        ModuleFacts {
+            imports: vec![ImportFact {
+                local: "core".into(),
+                source: "./runtime.js".into(),
+                kind: ImportKind::Default,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let report = analyze_angular_components_from_module_views_with_facts(
+        &views,
+        &facts,
+        AngularRecoveryOptions::default(),
+    )
+    .expect("fact-bridged view-state helpers should parse");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"<button (click)="select()"></button>"#));
+    assert!(!component.source.contains("core."));
+}
+
+#[test]
 fn rejects_unpaired_closure_view_state_lookalikes() {
     let source = r#"
         runtime.define = function(definition) { return definition; };
@@ -6314,6 +6552,122 @@ fn rejects_unpaired_closure_view_state_lookalikes() {
         issue.kind == AngularRecoveryIssueKind::UnsupportedStatement
             && issue.detail.as_deref() == Some("declaration")
     }));
+}
+
+#[test]
+fn rejects_unproven_symbolic_slots_and_lossy_current_view_wrappers() {
+    let source = r#"
+        const contextSlot = 8;
+        const wrongContextSlot = 9;
+
+        runtime.define = function(definition) { return definition; };
+        runtime.start = function(index, name) {
+            createNode(index, name);
+            return runtime.start;
+        };
+        runtime.end = function() {
+            leaveNode();
+            return runtime.end;
+        };
+        runtime.listener = function(name, handler, target) {
+            addListener(name, handler, target);
+            return runtime.listener;
+        };
+        runtime.public = {
+            "ɵɵdefineComponent": runtime.define,
+            "ɵɵelementStart": runtime.start,
+            "ɵɵelementEnd": runtime.end,
+            "ɵɵlistener": runtime.listener,
+        };
+
+        runtime.wrongRead = function() {
+            return runtime.wrongFrame.lView;
+        };
+        runtime.wrongCapture = function() {
+            return runtime.wrongRead();
+        };
+        runtime.wrongRestore = function(view) {
+            return runtime.wrongFrame.contextLView = view, view[wrongContextSlot];
+        };
+        runtime.wrongReset = function(value) {
+            return runtime.wrongFrame.contextLView = null, value;
+        };
+
+        runtime.argumentRead = function(ignored) {
+            return runtime.argumentFrame.lView;
+        };
+        runtime.lossyCapture = function() {
+            return runtime.argumentRead(0);
+        };
+        runtime.argumentRestore = function(view) {
+            return runtime.argumentFrame.contextLView = view, view[contextSlot];
+        };
+        runtime.argumentReset = function(value) {
+            return runtime.argumentFrame.contextLView = null, value;
+        };
+
+        class WrongSymbolicSlotComponent {
+            static compiled = runtime.define({
+                type: WrongSymbolicSlotComponent,
+                selectors: [["wrong-symbolic-slot"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        const savedView = runtime.wrongCapture();
+                        runtime.start(0, "button");
+                        runtime.listener("click", function() {
+                            runtime.wrongRestore(savedView);
+                            return runtime.wrongReset(context.select());
+                        });
+                        runtime.end();
+                    }
+                },
+            });
+        }
+
+        class LossyViewWrapperComponent {
+            static compiled = runtime.define({
+                type: LossyViewWrapperComponent,
+                selectors: [["lossy-view-wrapper"]],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        const savedView = runtime.lossyCapture();
+                        runtime.start(0, "button");
+                        runtime.listener("click", function() {
+                            runtime.argumentRestore(savedView);
+                            return runtime.argumentReset(context.select());
+                        });
+                        runtime.end();
+                    }
+                },
+            });
+        }
+        void runtime.public;
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("view-state lookalikes should remain analyzable");
+
+    for (selector, capture) in [
+        ("wrong-symbolic-slot", "runtime.wrongCapture"),
+        ("lossy-view-wrapper", "runtime.lossyCapture"),
+    ] {
+        let component = report
+            .components
+            .iter()
+            .find(|component| component.selector == selector)
+            .expect("the lookalike component should remain visible");
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Partial,
+            "{}",
+            component.source,
+        );
+        assert!(!component.source.contains(r#"(click)="select()""#));
+        assert!(component.issues.iter().any(|issue| {
+            issue.kind == AngularRecoveryIssueKind::UnknownRuntimeInstruction
+                && issue.actual_callee.as_deref() == Some(capture)
+        }));
+    }
 }
 
 #[test]

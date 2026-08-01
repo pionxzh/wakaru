@@ -260,22 +260,26 @@ unknown.
 Closure may preserve the view-state helpers while inlining
 `ɵɵgetCurrentView()` into a direct member read. The classifier identifies
 `ɵɵrestoreView` and `ɵɵresetView` only as a unique pair that writes the same
-state member: the restore helper assigns its parameter and returns that
-parameter's context slot, while the reset helper assigns `null` and returns its
-parameter unchanged. `ɵɵnextContext` additionally requires proven initializer
-use in an embedded view's update phase, its numeric depth default, and the
-compiled parent/context slot traversal. A member-valued creation-phase
-declaration is treated as an inlined current-view capture only when the same
-binding is later passed to a proven restore helper inside that view. The member
-shape alone is not semantic evidence, and ambiguous helper pairs remain
-unknown. Closure's nested-IIFE form is also supported when both wrappers
-forward the depth unchanged, the inner loop decrements that depth while
-traversing one stable parent slot, writes the traversed view back to the same
-binding-aware state path, and returns a distinct context slot. This admits
+binding-aware state path: the restore helper assigns its parameter and returns
+that parameter's context slot, while the reset helper assigns `null` and
+returns its parameter unchanged. The context slot may be a stable integer
+constant but must resolve to Angular's slot 8. `ɵɵnextContext` additionally
+requires proven initializer use in an embedded view's update phase, its numeric
+depth default, and the compiled parent/context slot traversal. A member-valued
+creation-phase declaration is treated as an inlined current-view capture only
+when the same binding is later passed to a proven restore helper inside that
+view. The member shape alone is not semantic evidence, and ambiguous helper
+pairs remain unknown. Closure's nested-IIFE form is also supported when both
+wrappers forward the depth unchanged, the inner loop decrements that depth
+while traversing one stable parent slot, writes the traversed view back to the
+same binding-aware state path, and returns a distinct context slot. This admits
 local paths such as `state.frame.currentView` and symbolic slot constants
 without depending on their minified names. When the getter call survives, its
-zero-argument function must return a member of the same state object and the
-captured result must flow to the proven restore helper before it receives the
+zero-argument function must return a member of the same state object, either
+directly or through one exact zero-argument wrapper. The captured result must
+then flow to the proven restore helper. Cross-module getter and restore calls
+are compared through the same ESM/fact-backed transport identities used by the
+rest of Angular role inference before the getter receives the
 `ɵɵgetCurrentView` role.
 
 Closure can similarly specialize `ɵɵreference(slot)` around a view-slot read.
