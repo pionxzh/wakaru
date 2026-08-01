@@ -5109,6 +5109,63 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
+            let target_argument = match call.args.as_slice() {
+                [_, _] => None,
+                [_, _, target] => {
+                    if is_nullish_expression(target.as_ref(), environment.unresolved_ctxt)
+                        || is_false_expression(target.as_ref())
+                    {
+                        None
+                    } else {
+                        Some(target.as_ref())
+                    }
+                }
+                [_, _, capture, target] => {
+                    if !is_nullish_expression(capture.as_ref(), environment.unresolved_ctxt)
+                        && !is_false_expression(capture.as_ref())
+                    {
+                        record_unsupported_instruction(
+                            call,
+                            "capturing event listeners cannot be represented in Angular template syntax",
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    }
+                    if is_nullish_expression(target.as_ref(), environment.unresolved_ctxt) {
+                        None
+                    } else {
+                        Some(target.as_ref())
+                    }
+                }
+                _ => {
+                    record_malformed_instruction(
+                        call,
+                        "expected an event name, handler, and optional target resolver",
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+            };
+            let target = target_argument.map(|target| {
+                environment
+                    .roles
+                    .listener_target_for_expr(target, environment.unresolved_ctxt)
+            });
+            let target = match target {
+                Some(Some(target)) => Some(target),
+                Some(None) => {
+                    record_unsupported_instruction(
+                        call,
+                        "listener target resolver is not a proven Angular global target",
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                }
+                None => None,
+            };
             let expression = match recover_view_listener_handler(
                 handler.as_ref(),
                 &event,
@@ -5167,7 +5224,10 @@ fn apply_create_instruction(
             tree.add_attribute(
                 node,
                 TemplateAttribute {
-                    name: format!("({event})"),
+                    name: match target {
+                        Some(target) => format!("({}:{event})", target.template_name()),
+                        None => format!("({event})"),
+                    },
                     value: Some(expression),
                 },
             );
@@ -5979,6 +6039,21 @@ fn is_nullish_expression(expression: &Expr, unresolved_ctxt: SyntaxContext) -> b
     }
 }
 
+fn is_false_expression(expression: &Expr) -> bool {
+    matches!(
+        strip_parentheses(expression),
+        Expr::Lit(Lit::Bool(boolean)) if !boolean.value
+    ) || matches!(
+        strip_parentheses(expression),
+        Expr::Unary(unary)
+            if unary.op == UnaryOp::Bang
+                && matches!(
+                    strip_parentheses(unary.arg.as_ref()),
+                    Expr::Lit(Lit::Num(number)) if number.value != 0.0
+                )
+    )
+}
+
 fn is_nullish_or_callable_expression(expression: &Expr, unresolved_ctxt: SyntaxContext) -> bool {
     is_nullish_expression(expression, unresolved_ctxt)
         || matches!(
@@ -6434,49 +6509,44 @@ fn apply_update_instruction(
                 );
                 return Ok(());
             };
-            if call.instruction == IvyInstruction::PropertyInterpolate {
-                tree.add_attribute(
-                    node,
-                    TemplateAttribute {
-                        name: name.to_string(),
-                        value: Some(format!("{{{{ {expression} }}}}")),
-                    },
-                );
-                return Ok(());
-            }
-            let prefix = match call.instruction {
-                IvyInstruction::Property | IvyInstruction::AriaProperty => "",
-                IvyInstruction::Attribute => "attr.",
-                IvyInstruction::ClassProp => "class.",
-                IvyInstruction::StyleProp => "style.",
-                _ => unreachable!(),
-            };
-            let suffix = if call.instruction == IvyInstruction::StyleProp {
-                match call.args.get(2) {
-                    Some(suffix) => {
-                        let Some(suffix) = string_lit(suffix.as_ref()) else {
-                            record_malformed_instruction(
-                                call,
-                                "style unit suffix is not a literal string",
-                                &mut program.issues,
-                                &mut program.stats,
-                            );
-                            return Ok(());
-                        };
-                        format!(".{suffix}")
-                    }
-                    None => String::new(),
+            let attribute = if call.instruction == IvyInstruction::PropertyInterpolate {
+                TemplateAttribute {
+                    name: name.to_string(),
+                    value: Some(format!("{{{{ {expression} }}}}")),
                 }
             } else {
-                String::new()
-            };
-            tree.add_attribute(
-                node,
+                let prefix = match call.instruction {
+                    IvyInstruction::Property | IvyInstruction::AriaProperty => "",
+                    IvyInstruction::Attribute => "attr.",
+                    IvyInstruction::ClassProp => "class.",
+                    IvyInstruction::StyleProp => "style.",
+                    _ => unreachable!(),
+                };
+                let suffix = if call.instruction == IvyInstruction::StyleProp {
+                    match call.args.get(2) {
+                        Some(suffix) => {
+                            let Some(suffix) = string_lit(suffix.as_ref()) else {
+                                record_malformed_instruction(
+                                    call,
+                                    "style unit suffix is not a literal string",
+                                    &mut program.issues,
+                                    &mut program.stats,
+                                );
+                                return Ok(());
+                            };
+                            format!(".{suffix}")
+                        }
+                        None => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
                 TemplateAttribute {
                     name: format!("[{prefix}{name}{suffix}]"),
                     value: Some(expression),
-                },
-            );
+                }
+            };
+            tree.add_attribute(node, attribute);
         }
         IvyInstruction::I18nExp => {
             if call.args.len() != 1 {
