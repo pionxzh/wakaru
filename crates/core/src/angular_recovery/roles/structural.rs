@@ -509,6 +509,7 @@ impl StructuralRoleEvidence {
         ));
         inferred.extend(infer_defer_role_family(&function_index, &by_identity));
         inferred.extend(infer_repeater_role_family(&function_index, &by_identity));
+        inferred.extend(infer_projection_role_family(&function_index, &by_identity));
         inferred.extend(infer_view_state_role_family(
             &self.functions,
             modules,
@@ -551,12 +552,6 @@ impl StructuralRoleEvidence {
             }
             if is_next_context_shape(definition, observations, &self.integer_constants) {
                 matches.push("ɵɵnextContext");
-            }
-            if is_projection_def_shape(definition, observations) {
-                matches.push("ɵɵprojectionDef");
-            }
-            if is_projection_shape(definition, observations) {
-                matches.push("ɵɵprojection");
             }
             if is_reference_shape(definition, observations) {
                 matches.push("ɵɵreference");
@@ -4906,13 +4901,82 @@ fn is_positive_depth_test(expression: &Expr, depth: &BindingKey) -> bool {
     }
 }
 
-fn is_projection_def_shape(
+fn infer_projection_role_family(
+    function_index: &RuntimeFunctionIndex<'_>,
+    observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+) -> Vec<(SymbolIdentity, &'static str)> {
+    let mut observations_by_definition =
+        HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        observations_by_definition
+            .entry(definition.identity.clone())
+            .or_default()
+            .extend(calls);
+    }
+
+    let mut definitions_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::new();
+    let mut projections_by_property = HashMap::<Atom, HashSet<SymbolIdentity>>::new();
+    for (identity, calls) in observations_by_definition {
+        let Some(definition) = function_index.unique(&identity) else {
+            continue;
+        };
+        if let Some(properties) = projection_definition_properties(definition, &calls) {
+            for property in properties {
+                definitions_by_property
+                    .entry(property)
+                    .or_default()
+                    .insert(identity.clone());
+            }
+        }
+        if let Some(property) = projection_selector_property(definition, &calls) {
+            projections_by_property
+                .entry(property)
+                .or_default()
+                .insert(identity);
+        }
+    }
+
+    let mut inferred = Vec::new();
+    for (property, definitions) in definitions_by_property {
+        let Some(projections) = projections_by_property.get(&property) else {
+            continue;
+        };
+        let (Some(definition), Some(projection)) =
+            (unique_identity(&definitions), unique_identity(projections))
+        else {
+            continue;
+        };
+        if definition == projection {
+            continue;
+        }
+        inferred.push((definition.clone(), "ɵɵprojectionDef"));
+        inferred.push((projection.clone(), "ɵɵprojection"));
+    }
+    inferred
+}
+
+fn unique_identity(identities: &HashSet<SymbolIdentity>) -> Option<&SymbolIdentity> {
+    let mut identities = identities.iter();
+    let identity = identities.next()?;
+    identities.next().is_none().then_some(identity)
+}
+
+fn projection_definition_properties(
     definition: &RuntimeFunction,
-    observations: &[TemplateCallObservation],
-) -> bool {
-    plain_parameter_bindings(definition).is_some_and(|parameters| parameters.len() == 1)
-        && direct_calls(definition).len() >= 4
-        && observations.iter().all(|observation| {
+    observations: &[&TemplateCallObservation],
+) -> Option<HashSet<Atom>> {
+    let parameters = plain_parameter_bindings(definition)?;
+    let [selectors] = parameters.as_slice() else {
+        return None;
+    };
+    if direct_calls(definition).len() < 3
+        || !block_contains_loop(&definition.body)
+        || !block_contains_binding(&definition.body, selectors)
+        || observations.is_empty()
+        || !observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 1
                 && matches!(observation.arguments.len(), 0 | 1)
@@ -4920,19 +4984,25 @@ fn is_projection_def_shape(
                     matches!(argument.as_ref(), Expr::Ident(_) | Expr::Array(_))
                 })
         })
+    {
+        return None;
+    }
+    let properties = assigned_member_properties(&definition.body);
+    (properties.len() >= 2).then_some(properties)
 }
 
-fn is_projection_shape(
+fn projection_selector_property(
     definition: &RuntimeFunction,
-    observations: &[TemplateCallObservation],
-) -> bool {
-    definition.params.len() == 6
-        && is_numeric_default(&definition.params[1], 0.0)
-        && direct_calls(definition).len() >= 6
-        && observations.iter().all(|observation| {
+    observations: &[&TemplateCallObservation],
+) -> Option<Atom> {
+    if !matches!(definition.params.len(), 3 | 6)
+        || !is_numeric_default(&definition.params[1], 0.0)
+        || direct_calls(definition).len() < 5
+        || observations.is_empty()
+        || !observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Effect
                 && observation.phase == 1
-                && matches!(observation.arguments.len(), 1..=6)
+                && (1..=definition.params.len()).contains(&observation.arguments.len())
                 && observation
                     .arguments
                     .first()
@@ -4942,6 +5012,114 @@ fn is_projection_shape(
                     .get(1)
                     .is_none_or(|argument| is_nonnegative_integer(argument.as_ref()))
         })
+    {
+        return None;
+    }
+    let selector = parameter_binding_with_default(&definition.params[1])?;
+    unique_atom(&member_properties_assigned_from_binding(
+        &definition.body,
+        &selector,
+    ))
+    .cloned()
+}
+
+fn unique_atom(atoms: &HashSet<Atom>) -> Option<&Atom> {
+    let mut atoms = atoms.iter();
+    let atom = atoms.next()?;
+    atoms.next().is_none().then_some(atom)
+}
+
+fn assigned_member_properties(block: &BlockStmt) -> HashSet<Atom> {
+    struct Collector {
+        properties: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
+                    if let Some(property) = member_prop_name(&member.prop) {
+                        self.properties.insert(property);
+                    }
+                }
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        properties: HashSet::new(),
+    };
+    block.visit_with(&mut collector);
+    collector.properties
+}
+
+fn member_properties_assigned_from_binding(
+    block: &BlockStmt,
+    binding: &BindingKey,
+) -> HashSet<Atom> {
+    struct Collector<'a> {
+        binding: &'a BindingKey,
+        properties: HashSet<Atom>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == AssignOp::Assign
+                && expression_is_binding(assignment.right.as_ref(), self.binding)
+            {
+                if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
+                    if let Some(property) = member_prop_name(&member.prop) {
+                        self.properties.insert(property);
+                    }
+                }
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        binding,
+        properties: HashSet::new(),
+    };
+    block.visit_with(&mut collector);
+    collector.properties
+}
+
+fn block_contains_loop(block: &BlockStmt) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_for_stmt(&mut self, _statement: &swc_core::ecma::ast::ForStmt) {
+            self.found = true;
+        }
+
+        fn visit_while_stmt(&mut self, _statement: &swc_core::ecma::ast::WhileStmt) {
+            self.found = true;
+        }
+
+        fn visit_do_while_stmt(&mut self, _statement: &swc_core::ecma::ast::DoWhileStmt) {
+            self.found = true;
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder { found: false };
+    block.visit_with(&mut finder);
+    finder.found
 }
 
 fn is_reference_shape(
