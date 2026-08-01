@@ -27,6 +27,7 @@ pub(super) struct StructuralRoleEvidence {
     invalid_values: HashSet<SymbolIdentity>,
     assignment_definitions: HashMap<SymbolIdentity, Vec<(usize, u32)>>,
     value_aliases: Vec<(SymbolIdentity, SymbolIdentity)>,
+    integer_constants: HashMap<BindingKey, u64>,
 }
 
 impl StructuralRoleEvidence {
@@ -521,7 +522,7 @@ impl StructuralRoleEvidence {
             if is_conditional_shape(definition, observations) {
                 matches.push("ɵɵconditional");
             }
-            if is_next_context_shape(definition, observations) {
+            if is_next_context_shape(definition, observations, &self.integer_constants) {
                 matches.push("ɵɵnextContext");
             }
             if is_projection_def_shape(definition, observations) {
@@ -1803,6 +1804,7 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
     let mut invalid_values = HashSet::new();
     let mut assignment_definitions = HashMap::<SymbolIdentity, Vec<(usize, u32)>>::new();
     let mut value_aliases = Vec::new();
+    let mut integer_candidates = HashMap::new();
     for (module_index, prepared) in modules.iter().enumerate() {
         let mut collector = RuntimeFunctionCollector {
             module_index,
@@ -1813,6 +1815,7 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
             invalid_values: HashSet::new(),
             assignment_definitions: HashMap::new(),
             value_aliases: Vec::new(),
+            integer_candidates: HashMap::new(),
         };
         prepared.module.visit_with(&mut collector);
         functions.extend(collector.functions);
@@ -1822,6 +1825,7 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
         }
         invalid_values.extend(collector.invalid_values);
         value_aliases.extend(collector.value_aliases);
+        integer_candidates.extend(collector.integer_candidates);
         for (identity, assignments) in collector.assignment_definitions {
             assignment_definitions
                 .entry(identity)
@@ -1846,6 +1850,12 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
             && !invalid_values.contains(left)
             && is_supported_value_alias_identity(left)
     });
+    let integer_constants = integer_candidates
+        .into_iter()
+        .filter(|(binding, _)| {
+            stable_values.contains(&SymbolIdentity::LocalBinding(binding.clone()))
+        })
+        .collect();
 
     StructuralRoleEvidence {
         functions,
@@ -1854,6 +1864,7 @@ fn collect_runtime_functions(modules: &[PreparedAngularModule]) -> StructuralRol
         invalid_values,
         assignment_definitions,
         value_aliases,
+        integer_constants,
     }
 }
 
@@ -1965,6 +1976,7 @@ struct RuntimeFunctionCollector {
     invalid_values: HashSet<SymbolIdentity>,
     assignment_definitions: HashMap<SymbolIdentity, Vec<(usize, u32)>>,
     value_aliases: Vec<(SymbolIdentity, SymbolIdentity)>,
+    integer_candidates: HashMap<BindingKey, u64>,
 }
 
 struct TemplateCallObservation {
@@ -4377,6 +4389,7 @@ fn is_conditional_shape(
 fn is_next_context_shape(
     definition: &RuntimeFunction,
     observations: &[TemplateCallObservation],
+    integer_constants: &HashMap<BindingKey, u64>,
 ) -> bool {
     let [parameter] = definition.params.as_slice() else {
         return false;
@@ -4404,6 +4417,8 @@ fn is_next_context_shape(
     };
     let calls = direct_calls(definition);
     let parameter = binding_key(&parameter.id);
+    let nested_iife = calls.is_empty()
+        && is_nested_iife_next_context_shape(definition, &parameter, integer_constants);
     if let [call] = calls.as_slice() {
         return call.arguments.as_slice().first().is_some_and(|argument| {
             matches!(
@@ -4413,9 +4428,297 @@ fn is_next_context_shape(
         });
     }
     calls.is_empty()
-        && decrements_binding(&definition.body, &parameter)
-        && contains_computed_member_index(&definition.body, 14)
-        && returns_computed_member_index(definition, 8)
+        && ((decrements_binding(&definition.body, &parameter)
+            && contains_computed_member_index(&definition.body, 14)
+            && returns_computed_member_index(definition, 8))
+            || nested_iife)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ValuePath {
+    root: BindingKey,
+    properties: Vec<Atom>,
+}
+
+fn is_nested_iife_next_context_shape(
+    definition: &RuntimeFunction,
+    outer_depth: &BindingKey,
+    integer_constants: &HashMap<BindingKey, u64>,
+) -> bool {
+    let Some(read_call) = single_returned_call(&definition.body) else {
+        return false;
+    };
+    let Some((read_function, read_parameters)) = direct_iife_with_plain_parameters(read_call)
+    else {
+        return false;
+    };
+    let [read_depth] = read_parameters.as_slice() else {
+        return false;
+    };
+    if read_call.args.len() != 1
+        || read_call.args[0].spread.is_some()
+        || !expression_is_binding(read_call.args[0].expr.as_ref(), outer_depth)
+    {
+        return false;
+    }
+    let Some(read_body) = &read_function.body else {
+        return false;
+    };
+    let Some(returned) = single_top_level_return_expression(read_body) else {
+        return false;
+    };
+    let Expr::Member(context_member) = strip_parentheses(returned) else {
+        return false;
+    };
+    let Some(context_slot) = computed_slot(&context_member.prop, integer_constants) else {
+        return false;
+    };
+    if context_slot != 8 {
+        return false;
+    }
+    let Expr::Assign(state_assignment) = strip_parentheses(context_member.obj.as_ref()) else {
+        return false;
+    };
+    if state_assignment.op != AssignOp::Assign {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(state_member)) = &state_assignment.left
+    else {
+        return false;
+    };
+    let Some(state) = value_path(&Expr::Member(state_member.clone())) else {
+        return false;
+    };
+    let Expr::Call(walk_call) = strip_parentheses(state_assignment.right.as_ref()) else {
+        return false;
+    };
+    let Some((walk_function, walk_parameters)) = direct_iife_with_plain_parameters(walk_call)
+    else {
+        return false;
+    };
+    let [walk_depth, walk_view] = walk_parameters.as_slice() else {
+        return false;
+    };
+    if walk_call.args.len() != 2
+        || walk_call
+            .args
+            .iter()
+            .any(|argument| argument.spread.is_some())
+        || !expression_is_binding(walk_call.args[0].expr.as_ref(), read_depth)
+        || value_path(walk_call.args[1].expr.as_ref()) != Some(state)
+    {
+        return false;
+    }
+    let Some(walk_body) = &walk_function.body else {
+        return false;
+    };
+    if single_returned_binding(walk_body).as_ref() != Some(walk_view) {
+        return false;
+    }
+    let Some(parent_slot) =
+        loop_traversal_slot(walk_body, walk_depth, walk_view, integer_constants)
+    else {
+        return false;
+    };
+    parent_slot == 14
+}
+
+fn direct_iife_with_plain_parameters(call: &CallExpr) -> Option<(&Function, Vec<BindingKey>)> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Fn(function) = strip_parentheses(callee.as_ref()) else {
+        return None;
+    };
+    if function.function.is_async || function.function.is_generator {
+        return None;
+    }
+    let parameters = function
+        .function
+        .params
+        .iter()
+        .map(|parameter| pat_binding(&parameter.pat))
+        .collect::<Option<Vec<_>>>()?;
+    Some((&function.function, parameters))
+}
+
+fn single_top_level_return_expression(body: &BlockStmt) -> Option<&Expr> {
+    let mut returned = None;
+    for statement in &body.stmts {
+        match statement {
+            Stmt::Return(ReturnStmt {
+                arg: Some(expression),
+                ..
+            }) if returned.is_none() => returned = Some(expression.as_ref()),
+            Stmt::Empty(_) => {}
+            _ => return None,
+        }
+    }
+    returned
+}
+
+fn computed_slot(
+    property: &MemberProp,
+    integer_constants: &HashMap<BindingKey, u64>,
+) -> Option<u64> {
+    if let Some(index) = computed_member_index(property) {
+        return Some(index);
+    }
+    let MemberProp::Computed(computed) = property else {
+        return None;
+    };
+    let Expr::Ident(identifier) = strip_parentheses(computed.expr.as_ref()) else {
+        return None;
+    };
+    integer_constants.get(&binding_key(identifier)).copied()
+}
+
+fn value_path(expression: &Expr) -> Option<ValuePath> {
+    match strip_parentheses(expression) {
+        Expr::Ident(identifier) => Some(ValuePath {
+            root: binding_key(identifier),
+            properties: Vec::new(),
+        }),
+        Expr::Member(member) => {
+            let mut path = value_path(member.obj.as_ref())?;
+            path.properties.push(member_prop_name(&member.prop)?);
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+fn loop_traversal_slot(
+    body: &BlockStmt,
+    depth: &BindingKey,
+    view: &BindingKey,
+    integer_constants: &HashMap<BindingKey, u64>,
+) -> Option<u64> {
+    struct LoopFinder<'a> {
+        depth: &'a BindingKey,
+        view: &'a BindingKey,
+        integer_constants: &'a HashMap<BindingKey, u64>,
+        slots: Vec<u64>,
+    }
+
+    impl LoopFinder<'_> {
+        fn inspect_loop(&mut self, test: &Expr, body: &Stmt, update: Option<&Expr>) {
+            if !is_positive_depth_test(test, self.depth) {
+                return;
+            }
+            let mut collector = LoopBodyTraversalCollector {
+                depth: self.depth,
+                view: self.view,
+                integer_constants: self.integer_constants,
+                decrements_depth: false,
+                slots: Vec::new(),
+            };
+            body.visit_with(&mut collector);
+            if let Some(update) = update {
+                update.visit_with(&mut collector);
+            }
+            let mut slots = collector.slots.into_iter();
+            let Some(slot) = slots.next() else {
+                return;
+            };
+            if collector.decrements_depth && slots.all(|candidate| candidate == slot) {
+                self.slots.push(slot);
+            }
+        }
+    }
+
+    impl Visit for LoopFinder<'_> {
+        fn visit_for_stmt(&mut self, statement: &swc_core::ecma::ast::ForStmt) {
+            if let Some(test) = statement.test.as_deref() {
+                self.inspect_loop(test, statement.body.as_ref(), statement.update.as_deref());
+            }
+        }
+
+        fn visit_while_stmt(&mut self, statement: &swc_core::ecma::ast::WhileStmt) {
+            self.inspect_loop(statement.test.as_ref(), statement.body.as_ref(), None);
+        }
+
+        fn visit_do_while_stmt(&mut self, statement: &swc_core::ecma::ast::DoWhileStmt) {
+            self.inspect_loop(statement.test.as_ref(), statement.body.as_ref(), None);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    struct LoopBodyTraversalCollector<'a> {
+        depth: &'a BindingKey,
+        view: &'a BindingKey,
+        integer_constants: &'a HashMap<BindingKey, u64>,
+        decrements_depth: bool,
+        slots: Vec<u64>,
+    }
+
+    impl Visit for LoopBodyTraversalCollector<'_> {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assignment.left {
+                    if binding_key(&target.id) == *self.view {
+                        if let Expr::Member(member) = strip_parentheses(assignment.right.as_ref()) {
+                            if matches!(
+                                strip_parentheses(member.obj.as_ref()),
+                                Expr::Ident(object) if binding_key(object) == *self.view
+                            ) {
+                                if let Some(slot) =
+                                    computed_slot(&member.prop, self.integer_constants)
+                                {
+                                    self.slots.push(slot);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if update.op == swc_core::ecma::ast::UpdateOp::MinusMinus
+                && expression_is_binding(update.arg.as_ref(), self.depth)
+            {
+                self.decrements_depth = true;
+            }
+            update.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = LoopFinder {
+        depth,
+        view,
+        integer_constants,
+        slots: Vec::new(),
+    };
+    body.visit_with(&mut finder);
+    let mut slots = finder.slots.into_iter();
+    let slot = slots.next()?;
+    slots.all(|candidate| candidate == slot).then_some(slot)
+}
+
+fn is_positive_depth_test(expression: &Expr, depth: &BindingKey) -> bool {
+    let Expr::Bin(binary) = strip_parentheses(expression) else {
+        return false;
+    };
+    match binary.op {
+        BinaryOp::Gt => {
+            expression_is_binding(binary.left.as_ref(), depth)
+                && nonnegative_integer_value(binary.right.as_ref()) == Some(0)
+        }
+        BinaryOp::Lt => {
+            nonnegative_integer_value(binary.left.as_ref()) == Some(0)
+                && expression_is_binding(binary.right.as_ref(), depth)
+        }
+        _ => false,
+    }
 }
 
 fn is_projection_def_shape(
@@ -5547,6 +5850,10 @@ impl Visit for RuntimeFunctionCollector {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
         if let Some(value) = declarator.init.as_deref() {
             if let Pat::Ident(binding) = &declarator.name {
+                if let Some(value) = nonnegative_integer_value(value) {
+                    self.integer_candidates
+                        .insert(binding_key(&binding.id), value as u64);
+                }
                 self.record_value_definition(&Expr::Ident(binding.id.clone()), value, None);
             } else {
                 self.record_pattern_definition(&declarator.name);
