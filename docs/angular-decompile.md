@@ -294,10 +294,14 @@ Closure can similarly specialize `ɵɵreference(slot)` around a view-slot read.
 The specialized form is accepted only with proven update-phase initializer
 uses, the Angular `27 + slot` layout relation, a returned checked slot, and the
 sentinel-error branch retained by the runtime helper. A bare
-`state[27 + slot]` loader is not enough: Angular uses the same primitive for
-non-reference slots, so it remains unknown without a stronger relationship.
-Resolving a proven reference slot to a template name is still view-local and
-requires a matching creation-table declaration.
+`state[27 + slot]` loader is not enough to receive that role because Angular
+uses the same primitive for non-reference slots. Sentinel-free loaders instead
+remain structural candidates. This includes an exact wrapper around a pure
+`view[index]` helper when its view comes from a zero-argument current-context
+IIFE and its stable header offset is the known Angular 25 or 27 layout. A
+candidate is rendered only when the computed slot resolves to a matching
+view-local creation-table reference; a wrong offset or missing declaration
+stays explicit unknown output.
 
 Two-way binding roles are inferred as a family rather than as three independent
 call shapes. The creation-phase event must end in `Change`, a unique

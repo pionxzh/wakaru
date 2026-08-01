@@ -555,7 +555,12 @@ impl StructuralRoleEvidence {
             }
             if is_reference_shape(definition, observations) {
                 matches.push("ɵɵreference");
-            } else if is_direct_reference_candidate(definition, observations) {
+            } else if is_reference_candidate_shape(
+                definition,
+                observations,
+                &self.integer_constants,
+                &function_index,
+            ) {
                 inferred.push((definition.identity.clone(), REFERENCE_CANDIDATE_NAME));
             }
             if is_declare_let_shape(definition, observations) {
@@ -5214,9 +5219,11 @@ fn is_read_context_let_shape(
         })
 }
 
-fn is_direct_reference_candidate(
+fn is_reference_candidate_shape(
     definition: &RuntimeFunction,
     observations: &[TemplateCallObservation],
+    integer_constants: &HashMap<BindingKey, u64>,
+    function_index: &RuntimeFunctionIndex<'_>,
 ) -> bool {
     let Some(parameters) = plain_parameter_bindings(definition) else {
         return false;
@@ -5224,8 +5231,7 @@ fn is_direct_reference_candidate(
     let [slot] = parameters.as_slice() else {
         return false;
     };
-    direct_calls(definition).is_empty()
-        && returns_parameter_offset_member(definition, slot, 27)
+    !observations.is_empty()
         && observations.iter().all(|observation| {
             observation.usage == TemplateCallUsage::Initializer
                 && observation.phase == 2
@@ -5235,6 +5241,122 @@ fn is_direct_reference_candidate(
                     .first()
                     .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
         })
+        && ((direct_calls(definition).is_empty()
+            && returns_parameter_offset_member(definition, slot, 27))
+            || returns_wrapped_context_slot(definition, slot, integer_constants, function_index))
+}
+
+fn returns_wrapped_context_slot(
+    definition: &RuntimeFunction,
+    slot: &BindingKey,
+    integer_constants: &HashMap<BindingKey, u64>,
+    function_index: &RuntimeFunctionIndex<'_>,
+) -> bool {
+    let Some(expression) = single_top_level_return_expression(&definition.body) else {
+        return false;
+    };
+    let Expr::Call(call) = strip_parentheses(expression) else {
+        return false;
+    };
+    let [view, index] = call.args.as_slice() else {
+        return false;
+    };
+    if view.spread.is_some()
+        || index.spread.is_some()
+        || zero_argument_iife_returned_value_path(view.expr.as_ref()).is_none()
+        || !matches!(
+            parameter_offset(index.expr.as_ref(), slot, integer_constants,),
+            Some(25 | 27)
+        )
+    {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Some(callee) = symbol_identity(callee.as_ref(), definition.unresolved_ctxt) else {
+        return false;
+    };
+    function_index
+        .unique(&callee)
+        .is_some_and(is_exact_index_loader)
+}
+
+fn zero_argument_iife_returned_value_path(expression: &Expr) -> Option<ValuePath> {
+    let Expr::Call(call) = strip_parentheses(expression) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Fn(function) = strip_parentheses(callee.as_ref()) else {
+        return None;
+    };
+    if !function.function.params.is_empty()
+        || function.function.is_async
+        || function.function.is_generator
+    {
+        return None;
+    }
+    let body = function.function.body.as_ref()?;
+    let path = value_path(single_top_level_return_expression(body)?)?;
+    (!path.properties.is_empty()).then_some(path)
+}
+
+fn is_exact_index_loader(function: &RuntimeFunction) -> bool {
+    let Some(parameters) = plain_parameter_bindings(function) else {
+        return false;
+    };
+    let [view, index] = parameters.as_slice() else {
+        return false;
+    };
+    let Some(expression) = single_top_level_return_expression(&function.body) else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parentheses(expression) else {
+        return false;
+    };
+    let MemberProp::Computed(property) = &member.prop else {
+        return false;
+    };
+    expression_is_binding(member.obj.as_ref(), view)
+        && expression_is_binding(property.expr.as_ref(), index)
+}
+
+fn parameter_offset(
+    expression: &Expr,
+    parameter: &BindingKey,
+    integer_constants: &HashMap<BindingKey, u64>,
+) -> Option<u64> {
+    let Expr::Bin(binary) = strip_parentheses(expression) else {
+        return None;
+    };
+    if binary.op != BinaryOp::Add {
+        return None;
+    }
+    if expression_is_binding(binary.left.as_ref(), parameter) {
+        return stable_integer_value(binary.right.as_ref(), integer_constants);
+    }
+    if expression_is_binding(binary.right.as_ref(), parameter) {
+        return stable_integer_value(binary.left.as_ref(), integer_constants);
+    }
+    None
+}
+
+fn stable_integer_value(
+    expression: &Expr,
+    integer_constants: &HashMap<BindingKey, u64>,
+) -> Option<u64> {
+    if let Some(value) = nonnegative_integer_value(expression) {
+        return u64::try_from(value).ok();
+    }
+    let Expr::Ident(identifier) = strip_parentheses(expression) else {
+        return None;
+    };
+    integer_constants.get(&binding_key(identifier)).copied()
 }
 
 fn returns_parameter_offset_member(
