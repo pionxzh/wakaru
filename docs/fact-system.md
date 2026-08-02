@@ -38,7 +38,7 @@ Phase 1 (per module, parallel):
 Phase 2 (per module, parallel):
     resume retained barrier AST
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
-    rule range from UnTemplateLiteral through UnReturn
+    registry rule range resuming after UnEsm, through UnReturn
     targeted late cleanup/recovery
 ```
 
@@ -101,7 +101,7 @@ For a cross-module late pass that naturally runs at the Stage 2 barrier:
    `(&mut Module, &ModuleFactsMap)`.
 2. Call it from `unpack_multi_module` between
    `apply_rules(..., RulePipelineOptions::until("UnEsm"))` and the
-   `UnTemplateLiteral`-through-`UnReturn` rule range.
+   post-`UnEsm`-through-`UnReturn` rule range.
 3. Do all AST mutation locally to the module — never write back to
    `ModuleFactsMap`.
 4. Add unit tests following `crates/core/tests/namespace_decomposition_rule.rs` (use

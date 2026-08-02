@@ -224,7 +224,7 @@ unpack_bundle(source)
   → Phase 1: par_iter → obtain resolved AST → rules through UnEsm
                         → ESM recovery on a facts clone → collect facts
   → Phase 2: par_iter → resume retained AST → cross-module late pass
-                    → rules from UnTemplateLiteral through UnReturn
+                    → registry range resuming after UnEsm, through UnReturn
                     → targeted late cleanup → emit
 ```
 
@@ -271,48 +271,41 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 ### Rules pipeline (`crates/core/src/rules/`)
 
-~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata and explicit ordering dependencies, while `RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and optional module facts.
+~80 transformation rules, each implementing SWC's `VisitMut` trait, applied in a fixed order by `apply_rules()` across ~100 registry entries (several rules run repeat passes after later stages expose new instances of their pattern). Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata and explicit ordering dependencies, while `RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and optional module facts.
 
 #### Pipeline stages
 
+**The registry is the authoritative roster** — this doc describes only what
+each stage is for, with a few representative rules. Do not treat the examples
+as exhaustive.
+
 ```
 Stage 1: Syntax normalization
-  UnComputedProperties, SimplifySequence, FlipComparisons, UnTypeofStrict, RemoveVoid,
-  UnminifyBooleans, UnDoubleNegation, UnInfinity, UnIndirectCall,
-  UnTypeof, UnNumericLiteral, UnBracketNotation
+  small, local de-minification rewrites
+  e.g. UnminifyBooleans (!0 → true), SimplifySequence, UnBracketNotation
 
 Stage 2: Transpiler helper unwrapping + module-system reconstruction
-  UnInteropRequireDefault, UnInteropRequireWildcard, UnToConsumableArray,
-  UnObjectSpread, UnObjectRest, UnSlicedToArray,
-  UnClassCallCheck, UnPossibleConstructorReturn,
-  UnTypeofPolyfill, UnCurlyBraces, UnEsmoduleFlag, UnUseStrict,
-  UnAssignmentMerging, UnVariableMergingDeclsOnly, UnBuiltinAliases,
-  UnWebpackInterop, UnEsm
+  Babel/TypeScript helper recovery and require() → ESM, ending with UnEsm
+  e.g. UnInteropRequireDefault, UnObjectSpread, UnWebpackInterop, UnEsm
 
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
 Stage 3: Structural restoration
-  UnTemplateLiteral, UnWhileLoop, UnTypeConstructor, UnBuiltinPrototype,
-  UnArgumentSpread, UnArrayConcatSpread, UnSpreadArrayLiteral,
-  ObjectAssignSpread, UnVariableMerging, UnNullishCoalescing,
-  UnOptionalChaining
+  expression/operator-level syntax recovery
+  e.g. UnTemplateLiteral, UnNullishCoalescing, UnOptionalChaining
 
 Stage 4: Complex pattern restoration
-  UnIife, UnConditionals, UnParameters, UnEnum, UnJsx, UnEs6Class,
-  UnAssertThisInitialized, UnClassFields, UnDefineProperty,
-  UnRegenerator, UnAsyncAwait, UnWebpackInterop (2nd pass)
+  multi-statement/control-flow pattern recovery
+  e.g. UnIife, UnParameters, UnJsx, UnEs6Class, UnRegenerator, UnAsyncAwait
 
 Stage 5: Modernization
-  UnThenCatch, UnUndefinedInit, VarDeclToLetConst, ObjShorthand,
-  ObjMethodShorthand, UnPrototypeClass, Exponent, ArgRest,
-  UnRestArrayCopy, ArrowFunction, UnNamespace, ArrowReturn, UnForOf
+  idiomatic-ESNext rewrites of already-correct code
+  e.g. VarDeclToLetConst, ArrowFunction, ObjShorthand, UnForOf
 
 Stage 6: Cleanup and renaming
-  UnWebpackDefineGetters, UnWebpackObjectGetters, ImportDedup,
-  UnImportRename, UnExportRename, UnWebpackInterop (3rd pass),
-  UnDestructuring, UnParameters (2nd pass), SmartInline,
-  UnIife (2nd pass), SmartRename, UnJsx (2nd pass),
-  [optional] DeadDecls, [optional] DeadImports, UnReturn
+  inlining, rename recovery, import/export cleanup, optional DCE
+  e.g. SmartInline, SmartRename, ImportDedup, DeadDecls/DeadImports (optional),
+  plus most repeat passes (UnIife2, UnJsx2, SmartRename2, ...)
 ```
 
 `DeadImports` and `DeadDecls` are an optional late cleanup phase controlled by
@@ -415,7 +408,7 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    `Globals` and unresolved mark.
 2. **Phase 2 (parallel):** Resume the retained Phase 1 AST → cross-module late
    pass (re-export consolidation, namespace decomposition, fact-aware helper
-   recovery) → run the `UnTemplateLiteral` through `UnReturn` rule range →
+   recovery) → run the registry range resuming after `UnEsm`, through `UnReturn` →
    targeted late cleanup/recovery → emit.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }` or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
