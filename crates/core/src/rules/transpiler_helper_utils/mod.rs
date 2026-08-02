@@ -26,6 +26,7 @@ mod lifecycle;
 mod matchers;
 mod paths;
 mod ts_helpers;
+mod ts_registrar;
 
 pub(crate) use collect::collect_transpiler_helpers;
 use collect::collect_transpiler_helpers_inner;
@@ -55,6 +56,10 @@ pub(crate) use ts_helpers::{
 };
 use ts_helpers::{
     collect_ts_helpers, collect_tslib_require_member_calls, detect_helper_from_tslib_require_member,
+};
+
+pub(crate) use ts_registrar::{
+    collect_ts_helper_export_registrars, is_ts_helper_export_registration_call,
 };
 
 #[cfg(test)]
