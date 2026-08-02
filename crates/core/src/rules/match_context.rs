@@ -75,12 +75,6 @@ impl MatchContext {
         }
         member_prop_name(&member.prop, prop_name)
     }
-
-    /// Raw `(sym, ctxt)` for APIs that still need the tuple form.
-    #[allow(dead_code)]
-    pub fn binding_key(&self, name: &str) -> Option<(&Atom, SyntaxContext)> {
-        self.get(name).map(|b| (&b.sym, b.ctxt))
-    }
 }
 
 #[cfg(test)]

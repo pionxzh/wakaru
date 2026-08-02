@@ -20,6 +20,7 @@ use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
+use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
@@ -629,7 +630,7 @@ fn inline_adjacent_default_export_aliases(body: &mut Vec<ModuleItem>) {
         }
 
         let alias_key = (alias.sym.clone(), alias.ctxt);
-        if count_binding_refs(body, &alias_key, Some(index)) != 1 {
+        if count_binding_refs_excluding_item(body, &alias_key, index) != 1 {
             index += 1;
             continue;
         }
@@ -674,32 +675,16 @@ fn default_export_ident(item: &ModuleItem) -> Option<&Ident> {
     Some(id)
 }
 
-fn count_binding_refs(
+fn count_binding_refs_excluding_item(
     body: &[ModuleItem],
     key: &(Atom, SyntaxContext),
-    skip_index: Option<usize>,
+    skip_index: usize,
 ) -> usize {
-    let mut counter = BindingRefCounter { key, count: 0 };
-    for (index, item) in body.iter().enumerate() {
-        if skip_index == Some(index) {
-            continue;
-        }
-        item.visit_with(&mut counter);
-    }
-    counter.count
-}
-
-struct BindingRefCounter<'a> {
-    key: &'a (Atom, SyntaxContext),
-    count: usize,
-}
-
-impl Visit for BindingRefCounter<'_> {
-    fn visit_ident(&mut self, id: &Ident) {
-        if id.sym == self.key.0 && id.ctxt == self.key.1 {
-            self.count += 1;
-        }
-    }
+    body.iter()
+        .enumerate()
+        .filter(|(index, _)| *index != skip_index)
+        .map(|(_, item)| count_binding_refs(item, key))
+        .sum()
 }
 
 fn get_or_insert<'a>(

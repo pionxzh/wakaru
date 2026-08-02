@@ -65,15 +65,16 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::Spanned;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, ComputedPropName, ExportSpecifier, Expr, Ident, KeyValueProp, Lit,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, Pat, Prop, PropName,
-    PropOrSpread, SeqExpr, SimpleAssignTarget, VarDecl, VarDeclKind,
+    AssignOp, AssignTarget, ComputedPropName, ExportSpecifier, Expr, KeyValueProp, Lit, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
+    SeqExpr, SimpleAssignTarget, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::binding_facts::collect_binding_facts;
 use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
 use super::decl_utils::{binding_id, collect_decl_binding_ids, ident_matches_binding, BindingId};
+use super::helper_matcher::count_binding_refs;
 use super::RewriteLevel;
 
 use crate::utils::paren::strip_parens;
@@ -162,7 +163,7 @@ impl UnComputedProperties {
 
         // The temp must not be read before the pattern seeds it, or the prefix
         // would observe the previous value.
-        if count_binding_refs(&seq.exprs[..seed_index], &temp_binding) != 0 {
+        if count_expr_binding_refs(&seq.exprs[..seed_index], &temp_binding) != 0 {
             return None;
         }
 
@@ -170,7 +171,7 @@ impl UnComputedProperties {
         // per following assignment, and the trailing read. Any surplus means the
         // temp is mentioned inside a key or a value, which folding would break.
         let structural_refs = assignments.len() + 2;
-        if count_binding_refs(&seq.exprs[seed_index..], &temp_binding) != structural_refs {
+        if count_expr_binding_refs(&seq.exprs[seed_index..], &temp_binding) != structural_refs {
             return None;
         }
         // `binding_references` counts the declarator identifier too, so a
@@ -461,23 +462,9 @@ fn member_prop_to_prop_name(prop: &MemberProp) -> Option<PropName> {
     }
 }
 
-fn count_binding_refs(exprs: &[Box<Expr>], binding: &BindingId) -> usize {
-    let mut counter = BindingRefCounter { binding, count: 0 };
-    for expr in exprs {
-        expr.visit_with(&mut counter);
-    }
-    counter.count
-}
-
-struct BindingRefCounter<'a> {
-    binding: &'a BindingId,
-    count: usize,
-}
-
-impl Visit for BindingRefCounter<'_> {
-    fn visit_ident(&mut self, ident: &Ident) {
-        if ident_matches_binding(ident, self.binding) {
-            self.count += 1;
-        }
-    }
+fn count_expr_binding_refs(exprs: &[Box<Expr>], binding: &BindingId) -> usize {
+    exprs
+        .iter()
+        .map(|expr| count_binding_refs(expr.as_ref(), binding))
+        .sum()
 }

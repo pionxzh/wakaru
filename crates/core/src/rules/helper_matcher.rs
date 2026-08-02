@@ -42,21 +42,6 @@ pub(crate) fn member_prop_name(prop: &MemberProp, name: &str) -> bool {
     static_member_prop_name(prop) == Some(name)
 }
 
-#[allow(dead_code)]
-pub(crate) fn member_of_binding<'a>(
-    expr: &'a Expr,
-    key: &BindingKey,
-    prop_name: &str,
-) -> Option<&'a swc_core::ecma::ast::MemberExpr> {
-    let Expr::Member(member) = expr else {
-        return None;
-    };
-    if !expr_matches_binding(&member.obj, key) {
-        return None;
-    }
-    member_prop_name(&member.prop, prop_name).then_some(member)
-}
-
 pub(crate) fn var_declarator_binding_key(decl: &VarDeclarator) -> Option<BindingKey> {
     binding_key_from_ident_pat(&decl.name)
 }
@@ -268,7 +253,7 @@ mod tests {
     use super::*;
     use swc_core::atoms::Atom;
     use swc_core::common::{SyntaxContext, DUMMY_SP, GLOBALS};
-    use swc_core::ecma::ast::{IdentName, MemberExpr};
+    use swc_core::ecma::ast::IdentName;
 
     fn ident(sym: &str, ctxt: SyntaxContext) -> Ident {
         Ident {
@@ -309,28 +294,6 @@ mod tests {
                 }))),
             });
             assert!(member_prop_name(&computed_prop, "default"));
-        });
-    }
-
-    #[test]
-    fn member_of_binding_requires_matching_object_context() {
-        GLOBALS.set(&Default::default(), || {
-            let key = (Atom::from("obj"), SyntaxContext::empty());
-            let member = Expr::Member(MemberExpr {
-                span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(ident("obj", SyntaxContext::empty()))),
-                prop: MemberProp::Ident(IdentName {
-                    span: DUMMY_SP,
-                    sym: Atom::from("prop"),
-                }),
-            });
-            assert!(member_of_binding(&member, &key, "prop").is_some());
-
-            let wrong_key = (
-                Atom::from("obj"),
-                SyntaxContext::empty().apply_mark(swc_core::common::Mark::new()),
-            );
-            assert!(member_of_binding(&member, &wrong_key, "prop").is_none());
         });
     }
 }
