@@ -1,7 +1,8 @@
 mod common;
 
 use common::normalize;
-use wakaru_core::{unpack, unpack_raw, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
+use wakaru_core::{unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")

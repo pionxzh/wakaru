@@ -2,7 +2,8 @@
 //! the bootstrap statements at the top level of the file instead of inside an
 //! IIFE. Detection must recognize this unwrapped form.
 
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::driver::test_support::unpack;
+use wakaru_core::DecompileOptions;
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(

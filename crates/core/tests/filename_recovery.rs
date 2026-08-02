@@ -5,7 +5,8 @@
 //! use it to rename the extracted module's output file, rewriting importers'
 //! import-source strings to match.
 
-use wakaru_core::{unpack_files, DecompileOptions, RewriteLevel, UnpackInput};
+use wakaru_core::driver::test_support::{unpack_files, UnpackInput};
+use wakaru_core::{DecompileOptions, RewriteLevel};
 
 /// A component module whose JSX carries the Sentry source-file marker in its
 /// pre-JSX (props-object) form, plus a consumer module that imports it by its

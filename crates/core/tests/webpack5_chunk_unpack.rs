@@ -1,4 +1,5 @@
-use wakaru_core::{unpack, unpack_raw, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
+use wakaru_core::DecompileOptions;
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(

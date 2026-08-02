@@ -2,7 +2,8 @@
 //! need an IIFE wrapper: `var __webpack_exports__ = {};` followed by the entry
 //! statements. These bundles previously produced no entry.js.
 
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::driver::test_support::unpack;
+use wakaru_core::DecompileOptions;
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(

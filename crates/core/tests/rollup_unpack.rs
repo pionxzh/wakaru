@@ -1,6 +1,7 @@
 mod common;
 use common::render;
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::driver::test_support::unpack;
+use wakaru_core::DecompileOptions;
 
 // --- Decompile (single-file) tests ---
 

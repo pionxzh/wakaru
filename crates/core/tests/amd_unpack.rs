@@ -1,4 +1,5 @@
-use wakaru_core::{unpack, unpack_raw, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
+use wakaru_core::DecompileOptions;
 
 fn raw_pairs(source: &str) -> Vec<(String, String)> {
     unpack_raw(

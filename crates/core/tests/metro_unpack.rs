@@ -1,5 +1,6 @@
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
 use wakaru_core::unpacker::{metro, try_unpack_bundle, BundleFormat};
-use wakaru_core::{unpack, unpack_raw, DecompileOptions};
+use wakaru_core::DecompileOptions;
 
 // Reduced from Metro 0.87's serializer/transform-worker output and runtime
 // contract (`facebook/metro` at d2730e67d). IDs are deliberately synthetic.

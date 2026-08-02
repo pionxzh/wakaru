@@ -19,13 +19,21 @@ pub use output::{deduplicate_path, safe_relative_module_path};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
-    DceMode, DecompileOptions, DecompileOutput, ModuleProvenance, PreparedInputId,
-    PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput, UnpackInput,
-    UnpackOutput, UnpackWarning, UnpackWarningKind,
+    DceMode, DecompileOptions, DecompileOutput, PreparedInputId, PreparedModuleOutput,
+    PreparedModuleProvenance, PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 pub use unpack::{
     prepare_unpack_input, prepare_unpack_input_with_policy, unpack_prepared_inputs,
     unpack_prepared_inputs_with_policy, PreparedInputDetection, PreparedUnpackInput,
     ScopeHoistPolicy,
 };
-pub use unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};
+
+/// Legacy adapters retained for `wakaru-core`'s integration tests.
+///
+/// Production callers should use the published `wakaru` facade. This module
+/// remains public only because Cargo integration tests are separate crates.
+#[doc(hidden)]
+pub mod test_support {
+    pub use super::types::{ModuleProvenance, UnpackInput, UnpackOutput};
+    pub use super::unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};
+}

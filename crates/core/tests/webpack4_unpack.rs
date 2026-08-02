@@ -1,6 +1,7 @@
 use std::fs;
 
-use wakaru_core::{unpack, unpack_raw, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
+use wakaru_core::DecompileOptions;
 
 #[test]
 fn webpack4_unpack_extracts_modules() {

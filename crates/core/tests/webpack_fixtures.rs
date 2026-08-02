@@ -1,6 +1,7 @@
 use std::fs;
 
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::driver::test_support::unpack;
+use wakaru_core::DecompileOptions;
 
 fn fixture(path: &str) -> String {
     let full = format!("tests/bundles/webpack-gen/dist/{path}");

@@ -1,6 +1,7 @@
 use std::fs;
 
-use wakaru_core::{unpack, unpack_raw, BundleFormat, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
+use wakaru_core::{BundleFormat, DecompileOptions};
 
 #[test]
 fn browserify_accepts_a_nonliteral_cache_argument() {

@@ -3,7 +3,8 @@
 //! — optionally wrapped in `Array(n).concat([...])` when the smallest id is
 //! non-zero. See https://github.com/pionxzh/wakaru/issues/200.
 
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::driver::test_support::unpack;
+use wakaru_core::DecompileOptions;
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(

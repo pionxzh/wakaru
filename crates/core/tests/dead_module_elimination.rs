@@ -5,7 +5,8 @@
 //! binding importers and is safe to drop, along with the now-vacuous side-effect
 //! imports in its consumers.
 
-use wakaru_core::{unpack_files, DecompileOptions, RewriteLevel, UnpackInput};
+use wakaru_core::driver::test_support::{unpack_files, UnpackInput};
+use wakaru_core::{DecompileOptions, RewriteLevel};
 
 /// A self-contained `_extends` helper module + a consumer that uses it in a
 /// spread-rewritable call. After the pipeline the consumer's helper call becomes

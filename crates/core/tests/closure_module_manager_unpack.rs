@@ -1,9 +1,7 @@
 use std::fs;
 
-use wakaru_core::{
-    is_detected_unpack_input, unpack, unpack_files_raw, unpack_raw, BundleFormat, DecompileOptions,
-    UnpackInput,
-};
+use wakaru_core::driver::test_support::{unpack, unpack_files_raw, unpack_raw, UnpackInput};
+use wakaru_core::{is_detected_unpack_input, BundleFormat, DecompileOptions};
 
 fn fixture() -> String {
     fs::read_to_string("tests/bundles/closure-module-manager/synthetic.js")

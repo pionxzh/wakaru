@@ -1,4 +1,5 @@
-use wakaru_core::{is_detected_unpack_input, unpack, unpack_raw, BundleFormat, DecompileOptions};
+use wakaru_core::driver::test_support::{unpack, unpack_raw, UnpackOutput};
+use wakaru_core::{is_detected_unpack_input, BundleFormat, DecompileOptions};
 
 fn cocos_bundle() -> String {
     std::fs::read_to_string(concat!(
@@ -16,7 +17,7 @@ fn minified_cocos_bundle() -> String {
     .expect("failed to read generated minified Cocos Creator fixture")
 }
 
-fn raw_output() -> wakaru_core::UnpackOutput {
+fn raw_output() -> UnpackOutput {
     let source = cocos_bundle();
     unpack_raw(
         &source,

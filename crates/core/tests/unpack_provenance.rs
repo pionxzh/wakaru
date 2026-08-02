@@ -2,9 +2,10 @@
 //! bundle it was extracted from, so callers (package detection, ground-truth
 //! builders) can map modules back to source-map positions.
 
-use wakaru_core::{
-    unpack, unpack_files, unpack_raw, DecompileOptions, ModuleProvenance, RewriteLevel, UnpackInput,
+use wakaru_core::driver::test_support::{
+    unpack, unpack_files, unpack_raw, ModuleProvenance, UnpackInput,
 };
+use wakaru_core::{DecompileOptions, RewriteLevel};
 
 fn provenance_for<'a>(provenance: &'a [ModuleProvenance], filename: &str) -> &'a ModuleProvenance {
     provenance

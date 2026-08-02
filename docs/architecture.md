@@ -233,9 +233,10 @@ chunk files. Each input is detected independently, detected module sets are
 merged, and the same two-phase pipeline runs once over the combined module set
 so cross-module facts can see modules from every input file.
 
-The legacy `wakaru-core` `unpack*` entry points are compatibility wrappers over
-the same `prepare_unpack_input` intake and shared executor used by the façade;
-they do not maintain a second detector loop.
+The legacy `wakaru-core` `unpack*` entry points exist only under the doc-hidden
+`driver::test_support` namespace for the crate's integration tests. They adapt
+the same `prepare_unpack_input` intake and structured executor result used by
+the façade; no production caller or second detector loop remains.
 
 Before the two-phase pipeline starts, multi-source unpack stabilizes the merged
 module set: filenames are made unique before fact collection, and unambiguous
