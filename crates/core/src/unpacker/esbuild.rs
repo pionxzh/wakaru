@@ -4691,6 +4691,39 @@ mod tests {
     use crate::unpacker::emit_esm::emit_module_raw;
     use swc_core::common::GLOBALS;
 
+    fn assert_owned_factory_detector_matches_borrowed(
+        source: &str,
+        filename: &str,
+        expect_commonjs_evidence: bool,
+    ) {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::super::parse_es_module(source, filename, cm.clone())
+            .expect("fixture should parse");
+        let helper_syms = collect_helper_syms(&module);
+        assert_eq!(
+            !collect_commonjs_helper_syms(&module).is_empty(),
+            expect_commonjs_evidence,
+            "fixture must exercise the intended evidence path"
+        );
+        assert!(
+            has_factory_detection_evidence(&module, &helper_syms),
+            "fixture must pass the owned detector's preflight"
+        );
+
+        let borrowed = detect_from_module_with_source(&module, Some(source), cm.clone())
+            .expect("borrowed detector should accept fixture");
+        let owned = detect_from_owned_factory_module_with_source(module, Some(source), cm)
+            .expect("owned detector should accept every preflight-approved fixture");
+        let module_pairs = |result: UnpackResult| {
+            result
+                .modules
+                .into_iter()
+                .map(|module| (module.filename, module.code))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(module_pairs(owned), module_pairs(borrowed));
+    }
+
     #[test]
     fn top_level_declaration_index_reuses_items_with_multiple_bindings() {
         GLOBALS.set(&Default::default(), || {
@@ -4867,25 +4900,7 @@ var wrap = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports)
 var value = wrap((exports, module) => { module.exports = 42; });
 console.log(value());
 "#;
-            let cm: Lrc<SourceMap> = Default::default();
-            let module =
-                super::super::parse_es_module(source, "owned-factory.js", cm.clone()).unwrap();
-            let borrowed = detect_from_module_with_source(&module, Some(source), cm.clone())
-                .expect("borrowed detector should accept fixture");
-            let owned =
-                detect_from_owned_factory_module_with_source(module, Some(source), cm.clone())
-                    .expect("owned detector should accept fixture");
-            let borrowed_modules = borrowed
-                .modules
-                .into_iter()
-                .map(|module| (module.filename, module.code))
-                .collect::<Vec<_>>();
-            let owned_modules = owned
-                .modules
-                .into_iter()
-                .map(|module| (module.filename, module.code))
-                .collect::<Vec<_>>();
-            assert_eq!(owned_modules, borrowed_modules);
+            assert_owned_factory_detector_matches_borrowed(source, "owned-factory.js", true);
 
             let rejected_source = "var y = (q, K) => () => q; var only = y(() => 1);";
             let rejected_cm: Lrc<SourceMap> = Default::default();
@@ -4906,6 +4921,66 @@ console.log(value());
             };
             let after = emit_module_raw(&rejected, rejected_cm).unwrap();
             assert_eq!(after, before, "rejected candidates must not be mutated");
+        });
+    }
+
+    #[test]
+    fn owned_factory_detector_preflight_covers_every_movable_body_shape() {
+        GLOBALS.set(&Default::default(), || {
+            let fixtures = [
+                (
+                    "arrow-block",
+                    r#"
+var y = (q, K) => () => (q && (K = q(q = 0)), K);
+var one = y(() => { first(); });
+var two = y(() => { second(); });
+var three = y(() => { third(); });
+var four = y(() => { fourth(); });
+var five = y(() => { fifth(); });
+"#,
+                ),
+                (
+                    "arrow-expression",
+                    r#"
+var y = (q, K) => () => (q && (K = q(q = 0)), K);
+var one = y(() => first());
+var two = y(() => second());
+var three = y(() => third());
+var four = y(() => fourth());
+var five = y(() => fifth());
+"#,
+                ),
+                (
+                    "function-expression",
+                    r#"
+var y = (q, K) => () => (q && (K = q(q = 0)), K);
+var one = y(function() { first(); });
+var two = y(function() { second(); });
+var three = y(function() { third(); });
+var four = y(function() { fourth(); });
+var five = y(function() { fifth(); });
+"#,
+                ),
+                (
+                    "object-method",
+                    r#"
+var y = (q, K) => () => (q && (K = q(q = 0)), K);
+var one = y({ "one.js"() { first(); } });
+var two = y({ "two.js"() { second(); } });
+var three = y({ "three.js"() { third(); } });
+var four = y({ "four.js"() { fourth(); } });
+var five = y({ "five.js"() { fifth(); } });
+"#,
+                ),
+            ];
+
+            for (shape, source) in fixtures {
+                assert_owned_factory_detector_matches_borrowed(
+                    source,
+                    &format!("owned-{shape}.js"),
+                    false,
+                );
+            }
         });
     }
 
