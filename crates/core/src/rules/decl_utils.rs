@@ -1,20 +1,11 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{BindingIdent, Decl, Id, Ident, Param, Pat, Stmt, VarDecl, VarDeclKind};
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-pub type BindingId = (Atom, SyntaxContext);
-
-pub fn binding_id(ident: &Ident) -> BindingId {
-    (ident.sym.clone(), ident.ctxt)
-}
-
-pub fn ident_matches_binding(ident: &Ident, binding: &BindingId) -> bool {
-    ident.sym == binding.0 && ident.ctxt == binding.1
-}
+pub(crate) use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 
 pub fn same_ident(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt

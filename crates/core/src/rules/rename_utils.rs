@@ -12,7 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{collect_decl_names, collect_pat_names};
 
-pub type BindingId = (Atom, SyntaxContext);
+pub(crate) use crate::analysis::BindingId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BindingRename {

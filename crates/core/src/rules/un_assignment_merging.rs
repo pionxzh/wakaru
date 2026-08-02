@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, ModuleItem, SimpleAssignTarget, Stmt,
 };
@@ -80,7 +79,7 @@ fn is_simple_value(expr: &Expr) -> bool {
     }
 }
 
-type BindingKey = (Atom, SyntaxContext);
+use crate::analysis::BindingId as BindingKey;
 
 fn targets_can_be_split(assign: &AssignExpr) -> bool {
     let mut assigned_bindings = HashSet::new();

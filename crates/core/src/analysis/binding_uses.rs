@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Span, SyntaxContext};
+use swc_core::common::Span;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, Callee, CatchClause,
     ClassDecl, ClassExpr, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, Function, Ident,
@@ -11,7 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-pub(crate) type BindingId = (Atom, SyntaxContext);
+pub(crate) use super::BindingId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum UseKind {

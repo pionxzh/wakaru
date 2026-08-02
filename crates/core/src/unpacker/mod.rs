@@ -15,8 +15,7 @@ use std::panic::{self, AssertUnwindSafe};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{
-    sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, Spanned, SyntaxContext,
-    GLOBALS,
+    sync::Lrc, BytePos, FileName, Globals, LineCol, Mark, SourceMap, Span, Spanned, GLOBALS,
 };
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
@@ -464,7 +463,7 @@ impl UnpackResult {
     }
 }
 
-pub(crate) type BindingId = (Atom, SyntaxContext);
+pub(crate) use crate::analysis::BindingId;
 
 /// Convert a bundler-provided module path into a relative output path.
 ///

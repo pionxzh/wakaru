@@ -1,27 +1,19 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem, Pat, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-pub(crate) type BindingKey = (Atom, SyntaxContext);
-
-pub(crate) fn binding_key(ident: &Ident) -> BindingKey {
-    (ident.sym.clone(), ident.ctxt)
-}
+pub(crate) use crate::analysis::{
+    binding_id as binding_key, ident_matches_binding, BindingId as BindingKey,
+};
 
 pub(crate) fn binding_key_from_ident_pat(pat: &Pat) -> Option<BindingKey> {
     let Pat::Ident(binding) = pat else {
         return None;
     };
     Some(binding_key(&binding.id))
-}
-
-pub(crate) fn ident_matches_binding(ident: &Ident, key: &BindingKey) -> bool {
-    ident.sym == key.0 && ident.ctxt == key.1
 }
 
 pub(crate) fn expr_matches_binding(expr: &Expr, key: &BindingKey) -> bool {

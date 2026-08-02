@@ -16,7 +16,7 @@ use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
 
-type BindingId = (Atom, SyntaxContext);
+use crate::analysis::BindingId;
 
 pub struct UnParameters {
     unresolved_mark: Mark,

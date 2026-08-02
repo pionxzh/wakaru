@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::atoms::Atom;
-use swc_core::common::{BytePos, SyntaxContext};
+use swc_core::common::BytePos;
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, FnDecl, Function,
     GetterProp, Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl,
@@ -9,7 +8,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-type BindingId = (Atom, SyntaxContext);
+use crate::analysis::BindingId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TdzViolation {

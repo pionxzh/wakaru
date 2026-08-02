@@ -14,6 +14,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
@@ -1851,10 +1852,6 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
     }
 
     module.body = new_body;
-}
-
-fn binding_id(ident: &Ident) -> BindingId {
-    (ident.sym.clone(), ident.ctxt)
 }
 
 /// Find inline Babel interop wrappers that are observably just default-import
