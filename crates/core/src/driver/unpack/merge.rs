@@ -208,28 +208,13 @@ fn assign_unique_module_filenames(modules: &mut [MultiSourceModule]) {
 }
 
 fn deduplicate_module_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    let key = filename.to_lowercase();
-    if seen.insert(key) {
-        return filename.to_string();
-    }
-
-    let path = std::path::Path::new(filename);
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("module");
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("js");
-    let parent = path.parent().unwrap_or(std::path::Path::new(""));
-    let mut n = 2u32;
-    loop {
-        let candidate = parent.join(format!("{stem}_{n}.{ext}"));
-        let candidate = candidate.to_string_lossy().replace('\\', "/");
-        let candidate_key = candidate.to_lowercase();
-        if seen.insert(candidate_key) {
-            return candidate;
-        }
-        n += 1;
-    }
+    crate::unpacker::emit_esm::dedup_filename(
+        filename,
+        seen,
+        crate::unpacker::emit_esm::FilenameDedupStyle::PathAware {
+            fallback_stem: "module",
+        },
+    )
 }
 
 pub(super) fn input_group_for_filename(filename: &str) -> String {

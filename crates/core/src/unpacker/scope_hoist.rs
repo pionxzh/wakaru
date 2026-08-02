@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, Spanned, GLOBALS};
+use swc_core::common::{sync::Lrc, SourceMap, Spanned, GLOBALS};
 use swc_core::ecma::ast::*;
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::emit_esm::{
+    dedup_filename, emit_items, make_named_export_stmt, make_named_import_stmt,
+    try_promote_fn_class_export, FilenameDedupStyle,
+};
 use super::{
     module_item_declared_names, spans_byte_ranges, BundleFormat, UnpackResult, UnpackedModule,
 };
@@ -1283,17 +1286,18 @@ fn emit_clusters(
             if oi == ci {
                 continue;
             }
-            let mut needed: Vec<&Atom> = cluster_referenced[ci]
+            let mut needed: Vec<Atom> = cluster_referenced[ci]
                 .iter()
                 .filter(|name| !dynamic_require_helpers.contains(*name))
                 .filter(|name| !esbuild_to_esm_helpers.contains(*name))
                 .filter(|name| other_decls.contains(*name))
+                .cloned()
                 .collect();
             if needed.is_empty() {
                 continue;
             }
             needed.sort();
-            module_items.push(make_import_stmt(&needed, &filenames[oi]));
+            module_items.push(make_named_import_stmt(&needed, &filenames[oi]));
         }
 
         // Collect which names this cluster should export.
@@ -1361,8 +1365,7 @@ fn emit_clusters(
         leftover_exports.extend(exported.iter().cloned());
         if !leftover_exports.is_empty() {
             leftover_exports.sort();
-            let refs: Vec<&Atom> = leftover_exports.iter().collect();
-            module_items.push(make_export_stmt(&refs));
+            module_items.push(make_named_export_stmt(&leftover_exports));
         }
 
         if !default_interop_bindings.is_empty() {
@@ -1458,29 +1461,10 @@ enum ExportPromotion {
 }
 
 fn try_promote_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ExportPromotion {
+    if let Some((new_item, names)) = try_promote_fn_class_export(item, exported) {
+        return ExportPromotion::Promoted(new_item, names);
+    }
     match item {
-        // `function foo() {}` → `export function foo() {}`
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
-            if exported.contains(&fn_decl.ident.sym) =>
-        {
-            let names = vec![fn_decl.ident.sym.clone()];
-            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: Default::default(),
-                decl: Decl::Fn(fn_decl.clone()),
-            }));
-            ExportPromotion::Promoted(new_item, names)
-        }
-        // `class Foo {}` → `export class Foo {}`
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl)))
-            if exported.contains(&class_decl.ident.sym) =>
-        {
-            let names = vec![class_decl.ident.sym.clone()];
-            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: Default::default(),
-                decl: Decl::Class(class_decl.clone()),
-            }));
-            ExportPromotion::Promoted(new_item, names)
-        }
         // `const x = ..., y = ...` — check if all or some declarators are exported.
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
             let decl_names: Vec<Atom> = var_decl
@@ -1534,61 +1518,6 @@ fn try_promote_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ExportProm
     }
 }
 
-fn make_import_stmt(names: &[&Atom], from: &str) -> ModuleItem {
-    use swc_core::ecma::ast::{ImportDecl, ImportNamedSpecifier, ImportSpecifier, Str};
-    let specifiers = names
-        .iter()
-        .map(|name| {
-            ImportSpecifier::Named(ImportNamedSpecifier {
-                span: Default::default(),
-                local: Ident::new((*name).clone(), Default::default(), Default::default()),
-                imported: None,
-                is_type_only: false,
-            })
-        })
-        .collect();
-    ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-        span: Default::default(),
-        specifiers,
-        src: Box::new(Str {
-            span: Default::default(),
-            value: format!("./{from}").into(),
-            raw: None,
-        }),
-        type_only: false,
-        with: None,
-        phase: Default::default(),
-    }))
-}
-
-fn make_export_stmt(names: &[&Atom]) -> ModuleItem {
-    use swc_core::ecma::ast::{
-        ExportNamedSpecifier, ExportSpecifier, ModuleExportName, NamedExport,
-    };
-    let specifiers = names
-        .iter()
-        .map(|name| {
-            ExportSpecifier::Named(ExportNamedSpecifier {
-                span: Default::default(),
-                orig: ModuleExportName::Ident(Ident::new(
-                    (*name).clone(),
-                    Default::default(),
-                    Default::default(),
-                )),
-                exported: None,
-                is_type_only: false,
-            })
-        })
-        .collect();
-    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
-        span: Default::default(),
-        specifiers,
-        src: None,
-        type_only: false,
-        with: None,
-    }))
-}
-
 fn derive_chunk_name(items: &[TopLevelItem], cluster: &Cluster) -> String {
     // Use the first declared class name if there is one.
     for &i in &cluster.item_indices {
@@ -1610,50 +1539,13 @@ fn derive_chunk_name(items: &[TopLevelItem], cluster: &Cluster) -> String {
 }
 
 fn dedup_cluster_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    let key = filename.to_lowercase();
-    if seen.insert(key) {
-        return filename.to_string();
-    }
-
-    let path = std::path::Path::new(filename);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("chunk");
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("js");
-    let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
-
-    let mut n = 2u32;
-    loop {
-        let candidate = parent.join(format!("{stem}_{n}.{ext}"));
-        let candidate = candidate.to_string_lossy().replace('\\', "/");
-        let candidate_key = candidate.to_lowercase();
-        if seen.insert(candidate_key) {
-            return candidate;
-        }
-        n += 1;
-    }
-}
-
-fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> String {
-    let module = Module {
-        span: Default::default(),
-        body: items,
-        shebang: None,
-    };
-    let _fm = cm.new_source_file(FileName::Custom(filename).into(), String::new());
-    emit_module_raw(&module, cm).unwrap_or_default()
-}
-
-fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
-    let mut output = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default().with_minify(false),
-            cm: cm.clone(),
-            comments: None,
-            wr: JsWriter::new(cm.clone(), "\n", &mut output, None),
-        };
-        emitter.emit_module(module)?;
-    }
-    String::from_utf8(output).map_err(|e| anyhow::anyhow!("{e}"))
+    dedup_filename(
+        filename,
+        seen,
+        FilenameDedupStyle::PathAware {
+            fallback_stem: "chunk",
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------

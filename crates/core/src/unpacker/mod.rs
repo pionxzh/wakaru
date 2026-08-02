@@ -1,6 +1,7 @@
 pub mod amd;
 pub mod browserify;
 pub mod closure_module_manager;
+pub(crate) mod emit_esm;
 pub mod esbuild;
 pub mod metro;
 pub mod scope_hoist;

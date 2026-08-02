@@ -1,24 +1,24 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{
-    sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP,
-};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool,
-    CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr,
-    ExprOrSpread, ExprStmt, FnDecl, ForInStmt, Function, Ident, IdentName, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit, ObjectPatProp, Pat, Prop,
-    PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDeclarator,
+    CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
+    FnDecl, ForInStmt, Function, Ident, IdentName, ImportDecl, ImportSpecifier, KeyValueProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit,
+    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDeclarator,
 };
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
+use crate::unpacker::emit_esm::{
+    self, emit_module, make_named_export_stmt, make_named_import_stmt,
+    make_named_import_stmt_with_aliases, try_promote_fn_class_export, FilenameDedupStyle,
+};
 use crate::unpacker::{
     module_item_declared_binding_ids, span_byte_range, spans_byte_ranges, BindingId, BundleFormat,
     UnpackResult, UnpackedModule,
@@ -642,7 +642,7 @@ fn detect_from_prepared_factories(
                     continue;
                 }
                 let rel_path = relative_import_path(&module.filename, &source_filename);
-                import_items.push(make_scope_import_stmt(names, &rel_path));
+                import_items.push(make_named_import_stmt(names, &rel_path));
             }
 
             let module_factory_owned = factory_owned_bindings
@@ -780,7 +780,7 @@ fn detect_from_prepared_factories(
                     names.push((imported, local));
                 }
                 let rel_path = relative_import_path(&factory.filename, &source_filename);
-                import_items.push(make_scope_import_stmt_with_aliases(&names, &rel_path));
+                import_items.push(make_named_import_stmt_with_aliases(&names, &rel_path));
             }
         }
         let mut external_import_bindings: Vec<BindingId> =
@@ -1003,7 +1003,7 @@ fn repair_module_imports(
         let names = imports_by_source.get_mut(&source).unwrap();
         names.sort();
         names.dedup();
-        import_items.push(make_scope_import_stmt(names, &source));
+        import_items.push(make_named_import_stmt(names, &source));
     }
     import_items.append(&mut entry_items);
     import_items
@@ -2704,7 +2704,7 @@ fn extract_scope_hoisted_modules(
                 imported_atoms.insert(local.clone());
                 names.push((imported, local));
             }
-            module_items.push(make_scope_import_stmt_with_aliases(
+            module_items.push(make_named_import_stmt_with_aliases(
                 &names,
                 &metas[source_mi].filename,
             ));
@@ -2730,7 +2730,7 @@ fn extract_scope_hoisted_modules(
                 names.push((imported, local));
             }
             let rel_path = relative_import_path(&meta.filename, &source_filename);
-            module_items.push(make_scope_import_stmt_with_aliases(&names, &rel_path));
+            module_items.push(make_named_import_stmt_with_aliases(&names, &rel_path));
         }
         imported_atoms.extend(external_imported_atoms);
         let mut local_atoms = declared_atoms.clone();
@@ -2806,7 +2806,7 @@ fn extract_scope_hoisted_modules(
         if !remaining_exports.is_empty() {
             let mut names: Vec<Atom> = remaining_exports.into_iter().collect();
             names.sort();
-            module_items.push(make_scope_export_stmt(&names));
+            module_items.push(make_named_export_stmt(&names));
         }
 
         rename_bindings(&mut module_items, &import_renames);
@@ -2934,7 +2934,7 @@ fn extract_scope_hoisted_modules(
     }
     if !factory_ns_exports.is_empty() {
         factory_ns_exports.sort();
-        restored_items.push(make_scope_export_stmt(&factory_ns_exports));
+        restored_items.push(make_named_export_stmt(&factory_ns_exports));
     }
     let mut entry_imports: HashMap<usize, Vec<BindingId>> = HashMap::new();
     for ref_binding in &entry_referenced {
@@ -2991,7 +2991,7 @@ fn extract_scope_hoisted_modules(
                 }
                 names.push((imported, local));
             }
-            remaining.push(make_scope_import_stmt_with_aliases(
+            remaining.push(make_named_import_stmt_with_aliases(
                 &names,
                 &metas[source_mi].filename,
             ));
@@ -3031,7 +3031,7 @@ fn extract_scope_hoisted_modules(
             names.push((imported, local));
         }
         let rel_path = relative_import_path("entry.js", &source_filename);
-        remaining.push(make_scope_import_stmt_with_aliases(&names, &rel_path));
+        remaining.push(make_named_import_stmt_with_aliases(&names, &rel_path));
     }
     rename_bindings(&mut entry_tail, &entry_import_renames);
     remaining.extend(entry_tail);
@@ -3993,81 +3993,10 @@ fn reserve_import_atom(imported: &Atom, reserved: &mut HashSet<Atom>) -> Atom {
     unreachable!("open-ended suffix search must find an unused import atom")
 }
 
-fn make_scope_import_stmt(names: &[Atom], from: &str) -> ModuleItem {
-    let names: Vec<(Atom, Atom)> = names
-        .iter()
-        .map(|name| (name.clone(), name.clone()))
-        .collect();
-    make_scope_import_stmt_with_aliases(&names, from)
-}
-
-fn make_scope_import_stmt_with_aliases(names: &[(Atom, Atom)], from: &str) -> ModuleItem {
-    let specifiers = names
-        .iter()
-        .map(|(imported, local)| {
-            ImportSpecifier::Named(ImportNamedSpecifier {
-                span: Default::default(),
-                local: Ident::new(local.clone(), Default::default(), Default::default()),
-                imported: if imported == local {
-                    None
-                } else {
-                    Some(ModuleExportName::Ident(Ident::new(
-                        imported.clone(),
-                        Default::default(),
-                        Default::default(),
-                    )))
-                },
-                is_type_only: false,
-            })
-        })
-        .collect();
-    ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-        span: Default::default(),
-        specifiers,
-        src: Box::new(Str {
-            span: Default::default(),
-            value: if from.starts_with('.') || from.starts_with('/') {
-                from.into()
-            } else {
-                format!("./{from}").into()
-            },
-            raw: None,
-        }),
-        type_only: false,
-        with: None,
-        phase: Default::default(),
-    }))
-}
-
 fn make_external_import_stmt(import: &ExternalImport) -> ModuleItem {
     let mut decl = import.decl.clone();
     decl.specifiers = vec![import.specifier.clone()];
     ModuleItem::ModuleDecl(ModuleDecl::Import(decl))
-}
-
-fn make_scope_export_stmt(names: &[Atom]) -> ModuleItem {
-    let specifiers = names
-        .iter()
-        .map(|name| {
-            ExportSpecifier::Named(ExportNamedSpecifier {
-                span: Default::default(),
-                orig: ModuleExportName::Ident(Ident::new(
-                    name.clone(),
-                    Default::default(),
-                    Default::default(),
-                )),
-                exported: None,
-                is_type_only: false,
-            })
-        })
-        .collect();
-    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
-        span: Default::default(),
-        specifiers,
-        src: None,
-        type_only: false,
-        with: None,
-    }))
 }
 
 fn make_namespace_define_property_items(
@@ -4280,7 +4209,7 @@ fn factory_owned_export_items(
     if names.is_empty() {
         vec![]
     } else {
-        vec![make_scope_export_stmt(&names)]
+        vec![make_named_export_stmt(&names)]
     }
 }
 
@@ -4383,37 +4312,10 @@ enum ScopeExportPromotion {
 }
 
 fn try_promote_scope_export(item: ModuleItem, exported: &HashSet<Atom>) -> ScopeExportPromotion {
+    if let Some((new_item, names)) = try_promote_fn_class_export(&item, exported) {
+        return ScopeExportPromotion::Promoted(new_item, names);
+    }
     match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(ref fn_decl)))
-            if exported.contains(&fn_decl.ident.sym) =>
-        {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
-                unreachable!()
-            };
-            let names = vec![fn_decl.ident.sym.clone()];
-            ScopeExportPromotion::Promoted(
-                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                    span: Default::default(),
-                    decl: Decl::Fn(fn_decl),
-                })),
-                names,
-            )
-        }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(ref class_decl)))
-            if exported.contains(&class_decl.ident.sym) =>
-        {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))) = item else {
-                unreachable!()
-            };
-            let names = vec![class_decl.ident.sym.clone()];
-            ScopeExportPromotion::Promoted(
-                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                    span: Default::default(),
-                    decl: Decl::Class(class_decl),
-                })),
-                names,
-            )
-        }
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
             if var_decl.decls.len() == 1 {
                 let decl = &var_decl.decls[0];
@@ -4502,64 +4404,22 @@ fn make_noop_export_function(name: &Atom) -> ModuleItem {
     }))
 }
 
-/// Case-insensitive filename dedup matching the CLI's `deduplicate_path` logic.
-/// Probes `filename`, then `{stem}_2.{ext}`, `{stem}_3.{ext}`, ... until a
-/// name not in `seen` is found.  Inserts the winner and returns it.
+/// Case-insensitive filename dedup matching the CLI's `deduplicate_path`
+/// logic (see `emit_esm::FilenameDedupStyle` for the pointer to that copy).
 fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    if seen.insert(filename.to_ascii_lowercase()) {
-        return filename.to_string();
-    }
-    let (stem, ext) = match filename.rfind('.') {
-        Some(i) => (&filename[..i], &filename[i + 1..]),
-        None => (filename, "js"),
-    };
-    let mut n = 2u32;
-    loop {
-        let candidate = format!("{stem}_{n}.{ext}");
-        if seen.insert(candidate.to_ascii_lowercase()) {
-            return candidate;
-        }
-        n += 1;
-    }
+    emit_esm::dedup_filename(filename, seen, FilenameDedupStyle::Flat)
 }
 
 fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> String {
     let span = tracing::info_span!("esbuild: emit_items", count = items.len());
     let _enter = span.enter();
-    let module = Module {
-        span: Default::default(),
-        body: items,
-        shebang: None,
-    };
-    emit_module(module, filename, cm)
-}
-
-// ---------------------------------------------------------------------------
-// Code generation
-// ---------------------------------------------------------------------------
-
-fn emit_module(module: Module, filename: String, cm: Lrc<SourceMap>) -> String {
-    let _fm = cm.new_source_file(FileName::Custom(filename).into(), String::new());
-    emit_module_raw(&module, cm).unwrap_or_default()
-}
-
-fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
-    let mut output = Vec::new();
-    {
-        let mut emitter = Emitter {
-            cfg: Config::default().with_minify(false),
-            cm: cm.clone(),
-            comments: None,
-            wr: JsWriter::new(cm.clone(), "\n", &mut output, None),
-        };
-        emitter.emit_module(module)?;
-    }
-    String::from_utf8(output).map_err(|e| anyhow::anyhow!("{e}"))
+    emit_esm::emit_items(items, filename, cm)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unpacker::emit_esm::emit_module_raw;
     use swc_core::common::GLOBALS;
 
     #[test]

@@ -978,21 +978,7 @@ fn sanitize_filename(module_id: &str) -> String {
 }
 
 fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
-    if seen.insert(filename.to_ascii_lowercase()) {
-        return filename.to_string();
-    }
-    let (stem, ext) = match filename.rfind('.') {
-        Some(i) => (&filename[..i], &filename[i + 1..]),
-        None => (filename, "js"),
-    };
-    let mut n = 2u32;
-    loop {
-        let candidate = format!("{stem}_{n}.{ext}");
-        if seen.insert(candidate.to_ascii_lowercase()) {
-            return candidate;
-        }
-        n += 1;
-    }
+    super::emit_esm::dedup_filename(filename, seen, super::emit_esm::FilenameDedupStyle::Flat)
 }
 
 fn is_valid_ident_name(name: &str) -> bool {
