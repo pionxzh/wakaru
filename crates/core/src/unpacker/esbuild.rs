@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{
-    sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+    sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP,
 };
 use swc_core::ecma::ast::{
     ArrowExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool,
@@ -23,14 +23,6 @@ use crate::unpacker::{
     module_item_declared_binding_ids, span_byte_range, spans_byte_ranges, BindingId, BundleFormat,
     UnpackResult, UnpackedModule,
 };
-
-pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
-        let module = super::parse_es_module(source, "esbuild.js", cm.clone()).ok()?;
-        detect_from_module_with_source(&module, Some(source), cm)
-    })
-}
 
 pub(super) fn detect_from_module_with_source(
     module: &Module,
@@ -4568,6 +4560,7 @@ fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use swc_core::common::GLOBALS;
 
     #[test]
     fn top_level_declaration_index_reuses_items_with_multiple_bindings() {

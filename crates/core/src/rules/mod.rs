@@ -91,8 +91,6 @@ mod un_while_loop;
 mod unminify_booleans;
 mod var_decl_to_let_const;
 
-use swc_core::ecma::visit::VisitMut;
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RewriteLevel {
     Minimal,
@@ -246,18 +244,3 @@ pub use un_webpack_object_getters::UnWebpackObjectGetters;
 pub use un_while_loop::UnWhileLoop;
 pub use unminify_booleans::UnminifyBooleans;
 pub use var_decl_to_let_const::VarDeclToLetConst;
-
-pub trait Rule: VisitMut {
-    fn name(&self) -> &'static str;
-}
-
-#[derive(Default)]
-pub struct NoopRule;
-
-impl VisitMut for NoopRule {}
-
-impl Rule for NoopRule {
-    fn name(&self) -> &'static str {
-        "noop"
-    }
-}

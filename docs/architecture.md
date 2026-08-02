@@ -495,7 +495,7 @@ crates/
         metro.rs                    — Metro plain-bundle detection and extraction
         scope_hoist.rs              — heuristic scope-hoisted splitting (esbuild, Bun, Rollup, Vite)
       utils/
-        matcher.rs                  — AST helper predicates
+        paren.rs, swc_safety.rs     — paren stripping, SWC panic guards
     tests/
       common/mod.rs                 — test helpers (see docs/testing.md)
       *_rule.rs                     — per-rule unit tests

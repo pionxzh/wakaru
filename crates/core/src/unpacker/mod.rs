@@ -748,10 +748,6 @@ fn detect_bundle_candidate_before_esbuild(
     None
 }
 
-pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {
-    try_unpack_bundle(source)
-}
-
 pub(crate) fn parse_es_module(
     source: &str,
     filename: &str,

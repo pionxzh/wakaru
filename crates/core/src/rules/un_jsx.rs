@@ -17,7 +17,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::decl_utils::BindingId;
-use super::{RewriteLevel, Rule};
+use super::RewriteLevel;
 
 const CLASSIC_PRAGMA: &str = "createElement";
 
@@ -675,12 +675,6 @@ impl VisitMut for UnJsx {
         if let Some(replacement) = replacement {
             *expr = replacement;
         }
-    }
-}
-
-impl Rule for UnJsx {
-    fn name(&self) -> &'static str {
-        "un-jsx"
     }
 }
 

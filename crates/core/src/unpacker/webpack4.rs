@@ -31,19 +31,16 @@ enum ModuleId {
     Named(String),
 }
 
-/// Normalizes webpack runtime wrapper constructs in extracted module code.
+/// Splits sequence expression statements in extracted module code so that
+/// `n.r(t), n.d(t, "x", fn)` in a single ExprStmt becomes separate statements
+/// before rule matching.
 ///
 /// ESM marker/getter helpers stay in the module for the rule pipeline. Lowering
 /// `require.d(exports, ...)` here would turn live getters into eager assignments
 /// before `UnEsm` can recover ESM export bindings, and deleting
 /// `require.r(exports)` would remove the marker `UnEsm` uses to prove that
 /// those getters are ESM exports.
-struct WebpackRuntimeNormalizer {
-    /// The symbol name used for the require-like parameter
-    require_sym: Atom,
-    /// Only match identifiers that resolver() marked as unresolved free-variable references.
-    unresolved_mark: Mark,
-}
+struct WebpackRuntimeNormalizer;
 
 impl VisitMut for WebpackRuntimeNormalizer {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -52,14 +49,7 @@ impl VisitMut for WebpackRuntimeNormalizer {
         let mut new_items: Vec<ModuleItem> = Vec::with_capacity(items.len());
         for item in items.drain(..) {
             if let ModuleItem::Stmt(stmt) = item {
-                let expanded = self.expand_stmt(stmt);
-                for s in expanded {
-                    if let Some(replacement) = self.try_convert_stmt(&s) {
-                        new_items.extend(replacement.into_iter().map(ModuleItem::Stmt));
-                    } else {
-                        new_items.push(ModuleItem::Stmt(s));
-                    }
-                }
+                new_items.extend(expand_seq_stmt(stmt).into_iter().map(ModuleItem::Stmt));
             } else {
                 new_items.push(item);
             }
@@ -72,76 +62,29 @@ impl VisitMut for WebpackRuntimeNormalizer {
 
         let mut new_stmts: Vec<Stmt> = Vec::with_capacity(stmts.len());
         for stmt in stmts.drain(..) {
-            // First, expand sequence expressions into individual statements so that
-            // `n.r(t), n.d(t, "x", fn)` in a single ExprStmt is split before matching.
-            let expanded = self.expand_stmt(stmt);
-            for s in expanded {
-                if let Some(replacement) = self.try_convert_stmt(&s) {
-                    new_stmts.extend(replacement);
-                } else {
-                    new_stmts.push(s);
-                }
-            }
+            new_stmts.extend(expand_seq_stmt(stmt));
         }
         *stmts = new_stmts;
     }
 }
 
-impl WebpackRuntimeNormalizer {
-    /// Expand a sequence ExprStmt into individual ExprStmts.
-    fn expand_stmt(&self, stmt: Stmt) -> Vec<Stmt> {
-        if let Stmt::Expr(ExprStmt { expr, span }) = &stmt {
-            if let Expr::Seq(seq) = &**expr {
-                return seq
-                    .exprs
-                    .iter()
-                    .map(|e| {
-                        Stmt::Expr(ExprStmt {
-                            span: *span,
-                            expr: e.clone(),
-                        })
+/// Expand a sequence ExprStmt into individual ExprStmts.
+fn expand_seq_stmt(stmt: Stmt) -> Vec<Stmt> {
+    if let Stmt::Expr(ExprStmt { expr, span }) = &stmt {
+        if let Expr::Seq(seq) = &**expr {
+            return seq
+                .exprs
+                .iter()
+                .map(|e| {
+                    Stmt::Expr(ExprStmt {
+                        span: *span,
+                        expr: e.clone(),
                     })
-                    .collect();
-            }
-        }
-        vec![stmt]
-    }
-
-    /// Returns None to keep the statement as-is, or Some(vec) to replace it (possibly empty to remove).
-    fn try_convert_stmt(&self, stmt: &Stmt) -> Option<Vec<Stmt>> {
-        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-            return None;
-        };
-        let Expr::Call(call) = &**expr else {
-            return None;
-        };
-
-        // Check if the callee is `<require>.r` or `<require>.d`
-        let Callee::Expr(callee_expr) = &call.callee else {
-            return None;
-        };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
-            return None;
-        };
-
-        let Expr::Ident(callee_obj) = &**obj else {
-            return None;
-        };
-
-        if callee_obj.sym != self.require_sym || callee_obj.ctxt.outer() != self.unresolved_mark {
-            return None;
-        }
-
-        let MemberProp::Ident(prop_name) = prop else {
-            return None;
-        };
-
-        match prop_name.sym.as_ref() {
-            "r" => None,
-            "d" => None,
-            _ => None,
+                })
+                .collect();
         }
     }
+    vec![stmt]
 }
 
 /// Which argument of `call` carries a module id for the require binding:
@@ -879,16 +822,12 @@ fn normalize_extracted_webpack_module(
     // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
     rewrite_require_n_accesses(
         &mut synthetic_module,
-        post_rename_require_sym.clone(),
+        post_rename_require_sym,
         unresolved_mark,
     );
 
-    // Step 2: normalize webpack runtime helpers while preserving ESM markers/getters
-    let mut normalizer = WebpackRuntimeNormalizer {
-        require_sym: post_rename_require_sym,
-        unresolved_mark,
-    };
-    synthetic_module.visit_mut_with(&mut normalizer);
+    // Step 2: split top-level sequence statements while preserving ESM markers/getters
+    synthetic_module.visit_mut_with(&mut WebpackRuntimeNormalizer);
 
     // Step 2b: strip webpack's global-polyfill envelope
     unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
