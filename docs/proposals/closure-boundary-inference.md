@@ -112,8 +112,5 @@ recorded only so the next reader does not re-derive it.
 
 ## See also
 
-- [metro-unpacker.md](metro-unpacker.md) — the same evidence-first pattern
-  applied to Metro; indexed/file RAM bundles and Hermes bytecode remain out
-  of scope there.
 - `docs/architecture.md` — the Closure section documents the current
   conservative contract; keep it true in the same commit as any change here.
