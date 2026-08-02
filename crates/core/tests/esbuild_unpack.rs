@@ -384,7 +384,7 @@ export { ns_a, ns_b };
     assert!(
         ns_a_code.contains("export var ns_a = {}")
             && ns_a_code.contains("\"renamed\"")
-            && ns_a_code.contains("get: () => value"),
+            && ns_a_code.contains("get: ()=>value"),
         "provider module should export its namespace object with getters:\n{ns_a_code}"
     );
 

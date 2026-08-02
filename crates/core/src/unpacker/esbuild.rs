@@ -7,7 +7,8 @@ use swc_core::ecma::ast::{
     CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
     FnDecl, ForInStmt, Function, Ident, IdentName, ImportDecl, ImportSpecifier, KeyValueProp, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDeclarator,
+    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
@@ -309,15 +310,15 @@ fn detect_from_prepared_factories(
     // Phase 5: split scope-hoisted modules out of the entry items.
     // Pass factory-referenced bindings so the extraction can expand exports
     // and return binding→module mapping for factory import synthesis.
-    let (
-        scope_hoisted_modules,
+    let ScopeExtractionResult {
+        modules: scope_hoisted_modules,
         remaining_entry,
         mut binding_to_filename,
         module_already_imports,
         module_local_atoms,
         module_referenced_atoms,
         scope_claimed_factory_bindings,
-    ) = {
+    } = {
         let span = tracing::info_span!("esbuild: extract scope-hoisted modules");
         let _enter = span.enter();
         extract_scope_hoisted_modules(
@@ -482,6 +483,13 @@ fn detect_from_prepared_factories(
 
     let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
     let external_import_by_atom = atom_binding_map_from_keys(&external_imports);
+    let merged_ref_resolver = MergedRefResolver {
+        binding_to_filename: &binding_to_filename,
+        binding_filename_by_atom: &binding_filename_by_atom,
+        external_imports: &external_imports,
+        external_import_by_atom: &external_import_by_atom,
+        top_level_decl_indices: &top_level_decl_indices,
+    };
 
     // Append merged factory bodies to their target modules, synthesizing
     // imports for any cross-module reads the factory body needs.
@@ -524,29 +532,17 @@ fn detect_from_prepared_factories(
                     if already_imported.contains(ref_binding) {
                         continue;
                     }
-                    if let Some(source_filename) = binding_to_filename.get(ref_binding) {
-                        if *source_filename != module.filename {
-                            extra_imports
-                                .entry(source_filename.clone())
-                                .or_default()
-                                .push(ref_binding.0.clone());
+                    match merged_ref_resolver.resolve(ref_binding, &module.filename) {
+                        MergedRefTarget::Import { filename, atom } => {
+                            extra_imports.entry(filename).or_default().push(atom);
                         }
-                    } else if let Some((source_binding, source_filename)) =
-                        binding_filename_by_atom.get(&ref_binding.0)
-                    {
-                        if *source_filename != module.filename {
-                            extra_imports
-                                .entry(source_filename.clone())
-                                .or_default()
-                                .push(source_binding.0.clone());
+                        MergedRefTarget::External(binding) => {
+                            extra_external_imports.insert(binding);
                         }
-                    } else if external_imports.contains_key(ref_binding) {
-                        extra_external_imports.insert(ref_binding.clone());
-                    } else if let Some(import_binding) = external_import_by_atom.get(&ref_binding.0)
-                    {
-                        extra_external_imports.insert(import_binding.clone());
-                    } else if top_level_decl_indices.contains_key(ref_binding) {
-                        extra_owned_bindings.insert(ref_binding.clone());
+                        MergedRefTarget::Owned => {
+                            extra_owned_bindings.insert(ref_binding.clone());
+                        }
+                        MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
                     }
                 }
                 merged_init_bodies.push((mf.var_name, mf.stmts));
@@ -567,31 +563,18 @@ fn detect_from_prepared_factories(
                         {
                             continue;
                         }
-                        if let Some(source_filename) = binding_to_filename.get(ref_binding) {
-                            if *source_filename != module.filename {
-                                extra_imports
-                                    .entry(source_filename.clone())
-                                    .or_default()
-                                    .push(ref_binding.0.clone());
+                        match merged_ref_resolver.resolve(ref_binding, &module.filename) {
+                            MergedRefTarget::Import { filename, atom } => {
+                                extra_imports.entry(filename).or_default().push(atom);
                             }
-                        } else if let Some((source_binding, source_filename)) =
-                            binding_filename_by_atom.get(&ref_binding.0)
-                        {
-                            if *source_filename != module.filename {
-                                extra_imports
-                                    .entry(source_filename.clone())
-                                    .or_default()
-                                    .push(source_binding.0.clone());
+                            MergedRefTarget::External(binding) => {
+                                extra_external_imports.insert(binding);
                             }
-                        } else if external_imports.contains_key(ref_binding) {
-                            extra_external_imports.insert(ref_binding.clone());
-                        } else if let Some(import_binding) =
-                            external_import_by_atom.get(&ref_binding.0)
-                        {
-                            extra_external_imports.insert(import_binding.clone());
-                        } else if top_level_decl_indices.contains_key(ref_binding) {
-                            extra_owned_bindings.insert(ref_binding.clone());
-                            changed = true;
+                            MergedRefTarget::Owned => {
+                                extra_owned_bindings.insert(ref_binding.clone());
+                                changed = true;
+                            }
+                            MergedRefTarget::SameModule | MergedRefTarget::Unresolved => {}
                         }
                     }
                 }
@@ -916,6 +899,69 @@ fn detect_from_prepared_factories(
         modules,
         BundleFormat::Esbuild,
     ))
+}
+
+/// Where a merged-factory reference resolves when synthesizing the imports
+/// its body needs inside the target module.
+enum MergedRefTarget {
+    /// Import `atom` from `filename`.
+    Import { filename: String, atom: Atom },
+    /// Re-materialize this external import declaration.
+    External(BindingId),
+    /// Declared at the bundle top level; adopt the declaration into the module.
+    Owned,
+    /// Already lives in the target module — nothing to synthesize.
+    SameModule,
+    /// Unknown binding — leave it alone.
+    Unresolved,
+}
+
+/// The binding-resolution cascade shared by the merged-factory import scan
+/// and its owned-binding fixed point: exact binding → atom fallback →
+/// external import (exact, then atom) → top-level owned declaration.
+struct MergedRefResolver<'a> {
+    binding_to_filename: &'a HashMap<BindingId, String>,
+    binding_filename_by_atom: &'a HashMap<Atom, (BindingId, String)>,
+    external_imports: &'a HashMap<BindingId, ExternalImport>,
+    external_import_by_atom: &'a HashMap<Atom, BindingId>,
+    top_level_decl_indices: &'a HashMap<BindingId, usize>,
+}
+
+impl MergedRefResolver<'_> {
+    fn resolve(&self, ref_binding: &BindingId, module_filename: &str) -> MergedRefTarget {
+        if let Some(source_filename) = self.binding_to_filename.get(ref_binding) {
+            return if source_filename.as_str() == module_filename {
+                MergedRefTarget::SameModule
+            } else {
+                MergedRefTarget::Import {
+                    filename: source_filename.clone(),
+                    atom: ref_binding.0.clone(),
+                }
+            };
+        }
+        if let Some((source_binding, source_filename)) =
+            self.binding_filename_by_atom.get(&ref_binding.0)
+        {
+            return if source_filename.as_str() == module_filename {
+                MergedRefTarget::SameModule
+            } else {
+                MergedRefTarget::Import {
+                    filename: source_filename.clone(),
+                    atom: source_binding.0.clone(),
+                }
+            };
+        }
+        if self.external_imports.contains_key(ref_binding) {
+            return MergedRefTarget::External(ref_binding.clone());
+        }
+        if let Some(import_binding) = self.external_import_by_atom.get(&ref_binding.0) {
+            return MergedRefTarget::External(import_binding.clone());
+        }
+        if self.top_level_decl_indices.contains_key(ref_binding) {
+            return MergedRefTarget::Owned;
+        }
+        MergedRefTarget::Unresolved
+    }
 }
 
 fn emit_esm_init_function_code(
@@ -2035,44 +2081,117 @@ fn merge_scope_meta_group(metas: &[ScopeModuleMeta], group: &[usize]) -> ScopeMo
 /// These are included in export expansion so scope-hoisted modules export
 /// bindings that factories need.  The returned `binding_to_filename` map
 /// lets callers synthesize imports in factory modules.
+/// Everything `extract_scope_hoisted_modules` returns to the caller.
+#[derive(Default)]
+struct ScopeExtractionResult {
+    modules: Vec<UnpackedModule>,
+    remaining_entry: Vec<ModuleItem>,
+    binding_to_filename: HashMap<BindingId, String>,
+    module_already_imports: HashMap<String, HashSet<BindingId>>,
+    module_local_atoms: HashMap<String, HashSet<Atom>>,
+    module_referenced_atoms: HashMap<String, HashSet<Atom>>,
+    scope_claimed_factory_bindings: HashMap<BindingId, String>,
+}
+
+/// Module-level facts collected before any item is moved out of the entry.
+struct ScopeMetadata {
+    export_helper_index: usize,
+    item_infos: Vec<ItemBindingInfo>,
+    top_level_bindings: HashSet<BindingId>,
+    top_level_atoms: HashSet<Atom>,
+    external_imports: HashMap<BindingId, ExternalImport>,
+    boundaries: Vec<ScopeHoistedBoundary>,
+}
+
+/// Output of the partition pass: per-module metadata plus which entry items
+/// each scope-hoisted module consumed.
+struct ScopePartition<'b> {
+    source_slots: Vec<Option<ModuleItem>>,
+    metas: Vec<ScopeModuleMeta>,
+    consumed: HashSet<usize>,
+    consumed_ns: Vec<(usize, usize, &'b ScopeHoistedBoundary)>,
+    removable_export_helper_indices: HashSet<usize>,
+    reference_candidate_atoms: HashSet<Atom>,
+}
+
+struct ScopeBindingMaps {
+    factory_preassigned_by_atom: HashMap<Atom, (BindingId, String)>,
+    binding_to_module: HashMap<BindingId, usize>,
+    decl_index_by_binding: HashMap<BindingId, usize>,
+}
+
+struct ScopeImportExportMaps {
+    remaining_indices: Vec<usize>,
+    entry_referenced: HashSet<BindingId>,
+    effective_exports: Vec<HashSet<Atom>>,
+    binding_to_filename: HashMap<BindingId, String>,
+    scope_claimed_factory_bindings: HashMap<BindingId, String>,
+    factory_binding_filename_by_atom: HashMap<Atom, (BindingId, String)>,
+    binding_filename_by_atom: HashMap<Atom, (BindingId, String)>,
+    filename_to_module: HashMap<String, usize>,
+    binding_module_by_atom: HashMap<Atom, (BindingId, usize)>,
+}
+
+struct ScopeEmittedModules {
+    modules: Vec<UnpackedModule>,
+    module_local_atoms: HashMap<String, HashSet<Atom>>,
+    module_referenced_atoms: HashMap<String, HashSet<Atom>>,
+}
+
 fn extract_scope_hoisted_modules(
     analysis_items: &[ModuleItem],
     source_items: Vec<ModuleItem>,
     seen_lower: &mut HashSet<String>,
     cm: Lrc<SourceMap>,
     refs: ScopeExtractionRefs<'_>,
-) -> (
-    Vec<UnpackedModule>,
-    Vec<ModuleItem>,
-    HashMap<BindingId, String>,
-    HashMap<String, HashSet<BindingId>>,
-    HashMap<String, HashSet<Atom>>,
-    HashMap<String, HashSet<Atom>>,
-    HashMap<BindingId, String>,
-) {
+) -> ScopeExtractionResult {
     debug_assert_eq!(analysis_items.len(), source_items.len());
-    let ScopeExtractionRefs {
-        factory_referenced,
-        factory_preassigned_bindings,
-        factory_importable_bindings,
-        drop_unowned_helper_sibling_indices,
-    } = refs;
 
+    let Some(metadata) = collect_scope_metadata(analysis_items, &source_items) else {
+        return ScopeExtractionResult {
+            remaining_entry: source_items,
+            ..Default::default()
+        };
+    };
+
+    let mut partition =
+        partition_scope_modules(analysis_items, source_items, seen_lower, &metadata, &refs);
+    let mut maps = build_scope_binding_maps(&mut partition.metas, &metadata, &refs);
+    let owned_support_source_items =
+        adopt_scope_support_decls(analysis_items, &metadata, &mut partition, &mut maps, &refs);
+    let ie = compute_scope_imports_exports(&metadata, &partition, &maps, &refs);
+    let emitted = emit_scope_modules(
+        cm,
+        &metadata,
+        &mut partition,
+        &maps,
+        &ie,
+        &owned_support_source_items,
+        &refs,
+    );
+    let (module_already_imports, remaining_entry) =
+        build_scope_entry(&metadata, &mut partition, &maps, &ie, &refs);
+
+    ScopeExtractionResult {
+        modules: emitted.modules,
+        remaining_entry,
+        binding_to_filename: ie.binding_to_filename,
+        module_already_imports,
+        module_local_atoms: emitted.module_local_atoms,
+        module_referenced_atoms: emitted.module_referenced_atoms,
+        scope_claimed_factory_bindings: ie.scope_claimed_factory_bindings,
+    }
+}
+
+fn collect_scope_metadata(
+    analysis_items: &[ModuleItem],
+    source_items: &[ModuleItem],
+) -> Option<ScopeMetadata> {
     let span = tracing::info_span!("esbuild: scope collect metadata");
-    let metadata_enter = span.enter();
+    let _enter = span.enter();
 
     // Step 1: find the __export helper binding.
-    let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
-        return (
-            vec![],
-            source_items,
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
-    };
+    let (export_helper_index, export_helper) = detect_export_helper(analysis_items)?;
     let item_infos = build_item_binding_infos(analysis_items);
     let top_level_bindings: HashSet<BindingId> = item_infos
         .iter()
@@ -2087,29 +2206,46 @@ fn extract_scope_hoisted_modules(
         .iter()
         .map(|(atom, _)| atom.clone())
         .collect();
-    let external_imports = collect_external_imports(analysis_items, &source_items);
+    let external_imports = collect_external_imports(analysis_items, source_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
     let boundaries = collect_scope_hoisted_boundaries(analysis_items, &export_helper);
     if boundaries.is_empty() {
-        return (
-            vec![],
-            source_items,
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-        );
+        return None;
     }
-    drop(metadata_enter);
+
+    Some(ScopeMetadata {
+        export_helper_index,
+        item_infos,
+        top_level_bindings,
+        top_level_atoms,
+        external_imports,
+        boundaries,
+    })
+}
+
+fn partition_scope_modules<'b>(
+    analysis_items: &[ModuleItem],
+    source_items: Vec<ModuleItem>,
+    seen_lower: &mut HashSet<String>,
+    metadata: &'b ScopeMetadata,
+    refs: &ScopeExtractionRefs<'_>,
+) -> ScopePartition<'b> {
+    let export_helper_index = metadata.export_helper_index;
+    let item_infos = &metadata.item_infos;
+    let top_level_bindings = &metadata.top_level_bindings;
+    let top_level_atoms = &metadata.top_level_atoms;
+    let boundaries = &metadata.boundaries;
+    let factory_referenced = refs.factory_referenced;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+    let factory_importable_bindings = refs.factory_importable_bindings;
 
     // Convert to Option<ModuleItem> so items can be moved out by index.
     let mut source_slots: Vec<Option<ModuleItem>> = source_items.into_iter().map(Some).collect();
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
     let span = tracing::info_span!("esbuild: scope partition modules", count = boundaries.len());
-    let partition_enter = span.enter();
+    let _enter = span.enter();
     let mut metas: Vec<ScopeModuleMeta> = Vec::new();
     let mut consumed: HashSet<usize> = HashSet::new();
     let scope_candidate_atoms: HashSet<Atom> = item_infos
@@ -2136,8 +2272,8 @@ fn extract_scope_hoisted_modules(
     let removable_export_helper_indices = removable_export_helper_dependency_indices(
         export_helper_index,
         analysis_items,
-        &item_infos,
-        &boundaries,
+        item_infos,
+        boundaries,
     );
     consumed.extend(removable_export_helper_indices.iter().copied());
 
@@ -2157,7 +2293,7 @@ fn extract_scope_hoisted_modules(
         } else {
             find_last_module_end(
                 analysis_items,
-                &item_infos,
+                item_infos,
                 boundary.export_call_index + 1,
                 &boundary.exported_bindings,
                 &factory_referenced_atoms,
@@ -2200,7 +2336,7 @@ fn extract_scope_hoisted_modules(
                     })
                     .expect("source item should filter with analysis item");
                 source_slots[i] = Some(filtered_source_item);
-                filtered_info = Some(item_binding_info_for(&item, &top_level_bindings));
+                filtered_info = Some(item_binding_info_for(&item, top_level_bindings));
                 filtered_analysis_item = Some(item);
             }
             let analysis_item_for_visits = filtered_analysis_item
@@ -2220,8 +2356,8 @@ fn extract_scope_hoisted_modules(
             referenced_bindings.extend(info.references.iter().cloned());
             written_atoms.extend(scope_write_atoms_for_item(
                 analysis_item_for_visits,
-                &top_level_bindings,
-                &top_level_atoms,
+                top_level_bindings,
+                top_level_atoms,
             ));
             referenced_atoms.extend(atom_collector.references);
         }
@@ -2263,16 +2399,32 @@ fn extract_scope_hoisted_modules(
             id,
         });
     }
-    drop(partition_enter);
 
+    ScopePartition {
+        source_slots,
+        metas,
+        consumed,
+        consumed_ns,
+        removable_export_helper_indices,
+        reference_candidate_atoms,
+    }
+}
+
+fn build_scope_binding_maps(
+    metas: &mut Vec<ScopeModuleMeta>,
+    metadata: &ScopeMetadata,
+    refs: &ScopeExtractionRefs<'_>,
+) -> ScopeBindingMaps {
     let span = tracing::info_span!("esbuild: scope build binding maps", count = metas.len());
-    let binding_maps_enter = span.enter();
+    let _enter = span.enter();
+    let item_infos = &metadata.item_infos;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+
     let factory_preassigned_by_atom = atom_to_filename_binding_map(factory_preassigned_bindings);
-    merge_conflicting_factory_scope_metas(&mut metas, &factory_preassigned_by_atom);
+    merge_conflicting_factory_scope_metas(metas, &factory_preassigned_by_atom);
 
     // Build binding → module index map for all scope-hoisted modules.
     let mut binding_to_module: HashMap<BindingId, usize> = HashMap::new();
-    let mut module_local_atoms: HashMap<String, HashSet<Atom>> = HashMap::new();
     for (mi, meta) in metas.iter().enumerate() {
         for namespace in &meta.namespaces {
             binding_to_module.insert(namespace.namespace_binding.clone(), mi);
@@ -2292,14 +2444,42 @@ fn extract_scope_hoisted_modules(
                 .map(move |binding| (binding, index))
         })
         .collect();
-    drop(binding_maps_enter);
 
+    ScopeBindingMaps {
+        factory_preassigned_by_atom,
+        binding_to_module,
+        decl_index_by_binding,
+    }
+}
+
+fn adopt_scope_support_decls(
+    analysis_items: &[ModuleItem],
+    metadata: &ScopeMetadata,
+    partition: &mut ScopePartition<'_>,
+    maps: &mut ScopeBindingMaps,
+    refs: &ScopeExtractionRefs<'_>,
+) -> HashMap<usize, ModuleItem> {
     // Scope-hoisted modules often call small top-level helpers that sit before
     // the namespace block. Move safe helper-like declarations into the first
     // extracted module that needs them so generated modules don't reference
     // invisible bindings left behind in entry.js.
     let span = tracing::info_span!("esbuild: scope adopt support decls");
-    let support_enter = span.enter();
+    let _enter = span.enter();
+    let ScopePartition {
+        source_slots,
+        metas,
+        consumed,
+        reference_candidate_atoms,
+        ..
+    } = partition;
+    let item_infos = &metadata.item_infos;
+    let external_imports = &metadata.external_imports;
+    let binding_to_module = &mut maps.binding_to_module;
+    let decl_index_by_binding = &maps.decl_index_by_binding;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+    let factory_importable_bindings = refs.factory_importable_bindings;
+    let drop_unowned_helper_sibling_indices = refs.drop_unowned_helper_sibling_indices;
+
     let mut owned_support_by_index: HashMap<usize, HashSet<BindingId>> = HashMap::new();
     for (mi, meta) in metas.iter_mut().enumerate() {
         let module_start = meta
@@ -2350,7 +2530,7 @@ fn extract_scope_hoisted_modules(
             }
 
             let mut atom_collector = AtomRefCollector {
-                candidate_atoms: &reference_candidate_atoms,
+                candidate_atoms: reference_candidate_atoms,
                 references: HashSet::new(),
                 shadowed_atoms: vec![HashSet::new()],
             };
@@ -2360,7 +2540,7 @@ fn extract_scope_hoisted_modules(
     }
 
     let owned_support_source_items =
-        retain_owned_support_source_items(&mut source_slots, &owned_support_by_index);
+        retain_owned_support_source_items(source_slots, &owned_support_by_index);
     for index in owned_support_by_index.keys() {
         if source_slots[*index].is_none() {
             consumed.insert(*index);
@@ -2379,11 +2559,34 @@ fn extract_scope_hoisted_modules(
             consumed.insert(*index);
         }
     }
-    drop(support_enter);
 
+    owned_support_source_items
+}
+
+fn compute_scope_imports_exports(
+    metadata: &ScopeMetadata,
+    partition: &ScopePartition<'_>,
+    maps: &ScopeBindingMaps,
+    refs: &ScopeExtractionRefs<'_>,
+) -> ScopeImportExportMaps {
     let span = tracing::info_span!("esbuild: scope compute imports exports");
-    let imports_exports_enter = span.enter();
-    let binding_module_by_atom = atom_to_module_binding_map(&binding_to_module);
+    let _enter = span.enter();
+    let ScopePartition {
+        source_slots,
+        metas,
+        consumed,
+        consumed_ns,
+        ..
+    } = partition;
+    let item_infos = &metadata.item_infos;
+    let boundaries = &metadata.boundaries;
+    let binding_to_module = &maps.binding_to_module;
+    let factory_preassigned_by_atom = &maps.factory_preassigned_by_atom;
+    let factory_referenced = refs.factory_referenced;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+    let factory_importable_bindings = refs.factory_importable_bindings;
+
+    let binding_module_by_atom = atom_to_module_binding_map(binding_to_module);
 
     // Collect remaining entry references early so they feed into the
     // effective-export expansion below.
@@ -2395,7 +2598,7 @@ fn extract_scope_hoisted_modules(
     for &i in &remaining_indices {
         entry_referenced.extend(item_infos[i].references.iter().cloned());
     }
-    for &(ns_idx, call_idx, _) in &consumed_ns {
+    for &(ns_idx, call_idx, _) in consumed_ns.iter() {
         entry_referenced.extend(item_infos[ns_idx].references.iter().cloned());
         entry_referenced.extend(item_infos[call_idx].references.iter().cloned());
     }
@@ -2442,7 +2645,7 @@ fn extract_scope_hoisted_modules(
 
     let mut claimed_factory_filenames: HashMap<String, String> = HashMap::new();
     let mut conflicted_factory_filenames: HashSet<String> = HashSet::new();
-    for meta in &metas {
+    for meta in metas.iter() {
         for atom in &meta.written_atoms {
             let Some((_, factory_filename)) = factory_preassigned_by_atom.get(atom) else {
                 continue;
@@ -2495,18 +2698,59 @@ fn extract_scope_hoisted_modules(
     // (`var ns_a = {}; __export(ns_a, {...})`) is restored into the entry
     // when the entry's own export declaration references it.  Factories
     // that use `ns_a.greet()` need to import the namespace from there.
-    for boundary in &boundaries {
+    for boundary in boundaries.iter() {
         if factory_referenced.contains(&boundary.ns_binding) {
             binding_to_filename
                 .entry(boundary.ns_binding.clone())
                 .or_insert_with(|| "entry.js".to_string());
         }
     }
-    drop(imports_exports_enter);
 
+    ScopeImportExportMaps {
+        remaining_indices,
+        entry_referenced,
+        effective_exports,
+        binding_to_filename,
+        scope_claimed_factory_bindings,
+        factory_binding_filename_by_atom,
+        binding_filename_by_atom,
+        filename_to_module,
+        binding_module_by_atom,
+    }
+}
+
+fn emit_scope_modules(
+    cm: Lrc<SourceMap>,
+    metadata: &ScopeMetadata,
+    partition: &mut ScopePartition<'_>,
+    maps: &ScopeBindingMaps,
+    ie: &ScopeImportExportMaps,
+    owned_support_source_items: &HashMap<usize, ModuleItem>,
+    refs: &ScopeExtractionRefs<'_>,
+) -> ScopeEmittedModules {
     // Step 4 (pass 2): emit each module with synthesized imports/exports.
-    let span = tracing::info_span!("esbuild: scope emit modules", count = metas.len());
-    let emit_modules_enter = span.enter();
+    let span = tracing::info_span!("esbuild: scope emit modules", count = partition.metas.len());
+    let _enter = span.enter();
+    let ScopePartition {
+        source_slots,
+        metas,
+        ..
+    } = partition;
+    let external_imports = &metadata.external_imports;
+    let binding_to_module = &maps.binding_to_module;
+    let decl_index_by_binding = &maps.decl_index_by_binding;
+    let ScopeImportExportMaps {
+        effective_exports,
+        binding_to_filename,
+        factory_binding_filename_by_atom,
+        binding_filename_by_atom,
+        filename_to_module,
+        binding_module_by_atom,
+        ..
+    } = ie;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+
+    let mut module_local_atoms: HashMap<String, HashSet<Atom>> = HashMap::new();
     let mut modules = Vec::new();
     let mut module_referenced_atoms: HashMap<String, HashSet<Atom>> = HashMap::new();
 
@@ -2764,8 +3008,8 @@ fn extract_scope_hoisted_modules(
         let mut remaining_exports = exports;
         for item in scope_owned_support_decl_items(
             &meta.owned_support_bindings,
-            &decl_index_by_binding,
-            &owned_support_source_items,
+            decl_index_by_binding,
+            owned_support_source_items,
         ) {
             if remaining_exports.is_empty() {
                 module_items.push(item);
@@ -2815,10 +3059,17 @@ fn extract_scope_hoisted_modules(
             if !effective_exports[mi].contains(&namespace.namespace_binding.0) {
                 continue;
             }
-            code.push('\n');
-            code.push_str(&make_namespace_export_code(
+            let mut namespace_items =
+                vec![make_namespace_object_decl(&namespace.namespace_binding.0)];
+            namespace_items.extend(make_namespace_define_property_items(
                 &namespace.namespace_binding.0,
                 &namespace.export_entries,
+            ));
+            code.push('\n');
+            code.push_str(&emit_items(
+                namespace_items,
+                meta.filename.clone(),
+                cm.clone(),
             ));
         }
         modules.push(UnpackedModule {
@@ -2831,14 +3082,46 @@ fn extract_scope_hoisted_modules(
             generated_source_map: Vec::new(),
         });
     }
-    drop(emit_modules_enter);
 
+    ScopeEmittedModules {
+        modules,
+        module_local_atoms,
+        module_referenced_atoms,
+    }
+}
+
+fn build_scope_entry(
+    metadata: &ScopeMetadata,
+    partition: &mut ScopePartition<'_>,
+    maps: &ScopeBindingMaps,
+    ie: &ScopeImportExportMaps,
+    refs: &ScopeExtractionRefs<'_>,
+) -> (HashMap<String, HashSet<BindingId>>, Vec<ModuleItem>) {
     let span = tracing::info_span!("esbuild: scope build entry");
-    let build_entry_enter = span.enter();
+    let _enter = span.enter();
+    let ScopePartition {
+        source_slots,
+        metas,
+        consumed_ns,
+        removable_export_helper_indices,
+        ..
+    } = partition;
+    let external_imports = &metadata.external_imports;
+    let binding_to_module = &maps.binding_to_module;
+    let ScopeImportExportMaps {
+        remaining_indices,
+        entry_referenced,
+        binding_module_by_atom,
+        binding_to_filename,
+        ..
+    } = ie;
+    let factory_referenced = refs.factory_referenced;
+    let factory_preassigned_bindings = refs.factory_preassigned_bindings;
+
     // Track which external bindings each scope-hoisted module already imports
     // (used later to avoid duplicate imports when merging init factories).
     let mut module_already_imports: HashMap<String, HashSet<BindingId>> = HashMap::new();
-    for meta in &metas {
+    for meta in metas.iter() {
         let imported: HashSet<BindingId> = meta
             .referenced_bindings
             .iter()
@@ -2897,7 +3180,7 @@ fn extract_scope_hoisted_modules(
     let mut restored_items: Vec<ModuleItem> = Vec::new();
     let mut factory_ns_exports: Vec<Atom> = Vec::new();
     let mut restored_namespace_bindings: HashSet<BindingId> = HashSet::new();
-    for &(ns_idx, call_idx, boundary) in &consumed_ns {
+    for &(ns_idx, call_idx, boundary) in consumed_ns.iter() {
         let entry_needs = entry_referenced.contains(&boundary.ns_binding);
         let factory_needs = factory_referenced.contains(&boundary.ns_binding);
         if !entry_needs && !factory_needs {
@@ -2917,7 +3200,7 @@ fn extract_scope_hoisted_modules(
         // and its late runtime aliases into the synthetic entry module.
         //
         // Extracted scope modules already use the same direct namespace setup
-        // through `make_namespace_export_code`.
+        // (`make_namespace_object_decl` + these defineProperty items).
         restored_items.extend(make_namespace_define_property_items(
             &boundary.ns_binding.0,
             &boundary.export_entries,
@@ -2929,7 +3212,7 @@ fn extract_scope_hoisted_modules(
             factory_ns_exports.push(boundary.ns_binding.0.clone());
         }
     }
-    for index in &removable_export_helper_indices {
+    for index in removable_export_helper_indices.iter() {
         let _ = source_slots[*index].take();
     }
     if !factory_ns_exports.is_empty() {
@@ -2937,7 +3220,7 @@ fn extract_scope_hoisted_modules(
         restored_items.push(make_named_export_stmt(&factory_ns_exports));
     }
     let mut entry_imports: HashMap<usize, Vec<BindingId>> = HashMap::new();
-    for ref_binding in &entry_referenced {
+    for ref_binding in entry_referenced.iter() {
         if restored_namespace_bindings.contains(ref_binding) {
             continue;
         }
@@ -2998,7 +3281,7 @@ fn extract_scope_hoisted_modules(
         }
     }
     let mut entry_factory_imports: HashMap<String, Vec<BindingId>> = HashMap::new();
-    for ref_binding in &entry_referenced {
+    for ref_binding in entry_referenced.iter() {
         if let Some(source_filename) = factory_preassigned_bindings.get(ref_binding) {
             let source_filename = binding_to_filename
                 .get(ref_binding)
@@ -3035,17 +3318,8 @@ fn extract_scope_hoisted_modules(
     }
     rename_bindings(&mut entry_tail, &entry_import_renames);
     remaining.extend(entry_tail);
-    drop(build_entry_enter);
 
-    (
-        modules,
-        remaining,
-        binding_to_filename,
-        module_already_imports,
-        module_local_atoms,
-        module_referenced_atoms,
-        scope_claimed_factory_bindings,
-    )
+    (module_already_imports, remaining)
 }
 
 struct ScopeHoistedBoundary {
@@ -4085,35 +4359,30 @@ fn make_namespace_define_property_items(
     items
 }
 
-fn make_namespace_export_code(namespace: &Atom, entries: &[(Atom, BindingId)]) -> String {
-    let mut code = format!("export var {namespace} = {{}};\n");
-    let mut seen = HashSet::new();
-    for (export_name, (binding_name, _)) in entries {
-        if !seen.insert(export_name.clone()) {
-            continue;
-        }
-        code.push_str(&format!(
-            "Object.defineProperty({namespace}, {}, {{ enumerable: true, get: () => {binding_name} }});\n",
-            js_string_literal(export_name)
-        ));
-    }
-    code
-}
-
-fn js_string_literal(value: &Atom) -> String {
-    let mut out = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(ch),
-        }
-    }
-    out.push('"');
-    out
+/// `export var {namespace} = {};` — the seed object a namespace's
+/// `Object.defineProperty` getters attach to.
+fn make_namespace_object_decl(namespace: &Atom) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+        span: Default::default(),
+        decl: Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: Ident::new(namespace.clone(), DUMMY_SP, SyntaxContext::empty()),
+                    type_ann: None,
+                }),
+                init: Some(Box::new(Expr::Object(ObjectLit {
+                    span: DUMMY_SP,
+                    props: Vec::new(),
+                }))),
+                definite: false,
+            }],
+        })),
+    }))
 }
 
 fn factory_owned_decl_items(
