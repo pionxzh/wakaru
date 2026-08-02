@@ -107,7 +107,7 @@ fn render_scope_hoist_plan(
 
     // Phase 5: emit modules.
     let modules = emit_clusters(body, &plan.items, clusters, cm);
-    Some(UnpackResult::without_cycle_premerge(
+    Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::ScopeHoisted,
     ))

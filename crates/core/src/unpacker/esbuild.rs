@@ -920,7 +920,7 @@ fn detect_from_prepared_factories(
         });
     }
 
-    Some(UnpackResult::without_cycle_premerge(
+    Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::Esbuild,
     ))

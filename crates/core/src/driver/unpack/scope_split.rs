@@ -57,7 +57,7 @@ pub(super) fn maybe_split_scope_hoisted_modules(
 
     UnpackResult {
         modules,
-        allow_cycle_premerge: result.allow_cycle_premerge && !did_split,
+        report_import_cycle_warnings: result.report_import_cycle_warnings && !did_split,
         format: result.format,
     }
 }
@@ -504,7 +504,7 @@ mod tests {
                 filename: "module-100.js".to_string(),
                 ..Default::default()
             }],
-            allow_cycle_premerge: true,
+            report_import_cycle_warnings: true,
             format: BundleFormat::Webpack5,
         };
 
@@ -517,7 +517,7 @@ mod tests {
         assert_eq!(output.modules.len(), 1);
         assert_eq!(output.modules[0].id, "100");
         assert_eq!(output.modules[0].filename, "module-100.js");
-        assert!(output.allow_cycle_premerge);
+        assert!(output.report_import_cycle_warnings);
     }
 
     #[test]
@@ -530,7 +530,7 @@ mod tests {
                 filename: "module-100.js".to_string(),
                 ..Default::default()
             }],
-            allow_cycle_premerge: true,
+            report_import_cycle_warnings: true,
             format: BundleFormat::Webpack5,
         };
 
@@ -557,8 +557,8 @@ mod tests {
             names
         );
         assert!(
-            !output.allow_cycle_premerge,
-            "recursive scope split should disable later cycle premerge"
+            !output.report_import_cycle_warnings,
+            "recursive scope split output should opt out of cycle diagnostics"
         );
     }
 
@@ -574,7 +574,7 @@ mod tests {
                         filename: "module-100.js".to_string(),
                         ..Default::default()
                     }],
-                    allow_cycle_premerge: true,
+                    report_import_cycle_warnings: true,
                     format: BundleFormat::Webpack5,
                 },
                 true,

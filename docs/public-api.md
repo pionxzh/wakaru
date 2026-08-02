@@ -749,7 +749,7 @@ struct PreparedInput {
     id: InputId,
     detection: InputDetection,
     modules: Vec<PreparedModule>,
-    allow_cycle_premerge: bool,
+    report_import_cycle_warnings: bool,
 }
 
 struct PreparedModule {

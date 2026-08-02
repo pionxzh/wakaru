@@ -20,7 +20,7 @@ use super::super::types::{
     DecompileOptions, ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
-use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
+use super::super::unpack_cycles::collect_import_cycle_warnings;
 use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
@@ -93,7 +93,7 @@ pub(super) fn unpack_multi_module(
 }
 
 pub(super) fn unpack_multi_module_with_plan(
-    modules: Vec<PreparedUnpackModule>,
+    mut modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
 ) -> Result<UnpackOutput> {
@@ -104,32 +104,9 @@ pub(super) fn unpack_multi_module_with_plan(
     }
     let span = tracing::info_span!("unpack_multi_module", count = modules.len());
     let _enter = span.enter();
-    let report_import_cycle_warnings = modules.iter().all(|module| module.allow_cycle_premerge);
-    let (mut modules, cycle_warnings) = if numeric_rewrite_plan.is_empty()
-        && modules.iter().all(|module| module.prepared.is_none())
-        && should_premerge_import_cycles(&modules)
-    {
-        let (modules, warnings) = merge_import_cycles(
-            modules
-                .into_iter()
-                .map(|prepared| prepared.module)
-                .collect(),
-        );
-        (
-            modules
-                .into_iter()
-                .map(PreparedUnpackModule::plain)
-                .collect(),
-            warnings,
-        )
-    } else {
-        // Numeric rewrite context is per original input group. A merged cycle
-        // could contain members from different groups, but the later AST
-        // pipeline accepts only one context per output module. Keep those
-        // modules split so numeric require ids are rewritten in their original
-        // context and source strings stay untouched until the normal pipeline.
-        (modules, Vec::new())
-    };
+    let report_import_cycle_warnings = modules
+        .iter()
+        .all(|module| module.report_import_cycle_warnings);
 
     // Stash per-module provenance (byte ranges into the original input)
     // keyed by provisional filename. Final provenance is built after dead
@@ -327,9 +304,6 @@ pub(super) fn unpack_multi_module_with_plan(
     let mut prepared_parse_warnings = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
     let mut rename_entries = Vec::with_capacity(phase1.len());
-    if options.diagnostics {
-        warnings.extend(cycle_warnings);
-    }
     for phase1_module in phase1 {
         rename_entries.push((
             phase1_module.filename.clone(),
@@ -679,18 +653,8 @@ pub(super) fn unpack_multi_module_with_plan(
     })
 }
 
-fn should_premerge_import_cycles(_modules: &[PreparedUnpackModule]) -> bool {
-    // Keep the pre-merge hook available for a future static validator, but do
-    // not merge only because a local import SCC exists. Native ESM cycles are
-    // often valid, while concatenating SCCs reduces split fidelity and can hide
-    // import-synthesis bugs. Remaining cycles are reported by diagnostics for
-    // non-scope-hoisted outputs.
-    false
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::should_merge_raw_import_cycles;
     use super::*;
     use crate::test_tracing::record_spans;
     use crate::unpacker::UnpackedModule;
@@ -809,78 +773,9 @@ mod tests {
     }
 
     #[test]
-    fn import_cycle_premerge_is_currently_disabled() {
-        let modules: Vec<PreparedUnpackModule> = (0..1025)
-            .map(|index| {
-                PreparedUnpackModule::plain(UnpackedModule {
-                    id: format!("m{index}"),
-                    is_entry: index == 0,
-                    code: format!("export const m{index} = {index};"),
-                    filename: if index == 0 {
-                        "entry.js".to_string()
-                    } else {
-                        format!("m{index}.js")
-                    },
-                    ..Default::default()
-                })
-            })
-            .collect();
-
-        assert!(
-            !should_premerge_import_cycles(&modules),
-            "huge detector/split outputs should not pay for pre-merge repair"
-        );
-        assert!(
-            !should_premerge_import_cycles(&modules[..1024]),
-            "cycle pre-merge is currently disabled even for normal-sized outputs"
-        );
-
-        let mut scope_split_modules: Vec<_> = modules[..3]
-            .iter()
-            .map(|module| {
-                PreparedUnpackModule::with_cycle_premerge(
-                    UnpackedModule {
-                        id: module.module.id.clone(),
-                        is_entry: module.module.is_entry,
-                        code: module.module.code.clone(),
-                        filename: module.module.filename.clone(),
-                        ..Default::default()
-                    },
-                    false,
-                )
-            })
-            .collect();
-        assert!(
-            !should_premerge_import_cycles(&scope_split_modules),
-            "scope-hoisted esbuild/Bun splits opt out even when small"
-        );
-        scope_split_modules[0].allow_cycle_premerge = true;
-        assert!(
-            !should_premerge_import_cycles(&scope_split_modules),
-            "all modules in the output must opt in before premerge runs"
-        );
-
-        let raw_modules: Vec<UnpackedModule> = modules
-            .iter()
-            .take(2)
-            .map(|module| UnpackedModule {
-                id: module.module.id.clone(),
-                is_entry: module.module.is_entry,
-                code: module.module.code.clone(),
-                filename: module.module.filename.clone(),
-                ..Default::default()
-            })
-            .collect();
-        assert!(
-            !should_merge_raw_import_cycles(&raw_modules),
-            "raw cycle merging is also kept disabled behind its gate"
-        );
-    }
-
-    #[test]
     fn scope_split_cycles_do_not_emit_diagnostic_warnings() {
         let modules = vec![
-            PreparedUnpackModule::with_cycle_premerge(
+            PreparedUnpackModule::with_cycle_warnings(
                 UnpackedModule {
                     id: "a".to_string(),
                     is_entry: true,
@@ -890,7 +785,7 @@ mod tests {
                 },
                 false,
             ),
-            PreparedUnpackModule::with_cycle_premerge(
+            PreparedUnpackModule::with_cycle_warnings(
                 UnpackedModule {
                     id: "b".to_string(),
                     is_entry: false,

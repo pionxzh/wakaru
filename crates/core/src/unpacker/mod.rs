@@ -321,7 +321,7 @@ impl BundleFormat {
 
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
-    pub allow_cycle_premerge: bool,
+    pub report_import_cycle_warnings: bool,
     pub format: BundleFormat,
 }
 
@@ -446,18 +446,18 @@ impl UnpackResult {
     pub(crate) fn new(modules: Vec<UnpackedModule>, format: BundleFormat) -> Self {
         Self {
             modules,
-            allow_cycle_premerge: true,
+            report_import_cycle_warnings: true,
             format,
         }
     }
 
-    pub(crate) fn without_cycle_premerge(
+    pub(crate) fn without_cycle_warnings(
         modules: Vec<UnpackedModule>,
         format: BundleFormat,
     ) -> Self {
         Self {
             modules,
-            allow_cycle_premerge: false,
+            report_import_cycle_warnings: false,
             format,
         }
     }

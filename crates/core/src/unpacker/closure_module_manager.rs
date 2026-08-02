@@ -119,8 +119,9 @@ pub(super) fn detect_from_module(
     }
 
     // These files remain shared-namespace fragments. In particular, loader
-    // graph edges are not ESM edges and must not trigger cycle pre-merging.
-    Some(UnpackResult::without_cycle_premerge(
+    // graph edges are not ESM edges and must not surface as import-cycle
+    // diagnostics.
+    Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::ClosureModuleManager,
     ))

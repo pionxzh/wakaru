@@ -29,7 +29,7 @@ pub(super) struct MultiSourceModule {
     module: UnpackedModule,
     prepared: Option<PreparedModuleAst>,
     allow_cross_chunk_rewrite: bool,
-    allow_cycle_premerge: bool,
+    report_import_cycle_warnings: bool,
     chunk_ids: Arc<HashSet<usize>>,
     input_filename: String,
     input_group: String,
@@ -41,14 +41,14 @@ impl MultiSourceModule {
         module: UnpackedModule,
         chunk_ids: impl Into<Arc<HashSet<usize>>>,
         input_filename: String,
-        allow_cycle_premerge: bool,
+        report_import_cycle_warnings: bool,
     ) -> Self {
         Self::detected_with_ast(
             module,
             None,
             chunk_ids,
             input_filename,
-            allow_cycle_premerge,
+            report_import_cycle_warnings,
         )
     }
 
@@ -58,7 +58,7 @@ impl MultiSourceModule {
         prepared: Option<PreparedModuleAst>,
         chunk_ids: impl Into<Arc<HashSet<usize>>>,
         input_filename: String,
-        allow_cycle_premerge: bool,
+        report_import_cycle_warnings: bool,
     ) -> Self {
         let source_input = input_filename.clone();
         let input_group = input_group_for_filename(&source_input);
@@ -69,7 +69,7 @@ impl MultiSourceModule {
             input_filename,
             source_input,
             input_group,
-            allow_cycle_premerge,
+            report_import_cycle_warnings,
         )
     }
 
@@ -80,7 +80,7 @@ impl MultiSourceModule {
         input_filename: String,
         source_input: String,
         input_group: String,
-        allow_cycle_premerge: bool,
+        report_import_cycle_warnings: bool,
     ) -> Self {
         // Unpackers don't know which physical input they ran on; attribute
         // provenance ranges to it here.
@@ -89,7 +89,7 @@ impl MultiSourceModule {
             module,
             prepared,
             allow_cross_chunk_rewrite: true,
-            allow_cycle_premerge,
+            report_import_cycle_warnings,
             chunk_ids: chunk_ids.into(),
             input_filename,
             input_group,
@@ -108,7 +108,7 @@ impl MultiSourceModule {
             module,
             prepared,
             allow_cross_chunk_rewrite: false,
-            allow_cycle_premerge: false,
+            report_import_cycle_warnings: false,
             chunk_ids: Arc::default(),
             input_filename: String::new(),
             input_group: String::new(),
@@ -120,35 +120,30 @@ pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
-    pub(super) allow_cycle_premerge: bool,
+    pub(super) report_import_cycle_warnings: bool,
 }
 
 impl PreparedUnpackModule {
+    #[cfg(test)]
     pub(super) fn plain(module: UnpackedModule) -> Self {
         Self {
             module,
             prepared: None,
             numeric_rewrite: None,
-            allow_cycle_premerge: true,
+            report_import_cycle_warnings: true,
         }
     }
 
     #[cfg(test)]
-    pub(super) fn with_cycle_premerge(module: UnpackedModule, allow_cycle_premerge: bool) -> Self {
-        Self::with_prepared_cycle_premerge(module, None, allow_cycle_premerge)
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_prepared_cycle_premerge(
+    pub(super) fn with_cycle_warnings(
         module: UnpackedModule,
-        prepared: Option<PreparedModuleAst>,
-        allow_cycle_premerge: bool,
+        report_import_cycle_warnings: bool,
     ) -> Self {
         Self {
             module,
-            prepared,
+            prepared: None,
             numeric_rewrite: None,
-            allow_cycle_premerge,
+            report_import_cycle_warnings,
         }
     }
 }
@@ -197,7 +192,7 @@ pub(super) fn prepare_multi_source_modules(
                 module: module.module,
                 prepared: module.prepared,
                 numeric_rewrite,
-                allow_cycle_premerge: module.allow_cycle_premerge,
+                report_import_cycle_warnings: module.report_import_cycle_warnings,
             }
         })
         .collect();

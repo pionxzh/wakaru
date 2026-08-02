@@ -8,13 +8,7 @@ use swc_core::ecma::visit::VisitMutWith;
 use super::io::{apply_fixer, parse_js, print_js};
 use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
 #[cfg(test)]
-use super::unpack_cleanup::hoist_late_runtime_helpers;
-#[cfg(test)]
-use super::unpack_cycles::merge_import_cycles;
-#[cfg(test)]
-use super::unpack_cycles::{
-    collect_import_cycle_warnings, scan_local_import_dependencies, unsafe_merge_member_reason,
-};
+use super::unpack_cycles::{collect_import_cycle_warnings, scan_local_import_dependencies};
 use super::{DriverError, DriverErrorKind, DriverResult};
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, RewriteLevel, RulePipelineOptions, SmartRename, UnEsm,
@@ -321,7 +315,7 @@ pub fn unpack_prepared_inputs_with_policy(
                     )?
                 };
                 let (result, prepared) = detected.into_parts();
-                let allow_cycle_premerge = result.allow_cycle_premerge;
+                let report_import_cycle_warnings = result.report_import_cycle_warnings;
                 let input_group = input_group_for_filename(&filename);
                 modules.extend(
                     result
@@ -336,7 +330,7 @@ pub fn unpack_prepared_inputs_with_policy(
                                 filename.clone(),
                                 provenance_input.clone(),
                                 input_group.clone(),
-                                allow_cycle_premerge,
+                                report_import_cycle_warnings,
                             )
                         }),
                 );
@@ -607,14 +601,6 @@ fn maybe_split_detected_bundle(
     let result = result.materialize()?;
     let result = maybe_split_scope_hoisted_modules(result, split_nested_scope, render_mode);
     Ok(DetectedBundle::from_result(result))
-}
-
-#[cfg(test)]
-fn should_merge_raw_import_cycles(_modules: &[UnpackedModule]) -> bool {
-    // Keep the raw merge hook available, but disabled for now. ESM cycles are
-    // often valid, and the previous repair could undo recovered module
-    // boundaries before users had a chance to inspect raw output.
-    false
 }
 
 #[cfg(test)]
