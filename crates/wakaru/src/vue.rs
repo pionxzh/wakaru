@@ -1,9 +1,20 @@
+//! Experimental standalone Vue 3 SFC recovery from compiled render modules.
+//!
+//! [`recover`] operates on its owned [`Source`] and parses it as an
+//! independent operation; it is not covered by the root operations'
+//! prepared-AST no-reparse invariant. There is deliberately no
+//! framework-specific `vue::decompile` composition operation — end-to-end
+//! component recovery belongs to the root operations (see the future
+//! framework recovery policy in `docs/public-api.md`).
+
 use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{Error, ErrorKind, Result};
 use crate::Source;
 
+/// Resolves an import specifier to that module's source text, letting
+/// recovery inspect sibling modules. Closures implement this trait.
 pub trait ImportResolver: Send + Sync {
     fn resolve(&self, specifier: &str) -> Option<String>;
 }
@@ -55,6 +66,11 @@ pub struct RecoveredSfc {
     pub source: String,
 }
 
+/// Recover best-effort Vue 3 SFCs from one compiled module.
+///
+/// Plural by contract: one compiled module can contain multiple recoverable
+/// components. An empty vector means no SFC was recovered — non-Vue input is
+/// not an error.
 pub fn recover(input: Source, options: RecoveryOptions) -> Result<Vec<RecoveredSfc>> {
     let input = input.into_parts();
     if input.source_map.is_some() {

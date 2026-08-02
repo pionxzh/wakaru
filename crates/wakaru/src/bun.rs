@@ -274,6 +274,12 @@ impl std::error::Error for BunStandaloneError {}
 
 /// Extract a Bun standalone graph from PE, Mach-O, ELF, or a bare serialized
 /// payload. Returns `Ok(None)` when the Bun trailer is absent.
+///
+/// A present but invalid graph is an error rather than a partial extraction.
+/// All returned byte slices borrow the caller-owned executable, and every
+/// data pointer in the record (four in Bun 1.3.3–1.3.8, six from 1.3.9) is
+/// range-checked before a result is returned; the two newer metadata regions
+/// are returned empty for an older record.
 pub fn extract_standalone(
     executable: &[u8],
 ) -> Result<Option<BunStandalone<'_>>, BunStandaloneError> {

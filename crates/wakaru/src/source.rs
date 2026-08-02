@@ -1,3 +1,16 @@
+/// An owned input file: filename, code, and an optional input source map.
+///
+/// Operations consume `Source`. Passing an owned `String` lets Wakaru move it
+/// into SWC's source storage instead of copying a borrowed `&str`; callers
+/// that need to retain the source can clone it explicitly.
+///
+/// Input source maps are valid for [`decompile`](crate::decompile): rule
+/// pipeline output is renamed using positions recovered from the map. They are
+/// always invalid for [`unpack`](crate::unpack), because extracted modules no
+/// longer use the bundle's generated coordinates —
+/// [`UnpackJob::push`](crate::UnpackJob::push) rejects such an input with
+/// [`ErrorKind::InvalidOptions`](crate::ErrorKind::InvalidOptions). Output
+/// source-map generation is independently configurable on the options types.
 #[derive(Debug, Clone)]
 pub struct Source {
     filename: String,
@@ -40,6 +53,7 @@ impl Source {
     }
 }
 
+/// The owned fields of a [`Source`], recovered via [`Source::into_parts`].
 #[derive(Debug, Clone)]
 pub struct SourceParts {
     pub filename: String,

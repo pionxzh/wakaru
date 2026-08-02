@@ -1,14 +1,20 @@
+//! Source-map utilities that do not require running an operation.
+
 use std::path::Path;
 
 use crate::error::{Error, ErrorKind, Result};
 
+/// One original source embedded in a source map's `sourcesContent`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EmbeddedSource {
+    /// Normalized, slash-separated relative path with bundler prefixes
+    /// (e.g. `webpack://`) and escaping parent components removed.
     pub path: String,
     pub content: String,
 }
 
+/// Extract every embedded original source from a source map.
 pub fn embedded_sources(data: &[u8]) -> Result<Vec<EmbeddedSource>> {
     let map = wakaru_core::parse_sourcemap(data)
         .map_err(|error| Error::new(ErrorKind::SourceMap, None, error))?;

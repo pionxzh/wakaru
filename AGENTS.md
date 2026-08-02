@@ -18,7 +18,7 @@ reading everything:
 | Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
 | Cross-module / unpack behavior | `docs/fact-system.md` — the two-phase barrier and module facts |
 | Bun standalone executables | `docs/bun-standalone.md` — binary graph format, CLI flow, safety, and public API limits |
-| Public Rust API (`wakaru` crate) | `docs/public-api.md` — stable façade, owned inputs, artifacts, diagnostics, and incremental unpack contract |
+| Public Rust API (`wakaru` crate) | `docs/public-api.md` — design decisions and boundaries; rustdoc (`cargo doc -p wakaru`) is the behavioral contract |
 | Vue SFC recovery (`--vue-sfc`) | `docs/vue-decompile.md` — the recovery path and CLI behavior; `docs/vue-sfc-recovery-status.md` — experimental status and known gaps |
 | Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |
 | Before proposing a redesign | `docs/learnings/` — approaches already built, measured, and reverted |

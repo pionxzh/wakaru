@@ -2,6 +2,13 @@ use std::fmt;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The category of a fatal operation failure.
+///
+/// [`Emit`](ErrorKind::Emit) and [`Internal`](ErrorKind::Internal) are
+/// reserved for failures where Wakaru cannot return any coherent artifact or
+/// uphold its result invariants; most post-parse failures instead surface as
+/// a best-effort artifact with
+/// [`ModuleStatus::DecompileFailed`](crate::ModuleStatus::DecompileFailed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -23,6 +30,13 @@ pub(crate) fn from_core_driver_error(kind: wakaru_core::driver::DriverErrorKind)
     }
 }
 
+/// A fatal operation failure: invalid options, an unusable top-level input,
+/// or a failure that prevents Wakaru from returning a coherent result.
+///
+/// Recoverable per-module problems belong in
+/// [`Diagnostic`](crate::Diagnostic) and
+/// [`ModuleStatus`](crate::ModuleStatus), not in `Error`. SWC error types and
+/// `anyhow::Error` are never part of the public contract.
 #[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,

@@ -6,6 +6,18 @@ use crate::output::{
 };
 use crate::source::Source;
 
+/// Decompile exactly one source module into readable, modern JavaScript.
+///
+/// # Failure behavior
+///
+/// - Invalid options, an invalid input source map, or an unrecoverable input
+///   parse returns `Err`.
+/// - After the input parses successfully, a transformation, fixer, or output
+///   emission failure normally returns `Ok` with the original input as the
+///   best-effort artifact, [`ModuleStatus::DecompileFailed`], no output
+///   source map, and an operational diagnostic.
+/// - [`ErrorKind::Emit`] and [`ErrorKind::Internal`] are reserved for
+///   failures where Wakaru cannot return any coherent artifact.
 pub fn decompile(input: Source, options: DecompileOptions) -> Result<DecompileOutput> {
     let input = input.into_parts();
     let core_options = wakaru_core::DecompileOptions {

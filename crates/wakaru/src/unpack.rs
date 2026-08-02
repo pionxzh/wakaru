@@ -14,6 +14,17 @@ use crate::output::{
 };
 use crate::source::Source;
 
+/// Split one or more bundle/chunk inputs into modules and process each.
+///
+/// The inputs are treated as one logical bundle/chunk set: under
+/// `ModuleMode::Decompile`, modules selected for processing participate in
+/// the same cross-module fact graph.
+///
+/// This function is semantically equivalent to pushing the sources into one
+/// [`UnpackJob`] in order and finishing it; the contract does not require a
+/// literally serial push loop. Each physical input is detected at most once
+/// per call, and a compatible plain JavaScript input is parsed at most once
+/// before rules.
 pub fn unpack(inputs: Vec<Source>, options: UnpackOptions) -> Result<UnpackOutput> {
     let mut job = UnpackJob::new(options)?;
     for input in inputs {
@@ -22,6 +33,14 @@ pub fn unpack(inputs: Vec<Source>, options: UnpackOptions) -> Result<UnpackOutpu
     job.finish()
 }
 
+/// Incremental intake form of [`unpack`] for directory walkers and other
+/// producers that should not retain every candidate source simultaneously.
+///
+/// [`push`](UnpackJob::push) detects and prepares one input immediately; a
+/// skipped plain input's source is released before `push` returns, so peak
+/// intake memory is bounded by retained detected/processed inputs rather
+/// than every file visited by a walk. No separate boolean detection preflight
+/// is needed.
 pub struct UnpackJob {
     options: UnpackOptions,
     reports: Vec<InputReport>,
@@ -52,6 +71,8 @@ struct ProcessedInput {
 }
 
 impl UnpackJob {
+    /// Create a job, validating option combinations (for example, raw mode
+    /// with requested output source maps is `ErrorKind::InvalidOptions`).
     pub fn new(options: UnpackOptions) -> Result<Self> {
         if matches!(options.modules(), ModuleMode::Raw) && options.output_source_maps() {
             return Err(Error::new(
@@ -68,6 +89,12 @@ impl UnpackJob {
         })
     }
 
+    /// Detect and prepare one input immediately.
+    ///
+    /// A skipped plain input's source is released before this method returns.
+    /// A failed push does not add an input or consume an [`InputId`]; the job
+    /// remains usable. A successful push returns the assigned ID and
+    /// detection result so a walker can report progress before `finish`.
     pub fn push(&mut self, input: Source) -> Result<InputReceipt> {
         self.push_with_unmatched(input, self.options.unmatched())
     }
@@ -139,6 +166,15 @@ impl UnpackJob {
         Ok(InputReceipt { id, detection })
     }
 
+    /// Run the shared cross-module phases and materialize final output.
+    ///
+    /// Finishing a job with no successfully pushed inputs returns
+    /// `ErrorKind::InvalidInput`. Finishing a non-empty job whose inputs were
+    /// all skipped returns `Ok(UnpackOutput)` with zero modules and one
+    /// skipped [`InputReport`] per input. If the job's
+    /// [`UnmatchedInput::Error`] policy was violated by any pushed input,
+    /// this returns `ErrorKind::InvalidInput`. All output ordering is
+    /// deterministic regardless of thread scheduling.
     pub fn finish(mut self) -> Result<UnpackOutput> {
         if self.reports.is_empty() {
             return Err(Error::new(

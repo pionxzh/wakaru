@@ -1,3 +1,9 @@
+//! Debug workflows: parse/print normalization, per-rule tracing, and stable
+//! rule metadata.
+//!
+//! Rule names and stable rule metadata are available through [`rules`]; rule
+//! execution and AST mutation are not exposed.
+
 use crate::error::{from_core_driver_error, Error, ErrorKind, Result};
 use crate::{RewriteOptions, Source};
 
@@ -63,6 +69,7 @@ impl TraceOptions {
     }
 }
 
+/// One rule's before/after snapshot from [`trace_rules`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TraceEvent {
@@ -72,6 +79,7 @@ pub struct TraceEvent {
     pub after: String,
 }
 
+/// The pipeline stage a rule belongs to, in execution order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RuleStage {
@@ -83,14 +91,19 @@ pub enum RuleStage {
     Cleanup,
 }
 
+/// Stable metadata for one rule registry entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RuleInfo {
+    /// Registry id; repeat passes carry a numeric suffix (e.g. `UnIife2`).
     pub id: &'static str,
     pub stage: RuleStage,
+    /// Declared ordering dependencies. This is the subset of dependencies
+    /// enforced by the registry, not a complete dependency graph.
     pub requires: &'static [&'static str],
 }
 
+/// Parse and re-print one source without running any rewrite rules.
 pub fn normalize(input: Source, options: NormalizeOptions) -> Result<String> {
     let input = input.into_parts();
     let core_options = wakaru_core::NormalizeOptions {
@@ -101,6 +114,7 @@ pub fn normalize(input: Source, options: NormalizeOptions) -> Result<String> {
         .map_err(|error| Error::new(ErrorKind::Parse, Some(input.filename), error))
 }
 
+/// Run the single-file pipeline capturing per-rule before/after snapshots.
 pub fn trace_rules(
     input: Source,
     rewrite: RewriteOptions,
@@ -143,6 +157,8 @@ pub fn trace_rules(
         })
 }
 
+/// Stable metadata for every rule registry entry, in pipeline execution
+/// order. This is the authoritative public roster of the rewrite pipeline.
 pub fn rules() -> &'static [RuleInfo] {
     static RULES: std::sync::OnceLock<Box<[RuleInfo]>> = std::sync::OnceLock::new();
     RULES.get_or_init(|| {
