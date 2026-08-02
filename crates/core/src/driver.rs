@@ -19,12 +19,13 @@ pub use output::{deduplicate_path, safe_relative_module_path};
 pub use single_file::{decompile, decompile_owned, OwnedDecompileFailure};
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
-    DceMode, DecompileOptions, DecompileOutput, ModuleProvenance, UnpackInput, UnpackOutput,
-    UnpackWarning, UnpackWarningKind,
+    DceMode, DecompileOptions, DecompileOutput, ModuleProvenance, PreparedInputId,
+    PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput, UnpackInput,
+    UnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 pub use unpack::{
-    prepare_unpack_input, prepare_unpack_input_with_policy, prepared_input_index,
-    unpack_prepared_inputs, unpack_prepared_inputs_with_policy, PreparedInputDetection,
-    PreparedUnpackInput, ScopeHoistPolicy,
+    prepare_unpack_input, prepare_unpack_input_with_policy, unpack_prepared_inputs,
+    unpack_prepared_inputs_with_policy, PreparedInputDetection, PreparedUnpackInput,
+    ScopeHoistPolicy,
 };
 pub use unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};

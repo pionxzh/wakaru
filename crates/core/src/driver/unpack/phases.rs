@@ -17,7 +17,8 @@ use super::super::io::{
     print_js_with_srcmap,
 };
 use super::super::types::{
-    DecompileOptions, ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind,
+    DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
+    PreparedUnpackOutput, UnpackWarning, UnpackWarningKind,
 };
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::collect_import_cycle_warnings;
@@ -75,7 +76,7 @@ struct Phase1Module {
 /// slicing, runtime wrapper residue). Hard-failing on those would discard
 /// all other successfully extracted modules, which is worse for both
 /// interactive and automated users. Failures are reported via
-/// `UnpackOutput::warnings` so callers can surface them without silent
+/// `PreparedUnpackOutput::warnings` so callers can surface them without silent
 /// swallowing.
 ///
 /// Both phases run via rayon. On targets without threading support, Rayon falls
@@ -84,7 +85,7 @@ struct Phase1Module {
 pub(super) fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
-) -> Result<UnpackOutput> {
+) -> Result<PreparedUnpackOutput> {
     let modules = modules
         .into_iter()
         .map(PreparedUnpackModule::plain)
@@ -96,7 +97,7 @@ pub(super) fn unpack_multi_module_with_plan(
     mut modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
     options: DecompileOptions,
-) -> Result<UnpackOutput> {
+) -> Result<PreparedUnpackOutput> {
     if options.sourcemap.is_some() {
         bail!(
             "input source maps are not supported with unpacking because extracted module coordinates differ from bundle coordinates; use --emit-source-map for output maps"
@@ -114,14 +115,14 @@ pub(super) fn unpack_multi_module_with_plan(
     // appear with their final names.
     let provenance_by_provisional: std::collections::HashMap<
         String,
-        (String, Vec<(u32, u32)>, bool),
+        (Option<PreparedInputId>, Vec<(u32, u32)>, bool),
     > = modules
         .iter()
         .map(|prepared| {
             (
                 prepared.module.filename.clone(),
                 (
-                    prepared.module.source_input.clone(),
+                    prepared.input,
                     prepared.module.source_ranges.clone(),
                     prepared.module.is_entry,
                 ),
@@ -611,15 +612,6 @@ pub(super) fn unpack_multi_module_with_plan(
         warnings.extend(collect_import_cycle_warnings(&modules));
     }
 
-    let source_maps: Vec<(String, String)> = modules
-        .iter()
-        .filter_map(|(filename, _)| {
-            srcmap_by_filename
-                .remove(filename)
-                .map(|map| (filename.clone(), map))
-        })
-        .collect();
-
     // Build final provenance from the surviving output modules, mapping
     // provisional filenames to their recovered names.  Dead helper modules
     // that were eliminated above are excluded.
@@ -627,29 +619,34 @@ pub(super) fn unpack_multi_module_with_plan(
         .iter()
         .map(|(prov, renamed)| (renamed.as_str(), prov.as_str()))
         .collect();
-    let provenance: Vec<ModuleProvenance> = modules
-        .iter()
-        .filter_map(|(final_filename, _)| {
+    let modules = modules
+        .into_iter()
+        .map(|(final_filename, code)| {
             let provisional = reverse_rename
                 .get(final_filename.as_str())
                 .copied()
                 .unwrap_or(final_filename.as_str());
-            let (input, ranges, is_entry) = provenance_by_provisional.get(provisional)?;
-            Some(ModuleProvenance {
-                filename: final_filename.clone(),
-                input: input.clone(),
-                ranges: ranges.clone(),
-                is_entry: *is_entry,
-            })
+            let (input, ranges, is_entry) = provenance_by_provisional
+                .get(provisional)
+                .expect("every surviving module retains its provenance");
+            let source_map = srcmap_by_filename.remove(&final_filename);
+            PreparedModuleOutput {
+                filename: final_filename,
+                code,
+                source_map,
+                provenance: PreparedModuleProvenance {
+                    input: *input,
+                    ranges: ranges.clone(),
+                    is_entry: *is_entry,
+                },
+            }
         })
         .collect();
 
-    Ok(UnpackOutput {
+    Ok(PreparedUnpackOutput {
         modules,
-        provenance,
         warnings,
         detected_formats: Vec::new(),
-        source_maps,
     })
 }
 
@@ -745,7 +742,7 @@ mod tests {
             },
         )
         .expect("fixture should decompile");
-        assert_eq!(output.modules[0].1, "import \"./module.js\";\n");
+        assert_eq!(output.modules[0].code, "import \"./module.js\";\n");
     }
 
     #[test]
@@ -767,7 +764,7 @@ mod tests {
         )
         .expect("fixture should decompile");
         assert_eq!(
-            output.modules[0].1,
+            output.modules[0].code,
             "import { alreadyDead } from \"./module.js\";\n"
         );
     }
@@ -829,7 +826,7 @@ module.exports = (a = (i = require("./module-2.js")).lib, o = a.WordArray, i.SHA
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("fixture should decompile");
-        let code = &output.modules[0].1;
+        let code = &output.modules[0].code;
         assert!(
             code.contains("const lib ="),
             "expected temp binding to use member name:\n{code}"
@@ -865,7 +862,7 @@ exports.default = o.default(l);
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("fixture should decompile");
-        let code = &output.modules[0].1;
+        let code = &output.modules[0].code;
         assert!(
             code.contains("import a from \"./module-2.js\";"),
             "expected require binding to become an import:\n{code}"
@@ -905,7 +902,7 @@ export { create, wrap };
             },
         )
         .expect("module should decompile");
-        let code = &output.modules[0].1;
+        let code = &output.modules[0].code;
 
         assert!(
             !code.contains("create }") && !code.contains("create,"),
@@ -944,7 +941,7 @@ export { helper };
             },
         )
         .expect("module should decompile");
-        let code = &output.modules[0].1;
+        let code = &output.modules[0].code;
         let setup_call = code.find("setup()").expect("setup call should remain");
         let define_property = code
             .find("defineProperty } = Object")
@@ -976,12 +973,11 @@ export { helper };
         )
         .expect("module should decompile with source maps");
 
-        assert_eq!(
-            output.source_maps.len(),
-            1,
-            "unpack should emit one source map per kept module"
-        );
-        let sm = sourcemap::SourceMap::from_reader(output.source_maps[0].1.as_bytes())
+        let source_map = output.modules[0]
+            .source_map
+            .as_deref()
+            .expect("unpack should emit one source map per kept module");
+        let sm = sourcemap::SourceMap::from_reader(source_map.as_bytes())
             .expect("source map should parse");
         assert_eq!(sm.get_file(), Some("entry.js"));
         assert!(

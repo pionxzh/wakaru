@@ -120,6 +120,11 @@ detector-specific work ends before that boundary, and the payload only
 controls how the common pipeline obtains its initial AST. There is no
 separate public or phase-level webpack route.
 
+The executor returns one internal record per module, with code, output source
+map, and provenance kept together. Provenance identifies its physical input
+with a typed prepared-input ID; input identity is never encoded into a
+filename or sentinel string for a later adapter to decode.
+
 ### Performance invariants
 
 1. Each physical input is detected at most once per `unpack` call.

@@ -67,8 +67,68 @@ pub struct UnpackInput {
     pub source: String,
 }
 
+/// Structured result returned by the prepared-input unpack path used by the
+/// lockstep `wakaru` facade.
+///
+/// Unlike the legacy test adapter below, every module owns its source map and
+/// provenance, so consumers never need to join parallel vectors by filename.
+#[derive(Debug, Clone, Default)]
+pub struct PreparedUnpackOutput {
+    pub modules: Vec<PreparedModuleOutput>,
+    pub warnings: Vec<UnpackWarning>,
+    pub detected_formats: Vec<BundleFormat>,
+}
+
+/// One processed module from a prepared-input unpack operation.
+#[derive(Debug, Clone, Default)]
+pub struct PreparedModuleOutput {
+    pub filename: String,
+    pub code: String,
+    pub source_map: Option<String>,
+    pub provenance: PreparedModuleProvenance,
+}
+
+/// Typed identity of one physical input in a prepared unpack operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PreparedInputId(usize);
+
+impl PreparedInputId {
+    pub(crate) fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// Provenance attached directly to one [`PreparedModuleOutput`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PreparedModuleProvenance {
+    /// Position of the physical input in the prepared-input vector. `None` is
+    /// reserved for synthesized modules that cannot be attributed to one
+    /// input.
+    pub input: Option<PreparedInputId>,
+    /// 0-based byte ranges `(start, end)` into the physical input.
+    pub ranges: Vec<(u32, u32)>,
+    /// Whether the detector identified this output as an entry module.
+    pub is_entry: bool,
+}
+
+impl PreparedUnpackOutput {
+    /// True when there are non-diagnostic warnings (parse failures, decompile
+    /// errors). Diagnostic warnings like TDZ violations are excluded.
+    pub fn has_errors(&self) -> bool {
+        self.warnings.iter().any(|warning| warning.kind.is_error())
+    }
+}
+
 /// Result of an unpack operation: the extracted modules plus any non-fatal
 /// warnings (e.g. per-module parse failures that fell back to raw code).
+///
+/// This parallel-vector shape is retained only for the legacy core test
+/// adapter. Production callers use [`PreparedUnpackOutput`] through the
+/// published `wakaru` facade.
 #[derive(Debug, Clone, Default)]
 pub struct UnpackOutput {
     pub modules: Vec<(String, String)>,

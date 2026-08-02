@@ -67,7 +67,6 @@ impl std::fmt::Debug for UnpackJob {
 
 struct ProcessedInput {
     id: InputId,
-    filename: String,
 }
 
 impl UnpackJob {
@@ -206,10 +205,7 @@ impl UnpackJob {
         if !processed.is_empty() {
             let processed_meta = processed
                 .iter()
-                .map(|input| ProcessedInput {
-                    id: input.id,
-                    filename: input.prepared.filename().to_string(),
-                })
+                .map(|input| ProcessedInput { id: input.id })
                 .collect::<Vec<_>>();
             let core_output = run_core_unpack(processed, &self.options)?;
             let converted = convert_core_output(
@@ -270,7 +266,7 @@ fn map_bundle_detection(format: wakaru_core::BundleFormat) -> InputDetection {
 fn run_core_unpack(
     inputs: Vec<RetainedInput>,
     options: &UnpackOptions,
-) -> Result<wakaru_core::UnpackOutput> {
+) -> Result<wakaru_core::driver::PreparedUnpackOutput> {
     let span = tracing::info_span!("public_unpack_core");
     let _enter = span.enter();
     let (level, dce_mode, raw) = match options.modules() {
@@ -318,23 +314,13 @@ struct ConvertedOutput {
 }
 
 fn convert_core_output(
-    output: wakaru_core::UnpackOutput,
+    output: wakaru_core::driver::PreparedUnpackOutput,
     processed: &[ProcessedInput],
     reports: &mut [InputReport],
     raw: bool,
 ) -> ConvertedOutput {
     let span = tracing::info_span!("public_unpack_convert_output");
     let _enter = span.enter();
-    let source_maps: HashMap<_, _> = output.source_maps.into_iter().collect();
-    let provenance: HashMap<_, _> = output
-        .provenance
-        .into_iter()
-        .map(|provenance| (provenance.filename.clone(), provenance))
-        .collect();
-    let input_by_name: HashMap<&str, InputId> = processed
-        .iter()
-        .map(|input| (input.filename.as_str(), input.id))
-        .collect();
     let only_input = (processed.len() == 1).then_some(processed[0].id);
     let failed: HashSet<&str> = output
         .warnings
@@ -347,31 +333,22 @@ fn convert_core_output(
         .modules
         .into_iter()
         .enumerate()
-        .map(|(index, (filename, code))| {
-            let module_provenance = provenance.get(&filename);
-            let provenance_input = module_provenance.and_then(|provenance| {
-                if let Some(position) = wakaru_core::driver::prepared_input_index(&provenance.input)
-                {
-                    processed.get(position).map(|input| input.id)
-                } else if provenance.input.is_empty() {
-                    only_input
-                } else {
-                    input_by_name.get(provenance.input.as_str()).copied()
-                }
-            });
-            let spans = module_provenance
-                .map(|provenance| {
-                    provenance_input
-                        .into_iter()
-                        .flat_map(|input| {
-                            provenance
-                                .ranges
-                                .iter()
-                                .map(move |&(start, end)| SourceSpan { input, start, end })
-                        })
-                        .collect::<Vec<_>>()
+        .map(|(index, module)| {
+            let provenance_input = module
+                .provenance
+                .input
+                .and_then(|input| processed.get(input.index()).map(|input| input.id))
+                .or(only_input);
+            let spans = provenance_input
+                .into_iter()
+                .flat_map(|input| {
+                    module
+                        .provenance
+                        .ranges
+                        .iter()
+                        .map(move |&(start, end)| SourceSpan { input, start, end })
                 })
-                .unwrap_or_default();
+                .collect::<Vec<_>>();
             let mut associated: HashSet<_> = spans.iter().map(|span| span.input).collect();
             if associated.is_empty() {
                 if let Some(input) = provenance_input {
@@ -383,23 +360,20 @@ fn convert_core_output(
             for input in associated {
                 reports[input.get() as usize].module_indices.push(index);
             }
-            let entry = entry_status_from_provenance(
-                module_provenance.map(|provenance| provenance.is_entry),
-                &spans,
-                reports,
-            );
+            let entry =
+                entry_status_from_provenance(Some(module.provenance.is_entry), &spans, reports);
             ModuleOutput {
-                source_map: source_maps.get(&filename).cloned(),
+                source_map: module.source_map,
                 entry,
-                status: if failed.contains(filename.as_str()) {
+                status: if failed.contains(module.filename.as_str()) {
                     ModuleStatus::DecompileFailed
                 } else if raw {
                     ModuleStatus::Raw
                 } else {
                     ModuleStatus::Decompiled
                 },
-                filename,
-                code,
+                filename: module.filename,
+                code: module.code,
                 provenance: spans,
             }
         })
@@ -831,25 +805,28 @@ mod tests {
         let processed = vec![
             ProcessedInput {
                 id: InputId::from_index(0),
-                filename: "first.js".to_string(),
             },
             ProcessedInput {
                 id: InputId::from_index(1),
-                filename: "second.js".to_string(),
             },
         ];
-        let mut reports = processed
-            .iter()
-            .map(|input| InputReport {
+        let mut reports = ["first.js", "second.js"]
+            .into_iter()
+            .zip(&processed)
+            .map(|(filename, input)| InputReport {
                 id: input.id,
-                filename: input.filename.clone(),
+                filename: filename.to_string(),
                 detection: InputDetection::Plain,
                 action: InputAction::Processed,
                 module_indices: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let output = wakaru_core::UnpackOutput {
-            modules: vec![("synthesized.js".to_string(), "export {};".to_string())],
+        let output = wakaru_core::driver::PreparedUnpackOutput {
+            modules: vec![wakaru_core::driver::PreparedModuleOutput {
+                filename: "synthesized.js".to_string(),
+                code: "export {};".to_string(),
+                ..Default::default()
+            }],
             ..Default::default()
         };
 

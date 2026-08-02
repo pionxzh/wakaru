@@ -19,7 +19,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::super::io::{apply_fixer, parse_js, print_js};
-use super::super::types::{ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::super::types::{
+    PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput,
+    UnpackWarning, UnpackWarningKind,
+};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::PreparedModuleAst;
 use crate::unpacker::UnpackedModule;
@@ -33,6 +36,7 @@ pub(super) struct MultiSourceModule {
     chunk_ids: Arc<HashSet<usize>>,
     input_filename: String,
     input_group: String,
+    input: Option<PreparedInputId>,
 }
 
 impl MultiSourceModule {
@@ -60,31 +64,27 @@ impl MultiSourceModule {
         input_filename: String,
         report_import_cycle_warnings: bool,
     ) -> Self {
-        let source_input = input_filename.clone();
-        let input_group = input_group_for_filename(&source_input);
-        Self::detected_with_ast_from_source(
+        let input_group = input_group_for_filename(&input_filename);
+        Self::detected_with_ast_from_input(
             module,
             prepared,
             chunk_ids,
             input_filename,
-            source_input,
+            None,
             input_group,
             report_import_cycle_warnings,
         )
     }
 
-    pub(super) fn detected_with_ast_from_source(
-        mut module: UnpackedModule,
+    pub(super) fn detected_with_ast_from_input(
+        module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
         chunk_ids: impl Into<Arc<HashSet<usize>>>,
         input_filename: String,
-        source_input: String,
+        input: Option<PreparedInputId>,
         input_group: String,
         report_import_cycle_warnings: bool,
     ) -> Self {
-        // Unpackers don't know which physical input they ran on; attribute
-        // provenance ranges to it here.
-        module.source_input = source_input;
         Self {
             module,
             prepared,
@@ -93,16 +93,14 @@ impl MultiSourceModule {
             chunk_ids: chunk_ids.into(),
             input_filename,
             input_group,
+            input,
         }
     }
 
-    pub(super) fn fallback(module: UnpackedModule) -> Self {
-        Self::fallback_with_ast(module, None)
-    }
-
-    pub(super) fn fallback_with_ast(
+    pub(super) fn fallback_with_ast_from_input(
         module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
+        input: Option<PreparedInputId>,
     ) -> Self {
         Self {
             module,
@@ -112,6 +110,7 @@ impl MultiSourceModule {
             chunk_ids: Arc::default(),
             input_filename: String::new(),
             input_group: String::new(),
+            input,
         }
     }
 }
@@ -121,6 +120,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
+    pub(super) input: Option<PreparedInputId>,
 }
 
 impl PreparedUnpackModule {
@@ -131,6 +131,7 @@ impl PreparedUnpackModule {
             prepared: None,
             numeric_rewrite: None,
             report_import_cycle_warnings: true,
+            input: None,
         }
     }
 
@@ -144,6 +145,7 @@ impl PreparedUnpackModule {
             prepared: None,
             numeric_rewrite: None,
             report_import_cycle_warnings,
+            input: None,
         }
     }
 }
@@ -193,6 +195,7 @@ pub(super) fn prepare_multi_source_modules(
                 prepared: module.prepared,
                 numeric_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,
+                input: module.input,
             }
         })
         .collect();
@@ -337,33 +340,35 @@ pub(super) fn apply_numeric_rewrites(
 pub(super) fn emit_raw_modules_with_numeric_rewrites(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
-) -> Result<UnpackOutput> {
-    let provenance: Vec<ModuleProvenance> = modules
-        .iter()
-        .map(|prepared| ModuleProvenance {
-            filename: prepared.module.filename.clone(),
-            input: prepared.module.source_input.clone(),
-            ranges: prepared.module.source_ranges.clone(),
-            is_entry: prepared.module.is_entry,
-        })
-        .collect();
-
+) -> Result<PreparedUnpackOutput> {
     if numeric_rewrite_plan.is_empty() {
-        return Ok(UnpackOutput {
+        return Ok(PreparedUnpackOutput {
             modules: modules
                 .into_iter()
-                .map(|module| (module.module.filename, module.module.code))
+                .map(|prepared| PreparedModuleOutput {
+                    filename: prepared.module.filename,
+                    code: prepared.module.code,
+                    source_map: None,
+                    provenance: PreparedModuleProvenance {
+                        input: prepared.input,
+                        ranges: prepared.module.source_ranges,
+                        is_entry: prepared.module.is_entry,
+                    },
+                })
                 .collect(),
-            provenance,
             warnings: Vec::new(),
             detected_formats: Vec::new(),
-            source_maps: Vec::new(),
         });
     }
 
-    let triples = modules
+    let processed = modules
         .into_par_iter()
         .map(|unpacked| {
+            let provenance = PreparedModuleProvenance {
+                input: unpacked.input,
+                ranges: unpacked.module.source_ranges,
+                is_entry: unpacked.module.is_entry,
+            };
             match GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
                 let mut module =
@@ -380,7 +385,15 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                 apply_fixer(&mut module)?;
                 print_js(&module, cm)
             }) {
-                Ok(code) => (unpacked.module.filename, code, None),
+                Ok(code) => (
+                    PreparedModuleOutput {
+                        filename: unpacked.module.filename,
+                        code,
+                        source_map: None,
+                        provenance,
+                    },
+                    None,
+                ),
                 Err(e) => {
                     let warning = UnpackWarning::new(
                         unpacked.module.filename.clone(),
@@ -388,8 +401,12 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                         format!("raw numeric rewrite failed, preserving unparsed code: {e}"),
                     );
                     (
-                        unpacked.module.filename,
-                        unpacked.module.code,
+                        PreparedModuleOutput {
+                            filename: unpacked.module.filename,
+                            code: unpacked.module.code,
+                            source_map: None,
+                            provenance,
+                        },
                         Some(warning),
                     )
                 }
@@ -399,19 +416,17 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
 
     let mut modules = Vec::new();
     let mut warnings = Vec::new();
-    for (filename, code, warning) in triples {
-        modules.push((filename, code));
+    for (module, warning) in processed {
+        modules.push(module);
         if let Some(warning) = warning {
             warnings.push(warning);
         }
     }
 
-    Ok(UnpackOutput {
+    Ok(PreparedUnpackOutput {
         modules,
-        provenance,
         warnings,
         detected_formats: Vec::new(),
-        source_maps: Vec::new(),
     })
 }
 
@@ -652,18 +667,19 @@ mod tests {
     }
 
     #[test]
-    fn prepared_detection_reuses_precomputed_input_group() {
-        let module = MultiSourceModule::detected_with_ast_from_source(
+    fn prepared_detection_keeps_typed_input_index_and_precomputed_group() {
+        let module = MultiSourceModule::detected_with_ast_from_input(
             UnpackedModule::default(),
             None,
             HashSet::new(),
             "input.js".to_string(),
-            "\0wakaru-input:0".to_string(),
+            Some(PreparedInputId::from_index(0)),
             "precomputed-group".to_string(),
             true,
         );
 
         assert_eq!(module.input_group, "precomputed-group");
+        assert_eq!(module.input.map(PreparedInputId::index), Some(0));
     }
 
     #[test]

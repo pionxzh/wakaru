@@ -6,7 +6,10 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
 use super::io::{apply_fixer, parse_js, print_js};
-use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::types::{
+    DecompileOptions, ModuleProvenance, PreparedInputId, PreparedUnpackOutput, UnpackInput,
+    UnpackOutput, UnpackWarning, UnpackWarningKind,
+};
 #[cfg(test)]
 use super::unpack_cycles::{collect_import_cycle_warnings, scan_local_import_dependencies};
 use super::{DriverError, DriverErrorKind, DriverResult};
@@ -71,19 +74,6 @@ impl ScopeHoistPolicy {
             }
         }
     }
-}
-
-const PREPARED_INPUT_PREFIX: &str = "\0wakaru-input:";
-
-pub fn prepared_input_index(source_input: &str) -> Option<usize> {
-    source_input
-        .strip_prefix(PREPARED_INPUT_PREFIX)?
-        .parse()
-        .ok()
-}
-
-fn prepared_input_label(index: usize) -> String {
-    format!("{PREPARED_INPUT_PREFIX}{index}")
 }
 
 /// Opaque input prepared by the public façade's incremental intake path.
@@ -256,7 +246,7 @@ pub fn unpack_prepared_inputs(
     options: DecompileOptions,
     raw: bool,
     recursive_scope_hoist: bool,
-) -> Result<UnpackOutput> {
+) -> Result<PreparedUnpackOutput> {
     unpack_prepared_inputs_with_policy(
         inputs,
         options,
@@ -274,7 +264,7 @@ pub fn unpack_prepared_inputs_with_policy(
     mut options: DecompileOptions,
     raw: bool,
     scope_hoist_policy: ScopeHoistPolicy,
-) -> Result<UnpackOutput> {
+) -> Result<PreparedUnpackOutput> {
     if inputs.is_empty() {
         return Err(anyhow!("at least one prepared input is required"));
     }
@@ -283,7 +273,7 @@ pub fn unpack_prepared_inputs_with_policy(
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
     for (input_index, input) in inputs.into_iter().enumerate() {
-        let provenance_input = prepared_input_label(input_index);
+        let input_id = PreparedInputId::from_index(input_index);
         let PreparedUnpackInput {
             filename,
             source,
@@ -323,12 +313,12 @@ pub fn unpack_prepared_inputs_with_policy(
                         .into_iter()
                         .zip(prepared)
                         .map(|(module, ast)| {
-                            MultiSourceModule::detected_with_ast_from_source(
+                            MultiSourceModule::detected_with_ast_from_input(
                                 module,
                                 ast,
                                 chunk_ids.clone(),
                                 filename.clone(),
-                                provenance_input.clone(),
+                                Some(input_id),
                                 input_group.clone(),
                                 report_import_cycle_warnings,
                             )
@@ -341,7 +331,6 @@ pub fn unpack_prepared_inputs_with_policy(
                 }
                 let result = scope_hoisted.expect("scope-hoist detection carries result");
                 modules.extend(result.modules.into_iter().map(|mut module| {
-                    module.source_input = provenance_input.clone();
                     if raw {
                         match normalize_raw_unpacked_module(&module.code, &module.filename) {
                             Ok(normalized) => module.code = normalized,
@@ -354,23 +343,24 @@ pub fn unpack_prepared_inputs_with_policy(
                             )),
                         }
                     }
-                    MultiSourceModule::fallback(module)
+                    MultiSourceModule::fallback_with_ast_from_input(module, None, Some(input_id))
                 }));
             }
             PreparedInputDetection::Plain => {
                 let source = source.expect("plain input retains source");
                 let source_len = source.len() as u32;
-                modules.push(MultiSourceModule::fallback_with_ast(
+                modules.push(MultiSourceModule::fallback_with_ast_from_input(
                     UnpackedModule {
                         id: filename.clone(),
                         is_entry: false,
                         filename: filename_for_fallback_input(&filename),
                         source_ranges: vec![(0, source_len)],
-                        source_input: provenance_input,
+                        source_input: String::new(),
                         generated_source_map: Vec::new(),
                         code: source,
                     },
                     (!raw).then_some(plain_prepared).flatten(),
+                    Some(input_id),
                 ));
             }
         }
@@ -461,22 +451,13 @@ fn unpack_legacy_inputs(
         })
         .collect::<Result<Vec<_>>>()?;
     let plain_single = single_input && prepared[0].detection() == PreparedInputDetection::Plain;
-    let mut output = unpack_prepared_inputs(
+    let prepared_output = unpack_prepared_inputs(
         prepared,
         options.clone(),
         raw,
         nested_scope_split_enabled(&options),
     )?;
-
-    for provenance in &mut output.provenance {
-        if let Some(index) = prepared_input_index(&provenance.input) {
-            provenance.input = if single_input {
-                String::new()
-            } else {
-                input_names.get(index).cloned().unwrap_or_default()
-            };
-        }
-    }
+    let mut output = into_legacy_unpack_output(prepared_output, &input_names, single_input);
     if plain_single {
         let emitted_name = output.modules[0].0.clone();
         output.modules[0].0 = "module.js".to_string();
@@ -492,6 +473,40 @@ fn unpack_legacy_inputs(
         }
     }
     Ok(output)
+}
+
+fn into_legacy_unpack_output(
+    output: PreparedUnpackOutput,
+    input_names: &[String],
+    single_input: bool,
+) -> UnpackOutput {
+    let mut legacy = UnpackOutput {
+        warnings: output.warnings,
+        detected_formats: output.detected_formats,
+        ..Default::default()
+    };
+    for module in output.modules {
+        let input = module
+            .provenance
+            .input
+            .filter(|_| !single_input)
+            .and_then(|input| input_names.get(input.index()))
+            .cloned()
+            .unwrap_or_default();
+        legacy.provenance.push(ModuleProvenance {
+            filename: module.filename.clone(),
+            input,
+            ranges: module.provenance.ranges,
+            is_entry: module.provenance.is_entry,
+        });
+        if let Some(source_map) = module.source_map {
+            legacy
+                .source_maps
+                .push((module.filename.clone(), source_map));
+        }
+        legacy.modules.push((module.filename, module.code));
+    }
+    legacy
 }
 
 fn filename_for_fallback_input(filename: &str) -> String {

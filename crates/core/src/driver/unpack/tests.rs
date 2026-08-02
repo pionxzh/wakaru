@@ -35,7 +35,7 @@ fn prepared_plain_input_reuses_detection_ast_in_phase1() {
     });
 
     assert_eq!(output.modules.len(), 1);
-    assert!(output.modules[0].1.contains("answer"));
+    assert!(output.modules[0].code.contains("answer"));
     assert_eq!(
         spans.iter().filter(|name| *name == "parse_bundle").count(),
         1,
@@ -48,6 +48,36 @@ fn prepared_plain_input_reuses_detection_ast_in_phase1() {
         );
     }
     assert!(spans.iter().any(|name| name == "prepare_plain: resolver"));
+}
+
+#[test]
+fn prepared_output_uses_typed_input_indices_for_duplicate_names() {
+    let inputs = ["const first = 1;", "const second = 2;"]
+        .into_iter()
+        .map(|source| {
+            prepare_unpack_input("same.js".to_string(), source.to_string(), false, true)
+                .expect("plain input should prepare")
+        })
+        .collect();
+
+    let output = unpack_prepared_inputs(inputs, DecompileOptions::default(), false, false)
+        .expect("prepared inputs should decompile");
+
+    assert_eq!(output.modules.len(), 2);
+    assert_eq!(
+        output.modules[0]
+            .provenance
+            .input
+            .map(PreparedInputId::index),
+        Some(0)
+    );
+    assert_eq!(
+        output.modules[1]
+            .provenance
+            .input
+            .map(PreparedInputId::index),
+        Some(1)
+    );
 }
 
 #[test]
@@ -123,9 +153,9 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
         .expect("raw scope-hoisted module should normalize");
     assert_eq!(output.modules.len(), 1);
     assert!(
-        output.modules[0].1.contains("if (ready) {"),
+        output.modules[0].code.contains("if (ready) {"),
         "raw split should retain runnable statement normalization: {}",
-        output.modules[0].1
+        output.modules[0].code
     );
 }
 
@@ -393,10 +423,9 @@ fn unpack_raw_preserves_unparseable_extracted_modules() {
     }];
     let output = unpack_multi_module(modules, DecompileOptions::default())
         .expect("unparseable extracted modules should be preserved as raw code");
-    assert_eq!(
-        output.modules,
-        vec![("module-1.js".to_string(), "const = ;".to_string())]
-    );
+    assert_eq!(output.modules.len(), 1);
+    assert_eq!(output.modules[0].filename, "module-1.js");
+    assert_eq!(output.modules[0].code, "const = ;");
     assert!(
         !output.warnings.is_empty(),
         "should warn about unparseable module"
