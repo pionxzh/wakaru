@@ -5000,7 +5000,7 @@ fn projection_selector_property(
     definition: &RuntimeFunction,
     observations: &[&TemplateCallObservation],
 ) -> Option<Atom> {
-    if !matches!(definition.params.len(), 3 | 6)
+    if !matches!(definition.params.len(), 2 | 3 | 6)
         || !is_numeric_default(&definition.params[1], 0.0)
         || direct_calls(definition).len() < 5
         || observations.is_empty()
