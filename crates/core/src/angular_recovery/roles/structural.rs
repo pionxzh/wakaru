@@ -450,6 +450,7 @@ impl StructuralRoleEvidence {
     ) -> Vec<(SymbolIdentity, &'static str)> {
         let function_index = RuntimeFunctionIndex::new(&self.functions, roles);
         let mut observations = Vec::new();
+        let mut creation_null_assignments = Vec::new();
         let mut next_view_id = 0;
         for prepared in modules {
             let mut collector = TemplateFunctionCollector {
@@ -457,11 +458,13 @@ impl StructuralRoleEvidence {
                 function_index: &function_index,
                 unresolved_ctxt: prepared.unresolved_ctxt,
                 observations: Vec::new(),
+                creation_null_assignments: Vec::new(),
                 next_view_id,
             };
             prepared.module.visit_with(&mut collector);
             next_view_id = collector.next_view_id;
             observations.extend(collector.observations);
+            creation_null_assignments.extend(collector.creation_null_assignments);
         }
 
         let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
@@ -477,7 +480,11 @@ impl StructuralRoleEvidence {
             &function_index,
             &by_identity,
         ));
-        inferred.extend(infer_namespace_family(&function_index, &by_identity));
+        inferred.extend(infer_namespace_family(
+            &function_index,
+            &by_identity,
+            &creation_null_assignments,
+        ));
         inferred.extend(infer_aria_property_family(&function_index, &by_identity));
         inferred.extend(infer_styling_map_family(
             &self.functions,
@@ -2071,6 +2078,12 @@ struct TemplateCallObservation {
     unresolved_ctxt: SyntaxContext,
 }
 
+struct CreationNullAssignmentObservation {
+    target: SymbolIdentity,
+    view_id: usize,
+    operation_order: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TemplateCallUsage {
     Effect,
@@ -2082,6 +2095,7 @@ struct TemplateFunctionCollector<'a> {
     function_index: &'a RuntimeFunctionIndex<'a>,
     unresolved_ctxt: SyntaxContext,
     observations: Vec<TemplateCallObservation>,
+    creation_null_assignments: Vec<CreationNullAssignmentObservation>,
     next_view_id: usize,
 }
 
@@ -2099,6 +2113,7 @@ impl Visit for TemplateFunctionCollector<'_> {
             render_flags,
             saw_creation_anchor: false,
             observations: Vec::new(),
+            creation_null_assignments: Vec::new(),
             view_id,
             next_call_order: 0,
         };
@@ -2111,6 +2126,8 @@ impl Visit for TemplateFunctionCollector<'_> {
             || has_unclassified_repeater_anchor(&observer.observations, self.function_index)
         {
             self.observations.extend(observer.observations);
+            self.creation_null_assignments
+                .extend(observer.creation_null_assignments);
         }
         function.visit_children_with(self);
     }
@@ -2122,6 +2139,7 @@ struct TemplateCallObserver<'a> {
     render_flags: BindingKey,
     saw_creation_anchor: bool,
     observations: Vec<TemplateCallObservation>,
+    creation_null_assignments: Vec<CreationNullAssignmentObservation>,
     view_id: usize,
     next_call_order: usize,
 }
@@ -2183,6 +2201,20 @@ impl TemplateCallObserver<'_> {
                 self.collect_expression(binary.right.as_ref(), branch_phase);
             }
             Expr::Assign(assignment) => {
+                if phase == Some(1) {
+                    if let Some((target, NamespaceAssignmentValue::Html)) =
+                        namespace_assignment_expression(assignment, self.unresolved_ctxt)
+                    {
+                        let operation_order = self.next_call_order;
+                        self.next_call_order += 1;
+                        self.creation_null_assignments
+                            .push(CreationNullAssignmentObservation {
+                                target,
+                                view_id: self.view_id,
+                                operation_order,
+                            });
+                    }
+                }
                 self.collect_initializer(assignment.right.as_ref(), phase);
             }
             Expr::Call(call) => self.collect_call(call, phase, TemplateCallUsage::Effect),
@@ -2521,6 +2553,7 @@ struct NamespaceCandidates {
 fn infer_namespace_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+    creation_null_assignments: &[CreationNullAssignmentObservation],
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut candidates = HashMap::<SymbolIdentity, NamespaceCandidates>::new();
     for (identity, calls) in observations {
@@ -2549,14 +2582,26 @@ fn infer_namespace_family(
     }
 
     let mut inferred = Vec::new();
-    for family in candidates.into_values() {
+    for (target, family) in candidates {
         if family.html.len() > 1 || family.svg.len() > 1 || family.math_ml.len() > 1 {
             continue;
         }
         let variants = usize::from(!family.html.is_empty())
             + usize::from(!family.svg.is_empty())
             + usize::from(!family.math_ml.is_empty());
-        if variants < 2 {
+        let specialized_svg = variants == 1
+            && family.svg.as_slice().first().is_some_and(|svg| {
+                observations.get(svg).is_some_and(|calls| {
+                    calls.iter().any(|call| {
+                        creation_null_assignments.iter().any(|assignment| {
+                            assignment.target == target
+                                && assignment.view_id == call.view_id
+                                && assignment.operation_order > call.call_order
+                        })
+                    })
+                })
+            });
+        if variants < 2 && !specialized_svg {
             continue;
         }
         if let [html] = family.html.as_slice() {
@@ -2582,29 +2627,11 @@ fn namespace_assignment(
 
     impl Visit for Collector {
         fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
-            if assignment.op != AssignOp::Assign {
-                return;
+            if let Some(assignment) =
+                namespace_assignment_expression(assignment, self.unresolved_ctxt)
+            {
+                self.assignments.push(assignment);
             }
-            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
-                return;
-            };
-            let value = match strip_parentheses(assignment.right.as_ref()) {
-                Expr::Lit(Lit::Null(_)) => NamespaceAssignmentValue::Html,
-                Expr::Lit(Lit::Str(string)) if string.value == "svg" => {
-                    NamespaceAssignmentValue::Svg
-                }
-                Expr::Lit(Lit::Str(string))
-                    if matches!(string.value.as_str(), Some("math" | "mathml")) =>
-                {
-                    NamespaceAssignmentValue::MathMl
-                }
-                _ => return,
-            };
-            let Some(target) = symbol_identity(&Expr::Member(member.clone()), self.unresolved_ctxt)
-            else {
-                return;
-            };
-            self.assignments.push((target, value));
         }
 
         fn visit_function(&mut self, _function: &Function) {}
@@ -2621,6 +2648,28 @@ fn namespace_assignment(
         return None;
     };
     Some(assignment.clone())
+}
+
+fn namespace_assignment_expression(
+    assignment: &AssignExpr,
+    unresolved_ctxt: SyntaxContext,
+) -> Option<(SymbolIdentity, NamespaceAssignmentValue)> {
+    if assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+        return None;
+    };
+    let value = match strip_parentheses(assignment.right.as_ref()) {
+        Expr::Lit(Lit::Null(_)) => NamespaceAssignmentValue::Html,
+        Expr::Lit(Lit::Str(string)) if string.value == "svg" => NamespaceAssignmentValue::Svg,
+        Expr::Lit(Lit::Str(string)) if matches!(string.value.as_str(), Some("math" | "mathml")) => {
+            NamespaceAssignmentValue::MathMl
+        }
+        _ => return None,
+    };
+    let target = symbol_identity(&Expr::Member(member.clone()), unresolved_ctxt)?;
+    Some((target, value))
 }
 
 fn infer_styling_property_family(
