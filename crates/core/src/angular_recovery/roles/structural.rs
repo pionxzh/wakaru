@@ -5,9 +5,9 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
     Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl, ForHead,
-    ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp, ObjectPatProp,
-    Pat, Prop, PropName, ReturnStmt, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr,
-    VarDeclarator,
+    ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp, ObjectLit,
+    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -6490,40 +6490,60 @@ impl Visit for ReturnedDescriptorBuilder<'_> {
         if self.matched {
             return;
         }
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Arrow(arrow) = strip_parentheses(callee.as_ref()) {
+                self.inspect_arrow(arrow);
+            }
+        }
+        if self.matched {
+            return;
+        }
         for argument in &call.args {
             let Expr::Arrow(arrow) = argument.expr.as_ref() else {
                 continue;
             };
-            let mut evidence = DescriptorBuilderEvidence {
-                parameter: self.parameter,
-                unresolved_ctxt: self.unresolved_ctxt,
-                parameter_fields: HashSet::new(),
-                has_object_assign: false,
-            };
-            arrow.visit_with(&mut evidence);
-            let has_fields = |names: &[&str]| {
-                names.iter().all(|name| {
-                    evidence
-                        .parameter_fields
-                        .iter()
-                        .any(|field| field.as_ref() == *name)
-                })
-            };
-            if (evidence.has_object_assign && has_fields(&["template", "dependencies", "styles"]))
-                || has_fields(&[
-                    "decls",
-                    "vars",
-                    "template",
-                    "consts",
-                    "dependencies",
-                    "styles",
-                ])
-            {
-                self.matched = true;
+            self.inspect_arrow(arrow);
+            if self.matched {
                 return;
             }
         }
         call.visit_children_with(self);
+    }
+}
+
+impl ReturnedDescriptorBuilder<'_> {
+    fn inspect_arrow(&mut self, arrow: &ArrowExpr) {
+        if self.matched {
+            return;
+        }
+        let mut evidence = DescriptorBuilderEvidence {
+            parameter: self.parameter,
+            unresolved_ctxt: self.unresolved_ctxt,
+            parameter_fields: HashSet::new(),
+            has_object_assign: false,
+            has_minified_component_descriptor: false,
+            has_ng_standalone_marker: false,
+        };
+        arrow.visit_with(&mut evidence);
+        let has_fields = |names: &[&str]| {
+            names.iter().all(|name| {
+                evidence
+                    .parameter_fields
+                    .iter()
+                    .any(|field| field.as_ref() == *name)
+            })
+        };
+        self.matched = (evidence.has_object_assign
+            && has_fields(&["template", "dependencies", "styles"]))
+            || has_fields(&[
+                "decls",
+                "vars",
+                "template",
+                "consts",
+                "dependencies",
+                "styles",
+            ])
+            || (evidence.has_minified_component_descriptor && evidence.has_ng_standalone_marker);
     }
 }
 
@@ -6532,6 +6552,8 @@ struct DescriptorBuilderEvidence<'a> {
     unresolved_ctxt: SyntaxContext,
     parameter_fields: HashSet<Atom>,
     has_object_assign: bool,
+    has_minified_component_descriptor: bool,
+    has_ng_standalone_marker: bool,
 }
 
 impl Visit for DescriptorBuilderEvidence<'_> {
@@ -6547,6 +6569,79 @@ impl Visit for DescriptorBuilderEvidence<'_> {
             if binding_key(object) == *self.parameter {
                 if let Some(property) = member_prop_name(&member.prop) {
                     self.parameter_fields.insert(property);
+                }
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_object_lit(&mut self, object: &ObjectLit) {
+        if is_minified_component_descriptor_object(object, self.parameter) {
+            self.has_minified_component_descriptor = true;
+        }
+        object.visit_children_with(self);
+    }
+
+    fn visit_str(&mut self, string: &swc_core::ecma::ast::Str) {
+        if string.value.as_bytes() == b"NgStandalone" {
+            self.has_ng_standalone_marker = true;
+        }
+    }
+}
+
+fn is_minified_component_descriptor_object(object: &ObjectLit, parameter: &BindingKey) -> bool {
+    // Closure may rename every component-only field on both sides of this object. A full Ivy
+    // component builder still has a much larger descriptor and forwards substantially more
+    // definition fields than directive builders or ordinary configuration normalizers.
+    const MIN_DESCRIPTOR_PROPERTIES: usize = 16;
+    const MIN_FORWARDED_FIELDS: usize = 8;
+
+    let mut property_count = 0usize;
+    let mut output_fields = HashSet::new();
+    let mut parameter_fields = HashSet::new();
+    let mut has_empty_id = false;
+
+    for property in &object.props {
+        let PropOrSpread::Prop(property) = property else {
+            continue;
+        };
+        let Prop::KeyValue(property) = property.as_ref() else {
+            continue;
+        };
+        property_count += 1;
+        if let Some(name) = prop_name(&property.key) {
+            if name == "id" && is_empty_string_literal(property.value.as_ref()) {
+                has_empty_id = true;
+            }
+            output_fields.insert(name);
+        }
+        let mut collector = ParameterFieldCollector {
+            parameter,
+            fields: HashSet::new(),
+        };
+        property.value.visit_with(&mut collector);
+        parameter_fields.extend(collector.fields);
+    }
+
+    property_count >= MIN_DESCRIPTOR_PROPERTIES
+        && parameter_fields.len() >= MIN_FORWARDED_FIELDS
+        && has_empty_id
+        && ["dependencies", "data", "id"]
+            .iter()
+            .all(|name| output_fields.contains(*name))
+}
+
+struct ParameterFieldCollector<'a> {
+    parameter: &'a BindingKey,
+    fields: HashSet<Atom>,
+}
+
+impl Visit for ParameterFieldCollector<'_> {
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if let Expr::Ident(object) = member.obj.as_ref() {
+            if binding_key(object) == *self.parameter {
+                if let Some(property) = member_prop_name(&member.prop) {
+                    self.fields.insert(property);
                 }
             }
         }
