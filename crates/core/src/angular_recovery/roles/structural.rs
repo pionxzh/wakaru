@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
     Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl, ForHead,
@@ -451,6 +451,7 @@ impl StructuralRoleEvidence {
         let function_index = RuntimeFunctionIndex::new(&self.functions, roles);
         let mut observations = Vec::new();
         let mut creation_null_assignments = Vec::new();
+        let mut creation_false_assignments = Vec::new();
         let mut next_view_id = 0;
         for prepared in modules {
             let mut collector = TemplateFunctionCollector {
@@ -459,12 +460,14 @@ impl StructuralRoleEvidence {
                 unresolved_ctxt: prepared.unresolved_ctxt,
                 observations: Vec::new(),
                 creation_null_assignments: Vec::new(),
+                creation_false_assignments: Vec::new(),
                 next_view_id,
             };
             prepared.module.visit_with(&mut collector);
             next_view_id = collector.next_view_id;
             observations.extend(collector.observations);
             creation_null_assignments.extend(collector.creation_null_assignments);
+            creation_false_assignments.extend(collector.creation_false_assignments);
         }
 
         let mut by_identity: HashMap<SymbolIdentity, Vec<TemplateCallObservation>> = HashMap::new();
@@ -492,7 +495,11 @@ impl StructuralRoleEvidence {
             &by_identity,
         ));
         inferred.extend(infer_styling_property_family(&function_index, &by_identity));
-        inferred.extend(infer_i18n_role_family(&function_index, &by_identity));
+        inferred.extend(infer_i18n_role_family(
+            &function_index,
+            &by_identity,
+            &creation_false_assignments,
+        ));
         let two_way_roles = infer_two_way_role_family(&function_index, &by_identity);
         let animation_roles = infer_animation_role_family(&function_index, &by_identity);
         let specialized_identities = two_way_roles
@@ -613,6 +620,23 @@ impl StructuralRoleEvidence {
                     })
             })
             .filter_map(|function| namespace_assignment(function).map(|(target, _)| target))
+            .collect()
+    }
+
+    pub(super) fn inferred_i18n_state_targets(
+        &self,
+        roles: &IvyRoleTable,
+    ) -> HashSet<SymbolIdentity> {
+        self.functions
+            .iter()
+            .filter(|function| {
+                roles
+                    .ivy_names
+                    .get(&function.identity)
+                    .and_then(|name| IvyInstruction::from_export_name(name))
+                    == Some(IvyInstruction::I18nStart)
+            })
+            .filter_map(optimized_i18n_start_target)
             .collect()
     }
 }
@@ -2084,6 +2108,12 @@ struct CreationNullAssignmentObservation {
     operation_order: usize,
 }
 
+struct CreationFalseAssignmentObservation {
+    target: SymbolIdentity,
+    view_id: usize,
+    operation_order: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TemplateCallUsage {
     Effect,
@@ -2096,6 +2126,7 @@ struct TemplateFunctionCollector<'a> {
     unresolved_ctxt: SyntaxContext,
     observations: Vec<TemplateCallObservation>,
     creation_null_assignments: Vec<CreationNullAssignmentObservation>,
+    creation_false_assignments: Vec<CreationFalseAssignmentObservation>,
     next_view_id: usize,
 }
 
@@ -2114,6 +2145,7 @@ impl Visit for TemplateFunctionCollector<'_> {
             saw_creation_anchor: false,
             observations: Vec::new(),
             creation_null_assignments: Vec::new(),
+            creation_false_assignments: Vec::new(),
             view_id,
             next_call_order: 0,
         };
@@ -2128,6 +2160,8 @@ impl Visit for TemplateFunctionCollector<'_> {
             self.observations.extend(observer.observations);
             self.creation_null_assignments
                 .extend(observer.creation_null_assignments);
+            self.creation_false_assignments
+                .extend(observer.creation_false_assignments);
         }
         function.visit_children_with(self);
     }
@@ -2140,6 +2174,7 @@ struct TemplateCallObserver<'a> {
     saw_creation_anchor: bool,
     observations: Vec<TemplateCallObservation>,
     creation_null_assignments: Vec<CreationNullAssignmentObservation>,
+    creation_false_assignments: Vec<CreationFalseAssignmentObservation>,
     view_id: usize,
     next_call_order: usize,
 }
@@ -2209,6 +2244,18 @@ impl TemplateCallObserver<'_> {
                         self.next_call_order += 1;
                         self.creation_null_assignments
                             .push(CreationNullAssignmentObservation {
+                                target,
+                                view_id: self.view_id,
+                                operation_order,
+                            });
+                    }
+                    if let Some(target) =
+                        boolean_member_assignment_target(assignment, false, self.unresolved_ctxt)
+                    {
+                        let operation_order = self.next_call_order;
+                        self.next_call_order += 1;
+                        self.creation_false_assignments
+                            .push(CreationFalseAssignmentObservation {
                                 target,
                                 view_id: self.view_id,
                                 operation_order,
@@ -2831,6 +2878,7 @@ fn infer_styling_map_family(
 fn infer_i18n_role_family(
     function_index: &RuntimeFunctionIndex<'_>,
     observations: &HashMap<SymbolIdentity, Vec<TemplateCallObservation>>,
+    creation_false_assignments: &[CreationFalseAssignmentObservation],
 ) -> Vec<(SymbolIdentity, &'static str)> {
     let mut inferred = Vec::new();
     for (identity, calls_in_templates) in observations {
@@ -2871,6 +2919,85 @@ fn infer_i18n_role_family(
             inferred.push((start.callee.clone(), "ɵɵi18nStart"));
             inferred.push((end.callee.clone(), "ɵɵi18nEnd"));
         }
+    }
+
+    let mut calls_by_definition = HashMap::<SymbolIdentity, Vec<&TemplateCallObservation>>::new();
+    for (identity, calls) in observations {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        calls_by_definition
+            .entry(definition.identity.clone())
+            .or_default()
+            .extend(calls);
+    }
+
+    let mut starts_by_target = HashMap::<SymbolIdentity, HashSet<SymbolIdentity>>::new();
+    for (identity, calls) in &calls_by_definition {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(target) = optimized_i18n_start_target(definition) else {
+            continue;
+        };
+        if !optimized_i18n_creation_calls(calls) {
+            continue;
+        }
+        starts_by_target
+            .entry(target)
+            .or_default()
+            .insert(definition.identity.clone());
+    }
+
+    for (target, starts) in &starts_by_target {
+        let Some(start) = unique_identity(starts) else {
+            continue;
+        };
+        let Some(calls) = calls_by_definition.get(start) else {
+            continue;
+        };
+        if calls.iter().any(|call| {
+            creation_false_assignments.iter().any(|assignment| {
+                assignment.target == *target
+                    && assignment.view_id == call.view_id
+                    && assignment.operation_order > call.call_order
+            })
+        }) {
+            inferred.push((start.clone(), "ɵɵi18nStart"));
+        }
+    }
+
+    for (identity, calls) in &calls_by_definition {
+        let Some(definition) = function_index.unique(identity) else {
+            continue;
+        };
+        let Some(parameters) = plain_parameter_bindings(definition) else {
+            continue;
+        };
+        if !matches!(parameters.len(), 2 | 3) || !optimized_i18n_creation_calls(calls) {
+            continue;
+        }
+        let Some(end_assignment) = unique_boolean_member_assignment(definition, false) else {
+            continue;
+        };
+        let direct = direct_calls(definition);
+        let [start_call] = direct.as_slice() else {
+            continue;
+        };
+        if start_call.callee == definition.identity
+            || !forwards_parameters(start_call, &parameters)
+            || start_call.span.lo >= end_assignment.span.lo
+        {
+            continue;
+        }
+        let Some(start_definition) = function_index.unique(&start_call.callee) else {
+            continue;
+        };
+        if optimized_i18n_start_target(start_definition).as_ref() != Some(&end_assignment.target) {
+            continue;
+        }
+        inferred.push((definition.identity.clone(), "ɵɵi18n"));
+        inferred.push((start_definition.identity.clone(), "ɵɵi18nStart"));
     }
 
     let apply_candidates = observations
@@ -2924,6 +3051,162 @@ fn infer_i18n_role_family(
     }
 
     inferred
+}
+
+fn optimized_i18n_creation_calls(calls: &[&TemplateCallObservation]) -> bool {
+    !calls.is_empty()
+        && calls.iter().all(|observation| {
+            observation.usage == TemplateCallUsage::Effect
+                && observation.phase == 1
+                && matches!(observation.arguments.len(), 2 | 3)
+                && observation
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+                && observation
+                    .arguments
+                    .get(1)
+                    .is_some_and(|argument| is_nonnegative_integer(argument.as_ref()))
+        })
+}
+
+fn optimized_i18n_start_target(definition: &RuntimeFunction) -> Option<SymbolIdentity> {
+    let parameters = plain_parameter_bindings(definition)?;
+    if !matches!(parameters.len(), 2 | 3)
+        || direct_calls(definition).len() < 5
+        || !block_contains_loop(&definition.body)
+        || !block_contains_binding(&definition.body, &parameters[1])
+        || !reassigns_binding_with_literal_offset(&definition.body, &parameters[0], 27)
+    {
+        return None;
+    }
+    unique_boolean_member_assignment(definition, true).map(|assignment| assignment.target)
+}
+
+fn reassigns_binding_with_literal_offset(
+    body: &BlockStmt,
+    binding: &BindingKey,
+    offset: isize,
+) -> bool {
+    struct Finder<'a> {
+        binding: &'a BindingKey,
+        offset: isize,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if assignment.op == AssignOp::Assign
+                && matches!(
+                    &assignment.left,
+                    AssignTarget::Simple(SimpleAssignTarget::Ident(target))
+                        if binding_key(&target.id) == *self.binding
+                )
+                && expression_is_binding_plus_literal(
+                    assignment.right.as_ref(),
+                    self.binding,
+                    self.offset,
+                )
+            {
+                self.found = true;
+                return;
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut finder = Finder {
+        binding,
+        offset,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
+}
+
+fn expression_is_binding_plus_literal(
+    expression: &Expr,
+    binding: &BindingKey,
+    offset: isize,
+) -> bool {
+    let Expr::Bin(binary) = strip_parentheses(expression) else {
+        return false;
+    };
+    if binary.op != BinaryOp::Add {
+        return false;
+    }
+    let operands_match = |binding_expression: &Expr, offset_expression: &Expr| {
+        expression_is_binding(binding_expression, binding)
+            && numeric_expression_value(offset_expression) == Some(offset as f64)
+    };
+    operands_match(binary.left.as_ref(), binary.right.as_ref())
+        || operands_match(binary.right.as_ref(), binary.left.as_ref())
+}
+
+struct BooleanMemberAssignment {
+    target: SymbolIdentity,
+    span: Span,
+}
+
+fn unique_boolean_member_assignment(
+    definition: &RuntimeFunction,
+    expected: bool,
+) -> Option<BooleanMemberAssignment> {
+    struct Collector {
+        unresolved_ctxt: SyntaxContext,
+        expected: bool,
+        assignments: Vec<BooleanMemberAssignment>,
+    }
+
+    impl Visit for Collector {
+        fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+            if let Some(target) =
+                boolean_member_assignment_target(assignment, self.expected, self.unresolved_ctxt)
+            {
+                self.assignments.push(BooleanMemberAssignment {
+                    target,
+                    span: assignment.span,
+                });
+            }
+            assignment.visit_children_with(self);
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+    }
+
+    let mut collector = Collector {
+        unresolved_ctxt: definition.unresolved_ctxt,
+        expected,
+        assignments: Vec::new(),
+    };
+    definition.body.visit_with(&mut collector);
+    let [assignment] = collector.assignments.as_slice() else {
+        return None;
+    };
+    Some(BooleanMemberAssignment {
+        target: assignment.target.clone(),
+        span: assignment.span,
+    })
+}
+
+pub(super) fn boolean_member_assignment_target(
+    assignment: &AssignExpr,
+    expected: bool,
+    unresolved_ctxt: SyntaxContext,
+) -> Option<SymbolIdentity> {
+    if assignment.op != AssignOp::Assign || !is_boolean_value(assignment.right.as_ref(), expected) {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left else {
+        return None;
+    };
+    symbol_identity(&Expr::Member(member.clone()), unresolved_ctxt)
 }
 
 fn infer_two_way_role_family(
@@ -6881,6 +7164,7 @@ fn statement_can_fall_through(statement: &Stmt) -> bool {
 struct DirectCall {
     callee: SymbolIdentity,
     arguments: Vec<Box<Expr>>,
+    span: Span,
 }
 
 fn is_member_call_named(call: &DirectCall, expected: &str) -> bool {
@@ -6919,6 +7203,7 @@ impl Visit for DirectCallCollector {
                     .iter()
                     .map(|argument| argument.expr.clone())
                     .collect(),
+                span: call.span,
             });
         }
     }
