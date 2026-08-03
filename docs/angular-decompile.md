@@ -390,10 +390,16 @@ function bindings are expanded only when the callback and value arity are
 proven and the callback body can be substituted safely. Otherwise the runtime
 operation remains explicit unsupported output. Basic i18n recovery is
 similarly bounded to a uniquely resolved static/interpolated message and a
-valid containing element. A structural region may contain balanced element
-start/end markers and interpolation placeholders; ICU expressions,
-sub-template opcodes, unbalanced markers, and ambiguous message factories
-remain partial.
+valid containing element. Closure-specialized creation helpers additionally
+require Angular's header-offset, message-parser loop, and shared active-state
+contract. A two- or three-parameter whole-message wrapper must forward every
+parameter to that start helper before clearing the same state member. When
+Closure inlines the end operation into a template, only a later clear of that
+exact member closes the region; an immediately adjacent start is restored as
+the original whole-message instruction. A structural region may contain
+balanced element start/end markers and interpolation placeholders; ICU
+expressions, sub-template opcodes, unbalanced markers, and ambiguous message
+factories remain partial.
 
 The base `ɵɵpropertyInterpolate` instruction is also distinct from an ordinary
 property binding because interpolation stringifies its value. A Closure-
