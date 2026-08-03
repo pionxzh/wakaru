@@ -193,7 +193,8 @@ fn recovers_components_after_rooted_closure_advanced() {
 #[test]
 fn infers_structural_roles_after_minimally_rooted_closure_advanced() {
     assert_production_artifact(CLOSURE_ADVANCED_STRUCTURAL);
-    assert!(CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
+    assert!(!CLOSURE_ADVANCED_STRUCTURAL.contains("ɵɵdefineComponent"));
+    assert!(!CLOSURE_ADVANCED_STRUCTURAL.contains("__wakaruIvyRuntime"));
     for omitted_role in [
         "ɵɵariaProperty",
         "ɵɵattribute",

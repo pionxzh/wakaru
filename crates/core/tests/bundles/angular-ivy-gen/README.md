@@ -14,9 +14,9 @@ The pinned Angular CLI application produces:
 - `dist/closure-advanced.js` — a separate producer entry passed through
   Closure Compiler `ADVANCED` with explicit retained roots and externs;
 - `dist/closure-advanced-structural.js` — a minimally rooted `ADVANCED`
-  profile that preserves the component definition role by name but requires
-  template instruction roles to be inferred from renamed runtime bodies and
-  their use in compiled templates;
+  profile that requires both the component definition role and template
+  instruction roles to be inferred from renamed runtime bodies and their use
+  in compiled templates;
 - `dist/template-constructs.js` — direct full-AOT Angular compiler output for
   isolated flat bindings and nested template constructs;
 - `dist/template-constructs-assignment.js` — the same direct compiler output
@@ -95,11 +95,12 @@ runtime functions used by the templates. The compiler input is not rewritten.
 
 The structural `ADVANCED` fixture is built from
 `src/advanced-structural-main.ts`. It keeps the same component roots but
-exports only `ɵɵdefineComponent` by canonical name. An otherwise anonymous
-control-flow runtime root keeps Angular's generic first-call/continuation
-template helper family observable. Wakaru must identify that family from
-template argument shape, the returned self-continuation, and shared
-parameter-forwarding behavior.
+does not export `ɵɵdefineComponent` or any template instruction by canonical
+name. An otherwise anonymous control-flow runtime root keeps Angular's generic
+first-call/continuation template helper family observable. Wakaru must identify
+the component-definition builder from Angular's descriptor construction and
+that template family from argument shape, the returned self-continuation, and
+shared parameter-forwarding behavior.
 
 The structural components require Closure-renamed roles to be recovered from
 runtime contracts and template use. They cover conditional and property

@@ -30,7 +30,6 @@ import {
   ɵɵelementContainer,
   ɵɵelementContainerEnd,
   ɵɵelementContainerStart,
-  ɵɵdefineComponent,
   ɵɵgetCurrentView,
   ɵɵi18n,
   ɵɵi18nApply,
@@ -65,7 +64,6 @@ import { LazyCardComponent } from './app/lazy-card.component';
 const producerGlobal = globalThis as typeof globalThis & {
   __wakaruAngularDefinitions?: unknown[];
   __wakaruAngularRoots?: unknown[];
-  __wakaruIvyRuntime?: Record<string, unknown>;
   __wakaruStructuralRuntime?: unknown[];
 };
 
@@ -554,9 +552,6 @@ producerGlobal.__wakaruAngularDefinitions = [
     }
   ).ɵcmp,
 ];
-producerGlobal.__wakaruIvyRuntime = {
-  'ɵɵdefineComponent': ɵɵdefineComponent,
-};
 producerGlobal.__wakaruStructuralRuntime = [
   ɵɵanimateEnter,
   ɵɵanimateEnterListener,
