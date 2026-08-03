@@ -4865,6 +4865,33 @@ fn infers_optimized_projection_family_and_rejects_unpaired_lookalikes() {
     assert!(lookalike
         .source
         .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+
+    let specialized_source = source
+        .replacen(
+            "runtime.projection = function(index, selector = 0, attributes)",
+            "runtime.projection = function(index, selector = 0)",
+            1,
+        )
+        .replacen("attributes || null", "null", 1);
+    let specialized_report =
+        analyze_angular_components_from_js(&specialized_source, AngularRecoveryOptions::default())
+            .expect("Closure-specialized projection helpers should remain analyzable");
+    let specialized_projection = specialized_report
+        .components
+        .iter()
+        .find(|component| component.selector == "optimized-projection")
+        .expect("the Closure-specialized projection component should recover");
+
+    assert_eq!(
+        specialized_projection.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        specialized_projection.issues,
+        specialized_projection.source,
+    );
+    assert!(specialized_projection
+        .source
+        .contains("<section>\n      <ng-content />\n    </section>"));
 }
 
 #[test]
