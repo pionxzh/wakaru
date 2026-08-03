@@ -84,6 +84,7 @@ fn analyze_scope_hoist(body: &[ModuleItem]) -> Option<ScopeHoistPlan> {
     // Phase 3: cluster via union-find.
     let mut uf = UnionFind::new(items.len());
     apply_merge_signals(&items, &graph, &mut uf);
+    merge_cross_item_writes(&graph, &mut uf);
 
     // Phase 4: extract the finest useful clusters and identify the entry.
     let clusters = extract_clusters(&items, &mut uf);
@@ -203,6 +204,7 @@ fn debug_clusters(source: &str) -> Vec<(Vec<String>, bool)> {
 struct TopLevelItem {
     declared_names: Vec<Atom>,
     referenced_names: HashSet<Atom>,
+    written_names: HashSet<Atom>,
     is_module_decl: bool,
 }
 
@@ -210,31 +212,38 @@ fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
     body.iter()
         .map(|item| {
             let declared_names = module_item_declared_names(item);
-            let referenced_names = item_referenced_names(item, &declared_names);
+            let (referenced_names, written_names) =
+                item_referenced_and_written_names(item, &declared_names);
             let is_module_decl = matches!(item, ModuleItem::ModuleDecl(_));
             TopLevelItem {
                 declared_names,
                 referenced_names,
+                written_names,
                 is_module_decl,
             }
         })
         .collect()
 }
 
-fn item_referenced_names(item: &ModuleItem, own_names: &[Atom]) -> HashSet<Atom> {
+fn item_referenced_and_written_names(
+    item: &ModuleItem,
+    own_names: &[Atom],
+) -> (HashSet<Atom>, HashSet<Atom>) {
     let own: HashSet<&Atom> = own_names.iter().collect();
     let mut collector = RefCollector {
         refs: HashSet::new(),
+        writes: HashSet::new(),
         own_names: &own,
         block_bindings: HashSet::new(),
         var_bindings: HashSet::new(),
     };
     item.visit_with(&mut collector);
-    collector.refs
+    (collector.refs, collector.writes)
 }
 
 struct RefCollector<'a> {
     refs: HashSet<Atom>,
+    writes: HashSet<Atom>,
     own_names: &'a HashSet<&'a Atom>,
     /// Block-scoped bindings (let/const, params, catch). Saved/restored on
     /// block and function boundaries.
@@ -248,6 +257,82 @@ impl RefCollector<'_> {
     fn is_local(&self, sym: &Atom) -> bool {
         self.block_bindings.contains(sym) || self.var_bindings.contains(sym)
     }
+
+    fn record_write(&mut self, ident: &Ident) {
+        if !self.own_names.contains(&ident.sym) && !self.is_local(&ident.sym) {
+            self.refs.insert(ident.sym.clone());
+            self.writes.insert(ident.sym.clone());
+        }
+    }
+
+    fn visit_assignment_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Ident(ident) => self.record_write(ident),
+            Expr::Paren(paren) => self.visit_assignment_expr(&paren.expr),
+            Expr::TsAs(ts_as) => self.visit_assignment_expr(&ts_as.expr),
+            Expr::TsSatisfies(ts_satisfies) => self.visit_assignment_expr(&ts_satisfies.expr),
+            Expr::TsNonNull(ts_non_null) => self.visit_assignment_expr(&ts_non_null.expr),
+            Expr::TsTypeAssertion(ts_assertion) => self.visit_assignment_expr(&ts_assertion.expr),
+            Expr::TsInstantiation(ts_instantiation) => {
+                self.visit_assignment_expr(&ts_instantiation.expr)
+            }
+            _ => expr.visit_with(self),
+        }
+    }
+
+    fn visit_assignment_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.record_write(&binding.id),
+            Pat::Array(array) => {
+                for element in array.elems.iter().flatten() {
+                    self.visit_assignment_pat(element);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(key_value) => {
+                            if let PropName::Computed(computed) = &key_value.key {
+                                computed.visit_with(self);
+                            }
+                            self.visit_assignment_pat(&key_value.value);
+                        }
+                        ObjectPatProp::Assign(assign) => {
+                            self.record_write(&assign.key);
+                            assign.value.visit_with(self);
+                        }
+                        ObjectPatProp::Rest(rest) => self.visit_assignment_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Assign(assign) => {
+                self.visit_assignment_pat(&assign.left);
+                assign.right.visit_with(self);
+            }
+            Pat::Rest(rest) => self.visit_assignment_pat(&rest.arg),
+            Pat::Expr(expr) => self.visit_assignment_expr(expr),
+            Pat::Invalid(_) => {}
+        }
+    }
+
+    fn visit_assignment_target(&mut self, target: &AssignTarget) {
+        match target {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+                self.record_write(&binding.id)
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Paren(paren)) => {
+                self.visit_assignment_expr(&paren.expr)
+            }
+            AssignTarget::Simple(simple) => simple.visit_children_with(self),
+            AssignTarget::Pat(AssignTargetPat::Array(array)) => {
+                self.visit_assignment_pat(&Pat::Array(array.clone()))
+            }
+            AssignTarget::Pat(AssignTargetPat::Object(object)) => {
+                self.visit_assignment_pat(&Pat::Object(object.clone()))
+            }
+            AssignTarget::Pat(AssignTargetPat::Invalid(_)) => {}
+        }
+    }
 }
 
 impl Visit for RefCollector<'_> {
@@ -255,6 +340,15 @@ impl Visit for RefCollector<'_> {
         if !self.own_names.contains(&ident.sym) && !self.is_local(&ident.sym) {
             self.refs.insert(ident.sym.clone());
         }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        self.visit_assignment_target(&assign.left);
+        assign.right.visit_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        self.visit_assignment_expr(&update.arg);
     }
 
     fn visit_var_decl(&mut self, decl: &VarDecl) {
@@ -357,7 +451,10 @@ impl Visit for RefCollector<'_> {
 
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
         let outer = self.block_bindings.clone();
-        stmt.left.visit_with(self);
+        match &stmt.left {
+            ForHead::Pat(pat) => self.visit_assignment_pat(pat),
+            _ => stmt.left.visit_with(self),
+        }
         stmt.right.visit_with(self);
         stmt.body.visit_with(self);
         self.block_bindings = outer;
@@ -365,7 +462,10 @@ impl Visit for RefCollector<'_> {
 
     fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
         let outer = self.block_bindings.clone();
-        stmt.left.visit_with(self);
+        match &stmt.left {
+            ForHead::Pat(pat) => self.visit_assignment_pat(pat),
+            _ => stmt.left.visit_with(self),
+        }
         stmt.right.visit_with(self);
         stmt.body.visit_with(self);
         self.block_bindings = outer;
@@ -841,6 +941,7 @@ impl VisitMut for DefaultInteropMemberRewriter<'_> {
 struct ReferenceGraph {
     references: Vec<HashSet<usize>>,
     referenced_by: Vec<HashSet<usize>>,
+    writes: Vec<HashSet<usize>>,
 }
 
 fn build_reference_graph(items: &[TopLevelItem]) -> ReferenceGraph {
@@ -854,6 +955,7 @@ fn build_reference_graph(items: &[TopLevelItem]) -> ReferenceGraph {
     let n = items.len();
     let mut references = vec![HashSet::new(); n];
     let mut referenced_by = vec![HashSet::new(); n];
+    let mut writes = vec![HashSet::new(); n];
 
     for (idx, item) in items.iter().enumerate() {
         for ref_name in &item.referenced_names {
@@ -864,11 +966,19 @@ fn build_reference_graph(items: &[TopLevelItem]) -> ReferenceGraph {
                 }
             }
         }
+        for written_name in &item.written_names {
+            if let Some(&target_idx) = name_to_item.get(written_name) {
+                if target_idx != idx {
+                    writes[idx].insert(target_idx);
+                }
+            }
+        }
     }
 
     ReferenceGraph {
         references,
         referenced_by,
+        writes,
     }
 }
 
@@ -910,6 +1020,17 @@ impl UnionFind {
         } else {
             self.parent[rb] = ra;
             self.rank[ra] += 1;
+        }
+    }
+}
+
+/// ESM imports are immutable bindings. If one planned cluster writes a binding
+/// declared by another, emitting that edge as an import would produce invalid
+/// JavaScript. Keep each writer with the item that owns the mutable binding.
+fn merge_cross_item_writes(graph: &ReferenceGraph, uf: &mut UnionFind) {
+    for (writer, targets) in graph.writes.iter().enumerate() {
+        for &target in targets {
+            uf.union(writer, target);
         }
     }
 }

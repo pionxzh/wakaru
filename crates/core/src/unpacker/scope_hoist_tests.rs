@@ -81,6 +81,42 @@ fn splits_independent_groups() {
 }
 
 #[test]
+fn writer_stays_with_mutable_top_level_binding() {
+    let input = r#"
+        var state = 0;
+        function readState() { return state; }
+        function formatState() { return `state:${readState()}`; }
+        function stateIsEven() { return readState() % 2 === 0; }
+        function stateLabel() { return stateIsEven() ? formatState() : "odd"; }
+
+        function increment() { state++; }
+        function incrementTwice() { increment(); increment(); }
+        function updateState() { incrementTwice(); }
+        function runUpdate() { updateState(); }
+        function reportUpdate() { runUpdate(); return "updated"; }
+
+        function helperA1() { return 1; }
+        function helperA2() { return helperA1() + 1; }
+        function helperA3() { return helperA2() * 2; }
+        function helperA4() { return helperA3() + 3; }
+        function publicA() { return helperA4(); }
+
+        console.log(stateLabel(), reportUpdate(), publicA());
+    "#;
+
+    let modules = split(input).expect("the independent reader group should still allow a split");
+    let writer = modules
+        .iter()
+        .find(|(_, code, _)| code.contains("state++"))
+        .expect("one output should retain the state write");
+    assert!(
+        writer.1.contains("var state"),
+        "the writer must stay in the module that declares the mutable binding, not import it:\n{}",
+        writer.1
+    );
+}
+
+#[test]
 fn cluster_filename_dedup_is_case_insensitive() {
     let mut seen = HashSet::new();
     assert_eq!(
