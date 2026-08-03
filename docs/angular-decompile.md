@@ -286,9 +286,11 @@ Closure-renamed content-projection helpers are inferred as a pair rather than
 from arity alone. The `ɵɵprojectionDef` side must build and traverse projection
 buckets in creation phase, while the `ɵɵprojection` side must assign its
 default-zero selector parameter to the same runtime member property. This
-shared property relationship survives Closure property renaming. Both the
-three-parameter runtime form and the six-parameter fallback-template form are
-supported; an unpaired helper with the same call count remains unknown.
+shared property relationship survives Closure property renaming. The ordinary
+three-parameter runtime form, the six-parameter fallback-template form, and
+Closure's two-parameter specialization produced by removing unused fallback
+arguments are all supported; an unpaired helper with the same call count
+remains unknown.
 
 Closure can similarly specialize `ɵɵreference(slot)` around a view-slot read.
 The specialized form is accepted only with proven update-phase initializer
