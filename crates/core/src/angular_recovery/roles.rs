@@ -445,6 +445,7 @@ pub(super) struct IvyRoleTable {
     query_initializer_roles: HashMap<SymbolIdentity, QueryInitializerRole>,
     core_namespaces: HashSet<BindingKey>,
     namespace_state_targets: HashSet<SymbolIdentity>,
+    i18n_state_targets: HashSet<SymbolIdentity>,
     alias_groups: Vec<Vec<SymbolIdentity>>,
     alias_group_by_symbol: HashMap<SymbolIdentity, usize>,
     class_api_argument_alias_groups: HashSet<usize>,
@@ -498,6 +499,7 @@ impl IvyRoleTable {
         table.propagate_aliases();
         table.namespace_state_targets =
             structural_evidence.inferred_namespace_state_targets(&table);
+        table.i18n_state_targets = structural_evidence.inferred_i18n_state_targets(&table);
         table
     }
 
@@ -918,6 +920,15 @@ impl IvyRoleTable {
         };
         symbol_identity(&Expr::Member(member.clone()), unresolved_ctxt)
             .is_some_and(|target| self.namespace_state_targets.contains(&target))
+    }
+
+    pub(super) fn is_i18n_end_assignment(
+        &self,
+        assignment: &AssignExpr,
+        unresolved_ctxt: SyntaxContext,
+    ) -> bool {
+        structural::boolean_member_assignment_target(assignment, false, unresolved_ctxt)
+            .is_some_and(|target| self.i18n_state_targets.contains(&target))
     }
 
     pub(super) fn is_known_runtime_member(

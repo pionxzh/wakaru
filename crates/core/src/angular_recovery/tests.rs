@@ -8426,6 +8426,143 @@ fn infers_container_i18n_and_binding_families_from_renamed_runtime_shapes() {
 }
 
 #[test]
+fn infers_closure_specialized_i18n_creation_helpers_and_inline_ends() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        runtime.i18nStart = function(index, message) {
+            const view = currentView();
+            index = 27 + index;
+            const value = lookupMessage(view, message);
+            const operations = [];
+            for (let cursor = 0; cursor < value.length; cursor++) {
+                operations.push(parseMessage(value[cursor]));
+            }
+            allocateNode(view, index);
+            storeOperations(view, index, operations);
+            renderOperations(view, operations);
+            attachNodes(view, index);
+            runtime.state.i18n = true;
+        };
+        runtime.i18n = function(index, message) {
+            runtime.i18nStart(index, message);
+            runtime.state.i18n = false;
+        };
+        runtime.reordered = function(index, message) {
+            runtime.state.i18n = false;
+            runtime.i18nStart(index, message);
+        };
+
+        class SpecializedI18nComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: SpecializedI18nComponent,
+                selectors: [["specialized-i18n"]],
+                consts: ["Whole message"],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        runtime.i18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+
+        class InlinedI18nEndComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: InlinedI18nEndComponent,
+                selectors: [["inlined-i18n-end"]],
+                consts: ["Inlined message"],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        runtime.i18nStart(1, 0);
+                        runtime.state.i18n = false;
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+
+        class StructuralI18nEndComponent {
+            name = "reader";
+
+            static compiled = core.ɵɵdefineComponent({
+                type: StructuralI18nEndComponent,
+                selectors: [["structural-i18n-end"]],
+                consts: ["Hello \uFFFD#2\uFFFD\uFFFD0\uFFFD\uFFFD/#2\uFFFD!"],
+                template: function(renderFlags, context) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        runtime.i18nStart(1, 0);
+                        core.ɵɵelement(2, "strong");
+                        runtime.state.i18n = false;
+                        core.ɵɵelementEnd();
+                    }
+                    if (renderFlags & 2) {
+                        core.ɵɵadvance(2);
+                        core.ɵɵi18nExp(context.name);
+                        core.ɵɵi18nApply(1);
+                    }
+                },
+            });
+        }
+
+        class ReorderedI18nLookalikeComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: ReorderedI18nLookalikeComponent,
+                selectors: [["reordered-i18n-lookalike"]],
+                consts: ["Not proven"],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        runtime.reordered(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("Closure-specialized i18n helpers should remain analyzable");
+    let by_selector = report
+        .components
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+
+    for (selector, expected) in [
+        ("specialized-i18n", "<p i18n>Whole message</p>"),
+        ("inlined-i18n-end", "<p i18n>Inlined message</p>"),
+        (
+            "structural-i18n-end",
+            "<p i18n>\n      Hello <strong>{{ name }}</strong>!\n    </p>",
+        ),
+    ] {
+        let component = by_selector[selector];
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains(expected), "{}", component.source);
+        assert_eq!(
+            component.stats.runtime_calls_observed,
+            component.stats.rendered_instruction_calls,
+        );
+    }
+
+    let lookalike = by_selector["reordered-i18n-lookalike"];
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
 fn selects_a_unique_direct_expression_i18n_constant_factory() {
     let source = r#"
         import {
