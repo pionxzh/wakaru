@@ -2090,6 +2090,104 @@ fn infers_a_component_helper_after_object_merge_lowering() {
 }
 
 #[test]
+fn infers_a_component_helper_from_a_renamed_angular_descriptor_builder() {
+    let source = r#"
+        const runtime = {};
+        runtime.component = function(definition) {
+            return noSideEffects(() => {
+                const base = directiveDefinition(definition);
+                const result = Object.assign({}, base, {
+                    a: definition.a,
+                    b: definition.b,
+                    c: definition.c,
+                    d: definition.d || null,
+                    e: definition.e,
+                    f: definition.f !== 1,
+                    g: null,
+                    h: null,
+                    dependencies: base.i && definition.dependencies || null,
+                    j: null,
+                    k: null,
+                    l: definition.l ?? false,
+                    data: definition.data || {},
+                    m: definition.m || 0,
+                    n: definition.n || emptyArray,
+                    o: null,
+                    schemas: definition.schemas || null,
+                    p: null,
+                    id: "",
+                });
+                if (base.i) markFeature("NgStandalone");
+                initFeatures(result);
+                const dependencies = definition.dependencies;
+                result.g = extractDefinitions(dependencies, directiveDefinition);
+                result.h = extractDefinitions(dependencies, pipeDefinition);
+                result.id = componentId(result);
+                return result;
+            });
+        };
+        runtime.element = function(index, name, attrs, refs) {
+            createElement(index, name, attrs, refs);
+            return runtime.element;
+        };
+        const publicRuntime = {
+            "ɵɵelement": runtime.element,
+        };
+
+        class RenamedDescriptorComponent {}
+        RenamedDescriptorComponent.compiled = runtime.component({
+            type: RenamedDescriptorComponent,
+            a: 1,
+            b: 0,
+            c: function(renderFlags) {
+                if (renderFlags & 1) runtime.element(0, "section");
+            },
+            q: [["renamed-descriptor-card"]],
+            n: ["section { display: block; }"],
+        });
+        void publicRuntime;
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a renamed Angular descriptor builder should parse");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].selector, "renamed-descriptor-card");
+    assert!(recovered[0].source.contains("<section></section>"));
+    assert!(recovered[0].source.contains("section { display: block; }"));
+}
+
+#[test]
+fn rejects_a_small_descriptor_normalizer_with_angular_field_names() {
+    let source = r#"
+        const runtime = {};
+        runtime.normalize = function(config) {
+            return noSideEffects(() => Object.assign({}, baseConfig, {
+                dependencies: config.dependencies,
+                data: config.data || {},
+                schemas: config.schemas || null,
+                id: "",
+                first: null,
+                second: null,
+                third: null,
+                fourth: null,
+            }));
+        };
+
+        class UnrelatedConfig {}
+        UnrelatedConfig.value = runtime.normalize({
+            type: UnrelatedConfig,
+            selectors: [["not-an-angular-component"]],
+            template: function() {},
+        });
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a small descriptor normalizer should parse");
+    assert!(recovered.is_empty());
+}
+
+#[test]
 fn infers_a_specialized_element_pair_from_proven_template_use() {
     let source = r#"
         runtime.component = function(definition) {
