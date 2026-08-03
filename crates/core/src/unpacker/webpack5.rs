@@ -1584,12 +1584,16 @@ fn extract_webpack5_modules_with_plan(
         false
     } else if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
         let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
+        let require_sym = match require_plan.as_ref() {
+            Some(RequireFnPlan::Declared { sym, .. }) => sym.clone(),
+            _ => Atom::from("__webpack_require__"),
+        };
         let code = emit_webpack5_entry_module(
             entry_body,
             cm.clone(),
             &id_to_filename,
             &str_id_to_filename,
-            Atom::from("__webpack_require__"),
+            require_sym,
             Some(Atom::from("__webpack_exports__")),
         );
         append_synthetic_entry(&mut modules, &mut prepared, entry_ranges, code)
@@ -3813,6 +3817,40 @@ const modules = Array(4).concat([
                 .iter()
                 .any(|module| module.filename == "entry.js" && module.is_entry),
             "trailing IIFE should become an entry module"
+        );
+    }
+
+    #[test]
+    fn trailing_iife_entry_rewrites_minified_require_binding() {
+        let source = r#"
+(()=>{
+  var e={1:(m,x)=>{m.exports="dep"}},c={};
+  function n(id){
+    var hit=c[id];
+    if(hit!==undefined)return hit.exports;
+    var m=c[id]={exports:{}};
+    e[id](m,m.exports,n);
+    return m.exports;
+  }
+  (()=>{const dep=n(1);console.log(dep)})();
+})();
+"#;
+
+        let result = detect_and_extract(source).expect("minified webpack bundle should unpack");
+        let entry = result
+            .modules
+            .iter()
+            .find(|module| module.filename == "entry.js")
+            .expect("trailing IIFE should become entry.js");
+        assert!(
+            entry.code.contains(r#"require("./module-1.js")"#),
+            "entry require should resolve to the extracted module:\n{}",
+            entry.code
+        );
+        assert!(
+            !entry.code.contains("n(1)"),
+            "entry must not retain the discarded runtime require binding:\n{}",
+            entry.code
         );
     }
 
