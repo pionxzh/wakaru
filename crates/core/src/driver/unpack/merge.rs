@@ -1,9 +1,9 @@
-//! Multi-source merge preparation and numeric webpack module-ID rewriting.
+//! Multi-source merge preparation and cross-input reference rewriting.
 //!
 //! When unpacking multiple input files at once, extracted module filenames are
-//! uniqued across inputs and numeric `require(<id>)` / async-chunk references
-//! are rewritten to the merged output filenames when the target id is
-//! unambiguous across all inputs.
+//! uniqued across inputs. Relative references are updated when that uniquing
+//! renames sibling outputs, and numeric `require(<id>)` / async-chunk
+//! references are rewritten when the target id is unambiguous across inputs.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -23,6 +23,7 @@ use super::super::types::{
     PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput,
     UnpackWarning, UnpackWarningKind,
 };
+use super::filename_recovery::rewrite_import_sources;
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::PreparedModuleAst;
 use crate::unpacker::UnpackedModule;
@@ -119,6 +120,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
+    pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
     pub(super) input: Option<PreparedInputId>,
 }
@@ -130,6 +132,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             numeric_rewrite: None,
+            filename_rewrite: None,
             report_import_cycle_warnings: true,
             input: None,
         }
@@ -144,6 +147,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             numeric_rewrite: None,
+            filename_rewrite: None,
             report_import_cycle_warnings,
             input: None,
         }
@@ -153,6 +157,11 @@ impl PreparedUnpackModule {
 pub(super) struct NumericRewriteModuleContext {
     input_group: String,
     module_filename: String,
+}
+
+pub(super) struct FilenameRewriteModuleContext {
+    original_filename: String,
+    rename_map: Arc<HashMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -172,7 +181,29 @@ pub(super) fn prepare_multi_source_modules(
 ) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
     let span = tracing::info_span!("prepare_multi_source_modules", count = modules.len());
     let _enter = span.enter();
+    let original_filenames = modules
+        .iter()
+        .map(|module| module.module.filename.clone())
+        .collect::<Vec<_>>();
     assign_unique_module_filenames(&mut modules);
+    let mut filename_maps = HashMap::<PreparedInputId, HashMap<String, String>>::new();
+    for (module, original_filename) in modules.iter().zip(&original_filenames) {
+        if let Some(input) = module.input {
+            filename_maps
+                .entry(input)
+                .or_default()
+                .insert(original_filename.clone(), module.module.filename.clone());
+        }
+    }
+    filename_maps.retain(|_, rename_map| {
+        rename_map
+            .iter()
+            .any(|(original, final_name)| original != final_name)
+    });
+    let filename_maps = filename_maps
+        .into_iter()
+        .map(|(input, rename_map)| (input, Arc::new(rename_map)))
+        .collect::<HashMap<_, _>>();
     let numeric_rewrite_plan = NumericRewritePlan {
         plain_id_to_filename: unique_numeric_module_id_map(&modules),
         chunk_id_to_filename: unique_numeric_chunk_module_id_map(&modules),
@@ -181,7 +212,8 @@ pub(super) fn prepare_multi_source_modules(
 
     let modules = modules
         .into_iter()
-        .map(|module| {
+        .zip(original_filenames)
+        .map(|(module, original_filename)| {
             let numeric_rewrite = if has_rewrites && module.allow_cross_chunk_rewrite {
                 Some(NumericRewriteModuleContext {
                     input_group: module.input_group,
@@ -190,10 +222,20 @@ pub(super) fn prepare_multi_source_modules(
             } else {
                 None
             };
+            let filename_rewrite = module.input.and_then(|input| {
+                filename_maps
+                    .get(&input)
+                    .cloned()
+                    .map(|rename_map| FilenameRewriteModuleContext {
+                        original_filename,
+                        rename_map,
+                    })
+            });
             PreparedUnpackModule {
                 module: module.module,
                 prepared: module.prepared,
                 numeric_rewrite,
+                filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,
                 input: module.input,
             }
@@ -201,6 +243,22 @@ pub(super) fn prepare_multi_source_modules(
         .collect();
 
     (modules, numeric_rewrite_plan)
+}
+
+pub(super) fn apply_filename_rewrites(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    context: Option<&FilenameRewriteModuleContext>,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    rewrite_import_sources(
+        module,
+        &context.original_filename,
+        &context.rename_map,
+        unresolved_mark,
+    );
 }
 
 fn assign_unique_module_filenames(modules: &mut [MultiSourceModule]) {
@@ -341,7 +399,11 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
 ) -> Result<PreparedUnpackOutput> {
-    if numeric_rewrite_plan.is_empty() {
+    if numeric_rewrite_plan.is_empty()
+        && modules
+            .iter()
+            .all(|module| module.filename_rewrite.is_none())
+    {
         return Ok(PreparedUnpackOutput {
             modules: modules
                 .into_iter()
@@ -376,6 +438,11 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                 let unresolved_mark = Mark::new();
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_filename_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.filename_rewrite.as_ref(),
+                );
                 apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,
@@ -398,7 +465,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                     let warning = UnpackWarning::new(
                         unpacked.module.filename.clone(),
                         UnpackWarningKind::RawNormalizationFailed,
-                        format!("raw numeric rewrite failed, preserving unparsed code: {e}"),
+                        format!("raw reference rewrite failed, preserving unparsed code: {e}"),
                     );
                     (
                         PreparedModuleOutput {

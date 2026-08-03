@@ -26,7 +26,9 @@ use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, I
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
 };
-use super::merge::{apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule};
+use super::merge::{
+    apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
+};
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
@@ -226,6 +228,11 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
+            apply_filename_rewrites(
+                &mut module,
+                unresolved_mark,
+                unpacked.filename_rewrite.as_ref(),
+            );
             apply_numeric_rewrites(
                 &mut module,
                 unresolved_mark,
@@ -530,6 +537,11 @@ pub(super) fn unpack_multi_module_with_plan(
                     module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
                     unresolved_mark
                 };
+                apply_filename_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.filename_rewrite.as_ref(),
+                );
                 apply_numeric_rewrites(
                     &mut module,
                     unresolved_mark,

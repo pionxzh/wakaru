@@ -816,6 +816,78 @@ exports.modules = {
 }
 
 #[test]
+fn scope_hoist_multi_file_rewrites_imports_to_deduplicated_filenames() {
+    fn scope_bundle(offset: usize) -> String {
+        format!(
+            r#"
+function helperA1() {{ return {offset}; }}
+function helperA2() {{ return helperA1() + 1; }}
+function helperA3() {{ return helperA2() * 2; }}
+function helperA4() {{ return helperA3() + 3; }}
+function publicA() {{ return helperA4(); }}
+
+function helperB1() {{ return {offset}0; }}
+function helperB2() {{ return helperB1() + 10; }}
+function helperB3() {{ return helperB2() * 20; }}
+function helperB4() {{ return helperB3() + 30; }}
+function publicB() {{ return helperB4(); }}
+
+const result = publicA() + publicB();
+console.log(result);
+"#
+        )
+    }
+
+    let inputs = || {
+        vec![
+            UnpackInput {
+                filename: "first.js".to_string(),
+                source: scope_bundle(1),
+            },
+            UnpackInput {
+                filename: "second.js".to_string(),
+                source: scope_bundle(2),
+            },
+        ]
+    };
+    let options = DecompileOptions {
+        heuristic_split: true,
+        ..Default::default()
+    };
+    let outputs = [
+        unpack_files(inputs(), options.clone()),
+        unpack_files_raw(inputs(), &options),
+    ];
+
+    for output in outputs {
+        let output = output.expect("both scope-hoisted inputs should unpack together");
+        let filenames = output
+            .modules
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        let second_dependent = output
+            .modules
+            .iter()
+            .find(|(name, _)| name == "chunk_helperB1_2.js")
+            .map(|(_, code)| code)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the second input should receive deduplicated module filenames: {filenames:?}"
+                )
+            });
+        assert!(
+            second_dependent.contains("./chunk_helperA1_2.js"),
+            "second input imports must follow its deduplicated sibling module:\n{second_dependent}"
+        );
+        assert!(
+            !second_dependent.contains("./chunk_helperA1.js"),
+            "second input must not link to the first input's colliding module:\n{second_dependent}"
+        );
+    }
+}
+
+#[test]
 fn webpack5_multi_file_does_not_rewrite_duplicate_bare_require_ids() {
     let entry = r#"
 (() => {
