@@ -102,6 +102,11 @@ the component-definition builder from Angular's descriptor construction and
 that template family from argument shape, the returned self-continuation, and
 shared parameter-forwarding behavior.
 
+The structural root deliberately leaves the i18n creation trio
+(`ɵɵi18n`, `ɵɵi18nStart`, and `ɵɵi18nEnd`) unrooted while retaining the update
+helpers. This lets Closure specialize the creation calls and inline the end
+state transition without making the unrelated update-side fixture unstable.
+
 The structural components require Closure-renamed roles to be recovered from
 runtime contracts and template use. They cover conditional and property
 instructions; attribute/class/style property and whole-map families;

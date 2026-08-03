@@ -246,6 +246,7 @@ struct InstructionCall {
     instruction: IvyInstruction,
     args: Vec<Box<Expr>>,
     result_binding: Option<BindingKey>,
+    counts_as_runtime_call: bool,
     provenance: TemplateOperationProvenance,
 }
 
@@ -1966,6 +1967,7 @@ fn collect_store_let_alias(
                 instruction: IvyInstruction::StoreLet,
                 args: args.iter().map(|argument| argument.expr.clone()).collect(),
                 result_binding: Some(binding_key(binding)),
+                counts_as_runtime_call: true,
                 provenance,
             }),
     );
@@ -2133,6 +2135,7 @@ fn collect_reference_alias(
                 .map(|argument| argument.expr.clone())
                 .collect(),
             result_binding: None,
+            counts_as_runtime_call: true,
             provenance,
         },
         context_depth: program.update_context_depth,
@@ -2185,6 +2188,7 @@ fn collect_reference_candidate_alias(
             instruction: IvyInstruction::Reference,
             args,
             result_binding: None,
+            counts_as_runtime_call: true,
             provenance,
         },
         context_depth: program.update_context_depth,
@@ -2272,6 +2276,35 @@ fn collect_expression(
                     .roles
                     .is_namespace_html_reset_assignment(assignment, environment.unresolved_ctxt)
             {
+                return;
+            }
+            if phase == Some(1)
+                && environment
+                    .roles
+                    .is_i18n_end_assignment(assignment, environment.unresolved_ctxt)
+            {
+                if let Some(previous) = program.create.last_mut() {
+                    if previous.instruction == IvyInstruction::I18nStart
+                        && program.next_operation_index
+                            == previous.provenance.operation_index.saturating_add(1)
+                    {
+                        previous.instruction = IvyInstruction::I18n;
+                        return;
+                    }
+                }
+                let provenance = program.next_operation(
+                    AngularTemplatePhase::Creation,
+                    assignment.span,
+                    None,
+                    environment.source_start_pos,
+                );
+                program.create.push(InstructionCall {
+                    instruction: IvyInstruction::I18nEnd,
+                    args: Vec::new(),
+                    result_binding: None,
+                    counts_as_runtime_call: false,
+                    provenance,
+                });
                 return;
             }
             let pending_alias_binding = match &assignment.left {
@@ -2585,6 +2618,7 @@ fn collect_expression(
                         instruction,
                         args: args.iter().map(|arg| arg.expr.clone()).collect(),
                         result_binding: None,
+                        counts_as_runtime_call: true,
                         provenance,
                     }),
             );
@@ -5830,7 +5864,9 @@ fn apply_create_instruction(
             return Ok(());
         }
     }
-    program.stats.rendered_instruction_calls += 1;
+    if call.counts_as_runtime_call {
+        program.stats.rendered_instruction_calls += 1;
+    }
     Ok(())
 }
 
@@ -6711,7 +6747,9 @@ fn apply_update_instruction(
             return Ok(());
         }
     }
-    program.stats.rendered_instruction_calls += 1;
+    if call.counts_as_runtime_call {
+        program.stats.rendered_instruction_calls += 1;
+    }
     Ok(())
 }
 
@@ -7016,7 +7054,9 @@ fn record_malformed_instruction(
     issues: &mut Vec<AngularRecoveryIssue>,
     stats: &mut AngularTemplateRecoveryStats,
 ) {
-    stats.malformed_instruction_calls += 1;
+    if call.counts_as_runtime_call {
+        stats.malformed_instruction_calls += 1;
+    }
     record_issue(
         issues,
         issue_at_operation(
@@ -7036,7 +7076,9 @@ fn record_missing_target(
     issues: &mut Vec<AngularRecoveryIssue>,
     stats: &mut AngularTemplateRecoveryStats,
 ) {
-    stats.malformed_instruction_calls += 1;
+    if call.counts_as_runtime_call {
+        stats.malformed_instruction_calls += 1;
+    }
     record_issue(
         issues,
         issue_at_operation(
@@ -7056,7 +7098,9 @@ fn record_unsupported_instruction(
     issues: &mut Vec<AngularRecoveryIssue>,
     stats: &mut AngularTemplateRecoveryStats,
 ) {
-    stats.unsupported_runtime_calls += 1;
+    if call.counts_as_runtime_call {
+        stats.unsupported_runtime_calls += 1;
+    }
     record_issue(
         issues,
         issue_at_operation(
@@ -7160,6 +7204,7 @@ fn recover_template_expression(
                         .map(|argument| argument.expr.clone())
                         .collect(),
                     result_binding: None,
+                    counts_as_runtime_call: true,
                     provenance: provenances
                         .pop()
                         .expect("a call chain always contains one invocation"),
@@ -7254,6 +7299,7 @@ fn recover_template_expression(
                         .map(|argument| argument.expr.clone())
                         .collect(),
                     result_binding: None,
+                    counts_as_runtime_call: true,
                     provenance: provenances
                         .pop()
                         .expect("a call chain always contains one invocation"),
@@ -7335,6 +7381,7 @@ fn recover_template_expression(
                         .map(|argument| argument.expr.clone())
                         .collect(),
                     result_binding: None,
+                    counts_as_runtime_call: true,
                     provenance: provenances
                         .pop()
                         .expect("a call chain always contains one invocation"),
