@@ -358,7 +358,9 @@ write `svg`, `math`/`mathml`, and/or `null` to the same proven runtime state
 member. A surviving HTML helper or Closure-inlined `state.namespace = null`
 assignment is consumed only against that exact target. Namespace operations do
 not produce standalone template syntax; their effect is represented by the
-recovered `<svg>`, `<math>`, and following HTML elements.
+recovered `<svg>`, `<math>`, and following HTML elements. If Closure removes
+the unused HTML and MathML helpers, a lone SVG writer is accepted only when a
+proven creation view later resets that exact state member to `null`.
 
 Closure-renamed whole-class and whole-style map helpers are inferred as a
 family. Both must be unique one-argument wrappers around the same internal

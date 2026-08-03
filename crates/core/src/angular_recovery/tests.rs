@@ -6226,6 +6226,80 @@ fn infers_closure_renamed_namespace_switches() {
 }
 
 #[test]
+fn infers_a_lone_svg_namespace_helper_from_a_later_html_reset() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        runtime.svg = function() {
+            runtime.state.namespace = "svg";
+        };
+        runtime.lookalike = function() {
+            runtime.application.iconType = "svg";
+        };
+
+        class SpecializedSvgComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: SpecializedSvgComponent,
+                selectors: [["specialized-svg"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.svg();
+                        core.ɵɵelementStart(0, "svg");
+                        core.ɵɵelement(1, "path");
+                        core.ɵɵelementEnd();
+                        runtime.state.namespace = null;
+                        core.ɵɵelement(2, "p");
+                    }
+                },
+            });
+        }
+
+        class SvgLookalikeComponent {
+            static compiled = core.ɵɵdefineComponent({
+                type: SvgLookalikeComponent,
+                selectors: [["svg-lookalike"]],
+                template: function(renderFlags) {
+                    if (renderFlags & 1) {
+                        runtime.application.iconType = null;
+                        runtime.lookalike();
+                        core.ɵɵelement(0, "div");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a Closure-specialized SVG helper should remain analyzable");
+    let specialized = report
+        .components
+        .iter()
+        .find(|component| component.selector == "specialized-svg")
+        .expect("the specialized SVG component should recover");
+    let lookalike = report
+        .components
+        .iter()
+        .find(|component| component.selector == "svg-lookalike")
+        .expect("the standalone SVG writer should remain visible");
+
+    assert_eq!(
+        specialized.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        specialized.issues,
+        specialized.source,
+    );
+    assert!(specialized
+        .source
+        .contains("<svg>\n      <path></path>\n    </svg>"));
+    assert!(specialized.source.contains("<p></p>"));
+    assert_eq!(lookalike.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(lookalike
+        .source
+        .contains("Unsupported Ivy instruction: unknown-runtime-instruction"));
+}
+
+#[test]
 fn infers_optimized_nested_iife_next_context_helper() {
     let source = r#"
         const runtime = {
