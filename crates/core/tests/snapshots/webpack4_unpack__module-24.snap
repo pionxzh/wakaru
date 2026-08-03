@@ -177,7 +177,7 @@ export class Route extends Component {
     render() {
         const match = this.state.match;
         const props = this.props;
-        const { children, Component, render } = props;
+        const { children, component: Component, render } = props;
         const router = this.context.router;
         const { history, route, staticContext } = router;
         const s = {

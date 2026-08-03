@@ -17,6 +17,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::decl_utils::BindingId;
+use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
 const CLASSIC_PRAGMA: &str = "createElement";
@@ -33,12 +34,6 @@ fn is_jsx_pragma_name(name: &str) -> bool {
         name,
         "createElement" | "jsx" | "jsxs" | "_jsx" | "_jsxs" | "jsxDEV" | "jsxsDEV"
     )
-}
-
-#[derive(Clone)]
-struct ScopedRename {
-    old: BindingId,
-    new: Atom,
 }
 
 pub struct UnJsx {
@@ -136,12 +131,7 @@ impl UnJsx {
         self.import_pragmas = collect_import_pragmas(items);
         let (renames, name_registry) =
             collect_module_renames(items, self.unresolved_mark, &self.import_pragmas);
-        if !renames.is_empty() {
-            let mut renamer = ScopedRenamer::new(renames);
-            for item in items.iter_mut() {
-                item.visit_mut_with(&mut renamer);
-            }
-        }
+        rename_bindings(items, &renames);
 
         self.used_names.push(name_registry);
         self.string_consts
@@ -169,12 +159,7 @@ impl UnJsx {
     fn process_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let (renames, name_registry) =
             collect_stmt_renames(stmts, self.unresolved_mark, &self.import_pragmas);
-        if !renames.is_empty() {
-            let mut renamer = ScopedRenamer::new(renames);
-            for stmt in stmts.iter_mut() {
-                stmt.visit_mut_with(&mut renamer);
-            }
-        }
+        rename_bindings(stmts, &renames);
 
         self.used_names.push(name_registry);
         self.string_consts
@@ -967,7 +952,7 @@ fn collect_module_renames(
     items: &[ModuleItem],
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> (Vec<ScopedRename>, HashSet<Atom>) {
+) -> (Vec<BindingRename>, HashSet<Atom>) {
     let has_display = has_display_name_candidates(items.iter().filter_map(|i| {
         if let ModuleItem::Stmt(s) = i {
             Some(s)
@@ -1000,7 +985,7 @@ fn collect_stmt_renames(
     stmts: &[Stmt],
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> (Vec<ScopedRename>, HashSet<Atom>) {
+) -> (Vec<BindingRename>, HashSet<Atom>) {
     let has_display = has_display_name_candidates(stmts.iter());
     let has_lc = has_lowercase_jsx_component_calls_stmts(stmts, import_pragmas, unresolved_mark);
     if !has_display && !has_lc {
@@ -1026,7 +1011,7 @@ fn collect_stmt_renames(
 fn collect_display_name_renames_from_module_items(
     items: &[ModuleItem],
     used_names: &mut HashSet<Atom>,
-) -> Vec<ScopedRename> {
+) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     for item in items {
         let ModuleItem::Stmt(stmt) = item else {
@@ -1040,7 +1025,7 @@ fn collect_display_name_renames_from_module_items(
 fn collect_display_name_renames_from_stmts(
     stmts: &[Stmt],
     used_names: &mut HashSet<Atom>,
-) -> Vec<ScopedRename> {
+) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     for stmt in stmts {
         collect_display_name_renames_from_stmt(stmt, used_names, &mut renames);
@@ -1051,7 +1036,7 @@ fn collect_display_name_renames_from_stmts(
 fn collect_display_name_renames_from_stmt(
     stmt: &Stmt,
     used_names: &mut HashSet<Atom>,
-    renames: &mut Vec<ScopedRename>,
+    renames: &mut Vec<BindingRename>,
 ) {
     let Stmt::Expr(expr_stmt) = stmt else {
         return;
@@ -1085,7 +1070,7 @@ fn collect_display_name_renames_from_stmt(
     };
     let new_name =
         generate_unique_name(used_names, pascalize(&wtf8_to_string(&display_name.value)));
-    renames.push(ScopedRename {
+    renames.push(BindingRename {
         old: (object.sym.clone(), object.ctxt),
         new: new_name.into(),
     });
@@ -1096,7 +1081,7 @@ fn collect_lowercase_component_renames_from_module_items(
     unresolved_mark: Mark,
     used_names: &mut HashSet<Atom>,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> Vec<ScopedRename> {
+) -> Vec<BindingRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_module_items(items);
     let mut visitor = LowercaseComponentRenameCollector {
         unresolved_mark,
@@ -1114,7 +1099,7 @@ fn collect_lowercase_component_renames_from_stmts(
     unresolved_mark: Mark,
     used_names: &mut HashSet<Atom>,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> Vec<ScopedRename> {
+) -> Vec<BindingRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_stmts(stmts);
     let mut visitor = LowercaseComponentRenameCollector {
         unresolved_mark,
@@ -1132,7 +1117,7 @@ struct LowercaseComponentRenameCollector<'a> {
     used_names: &'a mut HashSet<Atom>,
     eligible_bindings: HashMap<BindingId, ComponentBindingEligibility>,
     import_pragmas: &'a HashMap<BindingId, &'static str>,
-    renames: Vec<ScopedRename>,
+    renames: Vec<BindingRename>,
 }
 
 impl Visit for LowercaseComponentRenameCollector<'_> {
@@ -1158,7 +1143,7 @@ impl Visit for LowercaseComponentRenameCollector<'_> {
                                     .clone()
                                     .unwrap_or_else(|| pascalize(ident.sym.as_ref()));
                                 let new_name = generate_unique_name(self.used_names, target_name);
-                                self.renames.push(ScopedRename {
+                                self.renames.push(BindingRename {
                                     old: binding_id,
                                     new: new_name.into(),
                                 });
@@ -1170,27 +1155,6 @@ impl Visit for LowercaseComponentRenameCollector<'_> {
         }
 
         call.visit_children_with(self);
-    }
-}
-
-struct ScopedRenamer {
-    renames: Vec<ScopedRename>,
-}
-
-impl ScopedRenamer {
-    fn new(renames: Vec<ScopedRename>) -> Self {
-        Self { renames }
-    }
-}
-
-impl VisitMut for ScopedRenamer {
-    fn visit_mut_ident(&mut self, ident: &mut Ident) {
-        for rename in &self.renames {
-            if ident.sym == rename.old.0 && ident.ctxt == rename.old.1 {
-                ident.sym = rename.new.clone();
-                break;
-            }
-        }
     }
 }
 

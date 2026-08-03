@@ -324,6 +324,22 @@ function Foo() {}
 }
 
 #[test]
+fn preserves_imported_name_when_capitalizing_component_binding() {
+    let input = r#"
+import { jsx } from "react/jsx-runtime";
+import { widget } from "./dep";
+const view = jsx(widget, {});
+"#;
+    let expected = r#"
+import { jsx } from "react/jsx-runtime";
+import { widget as Widget } from "./dep";
+const view = <Widget />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn renames_lowercase_member_alias_component_from_property_name() {
     let input = r#"
 function render(U) {
