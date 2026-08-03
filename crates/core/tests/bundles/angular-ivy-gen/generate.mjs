@@ -310,15 +310,14 @@ for (const selector of [
 for (const contractName of [
   '__wakaruAngularDefinitions',
   '__wakaruAngularRoots',
-  '__wakaruIvyRuntime',
   '__wakaruStructuralRuntime',
-  'ɵɵdefineComponent',
 ]) {
   if (!advancedStructuralSource.includes(contractName)) {
     throw new Error(`Structural ADVANCED output is missing ${contractName}`);
   }
 }
 for (const excludedRole of [
+  'ɵɵdefineComponent',
   'ɵɵelementStart',
   'ɵɵtext',
   'ɵɵariaProperty',
