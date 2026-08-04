@@ -192,6 +192,13 @@ bundle format. Webpack5 and Metro can hand their normalized ASTs directly to
 Phase 1, avoiding an emit/parse cycle; raw unpack and source-map mode
 materialize the sidecar to source text.
 
+Development builds are a non-goal. Wakaru targets shipped, production
+bundles; artifacts that only appear in dev-mode output — such as webpack's
+`devtool: 'eval'` family, which wraps every module body in an `eval("...")`
+string for fast rebuilds — are intentionally not recovered. Such bodies pass
+through as-is rather than being unwrapped. Don't propose eval-string
+unwrapping or other dev-build-only recovery work.
+
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
 Orchestrates the internal pipeline. The stable Rust surface is the `wakaru`
