@@ -8,6 +8,26 @@ fn render_with_level(input: &str, level: RewriteLevel) -> String {
 }
 
 #[test]
+fn display_name_rename_updates_aliased_export_specifier() {
+    // The public name is the alias `Z`, so the local binding stays renamable;
+    // the specifier must follow the rename and keep the alias.
+    let input = r#"
+const c = styled.div;
+c.displayName = "FancyCard";
+export { c as Z };
+use(c);
+"#;
+    let expected = r#"
+const FancyCard = styled.div;
+FancyCard.displayName = "FancyCard";
+export { FancyCard as Z };
+use(FancyCard);
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn display_name_rename_skips_exported_binding_but_renames_private_binding() {
     let input = r#"
 export const a = styled.div;

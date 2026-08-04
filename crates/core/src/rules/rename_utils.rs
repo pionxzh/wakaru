@@ -6,10 +6,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
-    ExportNamedSpecifier, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt,
-    VarDeclarator,
+    ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
+    ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -23,10 +22,17 @@ pub struct BindingRename {
     pub new: Atom,
 }
 
-/// Collect local bindings whose public names are established by a named export.
+/// Collect local bindings whose public names are pinned to the binding name
+/// by an export *declaration* (`export const X` / `export function X` /
+/// `export class X`): renaming those would change the module's public API.
 ///
-/// Default exports are intentionally excluded: renaming the local binding of
-/// `export default function f() {}` does not change the public name `default`.
+/// Bindings that only appear in export *specifiers* (`export { c }`,
+/// `export { c as Z }`) are deliberately not collected: `BindingRenamer`
+/// preserves the public name by rewriting the specifier and inserting an
+/// alias when needed (`export { NewName as c }`), so renaming the local is
+/// safe and keeps readability. Default exports are likewise excluded —
+/// renaming the local of `export default function f() {}` does not change
+/// the public name `default`.
 pub(crate) fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {
     collect_exported_binding_ids_from_items(&module.body)
 }
@@ -35,29 +41,8 @@ pub(crate) fn collect_exported_binding_ids_from_items(items: &[ModuleItem]) -> H
     let mut bindings = HashSet::new();
 
     for item in items {
-        let ModuleItem::ModuleDecl(module_decl) = item else {
-            continue;
-        };
-
-        match module_decl {
-            ModuleDecl::ExportDecl(export) => {
-                collect_decl_binding_ids(&export.decl, &mut bindings);
-            }
-            ModuleDecl::ExportNamed(export) if export.src.is_none() && !export.type_only => {
-                for specifier in &export.specifiers {
-                    let ExportSpecifier::Named(named) = specifier else {
-                        continue;
-                    };
-                    if named.is_type_only {
-                        continue;
-                    }
-                    let ModuleExportName::Ident(local) = &named.orig else {
-                        continue;
-                    };
-                    bindings.insert((local.sym.clone(), local.ctxt));
-                }
-            }
-            _ => {}
+        if let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item {
+            collect_decl_binding_ids(&export.decl, &mut bindings);
         }
     }
 

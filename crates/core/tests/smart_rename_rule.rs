@@ -12,7 +12,9 @@ fn apply(input: &str) -> String {
 // the collector still provides useful names for non-exported bindings.
 
 #[test]
-fn react_hook_rename_skips_exported_binding_but_renames_private_binding() {
+fn react_hook_rename_aliases_specifier_export_to_keep_public_name() {
+    // Renaming a specifier-exported binding is safe: BindingRenamer inserts
+    // an alias so the public name `a` is unchanged.
     let input = r#"
 const a = useRef();
 const b = useRef();
@@ -20,10 +22,10 @@ export { a };
 use(a, b);
 "#;
     let expected = r#"
-const a = useRef();
+const aRef = useRef();
 const bRef = useRef();
-export { a };
-use(a, bRef);
+export { aRef as a };
+use(aRef, bRef);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -44,7 +46,7 @@ use(a, privateValue);
 }
 
 #[test]
-fn member_init_rename_skips_exported_binding_but_renames_private_binding() {
+fn member_init_rename_aliases_specifier_export_to_keep_public_name() {
     let input = r#"
 const a = runtime.publicValue;
 const b = runtime.privateValue;
@@ -52,10 +54,10 @@ export { a };
 use(a, b);
 "#;
     let expected = r#"
-const a = runtime.publicValue;
+const runtime_publicValue = runtime.publicValue;
 const runtime_privateValue = runtime.privateValue;
-export { a };
-use(a, runtime_privateValue);
+export { runtime_publicValue as a };
+use(runtime_publicValue, runtime_privateValue);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
