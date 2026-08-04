@@ -131,13 +131,17 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
    - `node scripts/repro/collect-stats.mjs --check`
    - If rates deliberately moved, regenerate without `--check` and commit the `stats.json` diff with the change
    - The `commit`/`date` fields in `stats.json` are provenance from regeneration time (typically the parent of the commit carrying the diff); `--check` compares only the measured numbers
-4. Run formatting and lint checks:
+4. If you changed rename, export/import handling, or any pipeline-visible rule behavior, run the private fixture suite (sibling checkout `../wakaru-fixtures`; skip only if it is absent and say so):
+   - `../wakaru-fixtures/run.sh --check`
+   - Per-rule tests can all pass while rules undo each other's work on real-world module shapes; this suite catches that class. Read the full diff report, not just the tail.
+   - Reference updates (`--update`) require reviewing every changed file: better, not just different.
+5. Run formatting and lint checks:
    - `cargo fmt --check`
    - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
    - Use the relevant package or `cargo clippy --workspace --all-targets -- -D warnings` when touching other crates or shared workspace code
-5. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
-6. If your change makes any statement in `docs/` (or this file) false, fix the doc in the same commit — agents trust the docs, so a wrong doc is worse than a missing one
-7. `git status --short` — no stale `.snap.new` files or unrelated changes
+6. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
+7. If your change makes any statement in `docs/` (or this file) false, fix the doc in the same commit — agents trust the docs, so a wrong doc is worse than a missing one
+8. `git status --short` — no stale `.snap.new` files or unrelated changes
 
 ## Important Rules
 

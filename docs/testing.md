@@ -221,6 +221,23 @@ producer permits it.
 
 There are two test patterns: **full-pipeline tests** (run all rules) and **isolated rule tests** (run one rule only).
 
+**Name tests after the property, not the mechanism.** A name like
+`skips_exported_binding` becomes a lie the day the mechanism changes (it did:
+the behavior became "rename but alias-preserve the public name"). A name like
+`public_export_name_survives_rename` stays true across implementations and
+tells the reader what actually matters.
+
+**Pipeline property tests** (`crates/core/tests/pipeline_properties.rs`)
+assert invariants over full-pipeline output instead of exact strings: public
+export names survive, JSX tags never bind lowercase component bindings, and a
+decompiled module pair validates as a graph (via
+`wakaru_core::validate_output_modules`). Add a property here whenever a bug
+was caused by two individually-correct rules undoing each other's work —
+per-rule tests cannot see that class. Readability-only regressions (renames
+that stop happening without breaking anything) are still invisible to
+properties; the private fixture suite (`../wakaru-fixtures/run.sh --check`)
+covers those.
+
 **Full-pipeline test** — use `render(input)`:
 
 ```rust
