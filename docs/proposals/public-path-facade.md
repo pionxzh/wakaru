@@ -1,30 +1,51 @@
 # Stable Public Paths for Processed Inputs
 
-Status: **PROPOSED, not implemented.** This addresses normal unpack output
-only. `--raw` is splitter passthrough and is not a correctness surface for this
-proposal.
+Status: **ADOPTED — Option A.** Implementation promotes the existing synthetic
+entry to the processed input's stable public path. Option B is rejected as a
+correctness mechanism: direct consumer rewrites are out of scope, and an
+export-owner map may exist only as internal facade validation if needed. This
+addresses normal unpack output only. `--raw` is splitter passthrough and is not
+a correctness surface for this proposal.
 
 ## Summary
 
-When a physical ESM input is selected for heuristic processing, Wakaru can
+When a physical ESM input is selected for processing, Wakaru can
 replace its original filename with `entry.js` plus generated chunks. Other
 inputs in the same job still refer to the original relative path. A
 development-corpus audit found this failure class repeatedly: sibling inputs
 kept static links to a processed input's original content-hashed path (of the
 `./index-<hash>.js` shape) after that input became `entry_3.js` plus chunks.
 
-The recommended design is **a stable facade at the processed input's original
-public path**. Prefer making the scope splitter's existing synthetic entry be
-that facade/entry, because it already retains the original module declarations
-and residual evaluation code. A separately generated, re-export-only facade is
-a fallback only when Wakaru can prove its complete public export surface and
-evaluation dependency.
+The adopted design is **a stable facade at the processed input's original
+public path**, implemented by making the existing synthetic entry that
+facade/entry. It already retains the original module declarations and residual
+evaluation code. Wakaru does not synthesize a separate re-export-only facade.
 
-Do not make exact export-owner rewriting the primary repair. It is sound for a
-proven named or default import, but it has no general one-module target for
-namespace imports, `export *`, side-effect imports, or `import()`. An export-owner
-map is still useful internally to validate or construct a facade and may later
-support a narrow optimization for static named edges.
+Do not implement exact export-owner rewriting. It is sound for a proven named
+or default import, but it has no general one-module target for namespace
+imports, `export *`, side-effect imports, or `import()`. An export-owner map may
+exist internally only when needed to validate the facade surface.
+
+## Applicable formats
+
+The invariant is format-agnostic: it applies whenever one physical input was
+addressable by a relative ESM path from a sibling input in the same multi-input
+job and processing would otherwise remove that path. Two current paths meet
+that definition:
+
+- top-level heuristic scope-hoist splitting of ESM input; and
+- structural esbuild unpack of an ESM code-split chunk when the detector emits
+  a synthetic `entry.js` for that input.
+
+Reserve the public path by `PreparedInputId`, not inside either splitter. Both
+formats then acquire the same boundary and filename-ordering behavior without
+duplicating policy in `scope_hoist.rs` and `esbuild.rs`.
+
+Webpack, Browserify, Metro, SystemJS, and AMD are explicitly out of scope.
+Sibling files address their outputs through format-specific runtime loading,
+not relative ESM imports to the physical bundle filename. Closure
+ModuleManager is likewise a script-loaded shared-namespace format rather than
+an ESM public-path case.
 
 ## Current boundary loss
 
@@ -40,6 +61,12 @@ entry keeps the detected parent module's filename, while child chunks are
 namespaced beneath the parent stem. See `namespace_scope_hoisted_split` in
 [`scope_split.rs`](../../crates/core/src/driver/unpack/scope_split.rs). The
 top-level case should acquire the same public-boundary property.
+
+The structural esbuild unpacker independently reserves and emits a synthetic
+`entry.js` for residual ESM declarations and evaluation code. In a code-split
+multi-input job, a sibling chunk can still import the physical esbuild chunk by
+its original relative path. That synthetic entry therefore needs the same
+promotion even though its module boundary came from structural detection.
 
 Multi-input preparation currently deduplicates all emitted filenames and then
 builds an old-to-final filename map per `PreparedInputId`. The rewrite updates
@@ -99,7 +126,7 @@ processed input. Its dependencies point to the final generated outputs.
 
 ### Preferred form: reuse the synthetic entry
 
-For top-level heuristic splitting, rename the existing synthetic entry from
+For either applicable format, rename the existing synthetic entry from
 `entry.js` to the input's safe logical output path and reserve that path before
 generated chunk names are assigned. This is an entry/facade rather than a thin
 barrel:
@@ -116,10 +143,10 @@ barrel:
 This form needs a public-path plan and filename reservation, but it does not
 need to infer an export owner for every public name.
 
-### Fallback form: a thin generated facade
+### Rejected fallback: a thin generated facade
 
-A separate facade is acceptable only when the existing entry cannot safely own
-the public path and Wakaru has both:
+A separate facade is not part of the adopted implementation. It would require
+both:
 
 - a complete inventory of the input's public exports, distinguished from
   splitter-synthesized cross-cluster exports; and
@@ -139,8 +166,9 @@ Blanket `export * from "./internal-entry.js"` is not sufficient. `export *`
 does not forward `default`, and the current splitter may add exports solely for
 generated cross-cluster imports. Forwarding all of those would enlarge the
 public namespace and could change downstream `export *` ambiguity. A thin
-facade therefore requires public-versus-synthetic export provenance that the
-preferred entry reuse does not.
+facade therefore requires public-versus-synthetic export provenance that entry
+reuse does not. If the existing entry cannot safely own the public path,
+Wakaru instead preserves the input as one processed module at that path.
 
 ### Behavior by consumer form
 
@@ -154,14 +182,12 @@ preferred entry reuse does not.
 | `export * from "./input.js"` | The language's normal `ResolveExport` rules retain omissions and ambiguity, provided the facade surface is exact. |
 | `import("./input.js")` | Literal and computed paths still select the public module; fulfillment yields its namespace after its dependency graph evaluates. |
 
-The main semantic risk is adding a distinct facade node to cycles and
-top-level-await graphs. That is another reason to rename/reuse the existing
-entry whenever possible. A thin facade needs execution tests for cycles and
-top-level await before it is eligible.
+Adding a distinct facade node would introduce risk in cycles and
+top-level-await graphs. The adopted entry reuse avoids that extra module record.
 
-## Option B — exact export-owner map and direct rewrites
+## Rejected Option B — exact export-owner map and direct rewrites
 
-This design records, for each processed input, a mapping such as
+This rejected design records, for each processed input, a mapping such as
 `(public path, exported name) -> (final output filename, final exported name)`
 and rewrites consumers directly:
 
@@ -194,6 +220,9 @@ the dangling-path defect: every unrevised namespace, side-effect, star, or
 dynamic edge still needs the original path. Once that stable path exists, the
 facade is already the correctness mechanism and direct rewrites are merely an
 optional optimization.
+
+Direct consumer rewrites remain out of scope. A binding-aware owner map may be
+used internally only if facade-surface validation later needs it.
 
 ## Ambiguous and missing owners
 
@@ -231,10 +260,11 @@ paths need to be planned before generated names:
 1. Derive the safe normalized public path for every retained physical input and
    associate it with `PreparedInputId`.
 2. Reject duplicate public-path claims in the same case-sensitivity domain used
-   by output filename deduplication.
+   by output filename deduplication. Ambiguity fails closed; never suffix a
+   public path.
 3. Reserve all public paths before naming entries and chunks. A generated
    module colliding with a public path is renamed; a public facade is not.
-4. Give the reused entry (or thin facade) the reserved public path. Namespace
+4. Give the reused entry the reserved public path. Namespace
    its generated chunks beneath that path's stem where practical, matching the
    recursive scope-split design.
 5. Run global deduplication for generated outputs, then apply the existing
@@ -242,15 +272,16 @@ paths need to be planned before generated names:
    all internal import, re-export, dynamic-import, and supported string
    `require` references aligned with final filenames.
 6. Do not add cross-input owner guesses to the filename rewriter. Consumers
-   continue to target the unchanged public path. Later readability filename
-   recovery must likewise not rename away a reserved public facade.
+   continue to target the unchanged public path. Pass the reserved path set to
+   `build_rename_map` so later Sentry-based readability recovery cannot rename
+   a public facade away.
 
 This ordering avoids a regression of the previously fixed collision bug. In
 particular, a facade must be generated against logical module identities and
 then have its internal specifiers rewritten to final deduplicated paths; it
 must not bake pre-dedup chunk strings into final output.
 
-## Proposed validation before implementation
+## Implementation validation
 
 Use synthetic multi-input fixtures only. Normal-output tests should cover:
 
@@ -263,29 +294,41 @@ Use synthetic multi-input fixtures only. Normal-output tests should cover:
   exports;
 - literal and computed dynamic import, checking namespace keys and repeated
   import identity;
-- a cycle and a top-level-await dependency if a distinct thin facade is ever
-  used;
 - two processed inputs whose generated chunk names collide, proving the
   existing dedup rewrite updates facade internals while both public paths stay
   unchanged;
 - duplicate normalized public paths, proving Wakaru falls back or reports the
-  ambiguity rather than suffixing a facade.
+  ambiguity rather than suffixing a facade;
+- a Sentry-annotated facade paired with an ordinary annotated module, proving
+  readability recovery leaves the reserved facade untouched; and
+- both applicable producers: a synthetic top-level scope-hoisted ESM input and
+  a synthetic structural esbuild ESM chunk input.
 
 The graph validator should assert target existence and requested-export
 availability on normal output. Raw passthrough may help localize a failure, but
 raw-only diagnostics are outside this proposal's acceptance criteria.
 
-## Recommendation
+## Decision
 
-Adopt **Option A**, specifically by promoting the existing scope-hoist entry to
-the stable public facade path. It preserves a single addressable ESM boundary,
-handles every consumer form without discovering all consumer sites, retains
-the language's own live-binding and ambiguity machinery, and minimally changes
-the current splitter graph.
+Adopt **Option A**, specifically by promoting the existing synthetic entry to
+the stable public facade path for top-level scope-hoist and structural esbuild
+ESM inputs. It preserves a single addressable ESM boundary, handles every
+consumer form without discovering all consumer sites, retains the language's
+own live-binding and ambiguity machinery, and minimally changes the current
+splitter graph.
 
-Build a binding-aware export-owner map only as supporting evidence: use it to
-validate that a public binding remains reachable, or to construct an explicit
-thin facade when entry reuse is impossible. Do not use direct consumer rewrites
-as the primary repair. They may be considered later for uniquely proven static
-named/default edges, after the facade contract exists, but they should never be
-required for correctness.
+Do not build direct consumer rewrites or a thin facade. A binding-aware
+export-owner map may exist only as supporting evidence to validate that a
+public binding remains reachable. When entry reuse is unprovable, preserve one
+processed module at the public path instead of approximating the boundary.
+
+## Adjacent plain-input path issue
+
+`filename_for_fallback_input` currently flattens a plain input to its basename.
+That can break cross-directory references between two plain inputs in a
+multi-input job, even though neither input was split. Public-path reservation
+does not naturally repair that case: the adopted mechanism promotes a proven
+synthetic entry, while a plain input already is its own entry and loses path
+information earlier during fallback naming. Covering plain inputs would require
+a separate safe common-root policy for retaining their relative directory
+structure. That issue remains documented but out of scope for this change.
