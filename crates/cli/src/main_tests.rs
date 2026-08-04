@@ -122,6 +122,22 @@ fn parses_debug_trace_command() {
 }
 
 #[test]
+fn parses_debug_validate_command() {
+    let cli = Cli::try_parse_from(["wakaru", "debug", "validate", "out", "--json"])
+        .expect("debug validate command should parse");
+
+    match cli.command {
+        Some(Command::Debug(DebugArgs {
+            command: DebugCommand::Validate(args),
+        })) => {
+            assert_eq!(args.dir, PathBuf::from("out"));
+            assert!(args.json);
+        }
+        other => panic!("expected debug validate command, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_debug_normalize_command() {
     let cli = Cli::try_parse_from(["wakaru", "debug", "normalize", "input.js", "--rename"])
         .expect("debug normalize command should parse");

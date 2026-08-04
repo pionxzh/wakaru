@@ -59,6 +59,28 @@ source module: original ESM import reads and link checks are preserved, while
 the unpack pipeline may remove unused imports that Wakaru recovered from bundle
 edges.
 
+## Validating Unpacked Output
+
+`debug validate` checks a directory of emitted modules as one graph and
+reports structural defects that would make it fail to load as ESM: dangling
+relative references (static, re-export, dynamic `import()`, string
+`require()`), imports of names the provider doesn't export, duplicate
+exports, and writes to imported or `const` bindings. It exits nonzero when
+findings exist, so harnesses can gate on it.
+
+```bash
+cargo run -p wakaru-cli -- --unpack bundle.js -o out/
+cargo run -p wakaru-cli -- debug validate out/          # human-readable
+cargo run -p wakaru-cli -- debug validate out/ --json   # machine-readable
+```
+
+Point it at **normal** unpack output only — `--raw` output promises only "no
+readability transforms" and carries no module-graph contract, so raw-only
+findings are not bugs. The checks are conservative: a provider whose export
+set is unknowable (it re-exports an external package or a missing module)
+suppresses missing-name findings for its consumers instead of guessing. The
+implementation lives in `crates/core/src/output_validate.rs`.
+
 ## Snapshot Layers
 
 Webpack4 has two snapshot layers:

@@ -12,6 +12,7 @@ pub mod facts;
 pub(crate) mod js_names;
 pub(crate) mod module_path;
 pub mod namespace_decomposition;
+pub mod output_validate;
 pub mod reexport_consolidation;
 pub mod rules;
 pub mod sourcemap_rename;
@@ -31,6 +32,7 @@ pub use facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
     ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
+pub use output_validate::{validate_output_modules, OutputFinding, OutputFindingKind};
 pub use rules::{
     apply_rules, rule_descriptors, rule_names, RewriteAssumptions, RewriteLevel, RewritePolicy,
     RuleDescriptor, RulePipelineOptions, RuleStage,

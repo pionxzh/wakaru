@@ -206,6 +206,23 @@ enum DebugCommand {
     /// optional scope-correct alpha-renaming of local bindings). Used by the
     /// reproduction matrices to compare mangled/minified output structurally.
     Normalize(NormalizeArgs),
+
+    /// Validate a directory of emitted modules as one graph: dangling relative
+    /// references, imports of names the provider doesn't export, duplicate
+    /// exports, and writes to imported or `const` bindings. Normal unpack
+    /// output only — raw output carries no module-graph contract. Exits
+    /// nonzero when findings exist.
+    Validate(ValidateArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct ValidateArgs {
+    /// Directory containing emitted modules (normal unpack output).
+    dir: PathBuf,
+
+    /// Print findings as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -788,7 +805,66 @@ fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
     match args.command {
         DebugCommand::Trace(args) => run_trace(args, force),
         DebugCommand::Normalize(args) => run_normalize(args),
+        DebugCommand::Validate(args) => run_validate(args),
     }
+}
+
+fn run_validate(args: ValidateArgs) -> Result<()> {
+    let files = collect_directory_js_inputs(&args.dir)?;
+    if files.is_empty() {
+        anyhow::bail!("no JavaScript files found under {}", args.dir.display());
+    }
+    let mut modules = Vec::with_capacity(files.len());
+    for path in &files {
+        let relative = path
+            .strip_prefix(&args.dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        modules.push((relative, source));
+    }
+
+    let findings = wakaru_core::validate_output_modules(&modules);
+
+    if args.json {
+        let payload = serde_json::json!({
+            "modules": modules.len(),
+            "findings": findings
+                .iter()
+                .map(|finding| {
+                    serde_json::json!({
+                        "filename": finding.filename,
+                        "kind": finding.kind.as_str(),
+                        "message": finding.message,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        for finding in &findings {
+            println!(
+                "{}: {}: {}",
+                finding.filename,
+                finding.kind.as_str(),
+                finding.message
+            );
+        }
+        if io::stderr().is_terminal() {
+            eprintln!(
+                "{} finding(s) across {} module(s)",
+                findings.len(),
+                modules.len()
+            );
+        }
+    }
+
+    if !findings.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn run_normalize(args: NormalizeArgs) -> Result<()> {
