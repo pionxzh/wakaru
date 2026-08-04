@@ -107,6 +107,13 @@ Ordinary Browserify bundles use unambiguous dependency-map request paths for
 readable module filenames. Conflicting or missing hints retain
 `module-<id>.js`, and entry names remain stable.
 
+For normal multi-input unpack, heuristic scope-hoisted ESM inputs and
+structural esbuild ESM chunks keep their original safe relative input paths as
+public entry filenames. Generated children live beneath each public filename's
+stem, so sibling ESM imports and dynamic imports continue to resolve. Reserved
+public paths win filename collisions. Raw output remains splitter passthrough
+and keeps provisional splitter names.
+
 ### 3. Recover names / original source when a map exists
 
 ```bash

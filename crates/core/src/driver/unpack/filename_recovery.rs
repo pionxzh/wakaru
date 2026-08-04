@@ -111,12 +111,23 @@ fn prop_key_name(key: &PropName) -> Option<&str> {
 /// - skips unsafe recovered paths (absolute, `..`-escaping);
 /// - skips a recovered name claimed by more than one module (ambiguous);
 /// - skips a recovered name that collides with another module's existing
-///   provisional filename (would clobber a reference target).
-pub(super) fn build_rename_map(entries: &[(String, Option<String>)]) -> HashMap<String, String> {
+///   provisional filename (would clobber a reference target);
+/// - never renames a reserved public facade or recovers another module onto a
+///   reserved facade path.
+pub(super) fn build_rename_map(
+    entries: &[(String, Option<String>)],
+    reserved_paths: &HashSet<String>,
+) -> HashMap<String, String> {
     let provisional: HashSet<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
     let mut target_count: HashMap<String, usize> = HashMap::new();
     let mut candidates: Vec<(String, String)> = Vec::new();
     for (provisional_name, suggested) in entries {
+        if reserved_paths
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(provisional_name))
+        {
+            continue;
+        }
         let Some(suggested) = suggested else {
             continue;
         };
@@ -124,6 +135,12 @@ pub(super) fn build_rename_map(entries: &[(String, Option<String>)]) -> HashMap<
             continue;
         };
         let recovered = safe.to_string_lossy().replace('\\', "/");
+        if reserved_paths
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(&recovered))
+        {
+            continue;
+        }
         if &recovered == provisional_name {
             continue;
         }
@@ -317,9 +334,31 @@ mod tests {
             ("a.js".to_string(), Some("Widget.jsx".to_string())),
             ("b.js".to_string(), None),
         ];
-        let map = build_rename_map(&entries);
+        let map = build_rename_map(&entries, &HashSet::new());
         assert_eq!(map.get("a.js").map(String::as_str), Some("Widget.jsx"));
         assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn rename_map_preserves_reserved_facade_but_renames_annotated_sibling() {
+        let entries = vec![
+            (
+                "index-<hash>.js".to_string(),
+                Some("Facade.jsx".to_string()),
+            ),
+            (
+                "index-<hash>/chunk_widget.js".to_string(),
+                Some("Widget.jsx".to_string()),
+            ),
+        ];
+        let reserved = HashSet::from(["index-<hash>.js".to_string()]);
+        let map = build_rename_map(&entries, &reserved);
+
+        assert!(!map.contains_key("index-<hash>.js"));
+        assert_eq!(
+            map.get("index-<hash>/chunk_widget.js").map(String::as_str),
+            Some("Widget.jsx")
+        );
     }
 
     #[test]
@@ -329,7 +368,7 @@ mod tests {
             ("b.js".to_string(), Some("Shared.jsx".to_string())),
         ];
         assert!(
-            build_rename_map(&entries).is_empty(),
+            build_rename_map(&entries, &HashSet::new()).is_empty(),
             "ambiguous recovered names should be dropped to keep references unambiguous"
         );
     }
@@ -341,19 +380,19 @@ mod tests {
             ("a.js".to_string(), Some("b.js".to_string())),
             ("b.js".to_string(), None),
         ];
-        assert!(build_rename_map(&entries).is_empty());
+        assert!(build_rename_map(&entries, &HashSet::new()).is_empty());
     }
 
     #[test]
     fn rename_map_skips_unsafe_recovered_paths() {
         let entries = vec![("a.js".to_string(), Some("../escape.js".to_string()))];
-        assert!(build_rename_map(&entries).is_empty());
+        assert!(build_rename_map(&entries, &HashSet::new()).is_empty());
     }
 
     #[test]
     fn rename_map_skips_noop_recovery() {
         let entries = vec![("a.js".to_string(), Some("a.js".to_string()))];
-        assert!(build_rename_map(&entries).is_empty());
+        assert!(build_rename_map(&entries, &HashSet::new()).is_empty());
     }
 
     #[test]

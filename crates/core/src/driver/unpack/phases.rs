@@ -110,6 +110,11 @@ pub(super) fn unpack_multi_module_with_plan(
     let report_import_cycle_warnings = modules
         .iter()
         .all(|module| module.report_import_cycle_warnings);
+    let reserved_public_paths = modules
+        .iter()
+        .filter(|module| module.reserved_public_path)
+        .map(|module| module.module.filename.clone())
+        .collect::<std::collections::HashSet<_>>();
 
     // Stash per-module provenance (byte ranges into the original input)
     // keyed by provisional filename. Final provenance is built after dead
@@ -330,7 +335,7 @@ pub(super) fn unpack_multi_module_with_plan(
     // rewrites, namespace decomposition) keeps operating on provisional names;
     // only the final emit step swaps names and rewrites import sources.
     let rename_map = if recover_filenames {
-        build_rename_map(&rename_entries)
+        build_rename_map(&rename_entries, &reserved_public_paths)
     } else {
         std::collections::HashMap::new()
     };

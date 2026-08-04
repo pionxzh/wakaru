@@ -123,12 +123,7 @@ fn namespace_scope_hoisted_split(
     parent: &UnpackedModule,
     split_modules: Vec<UnpackedModule>,
 ) -> Vec<UnpackedModule> {
-    let (parent_dir, parent_stem, parent_basename) = split_parent_path_parts(&parent.filename);
-    let child_dir = if parent_dir.is_empty() {
-        parent_stem.clone()
-    } else {
-        format!("{parent_dir}/{parent_stem}")
-    };
+    let (_, parent_stem, parent_basename) = split_parent_path_parts(&parent.filename);
     let entry_import_dir = parent_stem;
     let child_filenames: HashSet<String> = split_modules
         .iter()
@@ -155,13 +150,29 @@ fn namespace_scope_hoisted_split(
                 rewrite_scope_entry_imports(module.code, &entry_import_dir, &child_filenames);
         } else {
             module.id = format!("{}/{}", parent.id, module.id);
-            module.filename = format!("{child_dir}/{}", module.filename);
+            module.filename = public_path_child_filename(&parent.filename, &module.filename);
             module.code =
                 rewrite_scope_child_imports(module.code, &parent_basename, &child_filenames);
         }
         modules.push(module);
     }
     modules
+}
+
+/// Namespace a generated child beneath the public entry's stem.
+///
+/// Top-level public-path promotion and recursive scope splitting share this
+/// layout so `assets/chunk.js` owns children below `assets/chunk/`.
+pub(super) fn public_path_child_filename(
+    public_entry_filename: &str,
+    child_filename: &str,
+) -> String {
+    let (parent_dir, parent_stem, _) = split_parent_path_parts(public_entry_filename);
+    if parent_dir.is_empty() {
+        format!("{parent_stem}/{child_filename}")
+    } else {
+        format!("{parent_dir}/{parent_stem}/{child_filename}")
+    }
 }
 
 fn map_generated_ranges_to_source(

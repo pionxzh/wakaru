@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
@@ -87,6 +89,7 @@ pub struct PreparedUnpackInput {
     detected: Option<DetectedBundle>,
     scope_hoisted: Option<UnpackResult>,
     plain_prepared: Option<PreparedModuleAst>,
+    public_path_candidate: bool,
 }
 
 impl PreparedUnpackInput {
@@ -151,6 +154,7 @@ pub fn prepare_unpack_input_with_policy(
                         detected: None,
                         scope_hoisted: None,
                         plain_prepared: None,
+                        public_path_candidate: false,
                     });
                 }
                 Err(input_parse_error) => {
@@ -168,13 +172,28 @@ pub fn prepare_unpack_input_with_policy(
     let mut plain_prepared = match prepared {
         PreparedSource::Bundle(detected) => {
             let format = detected.result.format;
+            let public_path_candidate =
+                format == BundleFormat::Esbuild && detected.input_has_esm_declarations;
+            let needs_boundary_fallback = public_path_candidate
+                && detected
+                    .result
+                    .modules
+                    .iter()
+                    .filter(|module| module.is_entry)
+                    .count()
+                    != 1;
+            let fallback_prepared = needs_boundary_fallback
+                .then(|| prepare_plain_ast_for_filename(&source, &filename))
+                .transpose()
+                .map_err(|error| DriverError::new(DriverErrorKind::Parse, error))?;
             return Ok(PreparedUnpackInput {
                 filename,
-                source: None,
+                source: needs_boundary_fallback.then_some(source),
                 detection: PreparedInputDetection::Bundle(format),
                 detected: Some(detected),
                 scope_hoisted: None,
-                plain_prepared: None,
+                plain_prepared: fallback_prepared,
+                public_path_candidate,
             });
         }
         PreparedSource::Plain(prepared) => prepared,
@@ -202,13 +221,24 @@ pub fn prepare_unpack_input_with_policy(
             scope_hoist::split_scope_hoisted_with_mode(&source, scope_hoist_policy.render_mode())
                 .filter(|result| result.modules.len() > 1)
         {
+            let needs_boundary_fallback = result
+                .modules
+                .iter()
+                .filter(|module| module.is_entry)
+                .count()
+                != 1;
+            let fallback_prepared = needs_boundary_fallback
+                .then(|| prepare_plain_ast_for_filename(&source, &filename))
+                .transpose()
+                .map_err(|error| DriverError::new(DriverErrorKind::Parse, error))?;
             return Ok(PreparedUnpackInput {
                 filename,
-                source: None,
+                source: needs_boundary_fallback.then_some(source),
                 detection: PreparedInputDetection::ScopeHoisted,
                 detected: None,
                 scope_hoisted: Some(result),
-                plain_prepared: None,
+                plain_prepared: fallback_prepared,
+                public_path_candidate: true,
             });
         }
     }
@@ -220,6 +250,7 @@ pub fn prepare_unpack_input_with_policy(
         detected: None,
         scope_hoisted: None,
         plain_prepared,
+        public_path_candidate: false,
     })
 }
 
@@ -239,6 +270,90 @@ fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<Prepar
         unresolved_mark,
         recoverable_parse_errors: Vec::new(),
     })
+}
+
+fn plan_public_paths(
+    inputs: &[PreparedUnpackInput],
+    raw: bool,
+) -> Result<HashMap<PreparedInputId, String>> {
+    if raw || inputs.len() < 2 {
+        return Ok(HashMap::new());
+    }
+
+    let absolute_root = common_absolute_input_parent(inputs);
+    let mut paths = HashMap::new();
+    let mut claimed = HashSet::new();
+    for (index, input) in inputs.iter().enumerate() {
+        if !input.public_path_candidate {
+            continue;
+        }
+        let public_path = public_path_for_input(&input.filename, absolute_root.as_deref())?;
+        let collision_key = public_path.to_lowercase();
+        if !claimed.insert(collision_key) {
+            return Err(anyhow!(
+                "ambiguous public module path {public_path:?}: multiple processed inputs claim the same normalized path"
+            ));
+        }
+        paths.insert(PreparedInputId::from_index(index), public_path);
+    }
+    Ok(paths)
+}
+
+fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBuf> {
+    let normalized = inputs
+        .iter()
+        .map(|input| merge::normalize_path_lexically(Path::new(&input.filename)))
+        .collect::<Vec<_>>();
+    if normalized.is_empty() || normalized.iter().any(|path| !path.is_absolute()) {
+        return None;
+    }
+
+    let mut common = normalized[0].parent()?.to_path_buf();
+    for path in &normalized[1..] {
+        while !path.starts_with(&common) {
+            if !common.pop() {
+                return None;
+            }
+        }
+    }
+    Some(common)
+}
+
+fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result<String> {
+    let normalized = merge::normalize_path_lexically(Path::new(filename));
+    let candidate = if normalized.is_absolute() {
+        absolute_root
+            .and_then(|root| normalized.strip_prefix(root).ok())
+            .map(Path::to_path_buf)
+            .or_else(|| normalized.file_name().map(PathBuf::from))
+            .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?
+    } else {
+        normalized
+    };
+    let safe = super::output::safe_relative_module_path(&candidate.to_string_lossy())?;
+    Ok(safe.to_string_lossy().replace('\\', "/"))
+}
+
+fn public_boundary_fallback_module(
+    input: PreparedInputId,
+    public_path: String,
+    source: String,
+    prepared: Option<PreparedModuleAst>,
+) -> MultiSourceModule {
+    let source_len = source.len() as u32;
+    MultiSourceModule::fallback_with_ast_from_input(
+        UnpackedModule {
+            id: public_path.clone(),
+            is_entry: true,
+            filename: public_path,
+            source_ranges: vec![(0, source_len)],
+            source_input: String::new(),
+            generated_source_map: Vec::new(),
+            code: source,
+        },
+        prepared,
+        Some(input),
+    )
 }
 
 pub fn unpack_prepared_inputs(
@@ -269,6 +384,8 @@ pub fn unpack_prepared_inputs_with_policy(
         return Err(anyhow!("at least one prepared input is required"));
     }
 
+    let public_paths = plan_public_paths(&inputs, raw)?;
+
     let mut modules = Vec::new();
     let mut detected_formats = Vec::new();
     let mut preparation_warnings = Vec::new();
@@ -281,6 +398,7 @@ pub fn unpack_prepared_inputs_with_policy(
             detected,
             scope_hoisted,
             plain_prepared,
+            public_path_candidate: _,
         } = input;
         match detection {
             PreparedInputDetection::Bundle(format) => {
@@ -288,6 +406,24 @@ pub fn unpack_prepared_inputs_with_policy(
                     detected_formats.push(format);
                 }
                 let detected = detected.expect("bundle detection carries prepared result");
+                if format == BundleFormat::Esbuild
+                    && public_paths.contains_key(&input_id)
+                    && detected
+                        .result
+                        .modules
+                        .iter()
+                        .filter(|module| module.is_entry)
+                        .count()
+                        != 1
+                {
+                    modules.push(public_boundary_fallback_module(
+                        input_id,
+                        public_paths[&input_id].clone(),
+                        source.expect("unprovable esbuild boundary retains source"),
+                        plain_prepared,
+                    ));
+                    continue;
+                }
                 let chunk_ids = Arc::new(detected.chunk_ids.clone());
                 let detected = if raw {
                     let result = detected.materialize()?;
@@ -330,6 +466,22 @@ pub fn unpack_prepared_inputs_with_policy(
                     detected_formats.push(BundleFormat::ScopeHoisted);
                 }
                 let result = scope_hoisted.expect("scope-hoist detection carries result");
+                if public_paths.contains_key(&input_id)
+                    && result
+                        .modules
+                        .iter()
+                        .filter(|module| module.is_entry)
+                        .count()
+                        != 1
+                {
+                    modules.push(public_boundary_fallback_module(
+                        input_id,
+                        public_paths[&input_id].clone(),
+                        source.expect("unprovable scope boundary retains source"),
+                        plain_prepared,
+                    ));
+                    continue;
+                }
                 modules.extend(result.modules.into_iter().map(|mut module| {
                     if raw {
                         match normalize_raw_unpacked_module(&module.code, &module.filename) {
@@ -369,7 +521,7 @@ pub fn unpack_prepared_inputs_with_policy(
     if !raw && detected_formats == [BundleFormat::ScopeHoisted] && modules.len() > 1 {
         options.dce_mode = super::types::DceMode::Off;
     }
-    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
+    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules, &public_paths);
     let mut output = if raw {
         emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)?
     } else {

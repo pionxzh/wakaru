@@ -343,6 +343,7 @@ pub(crate) struct DetectedBundle {
     pub(crate) result: UnpackResult,
     pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
     pub(crate) chunk_ids: std::collections::HashSet<usize>,
+    pub(crate) input_has_esm_declarations: bool,
     materialize_cm: Option<Lrc<SourceMap>>,
 }
 
@@ -355,6 +356,7 @@ impl DetectedBundle {
             result,
             prepared,
             chunk_ids: Default::default(),
+            input_has_esm_declarations: false,
             materialize_cm: None,
         }
     }
@@ -373,6 +375,7 @@ impl DetectedBundle {
             result,
             prepared,
             chunk_ids: Default::default(),
+            input_has_esm_declarations: false,
             materialize_cm: Some(materialize_cm),
         }
     }
@@ -578,9 +581,14 @@ fn detect_parsed_source(
     cm: Lrc<SourceMap>,
     source: &str,
 ) -> Option<DetectedBundle> {
+    let input_has_esm_declarations = module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)));
     let chunk_ids = webpack5::detect_chunk_ids_from_module(module);
     if let Some(mut result) = detect_bundle_candidate(module, cm.clone(), source, true) {
         result.chunk_ids = chunk_ids;
+        result.input_has_esm_declarations = input_has_esm_declarations;
         return Some(result);
     }
 
@@ -588,6 +596,7 @@ fn detect_parsed_source(
         detect_owned_bun_candidate(candidate, cm.clone(), source)
     }) {
         result.chunk_ids = chunk_ids;
+        result.input_has_esm_declarations = input_has_esm_declarations;
         return Some(result);
     }
 
@@ -595,6 +604,7 @@ fn detect_parsed_source(
     for candidate in &unwrapped_candidates {
         if let Some(mut result) = detect_bundle_candidate(candidate, cm.clone(), source, false) {
             result.chunk_ids = chunk_ids;
+            result.input_has_esm_declarations = input_has_esm_declarations;
             return Some(result);
         }
     }
@@ -607,6 +617,7 @@ fn detect_parsed_source(
     result.map(|result| {
         let mut detected = DetectedBundle::from_result(result);
         detected.chunk_ids = chunk_ids;
+        detected.input_has_esm_declarations = input_has_esm_declarations;
         detected
     })
 }

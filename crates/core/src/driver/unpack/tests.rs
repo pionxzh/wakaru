@@ -147,6 +147,7 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
             format: BundleFormat::ScopeHoisted,
         }),
         plain_prepared: None,
+        public_path_candidate: true,
     };
 
     let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), true, false)
@@ -157,6 +158,59 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
         "raw split should retain runnable statement normalization: {}",
         output.modules[0].code
     );
+}
+
+#[test]
+fn unprovable_public_boundary_falls_back_to_one_processed_module() {
+    let source = "export const intact = 1;";
+    let uncertain = PreparedUnpackInput {
+        filename: "uncertain.js".to_string(),
+        source: Some(source.to_string()),
+        detection: PreparedInputDetection::ScopeHoisted,
+        detected: None,
+        scope_hoisted: Some(UnpackResult {
+            modules: vec![
+                UnpackedModule {
+                    filename: "chunk_a.js".to_string(),
+                    code: "export const a = 1;".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    filename: "chunk_b.js".to_string(),
+                    code: "export const b = 2;".to_string(),
+                    ..Default::default()
+                },
+            ],
+            report_import_cycle_warnings: false,
+            format: BundleFormat::ScopeHoisted,
+        }),
+        plain_prepared: None,
+        public_path_candidate: true,
+    };
+    let sibling = prepare_unpack_input(
+        "consumer.js".to_string(),
+        "import { intact } from './uncertain.js'; console.log(intact);".to_string(),
+        false,
+        true,
+    )
+    .expect("sibling should prepare");
+
+    let output = unpack_prepared_inputs(
+        vec![uncertain, sibling],
+        DecompileOptions::default(),
+        false,
+        false,
+    )
+    .expect("uncertain boundary should fall back safely");
+
+    let input_modules = output
+        .modules
+        .iter()
+        .filter(|module| module.provenance.input == Some(PreparedInputId::from_index(0)))
+        .collect::<Vec<_>>();
+    assert_eq!(input_modules.len(), 1);
+    assert_eq!(input_modules[0].filename, "uncertain.js");
+    assert!(input_modules[0].code.contains("intact"));
 }
 
 #[test]

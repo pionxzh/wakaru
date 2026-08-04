@@ -83,6 +83,16 @@ its inline startup as `entry.js`; separately emitted asset files remain
 external to the recovered JavaScript modules. ncc `.mjs` output uses a
 top-level runtime and is not structurally split.
 
+In normal multi-input unpack, a heuristic scope-hoisted ESM input or structural
+esbuild ESM chunk keeps its original safe relative input path as its public
+entry filename. Generated children are namespaced beneath that filename's stem
+(for example, `assets/index-<hash>.js` with children below
+`assets/index-<hash>/`). This preserves sibling static imports, re-exports,
+namespace imports, and dynamic imports that still address the physical input.
+Generated modules yield to these reserved public paths during collision
+deduplication. `--raw` remains splitter passthrough and keeps the splitter's
+provisional names.
+
 `--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
 including synthetic clusters whose emitted ESM imports form a cycle. The
 resulting module graph may not preserve the bundle's initialization order and

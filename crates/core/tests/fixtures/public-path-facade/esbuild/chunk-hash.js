@@ -1,0 +1,14 @@
+var lazy = (init, cache) => () => (init && (cache = init(init = 0)), cache);
+var init_a = lazy(() => { value_a = 1; });
+var init_b = lazy(() => { value_b = 2; });
+var init_c = lazy(() => { value_c = 3; });
+var init_d = lazy(() => { value_d = 4; });
+var init_e = lazy(() => { value_e = 5; });
+var value_a, value_b, value_c, value_d, value_e;
+init_a();
+init_b();
+init_c();
+init_d();
+init_e();
+var total = value_a + value_b + value_c + value_d + value_e;
+export { total };

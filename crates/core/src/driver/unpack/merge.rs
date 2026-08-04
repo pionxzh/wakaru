@@ -123,6 +123,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
     pub(super) input: Option<PreparedInputId>,
+    pub(super) reserved_public_path: bool,
 }
 
 impl PreparedUnpackModule {
@@ -135,6 +136,7 @@ impl PreparedUnpackModule {
             filename_rewrite: None,
             report_import_cycle_warnings: true,
             input: None,
+            reserved_public_path: false,
         }
     }
 
@@ -150,6 +152,7 @@ impl PreparedUnpackModule {
             filename_rewrite: None,
             report_import_cycle_warnings,
             input: None,
+            reserved_public_path: false,
         }
     }
 }
@@ -178,6 +181,7 @@ impl NumericRewritePlan {
 
 pub(super) fn prepare_multi_source_modules(
     mut modules: Vec<MultiSourceModule>,
+    public_paths: &HashMap<PreparedInputId, String>,
 ) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
     let span = tracing::info_span!("prepare_multi_source_modules", count = modules.len());
     let _enter = span.enter();
@@ -185,7 +189,8 @@ pub(super) fn prepare_multi_source_modules(
         .iter()
         .map(|module| module.module.filename.clone())
         .collect::<Vec<_>>();
-    assign_unique_module_filenames(&mut modules);
+    apply_public_path_reservations(&mut modules, public_paths);
+    assign_unique_module_filenames(&mut modules, public_paths);
     let mut filename_maps = HashMap::<PreparedInputId, HashMap<String, String>>::new();
     for (module, original_filename) in modules.iter().zip(&original_filenames) {
         if let Some(input) = module.input {
@@ -232,6 +237,12 @@ pub(super) fn prepare_multi_source_modules(
                     })
             });
             PreparedUnpackModule {
+                reserved_public_path: module.input.is_some_and(|input| {
+                    module.module.is_entry
+                        && public_paths
+                            .get(&input)
+                            .is_some_and(|path| path == &module.module.filename)
+                }),
                 module: module.module,
                 prepared: module.prepared,
                 numeric_rewrite,
@@ -261,9 +272,42 @@ pub(super) fn apply_filename_rewrites(
     );
 }
 
-fn assign_unique_module_filenames(modules: &mut [MultiSourceModule]) {
-    let mut seen = HashSet::new();
+fn apply_public_path_reservations(
+    modules: &mut [MultiSourceModule],
+    public_paths: &HashMap<PreparedInputId, String>,
+) {
     for module in modules {
+        let Some(public_path) = module.input.and_then(|input| public_paths.get(&input)) else {
+            continue;
+        };
+        if module.module.is_entry {
+            module.module.filename = public_path.clone();
+        } else {
+            module.module.filename = super::scope_split::public_path_child_filename(
+                public_path,
+                &module.module.filename,
+            );
+        }
+    }
+}
+
+fn assign_unique_module_filenames(
+    modules: &mut [MultiSourceModule],
+    public_paths: &HashMap<PreparedInputId, String>,
+) {
+    let mut seen = public_paths
+        .values()
+        .map(|path| path.to_lowercase())
+        .collect::<HashSet<_>>();
+    for module in modules {
+        if module.input.is_some_and(|input| {
+            module.module.is_entry
+                && public_paths
+                    .get(&input)
+                    .is_some_and(|path| path == &module.module.filename)
+        }) {
+            continue;
+        }
         module.module.filename = deduplicate_module_filename(&module.module.filename, &mut seen);
     }
 }
@@ -296,7 +340,7 @@ fn normalize_input_group_path(path: &std::path::Path) -> String {
         .replace('\\', "/")
 }
 
-fn normalize_path_lexically(path: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn normalize_path_lexically(path: &std::path::Path) -> std::path::PathBuf {
     let mut normalized = std::path::PathBuf::new();
     for component in path.components() {
         match component {
@@ -802,7 +846,7 @@ mod tests {
             ),
         ];
 
-        let (prepared, plan) = prepare_multi_source_modules(modules);
+        let (prepared, plan) = prepare_multi_source_modules(modules, &HashMap::new());
         assert!(
             prepared[0].module.code.contains("require(999)"),
             "prepare should keep source strings untouched"

@@ -1,11 +1,19 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_files, unpack_files_raw, UnpackInput};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn fixture(path: &str) -> String {
     let full = format!("tests/bundles/webpack-gen/dist/{path}");
     fs::read_to_string(&full).unwrap_or_else(|e| panic!("failed to read {full}: {e}"))
+}
+
+fn assert_valid_module_graph(modules: &[(String, String)]) {
+    let findings = validate_output_modules(modules);
+    assert!(
+        findings.is_empty(),
+        "unexpected graph findings: {findings:#?}"
+    );
 }
 
 #[test]
@@ -815,11 +823,9 @@ exports.modules = {
     );
 }
 
-#[test]
-fn scope_hoist_multi_file_rewrites_imports_to_deduplicated_filenames() {
-    fn scope_bundle(offset: usize) -> String {
-        format!(
-            r#"
+fn scope_bundle(offset: usize) -> String {
+    format!(
+        r#"
 function helperA1() {{ return {offset}; }}
 function helperA2() {{ return helperA1() + 1; }}
 function helperA3() {{ return helperA2() * 2; }}
@@ -835,18 +841,200 @@ function publicB() {{ return helperB4(); }}
 const result = publicA() + publicB();
 console.log(result);
 "#
-        )
-    }
+    )
+}
 
+#[test]
+fn scope_hoist_processed_input_keeps_public_esm_path() {
+    let target = include_str!("fixtures/public-path-facade/scope/index-hash.js");
+    let consumer = include_str!("fixtures/public-path-facade/scope/consumer.js");
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: consumer.to_string(),
+            },
+            UnpackInput {
+                filename: "index-hash.js".to_string(),
+                source: target.to_string(),
+            },
+            UnpackInput {
+                filename: "left.js".to_string(),
+                source: include_str!("fixtures/public-path-facade/scope/left.js").to_string(),
+            },
+            UnpackInput {
+                filename: "right.js".to_string(),
+                source: include_str!("fixtures/public-path-facade/scope/right.js").to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("scope-hoisted target should unpack with its public path");
+
+    let facade = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "index-hash.js")
+        .map(|(_, code)| code)
+        .unwrap_or_else(|| {
+            panic!(
+                "public facade path must survive: {:?}",
+                output
+                    .modules
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        facade.contains("export let liveValue") && facade.contains("liveValue += 1"),
+        "the facade must retain the reassigned live export:\n{facade}"
+    );
+    assert!(
+        facade.contains("export * from \"./left.js\"")
+            && facade.contains("export * from \"./right.js\""),
+        "the facade must retain ambiguous star re-exports for the ESM linker:\n{facade}"
+    );
+    assert!(
+        !facade.contains("export { helperA") && !facade.contains("export { helperB"),
+        "splitter-only helper bindings must not leak through the public facade:\n{facade}"
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(filename, _)| filename.starts_with("index-hash/")),
+        "generated children should follow recursive split naming discipline"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn esbuild_processed_chunk_keeps_public_esm_path() {
+    let target = include_str!("fixtures/public-path-facade/esbuild/chunk-hash.js");
+    let consumer = include_str!("fixtures/public-path-facade/esbuild/consumer.js");
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: consumer.to_string(),
+            },
+            UnpackInput {
+                filename: "chunk-hash.js".to_string(),
+                source: target.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("esbuild chunk should unpack with its public path");
+
+    assert!(output
+        .detected_formats
+        .contains(&wakaru_core::BundleFormat::Esbuild));
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(filename, _)| filename == "chunk-hash.js"),
+        "esbuild facade path must survive: {:?}",
+        output
+            .modules
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(filename, _)| filename.starts_with("chunk-hash/")),
+        "esbuild children should be namespaced beneath the facade"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn reserved_public_path_wins_generated_chunk_collision() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "first.js".to_string(),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(1)),
+            },
+            UnpackInput {
+                filename: "first/chunk_helperA1.js".to_string(),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(2)),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("reserved facade should displace the colliding generated chunk");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"first/chunk_helperA1.js"), "{names:?}");
+    assert!(names.contains(&"first/chunk_helperA1_2.js"), "{names:?}");
+    let facade = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "first.js")
+        .map(|(_, code)| code)
+        .expect("first facade should keep its reserved path");
+    assert!(
+        facade.contains("./first/chunk_helperA1_2.js"),
+        "facade imports must follow the deduplicated generated child:\n{facade}"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn duplicate_normalized_public_paths_fail_without_suffixing_facade() {
+    let error = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "same.js".to_string(),
+                source: scope_bundle(1),
+            },
+            UnpackInput {
+                filename: "./same.js".to_string(),
+                source: scope_bundle(2),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect_err("ambiguous public paths must not receive a numeric suffix");
+
+    assert!(
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn scope_hoist_multi_file_rewrites_imports_to_deduplicated_filenames() {
     let inputs = || {
         vec![
             UnpackInput {
                 filename: "first.js".to_string(),
-                source: scope_bundle(1),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(1)),
             },
             UnpackInput {
                 filename: "second.js".to_string(),
-                source: scope_bundle(2),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(2)),
             },
         ]
     };
@@ -855,21 +1043,27 @@ console.log(result);
         ..Default::default()
     };
     let outputs = [
-        unpack_files(inputs(), options.clone()),
-        unpack_files_raw(inputs(), &options),
+        (false, unpack_files(inputs(), options.clone())),
+        (true, unpack_files_raw(inputs(), &options)),
     ];
 
-    for output in outputs {
+    for (raw, output) in outputs {
         let output = output.expect("both scope-hoisted inputs should unpack together");
         let filenames = output
             .modules
             .iter()
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>();
-        let second_dependent = output
+        let expected_filename = if raw { "entry_2.js" } else { "second.js" };
+        let expected_import = if raw {
+            "./chunk_helperA1_2.js"
+        } else {
+            "./second/chunk_helperA1.js"
+        };
+        let second_entry = output
             .modules
             .iter()
-            .find(|(name, _)| name == "chunk_helperB1_2.js")
+            .find(|(name, _)| name == expected_filename)
             .map(|(_, code)| code)
             .unwrap_or_else(|| {
                 panic!(
@@ -877,13 +1071,15 @@ console.log(result);
                 )
             });
         assert!(
-            second_dependent.contains("./chunk_helperA1_2.js"),
-            "second input imports must follow its deduplicated sibling module:\n{second_dependent}"
+            second_entry.contains(expected_import),
+            "second input imports must follow its final sibling module:\n{second_entry}"
         );
-        assert!(
-            !second_dependent.contains("./chunk_helperA1.js"),
-            "second input must not link to the first input's colliding module:\n{second_dependent}"
-        );
+        if raw {
+            assert!(
+                !second_entry.contains("./chunk_helperA1.js"),
+                "raw second input must not link to the first input's colliding module:\n{second_entry}"
+            );
+        }
     }
 }
 
