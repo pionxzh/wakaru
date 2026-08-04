@@ -369,8 +369,11 @@ fn parse_program(filename: &str, source: &str, as_module: bool) -> Result<Module
         FileName::Custom(filename.to_string()).into(),
         source.to_string(),
     );
+    // JSX is always enabled: standard-level UnJsx emits JSX syntax into .js
+    // files. This is safe for plain JS — an expression cannot begin with `<`,
+    // so no comparison is reinterpreted.
     let syntax = Syntax::Es(EsSyntax {
-        jsx: filename.ends_with(".jsx"),
+        jsx: true,
         ..Default::default()
     });
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);

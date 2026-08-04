@@ -21,13 +21,28 @@ pub struct DirectoryScanStats {
 /// Recursively collect `.js`/`.mjs`/`.cjs` files under `root`, skipping hidden
 /// entries and `node_modules`. Results are sorted by their string path.
 pub fn collect_directory_js_inputs(root: &Path) -> Result<Vec<PathBuf>> {
+    collect_sorted(root, is_js_like_input)
+}
+
+/// Like [`collect_directory_js_inputs`] but for `debug validate`: emitted
+/// module trees can carry `.jsx` and extensionless filenames, so those are
+/// accepted too. Source maps and other extensions stay excluded.
+pub fn collect_validate_inputs(root: &Path) -> Result<Vec<PathBuf>> {
+    collect_sorted(root, is_emitted_module_file)
+}
+
+fn collect_sorted(root: &Path, accepts: fn(&Path) -> bool) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
-    collect_directory_js_inputs_inner(root, &mut paths)?;
+    collect_directory_js_inputs_inner(root, &mut paths, accepts)?;
     paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
     Ok(paths)
 }
 
-fn collect_directory_js_inputs_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_directory_js_inputs_inner(
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+    accepts: fn(&Path) -> bool,
+) -> Result<()> {
     let mut entries = fs::read_dir(dir)
         .with_context(|| format!("failed to read input directory {}", dir.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -46,8 +61,8 @@ fn collect_directory_js_inputs_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Re
             if is_hidden_name(&file_name) || file_name == "node_modules" {
                 continue;
             }
-            collect_directory_js_inputs_inner(&path, paths)?;
-        } else if file_type.is_file() && !is_hidden_name(&file_name) && is_js_like_input(&path) {
+            collect_directory_js_inputs_inner(&path, paths, accepts)?;
+        } else if file_type.is_file() && !is_hidden_name(&file_name) && accepts(&path) {
             paths.push(path);
         }
     }
@@ -63,6 +78,16 @@ fn is_js_like_input(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
+}
+
+fn is_emitted_module_file(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "js" | "mjs" | "cjs" | "jsx"
+        ),
+        None => true,
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +126,27 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["a.js", "b.mjs", "c.cjs"]);
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn collect_validate_inputs_accepts_jsx_and_extensionless() {
+        let dir = temp_test_dir("validate");
+        fs::create_dir_all(&dir).expect("create dir");
+
+        fs::write(dir.join("a.js"), "1").expect("write js");
+        fs::write(dir.join("b.jsx"), "1").expect("write jsx");
+        fs::write(dir.join("module"), "1").expect("write extensionless");
+        fs::write(dir.join("map.js.map"), "1").expect("write source map (ignored)");
+        fs::write(dir.join(".hidden"), "1").expect("write hidden (ignored)");
+
+        let collected = collect_validate_inputs(&dir).expect("collect");
+        let names: Vec<String> = collected
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["a.js", "b.jsx", "module"]);
 
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }

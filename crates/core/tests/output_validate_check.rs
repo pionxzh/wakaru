@@ -356,6 +356,41 @@ with (scope) {
 }
 
 #[test]
+fn jsx_in_js_output_parses_and_participates_in_graph() {
+    // Standard-level UnJsx emits JSX syntax in .js files; the validator must
+    // parse it and still catch graph defects in the same file.
+    let findings = kinds(&[
+        (
+            "app.js",
+            r#"
+import { widget } from "./missing.js";
+export function App() {
+    return <div className="x">{widget}</div>;
+}
+"#,
+        ),
+        ("util.js", "export const helper = 1;\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::DanglingRelativeRef, "app.js".into())]
+    );
+}
+
+#[test]
+fn extensionless_module_files_resolve() {
+    // Some emitted trees carry extensionless module filenames.
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { helper } from "./util"; console.log(helper);"#,
+        ),
+        ("util", "export const helper = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
 fn extensionless_relative_ref_resolves_to_js_sibling() {
     let findings = kinds(&[
         (

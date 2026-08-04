@@ -25,7 +25,7 @@ mod output;
 mod vue;
 
 use color::Styled;
-use discovery::{collect_directory_js_inputs, DirectoryScanStats};
+use discovery::{collect_directory_js_inputs, collect_validate_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
 use json_output::{
     JsonDecompileOutput, JsonModule, JsonModuleKind, JsonModuleStatus, JsonUnpackOutput,
@@ -810,7 +810,7 @@ fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
 }
 
 fn run_validate(args: ValidateArgs) -> Result<()> {
-    let files = collect_directory_js_inputs(&args.dir)?;
+    let files = collect_validate_inputs(&args.dir)?;
     if files.is_empty() {
         anyhow::bail!("no JavaScript files found under {}", args.dir.display());
     }
