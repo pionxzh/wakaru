@@ -1936,3 +1936,58 @@ var Foo = (function(_Bar) {
         "should not convert to class when _callSuper rewrite bails"
     );
 }
+
+// ============================================================
+// Duplicate sloppy-mode parameter names — class bodies are strict
+// mode, so conversion must bail rather than emit a SyntaxError
+// ============================================================
+
+#[test]
+fn duplicate_constructor_params_preserve_iife_shape() {
+    let input = r#"
+var Foo = function() {
+    function t(a, a) { this.value = a; }
+    t.prototype.run = function run() { return this.value; }
+    return t;
+}();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn duplicate_method_params_preserve_iife_shape() {
+    let input = r#"
+var Foo = function() {
+    function t(value) { this.value = value; }
+    t.prototype.pick = function pick(a, a) { return a; }
+    return t;
+}();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn duplicate_getter_params_preserve_iife_shape() {
+    let input = r#"
+var Foo = function() {
+    function t(val) { this._val = val; }
+    Object.defineProperty(t.prototype, "value", {
+        get: function(a, a) { return this._val; }
+    });
+    return t;
+}();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn duplicate_create_class_method_params_preserve_iife_shape() {
+    let input = r#"
+function _createClass(t, e, n) { return t; }
+var Foo = function() {
+    function t(value) { this.value = value; }
+    return _createClass(t, [{ key: "pick", value: function(a, a) { return a; } }]);
+}();
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

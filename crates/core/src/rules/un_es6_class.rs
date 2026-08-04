@@ -13,6 +13,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::has_duplicate_param_names;
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
@@ -1456,8 +1457,31 @@ fn parse_class_body(
         return None;
     }
 
+    // Class bodies are strict mode, so a sloppy-mode duplicate parameter list
+    // on any member would be an early error — keep the original IIFE.
+    if members.iter().any(class_member_has_duplicate_params) {
+        return None;
+    }
+
     let _ = class_name; // used only for documentation purposes
     Some(members)
+}
+
+fn class_member_has_duplicate_params(member: &ClassMember) -> bool {
+    match member {
+        ClassMember::Constructor(ctor) => {
+            let mut seen = HashSet::new();
+            ctor.params.iter().any(|param| {
+                matches!(
+                    param,
+                    ParamOrTsParamProp::Param(Param { pat: Pat::Ident(binding), .. })
+                        if !seen.insert(binding.id.sym.clone())
+                )
+            })
+        }
+        ClassMember::Method(method) => has_duplicate_param_names(&method.function.params),
+        _ => false,
+    }
 }
 
 /// Like `is_inline_inherits_iife` but doesn't check the second argument against a specific param name.
