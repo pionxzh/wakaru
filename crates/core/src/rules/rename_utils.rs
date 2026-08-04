@@ -4,13 +4,14 @@ use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
-    ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
-    ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
+    ExportNamedSpecifier, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::decl_utils::{collect_decl_names, collect_pat_names};
+use super::decl_utils::{collect_decl_binding_ids, collect_decl_names, collect_pat_names};
 
 pub(crate) use crate::analysis::BindingId;
 
@@ -18,6 +19,47 @@ pub(crate) use crate::analysis::BindingId;
 pub struct BindingRename {
     pub old: BindingId,
     pub new: Atom,
+}
+
+/// Collect local bindings whose public names are established by a named export.
+///
+/// Default exports are intentionally excluded: renaming the local binding of
+/// `export default function f() {}` does not change the public name `default`.
+pub(crate) fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {
+    collect_exported_binding_ids_from_items(&module.body)
+}
+
+pub(crate) fn collect_exported_binding_ids_from_items(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut bindings = HashSet::new();
+
+    for item in items {
+        let ModuleItem::ModuleDecl(module_decl) = item else {
+            continue;
+        };
+
+        match module_decl {
+            ModuleDecl::ExportDecl(export) => {
+                collect_decl_binding_ids(&export.decl, &mut bindings);
+            }
+            ModuleDecl::ExportNamed(export) if export.src.is_none() && !export.type_only => {
+                for specifier in &export.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    if named.is_type_only {
+                        continue;
+                    }
+                    let ModuleExportName::Ident(local) = &named.orig else {
+                        continue;
+                    };
+                    bindings.insert((local.sym.clone(), local.ctxt));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    bindings
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

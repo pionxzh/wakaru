@@ -7,6 +7,150 @@ fn apply(input: &str) -> String {
     render_rule(input, SmartRename::new)
 }
 
+// Module-level SmartRename collectors must never change a named export's
+// public binding. Each regression also keeps one private candidate to prove
+// the collector still provides useful names for non-exported bindings.
+
+#[test]
+fn react_hook_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+const a = useRef();
+const b = useRef();
+export { a };
+use(a, b);
+"#;
+    let expected = r#"
+const a = useRef();
+const bRef = useRef();
+export { a };
+use(a, bRef);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn destructuring_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export const { publicValue: a } = source;
+const { privateValue: b } = source;
+use(a, b);
+"#;
+    let expected = r#"
+export const { publicValue: a } = source;
+const { privateValue } = source;
+use(a, privateValue);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn member_init_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+const a = runtime.publicValue;
+const b = runtime.privateValue;
+export { a };
+use(a, b);
+"#;
+    let expected = r#"
+const a = runtime.publicValue;
+const runtime_privateValue = runtime.privateValue;
+export { a };
+use(a, runtime_privateValue);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn symbol_for_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export const a = Symbol.for("public.value");
+const b = Symbol.for("private.value");
+use(a, b);
+"#;
+    let expected = r#"
+export const a = Symbol.for("public.value");
+const SYMBOL_PRIVATE_VALUE = Symbol.for("private.value");
+use(a, SYMBOL_PRIVATE_VALUE);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export function a() {
+  return <div data-sentry-component="PublicCard" />;
+}
+function b() {
+  return <div data-sentry-component="PrivateCard" />;
+}
+use(a, b);
+"#;
+    let expected = r#"
+export function a() {
+  return <div />;
+}
+function PrivateCard() {
+  return <div />;
+}
+use(a, PrivateCard);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export function a() {
+  return <div />;
+}
+function b() {
+  return <span />;
+}
+use(a, b);
+"#;
+    let expected = r#"
+export function a() {
+  return <div />;
+}
+function BComponent() {
+  return <span />;
+}
+use(a, BComponent);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export const a = makePublic();
+const b = makePrivate();
+const values = { PublicValue: a, PrivateValue: b };
+"#;
+    let expected = r#"
+export const a = makePublic();
+const PrivateValue = makePrivate();
+const values = { PublicValue: a, PrivateValue };
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn jsx_alias_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export const Tm = sideCar;
+const Dm = drawer;
+const view = <><Tm /><Dm /></>;
+"#;
+    let expected = r#"
+export const Tm = sideCar;
+const Drawer = drawer;
+const view = <><Tm /><Drawer /></>;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
 #[test]
 fn jsx_component_alias_uses_source_name() {
     let input = r#"

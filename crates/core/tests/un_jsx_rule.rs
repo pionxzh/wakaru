@@ -8,6 +8,46 @@ fn render_with_level(input: &str, level: RewriteLevel) -> String {
 }
 
 #[test]
+fn display_name_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+export const a = styled.div;
+a.displayName = "PublicCard";
+const b = styled.div;
+b.displayName = "PrivateCard";
+use(a, b);
+"#;
+    let expected = r#"
+export const a = styled.div;
+a.displayName = "PublicCard";
+const PrivateCard = styled.div;
+PrivateCard.displayName = "PrivateCard";
+use(a, PrivateCard);
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn lowercase_component_rename_skips_exported_binding_but_renames_private_binding() {
+    let input = r#"
+import { jsx } from "react/jsx-runtime";
+export const widget = makeWidget();
+const panel = makePanel();
+const publicView = jsx(widget, {});
+const privateView = jsx(panel, {});
+"#;
+    let expected = r#"
+import { jsx } from "react/jsx-runtime";
+export const widget = makeWidget();
+const Panel = makePanel();
+const publicView = jsx(widget, {});
+const privateView = <Panel />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn converts_basic_create_element_to_jsx() {
     let input = r#"
 function fn() {

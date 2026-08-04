@@ -17,7 +17,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::analysis::binding_uses::BindingUseIndex;
 
 use super::decl_utils::BindingId;
-use super::rename_utils::{rename_bindings, BindingRename};
+use super::rename_utils::{
+    collect_exported_binding_ids_from_items, rename_bindings, BindingRename,
+};
 use super::RewriteLevel;
 
 const CLASSIC_PRAGMA: &str = "createElement";
@@ -978,6 +980,8 @@ fn collect_module_renames(
             import_pragmas,
         ));
     }
+    let exported_bindings = collect_exported_binding_ids_from_items(items);
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
     (renames, name_registry)
 }
 

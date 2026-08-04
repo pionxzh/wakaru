@@ -6,11 +6,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, GetterProp, Ident, ImportDecl,
-    ImportSpecifier, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr,
-    JSXExprContainer, JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop,
-    PropName, Stmt, VarDecl, VarDeclKind,
+    Decl, Expr, FnDecl, FnExpr, Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr,
+    JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
+    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -18,13 +17,12 @@ use crate::js_names::{
     is_likely_generated_alias, is_reserved_binding_name, to_valid_identifier_name,
 };
 
-use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
 use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
-    collect_module_names, rename_bindings, rename_bindings_in_module, BindingId, BindingRename,
-    RenameShadowIndex,
+    collect_exported_binding_ids, collect_module_names, rename_bindings, rename_bindings_in_module,
+    BindingId, BindingRename, RenameShadowIndex,
 };
 use super::ObjShorthand;
 
@@ -50,23 +48,30 @@ impl VisitMut for SmartRename {
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
         );
+        let exported_bindings = collect_exported_binding_ids(module);
         let mut cached_names = collect_names_in_module(&module.body);
         react_rename_module_with(
             module,
             &mut cached_names,
             &self.pending_value_position_names,
+            &exported_bindings,
         );
-        destructuring_rename_module_with(module, &mut cached_names);
-        member_init_rename_module_with(module, &mut cached_names);
-        symbol_for_rename_module_with(module, &mut cached_names, self.unresolved_mark);
+        destructuring_rename_module_with(module, &mut cached_names, &exported_bindings);
+        member_init_rename_module_with(module, &mut cached_names, &exported_bindings);
+        symbol_for_rename_module_with(
+            module,
+            &mut cached_names,
+            self.unresolved_mark,
+            &exported_bindings,
+        );
 
-        sentry_component_rename_module(module);
+        sentry_component_rename_module(module, &exported_bindings);
         react_function_shape_rename_module(module, &self.extracted_function_names.borrow());
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
         value_position_rename_module(module);
-        jsx_component_alias_rename_module(module);
+        jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
     }
 
@@ -121,11 +126,12 @@ impl VisitMut for SmartRenameSecondPass {
             &mut self.pending_value_position_names,
             collect_value_position_rename_map_module(module),
         );
-        sentry_component_rename_module(module);
+        let exported_bindings = collect_exported_binding_ids(module);
+        sentry_component_rename_module(module, &exported_bindings);
         react_function_shape_rename_module(module, &self.extracted_function_names.borrow());
         module.visit_mut_children_with(self);
         value_position_rename_module(module);
-        jsx_component_alias_rename_module(module);
+        jsx_component_alias_rename_module(module, &exported_bindings);
         self.pending_value_position_names = previous_pending_names;
     }
 
@@ -156,12 +162,14 @@ fn react_rename_module_with(
     module: &mut Module,
     all_names: &mut HashSet<Atom>,
     pending_value_position_names: &HashMap<BindingId, String>,
+    exported_bindings: &HashSet<BindingId>,
 ) {
-    let renames = collect_react_renames_from_module_items(
+    let mut renames = collect_react_renames_from_module_items(
         &module.body,
         all_names,
         pending_value_position_names,
     );
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
     }
@@ -684,8 +692,13 @@ fn destructuring_rename_function(func: &mut Function) {
     }
 }
 
-fn destructuring_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
-    let renames = collect_obj_pat_renames_from_module(&module.body, all_names);
+fn destructuring_rename_module_with(
+    module: &mut Module,
+    all_names: &mut HashSet<Atom>,
+    exported_bindings: &HashSet<BindingId>,
+) {
+    let mut renames = collect_obj_pat_renames_from_module(&module.body, all_names);
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
     }
@@ -1037,8 +1050,13 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
     rename_bindings(&mut block.stmts, &renames);
 }
 
-fn member_init_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
-    let renames = collect_member_init_renames_from_module(&module.body, all_names);
+fn member_init_rename_module_with(
+    module: &mut Module,
+    all_names: &mut HashSet<Atom>,
+    exported_bindings: &HashSet<BindingId>,
+) {
+    let mut renames = collect_member_init_renames_from_module(&module.body, all_names);
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
     }
@@ -1172,8 +1190,11 @@ fn symbol_for_rename_module_with(
     module: &mut Module,
     all_names: &mut HashSet<Atom>,
     unresolved_mark: Mark,
+    exported_bindings: &HashSet<BindingId>,
 ) {
-    let renames = collect_symbol_for_renames_from_module(&module.body, all_names, unresolved_mark);
+    let mut renames =
+        collect_symbol_for_renames_from_module(&module.body, all_names, unresolved_mark);
+    renames.retain(|rename| !exported_bindings.contains(&rename.old));
     if renames.is_empty() {
         return;
     }
@@ -1586,32 +1607,6 @@ impl BindingCollector {
     }
 }
 
-fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {
-    let mut ids = HashSet::new();
-    for item in &module.body {
-        let ModuleItem::ModuleDecl(module_decl) = item else {
-            continue;
-        };
-        match module_decl {
-            ModuleDecl::ExportDecl(export) => {
-                collect_decl_binding_ids(&export.decl, &mut ids);
-            }
-            ModuleDecl::ExportNamed(export) => {
-                for specifier in &export.specifiers {
-                    let ExportSpecifier::Named(named) = specifier else {
-                        continue;
-                    };
-                    if let ModuleExportName::Ident(local) = &named.orig {
-                        ids.insert((local.sym.clone(), local.ctxt));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    ids
-}
-
 impl Visit for BindingCollector {
     fn visit_pat(&mut self, pat: &Pat) {
         if let Pat::Ident(bi) = pat {
@@ -1906,7 +1901,7 @@ const SENTRY_ATTR_NAMES: &[&str] = &["data-sentry-component", "dataSentryCompone
 const SENTRY_ELEMENT_ATTR_NAMES: &[&str] = &["data-sentry-element", "dataSentryElement"];
 const SENTRY_SOURCE_FILE_ATTR_NAMES: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
 
-fn sentry_component_rename_module(module: &mut Module) {
+fn sentry_component_rename_module(module: &mut Module, exported_bindings: &HashSet<BindingId>) {
     let mut collector = SentryComponentCollector::default();
     module.visit_with(&mut collector);
     if collector.component_candidates.is_empty() && collector.element_candidates.is_empty() {
@@ -1933,6 +1928,9 @@ fn sentry_component_rename_module(module: &mut Module) {
 
     let mut renames = Vec::new();
     for (bid, target) in candidates {
+        if exported_bindings.contains(&bid) {
+            continue;
+        }
         if bid.0.as_ref() == target.as_str() {
             continue;
         }
@@ -2531,7 +2529,7 @@ impl Visit for ComponentUseBindingCollector {
 //   return <SideCar />;
 // ============================================================
 
-fn jsx_component_alias_rename_module(module: &mut Module) {
+fn jsx_component_alias_rename_module(module: &mut Module, exported_bindings: &HashSet<BindingId>) {
     let mut collector = JsxComponentAliasCollector::default();
     module.visit_with(&mut collector);
     if collector.aliases.is_empty() {
@@ -2544,7 +2542,9 @@ fn jsx_component_alias_rename_module(module: &mut Module) {
     let eligible: Vec<_> = classifier
         .states
         .into_iter()
-        .filter(|(_, state)| state.other_uses == 0 && state.jsx_uses > 0)
+        .filter(|(bid, state)| {
+            !exported_bindings.contains(bid) && state.other_uses == 0 && state.jsx_uses > 0
+        })
         .collect();
     let mut target_counts = HashMap::new();
     for (_, state) in &eligible {
