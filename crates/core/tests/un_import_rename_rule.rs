@@ -313,3 +313,30 @@ function Component() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn keeps_capitalized_alias_for_jsx_component_import() {
+    // Restoring the lowercase external name would turn the JSX element into
+    // an intrinsic-tag reference (`<kb/>` means the string tag "kb", not the
+    // component binding), so the capitalized alias must survive.
+    let input = r#"
+import { kb as Kb } from './dep.js';
+export const view = <Kb/>;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn still_dealiases_lowercase_import_not_used_as_jsx_tag() {
+    let input = r#"
+import { kb as Kb } from './dep.js';
+export const view = <Widget prop={Kb}/>;
+"#;
+    let expected = r#"
+import { kb } from './dep.js';
+export const view = <Widget prop={kb}/>;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

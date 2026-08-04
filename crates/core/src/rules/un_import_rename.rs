@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    Expr, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    Expr, ImportSpecifier, JSXElementName, Module, ModuleDecl, ModuleExportName, ModuleItem,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
@@ -31,6 +31,7 @@ impl VisitMut for UnImportRename {
             self.unresolved_mark,
         ));
 
+        let jsx_tags = collect_jsx_tag_bindings(module);
         let mut candidates: Vec<(BindingId, Atom)> = Vec::new();
         let mut candidate_bindings = HashSet::new();
         for item in &module.body {
@@ -54,6 +55,13 @@ impl VisitMut for UnImportRename {
                 }
 
                 let local_id = (local, named.local.ctxt);
+                // Restoring a lowercase external name onto a binding used as a
+                // JSX element would change the tag into an intrinsic-element
+                // string reference; keep the capitalized alias (UnJsx creates
+                // these deliberately).
+                if starts_with_lowercase(imported.as_ref()) && jsx_tags.contains(&local_id) {
+                    continue;
+                }
                 candidate_bindings.insert(local_id.clone());
                 candidates.push((local_id, imported));
             }
@@ -110,6 +118,29 @@ impl VisitMut for UnImportRename {
             }
         }
     }
+}
+
+fn starts_with_lowercase(value: &str) -> bool {
+    value.chars().next().is_some_and(|c| c.is_lowercase())
+}
+
+/// Binding ids used as JSX element names (`<Tag/>`).
+fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
+    struct TagCollector {
+        bindings: HashSet<BindingId>,
+    }
+    impl Visit for TagCollector {
+        fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+            if let JSXElementName::Ident(ident) = name {
+                self.bindings.insert((ident.sym.clone(), ident.ctxt));
+            }
+        }
+    }
+    let mut collector = TagCollector {
+        bindings: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.bindings
 }
 
 fn collect_unresolved_reference_names(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {
