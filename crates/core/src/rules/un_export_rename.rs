@@ -12,8 +12,9 @@ use swc_core::ecma::visit::VisitMut;
 use crate::js_names::is_reserved_binding_name;
 
 use super::rename_utils::{
-    collect_module_names, collect_top_level_binding_infos, rename_bindings_in_module, BindingId,
-    BindingRename, RenameShadowIndex, TopLevelBindingInfo, TopLevelBindingKind,
+    collect_jsx_tag_bindings, collect_module_names, collect_top_level_binding_infos,
+    rename_bindings_in_module, starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
+    TopLevelBindingInfo, TopLevelBindingKind,
 };
 
 pub struct UnExportRename;
@@ -41,8 +42,14 @@ impl VisitMut for UnExportRename {
             return;
         }
         let shadow_index = RenameShadowIndex::for_bindings(module, &shadow_bindings);
-        let plans =
-            collect_export_rename_plans(module, &module_names, &binding_infos, &shadow_index);
+        let jsx_tags = collect_jsx_tag_bindings(module);
+        let plans = collect_export_rename_plans(
+            module,
+            &module_names,
+            &binding_infos,
+            &shadow_index,
+            &jsx_tags,
+        );
 
         if plans.is_empty() {
             return;
@@ -151,13 +158,15 @@ fn collect_export_rename_plans(
     module_names: &std::collections::HashSet<Atom>,
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
     shadow_index: &RenameShadowIndex,
+    jsx_tags: &HashSet<BindingId>,
 ) -> Vec<ExportRenamePlan> {
     // Compute which names will be freed by export renames.  Given
     //   export { i as x };  export { x as f };
     // the name `x` is occupied but will be freed because `x` is itself renamed
     // to `f`.  We pre-compute the full set of freed names so all renames can be
     // planned in a single pass without iterative chain-following.
-    let freed_names = compute_freed_names(module, binding_infos, module_names, shadow_index);
+    let freed_names =
+        compute_freed_names(module, binding_infos, module_names, shadow_index, jsx_tags);
 
     let mut plans = Vec::new();
 
@@ -184,6 +193,13 @@ fn collect_export_rename_plans(
                             if new_name != info.id.0
                                 && !is_reserved_binding_name(&new_name)
                                 && !name_is_import_binding(&new_name, module_names, binding_infos)
+                                && !rename_breaks_jsx_tag(
+                                    &new_name,
+                                    &info.id,
+                                    &[],
+                                    binding_infos,
+                                    jsx_tags,
+                                )
                                 && !plans
                                     .iter()
                                     .any(|plan: &ExportRenamePlan| plan.old == info.id)
@@ -241,6 +257,13 @@ fn collect_export_rename_plans(
                         || new_name.len() < old_name.len()
                         || is_reserved_binding_name(&new_name)
                         || name_is_import_binding(&new_name, module_names, binding_infos)
+                        || rename_breaks_jsx_tag(
+                            &new_name,
+                            &info.id,
+                            &alias_names,
+                            binding_infos,
+                            jsx_tags,
+                        )
                         || name_conflicts_with_unmoved_binding(
                             binding_infos,
                             &plans,
@@ -283,6 +306,13 @@ fn collect_export_rename_plans(
                         || getter_name.len() < info.id.0.len()
                         || is_reserved_binding_name(&getter_name)
                         || name_is_import_binding(&getter_name, module_names, binding_infos)
+                        || rename_breaks_jsx_tag(
+                            &getter_name,
+                            &info.id,
+                            &[],
+                            binding_infos,
+                            jsx_tags,
+                        )
                         || name_conflicts_with_unmoved_binding(
                             binding_infos,
                             &plans,
@@ -327,6 +357,7 @@ fn compute_freed_names(
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
     module_names: &HashSet<Atom>,
     shadow_index: &RenameShadowIndex,
+    jsx_tags: &HashSet<BindingId>,
 ) -> HashSet<Atom> {
     // Pattern A (`export const X = z`) and Pattern C (getter namespaces) also
     // claim real bindings and target names; the planner honors them first and
@@ -357,7 +388,7 @@ fn compute_freed_names(
                     let Some(orig_info) = binding_infos.get(&orig.sym) else {
                         continue;
                     };
-                    let (info, old_name, _) =
+                    let (info, old_name, alias_names) =
                         resolve_to_real_binding(orig_info, &orig.sym, module, binding_infos);
                     if old_name == exported.sym || exported.sym.len() < old_name.len() {
                         continue;
@@ -369,6 +400,15 @@ fn compute_freed_names(
                         continue;
                     }
                     if name_is_import_binding(&exported.sym, module_names, binding_infos) {
+                        continue;
+                    }
+                    if rename_breaks_jsx_tag(
+                        &exported.sym,
+                        &info.id,
+                        &alias_names,
+                        binding_infos,
+                        jsx_tags,
+                    ) {
                         continue;
                     }
                     if shadow_index.rename_causes_shadowing(&info.id, &exported.sym) {
@@ -525,6 +565,29 @@ fn name_is_import_binding(
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
 ) -> bool {
     module_names.contains(new_name) && !binding_infos.contains_key(new_name)
+}
+
+/// True when renaming to `new_name` would corrupt a JSX element: a lowercase
+/// element name is an intrinsic-tag string reference, so a binding used as a
+/// JSX tag must keep a capitalized name (UnJsx creates these capitalized
+/// bindings deliberately). Var aliases are renamed along with the real
+/// binding, so an alias appearing as a JSX tag blocks the rename too.
+fn rename_breaks_jsx_tag(
+    new_name: &Atom,
+    id: &BindingId,
+    alias_names: &[Atom],
+    binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+    jsx_tags: &HashSet<BindingId>,
+) -> bool {
+    if !starts_with_lowercase(new_name) {
+        return false;
+    }
+    jsx_tags.contains(id)
+        || alias_names.iter().any(|alias| {
+            binding_infos
+                .get(alias)
+                .is_some_and(|info| jsx_tags.contains(&info.id))
+        })
 }
 
 fn name_conflicts_with_unmoved_binding(

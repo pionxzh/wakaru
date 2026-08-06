@@ -7,7 +7,7 @@ use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
     ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
-    ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
+    ImportSpecifier, JSXElementName, KeyValuePatProp, KeyValueProp, MemberProp, Module, ModuleDecl,
     ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -20,6 +20,33 @@ pub(crate) use crate::analysis::BindingId;
 pub struct BindingRename {
     pub old: BindingId,
     pub new: Atom,
+}
+
+/// True when the first character is lowercase — the JSX intrinsic-tag
+/// convention: `<kb/>` references the string tag "kb", not a binding, so a
+/// binding used as a JSX element name must never be renamed to a lowercase
+/// name.
+pub(crate) fn starts_with_lowercase(value: &str) -> bool {
+    value.chars().next().is_some_and(|c| c.is_lowercase())
+}
+
+/// Binding ids used as JSX element names (`<Tag/>`).
+pub(crate) fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
+    struct TagCollector {
+        bindings: HashSet<BindingId>,
+    }
+    impl Visit for TagCollector {
+        fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+            if let JSXElementName::Ident(ident) = name {
+                self.bindings.insert((ident.sym.clone(), ident.ctxt));
+            }
+        }
+    }
+    let mut collector = TagCollector {
+        bindings: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.bindings
 }
 
 /// Collect local bindings whose public names are pinned to the binding name

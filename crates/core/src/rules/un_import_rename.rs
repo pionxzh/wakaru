@@ -3,14 +3,15 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    Expr, ImportSpecifier, JSXElementName, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    Expr, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use crate::js_names::is_reserved_binding_name;
 
 use super::rename_utils::{
-    collect_module_names, rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex,
+    collect_jsx_tag_bindings, collect_module_names, rename_bindings_in_module,
+    starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
 };
 
 pub struct UnImportRename {
@@ -118,29 +119,6 @@ impl VisitMut for UnImportRename {
             }
         }
     }
-}
-
-fn starts_with_lowercase(value: &str) -> bool {
-    value.chars().next().is_some_and(|c| c.is_lowercase())
-}
-
-/// Binding ids used as JSX element names (`<Tag/>`).
-fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
-    struct TagCollector {
-        bindings: HashSet<BindingId>,
-    }
-    impl Visit for TagCollector {
-        fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
-            if let JSXElementName::Ident(ident) = name {
-                self.bindings.insert((ident.sym.clone(), ident.ctxt));
-            }
-        }
-    }
-    let mut collector = TagCollector {
-        bindings: HashSet::new(),
-    };
-    module.visit_with(&mut collector);
-    collector.bindings
 }
 
 fn collect_unresolved_reference_names(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {

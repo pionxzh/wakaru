@@ -650,3 +650,80 @@ export const ns = {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn keeps_capitalized_jsx_component_through_export_specifier() {
+    // Renaming `Kb` to the lowercase export alias would turn the JSX element
+    // into an intrinsic-tag string reference (`<mb/>` means the tag "mb",
+    // not the component binding). The capitalized binding must survive.
+    let input = r#"
+const Kb = makePanel();
+export { Kb as mb };
+export const view = <Kb/>;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_capitalized_jsx_component_through_export_const_alias() {
+    let input = r#"
+const Kb = makePanel();
+export const mb = Kb;
+export const view = <Kb/>;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_capitalized_jsx_component_through_getter_namespace() {
+    let input = r#"
+const Ym = makeEnv();
+export const ns = {
+  get subprocessEnv() { return Ym; },
+  get otherEnv() { return Ym; }
+};
+export const view = <Ym/>;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn keeps_capitalized_jsx_alias_through_export_specifier() {
+    // The specifier resolves through the var alias to the real binding; the
+    // alias itself is the JSX tag, so the rename must be rejected too.
+    let input = r#"
+const Kb = makePanel();
+var Alias = Kb;
+export { Alias as mb };
+export const view = <Alias/>;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn jsx_guarded_edge_does_not_free_its_name() {
+    // `Kb -> mb` is rejected by the JSX guard, so the name `Kb` is NOT freed;
+    // planning `i -> Kb` anyway would duplicate the still-live `Kb` binding.
+    let input = r#"
+const Kb = makePanel();
+const i = 1;
+export { Kb as mb };
+export { i as Kb };
+export const view = <Kb/>;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn still_renames_lowercase_export_not_used_as_jsx_tag() {
+    let input = r#"
+const Kb = makePanel();
+export { Kb as mb };
+export const view = render(Kb);
+"#;
+    let expected = r#"
+export const mb = makePanel();
+export const view = render(mb);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
