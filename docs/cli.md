@@ -89,9 +89,14 @@ entry filename. Generated children are namespaced beneath that filename's stem
 (for example, `assets/index-<hash>.js` with children below
 `assets/index-<hash>/`). This preserves sibling static imports, re-exports,
 namespace imports, and dynamic imports that still address the physical input.
-Generated modules yield to these reserved public paths during collision
-deduplication. `--raw` remains splitter passthrough and keeps the splitter's
-provisional names.
+Plain passthrough inputs keep their relative directory structure too, so
+same-named files from different directories coexist and sibling imports
+between inputs stay resolvable; a plain input whose path is already claimed
+falls back to its basename with a dedup suffix. Parent-relative invocations
+(`wakaru --unpack ../dist/*.js`) drop the traversal prefix and keep the
+in-bounds remainder. Generated modules yield to these reserved public paths
+during collision deduplication. `--raw` remains splitter passthrough and keeps
+the splitter's provisional names.
 
 `--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
 including synthetic clusters whose emitted ESM imports form a cycle. The

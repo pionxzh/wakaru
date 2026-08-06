@@ -179,9 +179,21 @@ impl NumericRewritePlan {
     }
 }
 
+/// Public output paths planned for the prepared inputs of one unpack run.
+#[derive(Default)]
+pub(super) struct PlannedPublicPaths {
+    /// Facade candidates (esbuild-ESM / scope-hoisted inputs): reserved paths
+    /// whose non-entry modules are namespaced beneath the facade.
+    pub(super) facade: HashMap<PreparedInputId, String>,
+    /// Every processed input's public path. Plain inputs keep theirs as the
+    /// provisional module filename so sibling imports between inputs stay
+    /// resolvable (a basename flatten would displace same-named files).
+    pub(super) input: HashMap<PreparedInputId, String>,
+}
+
 pub(super) fn prepare_multi_source_modules(
     mut modules: Vec<MultiSourceModule>,
-    public_paths: &HashMap<PreparedInputId, String>,
+    public_paths: &PlannedPublicPaths,
 ) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
     let span = tracing::info_span!("prepare_multi_source_modules", count = modules.len());
     let _enter = span.enter();
@@ -189,7 +201,7 @@ pub(super) fn prepare_multi_source_modules(
         .iter()
         .map(|module| module.module.filename.clone())
         .collect::<Vec<_>>();
-    apply_public_path_reservations(&mut modules, public_paths);
+    apply_public_path_reservations(&mut modules, &public_paths.facade);
     assign_unique_module_filenames(&mut modules, public_paths);
     let mut filename_maps = HashMap::<PreparedInputId, HashMap<String, String>>::new();
     for (module, original_filename) in modules.iter().zip(&original_filenames) {
@@ -240,6 +252,7 @@ pub(super) fn prepare_multi_source_modules(
                 reserved_public_path: module.input.is_some_and(|input| {
                     module.module.is_entry
                         && public_paths
+                            .facade
                             .get(&input)
                             .is_some_and(|path| path == &module.module.filename)
                 }),
@@ -293,19 +306,26 @@ fn apply_public_path_reservations(
 
 fn assign_unique_module_filenames(
     modules: &mut [MultiSourceModule],
-    public_paths: &HashMap<PreparedInputId, String>,
+    public_paths: &PlannedPublicPaths,
 ) {
     let mut seen = public_paths
+        .input
         .values()
         .map(|path| path.to_lowercase())
         .collect::<HashSet<_>>();
     for module in modules {
-        if module.input.is_some_and(|input| {
-            module.module.is_entry
-                && public_paths
-                    .get(&input)
-                    .is_some_and(|path| path == &module.module.filename)
-        }) {
+        // A module holding its input's planned public path keeps it: the
+        // reserved facade entry, or the single module of a non-facade input.
+        // (Facade children are namespaced beneath the facade and never carry
+        // the facade path itself, so they always fall through to dedup.)
+        let keeps_planned_path = module.input.is_some_and(|input| {
+            public_paths
+                .input
+                .get(&input)
+                .is_some_and(|path| path == &module.module.filename)
+                && (module.module.is_entry || !public_paths.facade.contains_key(&input))
+        });
+        if keeps_planned_path {
             continue;
         }
         module.module.filename = deduplicate_module_filename(&module.module.filename, &mut seen);
@@ -846,7 +866,8 @@ mod tests {
             ),
         ];
 
-        let (prepared, plan) = prepare_multi_source_modules(modules, &HashMap::new());
+        let (prepared, plan) =
+            prepare_multi_source_modules(modules, &PlannedPublicPaths::default());
         assert!(
             prepared[0].module.code.contains("require(999)"),
             "prepare should keep source strings untouched"

@@ -1217,3 +1217,93 @@ fn mixed_absolute_and_relative_inputs_keep_absolute_structure() {
     assert!(names.contains(&"consumer.js"), "{names:?}");
     assert_valid_module_graph(&output.modules);
 }
+
+#[test]
+fn plain_inputs_keep_directory_structure_and_sibling_imports() {
+    // Flattening `sub/left.js` to its basename used to collide with the real
+    // `left.js`; dedup then displaced one of them and consumer.js kept
+    // importing "./left.js" — argument-order-dependent wrong-module linkage.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "sub/left.js".to_string(),
+                source: "export const otherLeft = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "left.js".to_string(),
+                source: "export const leftValue = 2;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source:
+                    "import { leftValue } from \"./left.js\";\nexport const total = leftValue;\n"
+                        .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("same-basename plain inputs in different directories must coexist");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"sub/left.js"), "{names:?}");
+    assert!(names.contains(&"left.js"), "{names:?}");
+    assert!(names.contains(&"consumer.js"), "{names:?}");
+
+    let root_left = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "left.js")
+        .map(|(_, code)| code)
+        .expect("left.js should exist");
+    assert!(
+        root_left.contains("leftValue"),
+        "left.js must keep its own content, not the displaced sub/left.js:\n{root_left}"
+    );
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer.js should exist");
+    assert!(
+        consumer.contains("./left.js"),
+        "consumer must still resolve its sibling:\n{consumer}"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn parent_relative_plain_sibling_stays_next_to_candidate() {
+    // A plain sibling passed via the same `..` prefix as a facade candidate
+    // must keep the shared directory so its relative import still resolves.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "../pkg/lib.js".to_string(),
+                source: scope_bundle(1),
+            },
+            UnpackInput {
+                filename: "../pkg/consumer.js".to_string(),
+                source: "import \"./lib.js\";\nexport const ok = true;\n".to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("parent-relative plain siblings must unpack alongside candidates");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"pkg/lib.js"), "{names:?}");
+    assert!(names.contains(&"pkg/consumer.js"), "{names:?}");
+    assert_valid_module_graph(&output.modules);
+}

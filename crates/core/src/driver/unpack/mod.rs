@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
@@ -275,14 +275,17 @@ fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<Prepar
 fn plan_public_paths(
     inputs: &[PreparedUnpackInput],
     raw: bool,
-) -> Result<HashMap<PreparedInputId, String>> {
+) -> Result<merge::PlannedPublicPaths> {
+    let mut planned = merge::PlannedPublicPaths::default();
     if raw || inputs.len() < 2 {
-        return Ok(HashMap::new());
+        return Ok(planned);
     }
 
     let absolute_root = common_absolute_input_parent(inputs);
-    let mut paths = HashMap::new();
     let mut claimed = HashSet::new();
+    // Facade candidates claim first, and a collision between them stays a
+    // hard error: a facade's public path is a contract that its children are
+    // namespaced beneath, so suffixing one silently breaks importers.
     for (index, input) in inputs.iter().enumerate() {
         if !input.public_path_candidate {
             continue;
@@ -294,9 +297,30 @@ fn plan_public_paths(
                 "ambiguous public module path {public_path:?}: multiple processed inputs claim the same normalized path"
             ));
         }
-        paths.insert(PreparedInputId::from_index(index), public_path);
+        let input_id = PreparedInputId::from_index(index);
+        planned.facade.insert(input_id, public_path.clone());
+        planned.input.insert(input_id, public_path);
     }
-    Ok(paths)
+    // Plain inputs keep their directory structure when the path is free, so
+    // sibling imports between inputs stay resolvable. On a collision (or an
+    // underivable path) they fall back to the legacy basename flatten plus
+    // dedup suffix instead of failing the run — duplicate names are valid
+    // prepared-input API usage.
+    for (index, input) in inputs.iter().enumerate() {
+        if input.public_path_candidate {
+            continue;
+        }
+        let Ok(public_path) = public_path_for_input(&input.filename, absolute_root.as_deref())
+        else {
+            continue;
+        };
+        if claimed.insert(public_path.to_lowercase()) {
+            planned
+                .input
+                .insert(PreparedInputId::from_index(index), public_path);
+        }
+    }
+    Ok(planned)
 }
 
 fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBuf> {
@@ -418,7 +442,7 @@ pub fn unpack_prepared_inputs_with_policy(
                 }
                 let detected = detected.expect("bundle detection carries prepared result");
                 if format == BundleFormat::Esbuild
-                    && public_paths.contains_key(&input_id)
+                    && public_paths.facade.contains_key(&input_id)
                     && detected
                         .result
                         .modules
@@ -429,7 +453,7 @@ pub fn unpack_prepared_inputs_with_policy(
                 {
                     modules.push(public_boundary_fallback_module(
                         input_id,
-                        public_paths[&input_id].clone(),
+                        public_paths.facade[&input_id].clone(),
                         source.expect("unprovable esbuild boundary retains source"),
                         plain_prepared,
                     ));
@@ -477,7 +501,7 @@ pub fn unpack_prepared_inputs_with_policy(
                     detected_formats.push(BundleFormat::ScopeHoisted);
                 }
                 let result = scope_hoisted.expect("scope-hoist detection carries result");
-                if public_paths.contains_key(&input_id)
+                if public_paths.facade.contains_key(&input_id)
                     && result
                         .modules
                         .iter()
@@ -487,7 +511,7 @@ pub fn unpack_prepared_inputs_with_policy(
                 {
                     modules.push(public_boundary_fallback_module(
                         input_id,
-                        public_paths[&input_id].clone(),
+                        public_paths.facade[&input_id].clone(),
                         source.expect("unprovable scope boundary retains source"),
                         plain_prepared,
                     ));
@@ -516,7 +540,11 @@ pub fn unpack_prepared_inputs_with_policy(
                     UnpackedModule {
                         id: filename.clone(),
                         is_entry: false,
-                        filename: filename_for_fallback_input(&filename),
+                        filename: public_paths
+                            .input
+                            .get(&input_id)
+                            .cloned()
+                            .unwrap_or_else(|| filename_for_fallback_input(&filename)),
                         source_ranges: vec![(0, source_len)],
                         source_input: String::new(),
                         generated_source_map: Vec::new(),

@@ -110,9 +110,12 @@ readable module filenames. Conflicting or missing hints retain
 For normal multi-input unpack, heuristic scope-hoisted ESM inputs and
 structural esbuild ESM chunks keep their original safe relative input paths as
 public entry filenames. Generated children live beneath each public filename's
-stem, so sibling ESM imports and dynamic imports continue to resolve. Reserved
-public paths win filename collisions. Raw output remains splitter passthrough
-and keeps provisional splitter names.
+stem, so sibling ESM imports and dynamic imports continue to resolve. Plain
+passthrough inputs keep their relative directory structure too (a
+parent-relative `../` prefix is dropped), so same-named files from different
+directories coexist and sibling imports between inputs stay resolvable.
+Reserved public paths win filename collisions. Raw output remains splitter
+passthrough and keeps provisional splitter names.
 
 ### 3. Recover names / original source when a map exists
 
