@@ -1307,3 +1307,42 @@ fn parent_relative_plain_sibling_stays_next_to_candidate() {
     assert!(names.contains(&"pkg/consumer.js"), "{names:?}");
     assert_valid_module_graph(&output.modules);
 }
+
+#[test]
+fn collapsed_parent_relative_path_yields_to_faithful_sibling() {
+    // `../left.js` collapses to "left.js" after the traversal strip; it must
+    // not claim that path ahead of the input that faithfully lives there,
+    // or the consumer's "./left.js" silently links to the wrong module.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "../left.js".to_string(),
+                source: "export const outer = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "left.js".to_string(),
+                source: "export const leftValue = 2;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source:
+                    "import { leftValue } from \"./left.js\";\nexport const total = leftValue;\n"
+                        .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("collapsed and faithful siblings must coexist");
+
+    let left = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "left.js")
+        .map(|(_, code)| code)
+        .expect("left.js should exist");
+    assert!(
+        left.contains("leftValue"),
+        "the faithful left.js must keep its path; the collapsed ../left.js yields:\n{left}"
+    );
+    assert_valid_module_graph(&output.modules);
+}

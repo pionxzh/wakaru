@@ -290,34 +290,48 @@ fn plan_public_paths(
         if !input.public_path_candidate {
             continue;
         }
-        let public_path = public_path_for_input(&input.filename, absolute_root.as_deref())?;
-        let collision_key = public_path.to_lowercase();
+        let derived = public_path_for_input(&input.filename, absolute_root.as_deref())?;
+        let collision_key = derived.path.to_lowercase();
         if !claimed.insert(collision_key) {
             return Err(anyhow!(
-                "ambiguous public module path {public_path:?}: multiple processed inputs claim the same normalized path"
+                "ambiguous public module path {:?}: multiple processed inputs claim the same normalized path",
+                derived.path
             ));
         }
         let input_id = PreparedInputId::from_index(index);
-        planned.facade.insert(input_id, public_path.clone());
-        planned.input.insert(input_id, public_path);
+        planned.facade.insert(input_id, derived.path.clone());
+        planned.input.insert(input_id, derived.path);
     }
     // Plain inputs keep their directory structure when the path is free, so
     // sibling imports between inputs stay resolvable. On a collision (or an
     // underivable path) they fall back to the legacy basename flatten plus
     // dedup suffix instead of failing the run — duplicate names are valid
-    // prepared-input API usage.
+    // prepared-input API usage. Faithful derivations claim before collapsed
+    // ones regardless of argument order: `../x.js` collapses to "x.js" and
+    // must not displace an input that genuinely lives there.
+    let mut deferred = Vec::new();
     for (index, input) in inputs.iter().enumerate() {
         if input.public_path_candidate {
             continue;
         }
-        let Ok(public_path) = public_path_for_input(&input.filename, absolute_root.as_deref())
-        else {
+        let Ok(derived) = public_path_for_input(&input.filename, absolute_root.as_deref()) else {
             continue;
         };
-        if claimed.insert(public_path.to_lowercase()) {
+        if derived.collapsed {
+            deferred.push((index, derived.path));
+            continue;
+        }
+        if claimed.insert(derived.path.to_lowercase()) {
             planned
                 .input
-                .insert(PreparedInputId::from_index(index), public_path);
+                .insert(PreparedInputId::from_index(index), derived.path);
+        }
+    }
+    for (index, path) in deferred {
+        if claimed.insert(path.to_lowercase()) {
+            planned
+                .input
+                .insert(PreparedInputId::from_index(index), path);
         }
     }
     Ok(planned)
@@ -347,26 +361,47 @@ fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBu
     Some(common)
 }
 
-fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result<String> {
+struct DerivedPublicPath {
+    path: String,
+    /// True when the derivation had to discard leading path components (a
+    /// `..` traversal prefix, or an absolute path without a shared root).
+    /// Collapsed claims yield to faithful ones: another input may genuinely
+    /// live at the collapsed path.
+    collapsed: bool,
+}
+
+fn public_path_for_input(
+    filename: &str,
+    absolute_root: Option<&Path>,
+) -> Result<DerivedPublicPath> {
     let normalized = merge::normalize_path_lexically(Path::new(filename));
-    let candidate = if normalized.is_absolute() {
-        absolute_root
-            .and_then(|root| normalized.strip_prefix(root).ok())
-            .map(Path::to_path_buf)
-            .or_else(|| normalized.file_name().map(PathBuf::from))
-            .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?
+    let (candidate, collapsed) = if normalized.is_absolute() {
+        match absolute_root.and_then(|root| normalized.strip_prefix(root).ok()) {
+            Some(stripped) => (stripped.to_path_buf(), false),
+            None => (
+                normalized.file_name().map(PathBuf::from).ok_or_else(|| {
+                    anyhow!("cannot derive a public output path from {filename:?}")
+                })?,
+                true,
+            ),
+        }
     } else {
         // `wakaru --unpack ../pkg/bundle.js` is an ordinary invocation; the
         // traversal prefix cannot be mirrored under the output root, so keep
         // the in-bounds remainder rather than failing the whole run.
         // Lexical normalization leaves `..` components only at the front.
-        normalized
+        let stripped: PathBuf = normalized
             .components()
             .skip_while(|component| matches!(component, std::path::Component::ParentDir))
-            .collect()
+            .collect();
+        let collapsed = stripped != normalized;
+        (stripped, collapsed)
     };
     let safe = super::output::safe_relative_module_path(&candidate.to_string_lossy())?;
-    Ok(safe.to_string_lossy().replace('\\', "/"))
+    Ok(DerivedPublicPath {
+        path: safe.to_string_lossy().replace('\\', "/"),
+        collapsed,
+    })
 }
 
 fn public_boundary_fallback_module(
