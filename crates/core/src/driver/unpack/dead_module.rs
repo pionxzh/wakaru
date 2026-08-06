@@ -21,13 +21,12 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
-use swc_core::ecma::ast::{
-    CallExpr, Callee, Decl, DefaultDecl, Expr, Lit, Module, ModuleDecl, ModuleItem, Stmt,
-};
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, Lit, Module, ModuleDecl, ModuleItem, Stmt};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::super::io::{parse_js, print_js};
 use super::super::types::UnpackWarning;
+use crate::analysis::purity::{is_pure_decl, is_pure_default_decl, is_pure_init};
 use crate::module_path::resolve_relative_specifier;
 
 /// Per-module facts needed to decide dead-module elimination, gathered from the
@@ -291,30 +290,6 @@ fn is_own_body_pure(module: &Module) -> bool {
         // Bare expression statements, etc. are potential side effects.
         _ => false,
     })
-}
-
-fn is_pure_decl(decl: &Decl) -> bool {
-    match decl {
-        Decl::Fn(_) => true,
-        Decl::Class(_) => false,
-        Decl::Var(var) => var
-            .decls
-            .iter()
-            .all(|d| d.init.as_ref().is_none_or(|init| is_pure_init(init))),
-        Decl::TsInterface(_) | Decl::TsTypeAlias(_) | Decl::TsEnum(_) | Decl::TsModule(_) => true,
-        _ => false,
-    }
-}
-
-fn is_pure_default_decl(decl: &DefaultDecl) -> bool {
-    matches!(decl, DefaultDecl::Fn(_) | DefaultDecl::TsInterfaceDecl(_))
-}
-
-fn is_pure_init(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Fn(_) | Expr::Arrow(_) | Expr::Lit(_) | Expr::Ident(_)
-    )
 }
 
 #[derive(Default)]

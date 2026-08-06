@@ -798,3 +798,67 @@ fn top_level_writer_statement_folds_its_cluster_into_entry() {
         entry.1
     );
 }
+
+#[test]
+fn unreachable_effectful_singleton_folds_into_entry() {
+    const REGION_COUNT: usize = 64;
+    let mut input = pathological_entry_fixture(REGION_COUNT);
+    // An unreferenced singleton whose initializer runs code, parked mid-file
+    // so the topological attachment picks an interior anchor: wherever
+    // partitioning parks it, running the split output must still execute it.
+    let mid_marker = "class Type32 ";
+    let mid = input
+        .find(mid_marker)
+        .expect("fixture should have region 32");
+    input.insert_str(
+        mid,
+        "const sideEffectProbe = globalThis.registerPolyfill();\n",
+    );
+
+    let executable = split_scope_hoisted(&input).expect("fixture should split");
+    let entry = executable
+        .modules
+        .iter()
+        .find(|module| module.is_entry)
+        .expect("should have an entry module");
+
+    // BFS over emitted import specifiers from the entry.
+    let imports_of = |code: &str| -> Vec<String> {
+        code.match_indices("\"./")
+            .filter_map(|(start, _)| {
+                let rest = &code[start + 3..];
+                rest.find('"').map(|end| rest[..end].to_string())
+            })
+            .collect()
+    };
+    let mut reachable: HashSet<String> = HashSet::new();
+    let mut queue = vec![entry.filename.clone()];
+    while let Some(filename) = queue.pop() {
+        if !reachable.insert(filename.clone()) {
+            continue;
+        }
+        let Some(module) = executable
+            .modules
+            .iter()
+            .find(|module| module.filename == filename)
+        else {
+            continue;
+        };
+        queue.extend(imports_of(&module.code));
+    }
+
+    let probe_host = executable
+        .modules
+        .iter()
+        .find(|module| module.code.contains("registerPolyfill"))
+        .expect("the effectful singleton must be emitted somewhere");
+    assert!(
+        reachable.contains(&probe_host.filename),
+        "the module holding the side-effectful initializer must be reachable from the entry, \
+         or the split output never runs it; it landed unreachable in {} \
+         (reachable: {} of {} modules)",
+        probe_host.filename,
+        reachable.len(),
+        executable.modules.len()
+    );
+}

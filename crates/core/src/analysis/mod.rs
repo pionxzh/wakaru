@@ -1,4 +1,5 @@
 pub(crate) mod binding_uses;
+pub(crate) mod purity;
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;

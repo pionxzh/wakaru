@@ -144,7 +144,7 @@ fn render_scope_hoist_plan(
                 clusters
             };
             let folded = merge_cyclic_clusters(
-                fold_startup_effects_into_entry(&items, &graph, base),
+                fold_startup_effects_into_entry(body, &items, &graph, base),
                 &graph,
             );
             if folded.len() >= 2 || repartitioned {
@@ -158,6 +158,7 @@ fn render_scope_hoist_plan(
                 // which breaks the cycle and preserves the split.
                 merge_cyclic_clusters(
                     fold_startup_effects_into_entry(
+                        body,
                         &items,
                         &graph,
                         extract_executable_clusters(&items, &graph, roots),
@@ -1485,6 +1486,16 @@ fn stable_topological_order(clusters: &[Cluster], graph: &[HashSet<usize>]) -> O
 /// binding as a live view. Inspect mode keeps fine-grained clusters and
 /// explicitly does not promise initialization order.
 fn fold_startup_effects_into_entry(
+    body: &[ModuleItem],
+    items: &[TopLevelItem],
+    graph: &ReferenceGraph,
+    clusters: Vec<Cluster>,
+) -> Vec<Cluster> {
+    let clusters = move_bare_statements_into_entry(items, graph, clusters);
+    fold_unreachable_effectful_clusters(body, graph, clusters)
+}
+
+fn move_bare_statements_into_entry(
     items: &[TopLevelItem],
     graph: &ReferenceGraph,
     clusters: Vec<Cluster>,
@@ -1530,6 +1541,99 @@ fn fold_startup_effects_into_entry(
     });
     kept.sort_by_key(|cluster| cluster.item_indices[0]);
     kept
+}
+
+/// A cluster the entry never transitively imports never executes, so a
+/// side-effectful initializer parked there (singleton repartitioning attaches
+/// singletons by topological distance, without requiring a reference) is
+/// silently dropped from the program. Fold every unreachable cluster that
+/// carries startup effects into the entry — its items return to their source
+/// positions there. Pure unreachable clusters stay split: never running them
+/// is unobservable, and they remain readable output.
+fn fold_unreachable_effectful_clusters(
+    body: &[ModuleItem],
+    graph: &ReferenceGraph,
+    mut clusters: Vec<Cluster>,
+) -> Vec<Cluster> {
+    if !clusters.iter().any(|cluster| cluster.is_entry) {
+        return clusters;
+    }
+    let cluster_graph = build_cluster_graph(&clusters, graph);
+    let mut fold = vec![false; clusters.len()];
+    // Folding a cluster makes everything it references reachable, which can
+    // spare other effectful clusters from folding — iterate to a fixpoint
+    // (each round only grows the fold set, so it terminates).
+    loop {
+        let mut reachable = vec![false; clusters.len()];
+        let mut queue: Vec<usize> = (0..clusters.len())
+            .filter(|&index| clusters[index].is_entry || fold[index])
+            .collect();
+        for &index in &queue {
+            reachable[index] = true;
+        }
+        while let Some(index) = queue.pop() {
+            for &target in &cluster_graph[index] {
+                if !reachable[target] {
+                    reachable[target] = true;
+                    queue.push(target);
+                }
+            }
+        }
+        let mut changed = false;
+        for (index, cluster) in clusters.iter().enumerate() {
+            if reachable[index] || fold[index] {
+                continue;
+            }
+            if cluster
+                .item_indices
+                .iter()
+                .any(|&item_index| item_executes_startup_effects(&body[item_index]))
+            {
+                fold[index] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if !fold.iter().any(|&folds| folds) {
+        return clusters;
+    }
+
+    let mut entry_indices = Vec::new();
+    let mut kept = Vec::new();
+    for (index, cluster) in clusters.drain(..).enumerate() {
+        if cluster.is_entry || fold[index] {
+            entry_indices.extend(cluster.item_indices);
+        } else {
+            kept.push(cluster);
+        }
+    }
+    entry_indices.sort_unstable();
+    kept.push(Cluster {
+        item_indices: entry_indices,
+        is_entry: true,
+    });
+    kept.sort_by_key(|cluster| cluster.item_indices[0]);
+    kept
+}
+
+/// True when executing this item is observable: bare statements, and
+/// declarations whose initializers run code.
+fn item_executes_startup_effects(item: &ModuleItem) -> bool {
+    use crate::analysis::purity::{is_pure_decl, is_pure_default_decl, is_pure_init};
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(decl)) => !is_pure_decl(decl),
+        ModuleItem::Stmt(_) => true,
+        ModuleItem::ModuleDecl(decl) => match decl {
+            ModuleDecl::Import(_) | ModuleDecl::ExportAll(_) | ModuleDecl::ExportNamed(_) => false,
+            ModuleDecl::ExportDecl(export) => !is_pure_decl(&export.decl),
+            ModuleDecl::ExportDefaultDecl(export) => !is_pure_default_decl(&export.decl),
+            ModuleDecl::ExportDefaultExpr(export) => !is_pure_init(&export.expr),
+            _ => true,
+        },
+    }
 }
 
 /// Detect when the synthetic entry turns a substantial part of a large plan into
