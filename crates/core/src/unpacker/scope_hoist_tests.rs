@@ -349,6 +349,11 @@ fn chunk_references_to_imported_bindings_keep_imports() {
 
 #[test]
 fn partial_var_export_preserves_declarator_order() {
+    // The b-group consumes `exported` from the entry without the entry
+    // referencing the b-group back: an entry-side consumer of b5 would form
+    // an entry↔chunk cycle, and the executable-order fold plus cycle merge
+    // would (correctly) collapse the chunk into the entry, leaving nothing
+    // for the partial var export to split.
     let input = r#"
             function a1() { return 1; }
             function a2() { return a1() + 1; }
@@ -361,7 +366,7 @@ fn partial_var_export_preserves_declarator_order() {
             function b3() { return b2() + 1; }
             function b4() { return b3() + 1; }
             function b5() { return b4() + exported; }
-            console.log(b5());
+            console.log(a4());
         "#;
 
     let modules = split(input).expect("should split");
@@ -737,5 +742,59 @@ fn iife_trailing_statements_preserved() {
     assert!(
         all_code.contains("after"),
         "trailing statement after IIFE should be preserved"
+    );
+}
+
+#[test]
+fn top_level_writer_statement_folds_its_cluster_into_entry() {
+    // A bare top-level write must keep its source position relative to the
+    // entry statements around it. Emitting `state++` inside a lazily imported
+    // chunk runs it at import time — before entry statements that preceded it
+    // in the source — silently changing observable values.
+    let input = r#"
+        var state = 0;
+        function readState() { return state; }
+        function formatState() { return `state:${readState()}`; }
+        function stateIsEven() { return readState() % 2 === 0; }
+        function stateLabel() { return stateIsEven() ? formatState() : "odd"; }
+
+        function helperA1() { return 1; }
+        function helperA2() { return helperA1() + 1; }
+        function helperA3() { return helperA2() * 2; }
+        function helperA4() { return helperA3() + 3; }
+        function publicA() { return helperA4(); }
+
+        function helperB1() { return 5; }
+        function helperB2() { return helperB1() + 5; }
+        function helperB3() { return helperB2() * 6; }
+        function helperB4() { return helperB3() + 7; }
+        function publicB() { return helperB4(); }
+
+        console.log("before-increment", readState());
+        state++;
+        console.log("after-increment", readState(), publicA(), publicB());
+    "#;
+
+    let modules = split(input).expect("the independent helper groups should still split");
+    let entry = modules
+        .iter()
+        .find(|(_, _, is_entry)| *is_entry)
+        .expect("should have an entry module");
+    let decl_pos = entry
+        .1
+        .find("var state")
+        .expect("the mutable binding must fold into the entry alongside its writer");
+    let before_pos = entry
+        .1
+        .find("before-increment")
+        .expect("entry should keep the preceding log statement");
+    let write_pos = entry
+        .1
+        .find("state++")
+        .expect("the top-level write must execute from the entry");
+    assert!(
+        decl_pos < before_pos && before_pos < write_pos,
+        "entry must retain source execution order:\n{}",
+        entry.1
     );
 }

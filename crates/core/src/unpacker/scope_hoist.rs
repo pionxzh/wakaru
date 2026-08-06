@@ -137,12 +137,34 @@ fn render_scope_hoist_plan(
     } = plan;
     let clusters = match render_mode {
         ScopeHoistRenderMode::Executable => {
-            let clusters = if has_pathological_entry_scc(&clusters, &graph) {
-                extract_executable_clusters(&items, &graph, roots)
+            let repartitioned = has_pathological_entry_scc(&clusters, &graph);
+            let base = if repartitioned {
+                extract_executable_clusters(&items, &graph, roots.clone())
             } else {
                 clusters
             };
-            merge_cyclic_clusters(clusters, &graph)
+            let folded = merge_cyclic_clusters(
+                fold_startup_effects_into_entry(&items, &graph, base),
+                &graph,
+            );
+            if folded.len() >= 2 || repartitioned {
+                folded
+            } else {
+                // A singleton-contracted entry can form a false cycle with
+                // every chunk once bare statements return to it (the chunks
+                // reference the entry's singleton helpers, the statements
+                // reference the chunks). Repartitioning assigns optional
+                // singletons to nearby module clusters instead of the entry,
+                // which breaks the cycle and preserves the split.
+                merge_cyclic_clusters(
+                    fold_startup_effects_into_entry(
+                        &items,
+                        &graph,
+                        extract_executable_clusters(&items, &graph, roots),
+                    ),
+                    &graph,
+                )
+            }
         }
         ScopeHoistRenderMode::Inspect => clusters,
     };
@@ -1203,7 +1225,7 @@ fn apply_merge_signals(items: &[TopLevelItem], graph: &ReferenceGraph, uf: &mut 
 // Phase 4: Extract clusters and identify entry
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Cluster {
     item_indices: Vec<usize>,
     is_entry: bool,
@@ -1450,6 +1472,64 @@ fn stable_topological_order(clusters: &[Cluster], graph: &[HashSet<usize>]) -> O
     }
 
     (order.len() == graph.len()).then_some(order)
+}
+
+/// Executable outputs must preserve top-level effect order: a declarationless
+/// item (a bare effect statement such as `state++;` or a top-level call) runs
+/// whenever the module holding it is first imported, so emitting it inside a
+/// lazily imported chunk reorders it against the entry statements around it.
+/// Move each such item into the entry, which emits items in original source
+/// order. A bare writer drags its whole write-group along — every item that
+/// writes a binding must stay with the declaration (imported bindings are
+/// immutable), while pure readers may stay behind and import the moved
+/// binding as a live view. Inspect mode keeps fine-grained clusters and
+/// explicitly does not promise initialization order.
+fn fold_startup_effects_into_entry(
+    items: &[TopLevelItem],
+    graph: &ReferenceGraph,
+    clusters: Vec<Cluster>,
+) -> Vec<Cluster> {
+    let mut write_groups = UnionFind::new(items.len());
+    merge_cross_item_writes(graph, &mut write_groups);
+    let mut entry_write_roots = HashSet::new();
+    for (item_index, item) in items.iter().enumerate() {
+        if item.declared_names.is_empty() && !item.is_module_decl {
+            entry_write_roots.insert(write_groups.find(item_index));
+        }
+    }
+    if entry_write_roots.is_empty() {
+        return clusters;
+    }
+
+    let mut entry_indices = Vec::new();
+    let mut kept = Vec::new();
+    for cluster in clusters {
+        if cluster.is_entry {
+            entry_indices.extend(cluster.item_indices);
+            continue;
+        }
+        let (moved, stay): (Vec<_>, Vec<_>) = cluster
+            .item_indices
+            .into_iter()
+            .partition(|&item_index| entry_write_roots.contains(&write_groups.find(item_index)));
+        entry_indices.extend(moved);
+        if !stay.is_empty() {
+            kept.push(Cluster {
+                item_indices: stay,
+                is_entry: false,
+            });
+        }
+    }
+    if entry_indices.is_empty() {
+        return kept;
+    }
+    entry_indices.sort_unstable();
+    kept.push(Cluster {
+        item_indices: entry_indices,
+        is_entry: true,
+    });
+    kept.sort_by_key(|cluster| cluster.item_indices[0]);
+    kept
 }
 
 /// Detect when the synthetic entry turns a substantial part of a large plan into
@@ -1741,15 +1821,19 @@ fn emit_clusters(
         // Original body items, with exported declarations promoted to
         // `export function ...` / `export const ...` / `export class ...`.
         let mut leftover_exports: Vec<Atom> = Vec::new();
-        let should_rewrite_dynamic_require = !dynamic_require_helpers.is_empty()
-            && !cluster_declared[ci]
-                .iter()
-                .any(|name| dynamic_require_helpers.contains(name));
         let should_rewrite_esbuild_to_esm = !esbuild_to_esm_helpers.is_empty();
         let mut default_interop_bindings = HashSet::new();
         for &i in &cluster.item_indices {
             let mut item = body[i].clone();
-            if should_rewrite_dynamic_require {
+            // Restore `r("react")` helper calls to direct requires everywhere
+            // except the item declaring the helper itself — the helper can
+            // land in any cluster (repartitioning attaches singletons to
+            // module anchors), and only its own declaration must stay intact.
+            let declares_dynamic_require_helper = items[i]
+                .declared_names
+                .iter()
+                .any(|name| dynamic_require_helpers.contains(name));
+            if !dynamic_require_helpers.is_empty() && !declares_dynamic_require_helper {
                 item.visit_mut_with(&mut DynamicRequireHelperRewriter::new(
                     &dynamic_require_helpers,
                 ));
