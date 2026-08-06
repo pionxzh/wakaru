@@ -328,7 +328,14 @@ fn public_path_for_input(filename: &str, absolute_root: Option<&Path>) -> Result
             .or_else(|| normalized.file_name().map(PathBuf::from))
             .ok_or_else(|| anyhow!("cannot derive a public output path from {filename:?}"))?
     } else {
+        // `wakaru --unpack ../pkg/bundle.js` is an ordinary invocation; the
+        // traversal prefix cannot be mirrored under the output root, so keep
+        // the in-bounds remainder rather than failing the whole run.
+        // Lexical normalization leaves `..` components only at the front.
         normalized
+            .components()
+            .skip_while(|component| matches!(component, std::path::Component::ParentDir))
+            .collect()
     };
     let safe = super::output::safe_relative_module_path(&candidate.to_string_lossy())?;
     Ok(safe.to_string_lossy().replace('\\', "/"))

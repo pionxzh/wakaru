@@ -1147,3 +1147,36 @@ exports.modules = {
         "ambiguous duplicate module id should keep the numeric require:\n{module_20}"
     );
 }
+
+#[test]
+fn parent_relative_inputs_keep_public_paths_without_failing() {
+    // `wakaru --unpack ../pkg/*.js` is an ordinary invocation; the traversal
+    // prefix cannot be mirrored under the output root, but that must not
+    // abort the run — the in-bounds remainder keeps the directory structure.
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "../pkg/first.js".to_string(),
+                source: scope_bundle(1),
+            },
+            UnpackInput {
+                filename: "../pkg/second.js".to_string(),
+                source: scope_bundle(2),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("parent-relative CLI paths must not abort the unpack");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"pkg/first.js"), "{names:?}");
+    assert!(names.contains(&"pkg/second.js"), "{names:?}");
+    assert_valid_module_graph(&output.modules);
+}
