@@ -300,11 +300,15 @@ fn plan_public_paths(
 }
 
 fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBuf> {
+    // Relative inputs derive their public paths from their own relative
+    // structure; they must not veto the shared root of the absolute inputs
+    // (collapsing those to bare basenames invites spurious collisions).
     let normalized = inputs
         .iter()
         .map(|input| merge::normalize_path_lexically(Path::new(&input.filename)))
+        .filter(|path| path.is_absolute())
         .collect::<Vec<_>>();
-    if normalized.is_empty() || normalized.iter().any(|path| !path.is_absolute()) {
+    if normalized.is_empty() {
         return None;
     }
 

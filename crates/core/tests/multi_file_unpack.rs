@@ -1180,3 +1180,40 @@ fn parent_relative_inputs_keep_public_paths_without_failing() {
     assert!(names.contains(&"pkg/second.js"), "{names:?}");
     assert_valid_module_graph(&output.modules);
 }
+
+#[test]
+fn mixed_absolute_and_relative_inputs_keep_absolute_structure() {
+    // One unrelated relative input must not collapse the absolute candidates
+    // to bare basenames (which would then spuriously collide).
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "/proj/m1/widget.js".to_string(),
+                source: scope_bundle(1),
+            },
+            UnpackInput {
+                filename: "/proj/m2/widget.js".to_string(),
+                source: scope_bundle(2),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: "export const c = 1;\n".to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("a relative sibling input must not collapse absolute candidate paths");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"m1/widget.js"), "{names:?}");
+    assert!(names.contains(&"m2/widget.js"), "{names:?}");
+    assert!(names.contains(&"consumer.js"), "{names:?}");
+    assert_valid_module_graph(&output.modules);
+}
