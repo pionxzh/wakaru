@@ -11,7 +11,8 @@ use swc_core::ecma::ast::{
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
     SimpleAssignTarget, Stmt, VarDecl,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::utils::find_pat_ids;
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::has_duplicate_param_names;
 use super::expr_utils::is_unresolved_ident;
@@ -187,6 +188,7 @@ impl Es6ClassHelperContext {
 /// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
     helpers: Es6ClassHelperContext,
+    reused_var_bindings: HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
 }
@@ -199,18 +201,63 @@ impl UnEs6ClassInner {
     ) -> Self {
         Self {
             helpers: helper_context,
+            reused_var_bindings: HashSet::new(),
             unresolved_mark,
             rewrite_level,
         }
     }
 }
 
+#[derive(Default)]
+struct ReusedVarBindingCollector {
+    seen: HashSet<BindingKey>,
+    reused: HashSet<BindingKey>,
+}
+
+impl Visit for ReusedVarBindingCollector {
+    fn visit_var_decl(&mut self, var_decl: &VarDecl) {
+        for declarator in &var_decl.decls {
+            let bindings: Vec<BindingKey> = find_pat_ids(&declarator.name);
+            for binding in bindings {
+                if !self.seen.insert(binding.clone()) {
+                    self.reused.insert(binding);
+                }
+            }
+        }
+        var_decl.visit_children_with(self);
+    }
+
+    // `var` is function-scoped, so block/loop declarations must remain in
+    // this scan. Nested functions and classes are separate binding scopes and
+    // are processed by their own `visit_mut_stmts` invocation.
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+fn reused_var_bindings_in_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+    let mut collector = ReusedVarBindingCollector::default();
+    stmts.visit_with(&mut collector);
+    collector.reused
+}
+
+fn reused_var_bindings_in_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+    let mut collector = ReusedVarBindingCollector::default();
+    items.visit_with(&mut collector);
+    collector.reused
+}
+
 impl VisitMut for UnEs6ClassInner {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let mut scope_helpers = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
         scope_helpers.extend(&self.helpers);
+        let mut reused_var_bindings = reused_var_bindings_in_stmts(stmts);
+        reused_var_bindings.extend(self.reused_var_bindings.iter().cloned());
         let mut scoped_inner =
             UnEs6ClassInner::new(scope_helpers, self.unresolved_mark, self.rewrite_level);
+        scoped_inner.reused_var_bindings = reused_var_bindings;
         stmts.visit_mut_children_with(&mut scoped_inner);
 
         let mut converted_any = false;
@@ -220,6 +267,7 @@ impl VisitMut for UnEs6ClassInner {
                 Stmt::Decl(Decl::Var(ref var_decl)) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
+                        &scoped_inner.reused_var_bindings,
                         &scoped_inner.helpers.inherits_helpers,
                         &scoped_inner.helpers.tslib_namespaces,
                         &scoped_inner.helpers.create_class_helpers,
@@ -254,6 +302,8 @@ impl VisitMut for UnEs6ClassInner {
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        self.reused_var_bindings
+            .extend(reused_var_bindings_in_items(items));
         items.visit_mut_children_with(self);
 
         let mut converted_any = false;
@@ -263,6 +313,7 @@ impl VisitMut for UnEs6ClassInner {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
+                        &self.reused_var_bindings,
                         &self.helpers.inherits_helpers,
                         &self.helpers.tslib_namespaces,
                         &self.helpers.create_class_helpers,
@@ -283,6 +334,7 @@ impl VisitMut for UnEs6ClassInner {
                 })) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
+                        &self.reused_var_bindings,
                         &self.helpers.inherits_helpers,
                         &self.helpers.tslib_namespaces,
                         &self.helpers.create_class_helpers,
@@ -991,6 +1043,7 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
 #[allow(clippy::too_many_arguments)]
 fn try_iife_to_class(
     var: &VarDecl,
+    reused_var_bindings: &HashSet<BindingKey>,
     inherits_helpers: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<BindingKey>,
@@ -1009,6 +1062,12 @@ fn try_iife_to_class(
     let Pat::Ident(BindingIdent { id: class_name, .. }) = &declarator.name else {
         return None;
     };
+    // Multiple `var` declarations intentionally reinitialize one hoisted
+    // binding. Replacing any one of them with a lexical class declaration
+    // changes that ordering and can make earlier reads enter a TDZ.
+    if reused_var_bindings.contains(&binding_key(class_name)) {
+        return None;
+    }
 
     // Must have an initializer
     let init = declarator.init.as_ref()?;

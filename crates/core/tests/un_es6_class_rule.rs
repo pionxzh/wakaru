@@ -2,7 +2,7 @@ mod common;
 
 use common::{assert_eq_normalized, render, render_pipeline_between, render_rule};
 use wakaru_core::rules::UnEs6Class;
-use wakaru_core::RewriteLevel;
+use wakaru_core::{DecompileOptions, RewriteLevel, UnpackWarningKind};
 
 fn apply(input: &str) -> String {
     render_rule(input, UnEs6Class::new)
@@ -1990,4 +1990,129 @@ var Foo = function() {
 }();
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+// ============================================================
+// Reused `var` bindings — class declarations are lexical
+// ============================================================
+
+#[test]
+fn reused_var_binding_preserves_later_class_iife() {
+    let input = r#"
+var Shared = makeFirstValue();
+exports.Primary = Shared;
+var Shared = (function() {
+    function Base(value) { this.value = value; }
+    Base.prototype.read = function read() { return this.value; };
+    return Base;
+}());
+consume(Shared);
+"#;
+    let expected = r#"
+var Shared = makeFirstValue();
+exports.Primary = Shared;
+var Shared = function() {
+    function Base(value) { this.value = value; }
+    Base.prototype.read = function read() { return this.value; };
+    return Base;
+}();
+consume(Shared);
+"#;
+
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn block_scoped_var_reuse_preserves_later_class_iife() {
+    let input = r#"
+if (enabled) {
+    var Shared = makeFirstValue();
+}
+var Shared = (function() {
+    function Base() {}
+    Base.prototype.read = function read() { return 1; };
+    return Base;
+}());
+"#;
+    let output = apply(input);
+
+    assert!(
+        !output.contains("class Shared"),
+        "a block-level var shares the outer function binding: {output}"
+    );
+}
+
+#[test]
+fn class_iife_in_block_observes_outer_var_reuse() {
+    let input = r#"
+var Shared = makeFirstValue();
+if (enabled) {
+    var Shared = (function() {
+        function Base() {}
+        Base.prototype.read = function read() { return 1; };
+        return Base;
+    }());
+}
+consume(Shared);
+"#;
+    let output = apply(input);
+
+    assert!(
+        !output.contains("class Shared"),
+        "a class inside the block would shadow the hoisted var: {output}"
+    );
+}
+
+#[test]
+fn nested_same_name_var_does_not_block_class_recovery() {
+    let input = r#"
+function makeOther() {
+    var Shared = makeFirstValue();
+    return Shared;
+}
+var Shared = (function() {
+    function Base() {}
+    Base.prototype.read = function read() { return 1; };
+    return Base;
+}());
+"#;
+    let output = apply(input);
+
+    assert!(
+        output.contains("class Shared"),
+        "binding identity should distinguish nested locals: {output}"
+    );
+}
+
+#[test]
+fn reused_var_binding_does_not_gain_pipeline_tdz() {
+    let input = r#"
+var Shared = makeFirstValue();
+exports.Primary = Shared;
+var Shared = (function() {
+    function Base(value) { this.value = value; }
+    Base.prototype.read = function read() { return this.value; };
+    return Base;
+}());
+consume(Shared);
+"#;
+
+    let output = wakaru_core::decompile(
+        input,
+        DecompileOptions {
+            diagnostics: true,
+            filename: "reused-var-class.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    assert!(
+        output
+            .warnings
+            .iter()
+            .all(|warning| warning.kind != UnpackWarningKind::TdzViolation),
+        "class recovery introduced a TDZ: {:?}\n--- output ---\n{}",
+        output.warnings,
+        output.code
+    );
 }
