@@ -277,7 +277,7 @@ fn prepare_plain_ast_for_filename(source: &str, filename: &str) -> Result<Prepar
 }
 
 fn plan_public_paths(
-    inputs: &[PreparedUnpackInput],
+    inputs: &[&PreparedUnpackInput],
     raw: bool,
 ) -> Result<merge::PlannedPublicPaths> {
     let mut planned = merge::PlannedPublicPaths::default();
@@ -314,7 +314,7 @@ fn plan_public_paths(
     Ok(planned)
 }
 
-fn common_absolute_input_parent(inputs: &[PreparedUnpackInput]) -> Option<PathBuf> {
+fn common_absolute_input_parent(inputs: &[&PreparedUnpackInput]) -> Option<PathBuf> {
     // Relative inputs derive their public paths from their own relative
     // structure; they must not veto the shared root of the absolute inputs
     // (collapsing those to bare basenames invites spurious collisions).
@@ -441,7 +441,11 @@ pub fn unpack_prepared_inputs_with_policies_and_capture(
         return Err(anyhow!("at least one prepared input is required"));
     }
 
-    let public_paths = plan_public_paths(&inputs, raw)?;
+    // Scope-hoist policy controls how an input is split, not the stable public
+    // path derived from that input. Borrow only the input side for planning so
+    // source and prepared-AST payloads are not cloned.
+    let public_path_inputs = inputs.iter().map(|(input, _)| input).collect::<Vec<_>>();
+    let public_paths = plan_public_paths(&public_path_inputs, raw)?;
 
     let mut modules = Vec::new();
     let mut detected_formats = Vec::new();
