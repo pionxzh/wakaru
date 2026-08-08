@@ -127,6 +127,39 @@ fn prepared_output_uses_typed_input_indices_for_distinct_paths() {
 }
 
 #[test]
+fn per_input_scope_policies_preserve_public_path_planning() {
+    let inputs = [
+        ("src/consumer.js", "import './value.js';"),
+        ("src/value.js", "export const value = 1;"),
+    ]
+    .into_iter()
+    .map(|(filename, source)| {
+        prepare_unpack_input(filename.to_string(), source.to_string(), false, true)
+            .expect("plain input should prepare")
+    })
+    .zip([ScopeHoistPolicy::Disabled, ScopeHoistPolicy::Fallback])
+    .collect();
+
+    let output = unpack_prepared_inputs_with_policies_and_capture(
+        inputs,
+        DecompileOptions::default(),
+        false,
+        false,
+    )
+    .expect("mixed per-input policies should retain public path planning")
+    .output;
+
+    assert_eq!(
+        output
+            .modules
+            .iter()
+            .map(|module| module.filename.as_str())
+            .collect::<HashSet<_>>(),
+        HashSet::from(["src/consumer.js", "src/value.js"])
+    );
+}
+
+#[test]
 fn legacy_plain_unpack_uses_prepared_intake_once() {
     let (output, spans) = record_spans(|| {
         unpack(
