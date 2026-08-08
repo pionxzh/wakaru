@@ -1185,14 +1185,18 @@ fn parent_relative_inputs_keep_public_paths_without_failing() {
 fn mixed_absolute_and_relative_inputs_keep_absolute_structure() {
     // One unrelated relative input must not collapse the absolute candidates
     // to bare basenames (which would then spuriously collide).
+    let absolute_root = std::env::temp_dir().join("wakaru-mixed-input-root");
+    let first = absolute_root.join("m1").join("widget.js");
+    let second = absolute_root.join("m2").join("widget.js");
+    assert!(first.is_absolute() && second.is_absolute());
     let output = unpack_files(
         vec![
             UnpackInput {
-                filename: "/proj/m1/widget.js".to_string(),
+                filename: first.to_string_lossy().into_owned(),
                 source: scope_bundle(1),
             },
             UnpackInput {
-                filename: "/proj/m2/widget.js".to_string(),
+                filename: second.to_string_lossy().into_owned(),
                 source: scope_bundle(2),
             },
             UnpackInput {
