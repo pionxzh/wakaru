@@ -118,3 +118,27 @@ export const view = jsx(k, { label: "x" });
 "#;
     assert_pipeline_pair_valid(&[("provider.js", provider), ("consumer.js", consumer)]);
 }
+
+#[test]
+fn mutable_export_alias_remains_distinct_and_assignable() {
+    let source = r#"
+var initial = new Set();
+export var active = initial;
+export function replace(next) {
+    active = next;
+}
+export function readInitial() {
+    return initial;
+}
+"#;
+    let output = render(source);
+    let findings = validate_output_modules(&[("provider.js".to_string(), output.clone())]);
+    assert!(
+        findings.is_empty(),
+        "pipeline made a mutable export alias invalid: {findings:#?}\n--- output ---\n{output}"
+    );
+    assert!(
+        output.contains("return initial;"),
+        "pipeline merged an independently mutable alias with its source binding\n--- output ---\n{output}"
+    );
+}

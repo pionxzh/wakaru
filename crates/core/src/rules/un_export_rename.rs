@@ -100,7 +100,7 @@ fn collect_export_shadow_bindings(
             ..
         })) = item
         {
-            if var.decls.len() == 1 {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Some(Expr::Ident(init_id)) = var.decls[0].init.as_deref() {
                     if let Some(info) = binding_infos.get(&init_id.sym) {
                         if info.id == (init_id.sym.clone(), init_id.ctxt) && !info.exported {
@@ -180,7 +180,11 @@ fn collect_export_rename_plans(
                 ..
             })) = item
             {
-                if var.decls.len() == 1 {
+                // A mutable export alias is an independent binding. Collapsing
+                // `const initial = value; export let active = initial` would
+                // make later writes to `active` mutate (or const-assign) the
+                // binding that reads of `initial` must continue to observe.
+                if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                     if let (Pat::Ident(id), Some(init)) = (&var.decls[0].name, &var.decls[0].init) {
                         if let Expr::Ident(init_id) = init.as_ref() {
                             let Some(info) = binding_infos.get(&init_id.sym) else {
@@ -514,7 +518,7 @@ fn collect_competing_claims(
             ..
         })) = item
         {
-            if var.decls.len() == 1 {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let (Pat::Ident(id), Some(init)) = (&var.decls[0].name, &var.decls[0].init) {
                     if let Expr::Ident(init_id) = init.as_ref() {
                         let Some(info) = binding_infos.get(&init_id.sym) else {
@@ -851,7 +855,7 @@ fn is_collapsed_export_const_alias(
     var: &VarDecl,
     plans_by_old: &HashMap<BindingId, &ExportRenamePlan>,
 ) -> bool {
-    if var.decls.len() != 1 {
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return false;
     }
     let (Pat::Ident(binding), Some(init)) = (&var.decls[0].name, &var.decls[0].init) else {

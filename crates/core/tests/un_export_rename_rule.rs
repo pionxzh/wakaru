@@ -21,6 +21,22 @@ export const App = 1;
 }
 
 #[test]
+fn mutable_export_alias_stays_distinct_from_source_binding() {
+    let input = r#"
+const initial = new Set();
+export let active = initial;
+export function replace(next) {
+    active = next;
+}
+export function readInitial() {
+    return initial;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn export_const_inlines_function_declaration() {
     let input = r#"
 function a() {}
