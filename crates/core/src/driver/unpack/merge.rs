@@ -185,10 +185,22 @@ pub(super) struct PlannedPublicPaths {
     /// Facade candidates (esbuild-ESM / scope-hoisted inputs): reserved paths
     /// whose non-entry modules are namespaced beneath the facade.
     pub(super) facade: HashMap<PreparedInputId, String>,
-    /// Every processed input's public path. Plain inputs keep theirs as the
-    /// provisional module filename so sibling imports between inputs stay
-    /// resolvable (a basename flatten would displace same-named files).
+    /// Every physical relative-ESM identity's public path. Plain inputs keep
+    /// theirs as the provisional module filename so sibling imports between
+    /// inputs stay resolvable (a basename flatten would displace same-named
+    /// files). Script-loaded bundle inputs do not appear here.
     pub(super) input: HashMap<PreparedInputId, String>,
+}
+
+impl PlannedPublicPaths {
+    fn module_holds_reserved_path(&self, module: &MultiSourceModule) -> bool {
+        module.input.is_some_and(|input| {
+            self.input
+                .get(&input)
+                .is_some_and(|path| path == &module.module.filename)
+                && (module.module.is_entry || !self.facade.contains_key(&input))
+        })
+    }
 }
 
 pub(super) fn prepare_multi_source_modules(
@@ -231,6 +243,7 @@ pub(super) fn prepare_multi_source_modules(
         .into_iter()
         .zip(original_filenames)
         .map(|(module, original_filename)| {
+            let reserved_public_path = public_paths.module_holds_reserved_path(&module);
             let numeric_rewrite = if has_rewrites && module.allow_cross_chunk_rewrite {
                 Some(NumericRewriteModuleContext {
                     input_group: module.input_group,
@@ -249,13 +262,7 @@ pub(super) fn prepare_multi_source_modules(
                     })
             });
             PreparedUnpackModule {
-                reserved_public_path: module.input.is_some_and(|input| {
-                    module.module.is_entry
-                        && public_paths
-                            .facade
-                            .get(&input)
-                            .is_some_and(|path| path == &module.module.filename)
-                }),
+                reserved_public_path,
                 module: module.module,
                 prepared: module.prepared,
                 numeric_rewrite,
@@ -318,13 +325,7 @@ fn assign_unique_module_filenames(
         // reserved facade entry, or the single module of a non-facade input.
         // (Facade children are namespaced beneath the facade and never carry
         // the facade path itself, so they always fall through to dedup.)
-        let keeps_planned_path = module.input.is_some_and(|input| {
-            public_paths
-                .input
-                .get(&input)
-                .is_some_and(|path| path == &module.module.filename)
-                && (module.module.is_entry || !public_paths.facade.contains_key(&input))
-        });
+        let keeps_planned_path = public_paths.module_holds_reserved_path(module);
         if keeps_planned_path {
             continue;
         }

@@ -6,15 +6,49 @@
 //! import-source strings to match.
 
 use wakaru_core::driver::test_support::{unpack_files, UnpackInput};
-use wakaru_core::{DecompileOptions, RewriteLevel};
+use wakaru_core::{validate_output_modules, DecompileOptions, RewriteLevel};
 
-/// A component module whose JSX carries the Sentry source-file marker in its
-/// pre-JSX (props-object) form, plus a consumer module that imports it by its
-/// provisional filename.
+/// A Browserify bundle containing a generated module whose JSX carries the
+/// Sentry source-file marker, plus an entry that requires it by its provisional
+/// filename. Physical plain inputs now reserve their authored path, so positive
+/// filename-recovery coverage belongs on generated bundle outputs.
 fn sentry_annotated_inputs() -> Vec<UnpackInput> {
+    browserify_inputs(
+        r#"
+exports.Comp = function Comp() {
+    return _jsx("div", {
+        "data-sentry-component": "MyAwesomeComponent",
+        "data-sentry-source-file": "myAwesomeComponent.jsx",
+        children: "hi"
+    });
+}
+"#,
+        r#"module.exports = require("./a.js");"#,
+    )
+}
+
+fn browserify_inputs(module_source: &str, entry_source: &str) -> Vec<UnpackInput> {
+    vec![UnpackInput {
+        filename: "bundle.js".to_string(),
+        source: format!(
+            r#"
+(function() {{ return function() {{}}; }})()({{
+  1: [function(require, module, exports) {{
+    {entry_source}
+  }}, {{ "./a.js": 2 }}],
+  2: [function(require, module, exports) {{
+    {module_source}
+  }}, {{}}]
+}}, {{}}, [1]);
+"#
+        ),
+    }]
+}
+
+fn plain_sentry_annotated_inputs() -> Vec<UnpackInput> {
     vec![
         UnpackInput {
-            filename: "a.js".to_string(),
+            filename: "components/a.js".to_string(),
             source: r#"
 export function Comp() {
     return _jsx("div", {
@@ -27,8 +61,8 @@ export function Comp() {
             .to_string(),
         },
         UnpackInput {
-            filename: "b.js".to_string(),
-            source: r#"import { Comp } from "./a.js";
+            filename: "consumer.js".to_string(),
+            source: r#"import { Comp } from "./components/a.js";
 export const x = Comp;
 "#
             .to_string(),
@@ -61,9 +95,9 @@ fn rewrites_importer_source_to_recovered_filename() {
     let consumer = output
         .modules
         .iter()
-        .find(|(n, _)| n == "b.js")
+        .find(|(n, _)| n == "entry.js")
         .map(|(_, code)| code)
-        .expect("consumer module b.js should exist");
+        .expect("Browserify entry should exist");
 
     assert!(
         consumer.contains("myAwesomeComponent.jsx"),
@@ -103,17 +137,14 @@ fn recovered_filename_is_used_in_source_map_file_field() {
 
 #[test]
 fn rewrites_surviving_require_source_to_recovered_filename() {
-    let mut inputs = sentry_annotated_inputs();
-    inputs[1].source = r#"export default require("./a.js");"#.to_string();
-
-    let output =
-        unpack_files(inputs, DecompileOptions::default()).expect("two modules should unpack");
+    let output = unpack_files(sentry_annotated_inputs(), DecompileOptions::default())
+        .expect("bundle modules should unpack");
     let consumer = output
         .modules
         .iter()
-        .find(|(n, _)| n == "b.js")
+        .find(|(n, _)| n == "entry.js")
         .map(|(_, code)| code)
-        .expect("consumer module b.js should exist");
+        .expect("Browserify entry should exist");
 
     assert!(
         consumer.contains(r#"require("./myAwesomeComponent.jsx")"#),
@@ -128,28 +159,18 @@ fn rewrites_surviving_require_source_to_recovered_filename() {
 #[test]
 fn source_file_without_component_marker_does_not_recover_filename() {
     let output = unpack_files(
-        vec![
-            UnpackInput {
-                filename: "a.js".to_string(),
-                source: r#"
-export const marker = {
+        browserify_inputs(
+            r#"
+exports.marker = {
     "data-sentry-source-file": "plainObject.jsx",
     children: "hi"
 };
-"#
-                .to_string(),
-            },
-            UnpackInput {
-                filename: "b.js".to_string(),
-                source: r#"import { marker } from "./a.js";
-export const x = marker;
-"#
-                .to_string(),
-            },
-        ],
+"#,
+            r#"module.exports = require("./a.js");"#,
+        ),
         DecompileOptions::default(),
     )
-    .expect("two modules should unpack");
+    .expect("bundle modules should unpack");
 
     let names: Vec<&str> = output.modules.iter().map(|(n, _)| n.as_str()).collect();
     assert!(
@@ -173,5 +194,27 @@ fn minimal_level_keeps_provisional_filename() {
     assert!(
         names.contains(&"a.js"),
         "minimal level should not rename files from provenance markers, got {names:?}"
+    );
+}
+
+#[test]
+fn plain_input_public_path_is_not_recovered_from_sentry_marker() {
+    let output = unpack_files(plain_sentry_annotated_inputs(), DecompileOptions::default())
+        .expect("plain physical inputs should keep their reserved paths");
+
+    let names: Vec<&str> = output.modules.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(names.contains(&"components/a.js"), "{names:?}");
+    assert!(!names.contains(&"myAwesomeComponent.jsx"), "{names:?}");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(n, _)| n == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer.js should exist");
+    assert!(consumer.contains("./components/a.js"), "{consumer}");
+    let findings = validate_output_modules(&output.modules);
+    assert!(
+        findings.is_empty(),
+        "unexpected graph findings: {findings:#?}"
     );
 }

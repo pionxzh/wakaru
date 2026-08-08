@@ -112,8 +112,8 @@ fn prop_key_name(key: &PropName) -> Option<&str> {
 /// - skips a recovered name claimed by more than one module (ambiguous);
 /// - skips a recovered name that collides with another module's existing
 ///   provisional filename (would clobber a reference target);
-/// - never renames a reserved public facade or recovers another module onto a
-///   reserved facade path.
+/// - never renames a reserved physical input path (facade or plain input), or
+///   recovers another module onto a reserved physical input path.
 pub(super) fn build_rename_map(
     entries: &[(String, Option<String>)],
     reserved_paths: &HashSet<String>,

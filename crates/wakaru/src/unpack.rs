@@ -775,15 +775,32 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_input_filenames_keep_distinct_ids_and_provenance() {
-        let output = unpack(
+    fn duplicate_input_filenames_fail_as_ambiguous_public_paths() {
+        let error = unpack(
             vec![
                 Source::new("same.js", "export const first = 1;"),
                 Source::new("same.js", "export const second = 2;"),
             ],
             UnpackOptions::default().with_mode(UnpackMode::Strict),
         )
-        .expect("duplicate physical filenames should remain distinguishable");
+        .expect_err("duplicate physical identities must fail before emission");
+
+        assert!(
+            error.to_string().contains("ambiguous public module path"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn distinct_input_paths_keep_distinct_ids_and_provenance() {
+        let output = unpack(
+            vec![
+                Source::new("first/same.js", "export const first = 1;"),
+                Source::new("second/same.js", "export const second = 2;"),
+            ],
+            UnpackOptions::default().with_mode(UnpackMode::Strict),
+        )
+        .expect("distinct physical filenames should remain distinguishable");
 
         assert_eq!(output.inputs.len(), 2);
         assert_eq!(output.inputs[0].id.get(), 0);

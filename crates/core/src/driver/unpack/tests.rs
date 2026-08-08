@@ -51,7 +51,7 @@ fn prepared_plain_input_reuses_detection_ast_in_phase1() {
 }
 
 #[test]
-fn prepared_output_uses_typed_input_indices_for_duplicate_names() {
+fn prepared_inputs_reject_duplicate_physical_identity_names() {
     let inputs = ["const first = 1;", "const second = 2;"]
         .into_iter()
         .map(|source| {
@@ -60,10 +60,33 @@ fn prepared_output_uses_typed_input_indices_for_duplicate_names() {
         })
         .collect();
 
+    let error = unpack_prepared_inputs(inputs, DecompileOptions::default(), false, false)
+        .expect_err("duplicate physical identities must fail before emission");
+    assert!(
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn prepared_output_uses_typed_input_indices_for_distinct_paths() {
+    let inputs = [
+        ("first/same.js", "const first = 1;"),
+        ("second/same.js", "const second = 2;"),
+    ]
+    .into_iter()
+    .map(|(filename, source)| {
+        prepare_unpack_input(filename.to_string(), source.to_string(), false, true)
+            .expect("plain input should prepare")
+    })
+    .collect();
+
     let output = unpack_prepared_inputs(inputs, DecompileOptions::default(), false, false)
-        .expect("prepared inputs should decompile");
+        .expect("distinct prepared inputs should decompile");
 
     assert_eq!(output.modules.len(), 2);
+    assert_eq!(output.modules[0].filename, "first/same.js");
+    assert_eq!(output.modules[1].filename, "second/same.js");
     assert_eq!(
         output.modules[0]
             .provenance

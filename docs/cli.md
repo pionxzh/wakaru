@@ -91,12 +91,15 @@ entry filename. Generated children are namespaced beneath that filename's stem
 namespace imports, and dynamic imports that still address the physical input.
 Plain passthrough inputs keep their relative directory structure too, so
 same-named files from different directories coexist and sibling imports
-between inputs stay resolvable; a plain input whose path is already claimed
-falls back to its basename with a dedup suffix. Parent-relative invocations
-(`wakaru --unpack ../dist/*.js`) drop the traversal prefix and keep the
-in-bounds remainder. Generated modules yield to these reserved public paths
-during collision deduplication. `--raw` remains splitter passthrough and keeps
-the splitter's provisional names.
+between inputs stay resolvable. Parent-relative invocations (`wakaru --unpack
+../dist/*.js`) drop the traversal prefix and keep the in-bounds remainder.
+Generated modules yield to these reserved physical-input paths during collision
+deduplication. Two physical ESM identities that normalize to the same path
+(including a plain input colliding with a facade) fail as ambiguous instead of
+silently suffixing either identity. Script-loaded bundle inputs do not reserve
+their physical filenames. `--raw` only skips readability transforms, retains
+provisional extraction names, and does not apply public-path reservations or
+promise a usable module graph.
 
 `--unpack=inspect` recursively retains fine-grained scope-hoist boundaries,
 including synthetic clusters whose emitted ESM imports form a cycle. The

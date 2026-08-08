@@ -1,6 +1,7 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_files, unpack_files_raw, UnpackInput};
+use wakaru_core::driver::{prepare_unpack_input, unpack_prepared_inputs};
 use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn fixture(path: &str) -> String {
@@ -1281,6 +1282,263 @@ fn plain_inputs_keep_directory_structure_and_sibling_imports() {
 }
 
 #[test]
+fn cross_directory_plain_imports_keep_their_relative_layout() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "assets/x.js".to_string(),
+                source: "import { y } from \"../lib/y.js\";\nexport const x = y + 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "lib/y.js".to_string(),
+                source: "export const y = 1;\n".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("cross-directory plain inputs should retain a resolvable layout");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"assets/x.js"), "{names:?}");
+    assert!(names.contains(&"lib/y.js"), "{names:?}");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "assets/x.js")
+        .map(|(_, code)| code)
+        .expect("assets/x.js should exist");
+    assert!(consumer.contains("../lib/y.js"), "{consumer}");
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn generated_chunk_yields_to_plain_input_public_path() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "first.js".to_string(),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(1)),
+            },
+            UnpackInput {
+                filename: "first/chunk_helperA1.js".to_string(),
+                source: "export const authored = true;\n".to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("the generated chunk should yield to the plain input path");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"first/chunk_helperA1.js"), "{names:?}");
+    assert!(names.contains(&"first/chunk_helperA1_2.js"), "{names:?}");
+    let plain = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "first/chunk_helperA1.js")
+        .map(|(_, code)| code)
+        .expect("the authored plain input must keep its public path");
+    assert!(plain.contains("authored"), "{plain}");
+    let facade = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "first.js")
+        .map(|(_, code)| code)
+        .expect("first.js facade should exist");
+    assert!(
+        facade.contains("./first/chunk_helperA1_2.js"),
+        "the facade must follow its renamed generated child:\n{facade}"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn duplicate_normalized_plain_paths_fail_without_suffixing() {
+    let error = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "same.js".to_string(),
+                source: "export const first = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "./same.js".to_string(),
+                source: "export const second = 2;\n".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect_err("duplicate normalized plain paths must not receive a numeric suffix");
+
+    assert!(
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn plain_and_facade_claiming_the_same_public_path_fail_closed() {
+    let error = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "same.js".to_string(),
+                source: format!("{}\nexport {{ publicA, publicB }};", scope_bundle(1)),
+            },
+            UnpackInput {
+                filename: "./same.js".to_string(),
+                source: "export const authored = true;\n".to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect_err("facade and plain identity claims must not receive numeric suffixes");
+
+    assert!(
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn windows_separator_aliases_share_the_plain_path_collision_policy() {
+    let error = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "assets\\same.js".to_string(),
+                source: "export const first = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "assets/same.js".to_string(),
+                source: "export const second = 2;\n".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect_err("separator aliases must collide after public-path normalization");
+
+    assert!(
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn single_plain_prepared_input_keeps_legacy_basename() {
+    let prepared = prepare_unpack_input(
+        "nested/plain.js".to_string(),
+        "export const value = 1;\n".to_string(),
+        false,
+        true,
+    )
+    .expect("plain input should prepare");
+    let output = unpack_prepared_inputs(vec![prepared], DecompileOptions::default(), false, false)
+        .expect("single plain input should unpack");
+
+    assert_eq!(output.modules.len(), 1);
+    assert_eq!(output.modules[0].filename, "plain.js");
+    let modules = output
+        .modules
+        .iter()
+        .map(|module| (module.filename.clone(), module.code.clone()))
+        .collect::<Vec<_>>();
+    assert_valid_module_graph(&modules);
+}
+
+#[test]
+fn raw_plain_inputs_keep_the_legacy_provisional_layout() {
+    let output = unpack_files_raw(
+        vec![
+            UnpackInput {
+                filename: "assets/x.js".to_string(),
+                source: "export const x = 1;\n".to_string(),
+            },
+            UnpackInput {
+                filename: "lib/y.js".to_string(),
+                source: "export const y = 2;\n".to_string(),
+            },
+        ],
+        &DecompileOptions::default(),
+    )
+    .expect("raw plain inputs should retain the legacy provisional layout");
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"x.js"), "{names:?}");
+    assert!(names.contains(&"y.js"), "{names:?}");
+    assert!(!names.contains(&"assets/x.js"), "{names:?}");
+    assert!(!names.contains(&"lib/y.js"), "{names:?}");
+}
+
+#[test]
+fn script_loaded_bundle_input_path_is_not_reserved() {
+    let bundle = r#"
+(() => {
+  var __webpack_modules__ = ({
+    1: function(module) {
+      module.exports = 42;
+    }
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(id) {
+    var cached = __webpack_module_cache__[id];
+    if (cached !== undefined) return cached.exports;
+    var module = __webpack_module_cache__[id] = { exports: {} };
+    __webpack_modules__[id](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__(1);
+})();
+"#;
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                // A script-loaded bundle has no ESM identity at its physical
+                // filename; it must not reserve this generated module name.
+                filename: "module-1.js".to_string(),
+                source: bundle.to_string(),
+            },
+            UnpackInput {
+                filename: "plain.js".to_string(),
+                source: "export const plain = true;\n".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("script-loaded bundle should not reserve its physical input path");
+
+    assert!(
+        output
+            .detected_formats
+            .contains(&wakaru_core::BundleFormat::Webpack5),
+        "expected webpack5 detection: {:?}",
+        output.detected_formats
+    );
+    let names = output
+        .modules
+        .iter()
+        .map(|(filename, _)| filename.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"module-1.js"), "{names:?}");
+    assert!(!names.contains(&"module-1_2.js"), "{names:?}");
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
 fn parent_relative_plain_sibling_stays_next_to_candidate() {
     // A plain sibling passed via the same `..` prefix as a facade candidate
     // must keep the shared directory so its relative import still resolves.
@@ -1313,11 +1571,11 @@ fn parent_relative_plain_sibling_stays_next_to_candidate() {
 }
 
 #[test]
-fn collapsed_parent_relative_path_yields_to_faithful_sibling() {
-    // `../left.js` collapses to "left.js" after the traversal strip; it must
-    // not claim that path ahead of the input that faithfully lives there,
-    // or the consumer's "./left.js" silently links to the wrong module.
-    let output = unpack_files(
+fn collapsed_parent_relative_path_collision_fails_closed() {
+    // `../left.js` collapses to "left.js" after the traversal strip. There is
+    // no sound suffix rewrite for author-written cross-input references, so
+    // the two physical identity claims must fail instead of picking a winner.
+    let error = unpack_files(
         vec![
             UnpackInput {
                 filename: "../left.js".to_string(),
@@ -1336,17 +1594,10 @@ fn collapsed_parent_relative_path_yields_to_faithful_sibling() {
         ],
         DecompileOptions::default(),
     )
-    .expect("collapsed and faithful siblings must coexist");
+    .expect_err("collapsed and faithful claims must not be silently suffixed");
 
-    let left = output
-        .modules
-        .iter()
-        .find(|(filename, _)| filename == "left.js")
-        .map(|(_, code)| code)
-        .expect("left.js should exist");
     assert!(
-        left.contains("leftValue"),
-        "the faithful left.js must keep its path; the collapsed ../left.js yields:\n{left}"
+        error.to_string().contains("ambiguous public module path"),
+        "unexpected error: {error}"
     );
-    assert_valid_module_graph(&output.modules);
 }

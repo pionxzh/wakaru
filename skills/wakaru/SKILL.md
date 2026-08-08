@@ -114,8 +114,12 @@ stem, so sibling ESM imports and dynamic imports continue to resolve. Plain
 passthrough inputs keep their relative directory structure too (a
 parent-relative `../` prefix is dropped), so same-named files from different
 directories coexist and sibling imports between inputs stay resolvable.
-Reserved public paths win filename collisions. Raw output remains splitter
-passthrough and keeps provisional splitter names.
+Generated modules yield to these reserved physical-input paths. Duplicate
+normalized paths claimed by physical ESM identities fail as ambiguous instead
+of suffixing either identity; script-loaded bundle inputs do not reserve their
+physical filenames. Raw output only skips readability transforms, keeps
+provisional extraction names, and has no public-path reservation or usable
+module-graph contract.
 
 ### 3. Recover names / original source when a map exists
 
