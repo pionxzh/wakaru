@@ -16,7 +16,7 @@
 mod common;
 
 use common::render;
-use wakaru_core::validate_output_modules;
+use wakaru_core::{decompile, validate_output_modules, DecompileOptions, UnpackWarningKind};
 
 /// Decompile each module independently (as real single-file jobs do), then
 /// validate the results as one graph. Consumer imports pin the providers'
@@ -140,5 +140,34 @@ export function readInitial() {
     assert!(
         output.contains("return initial;"),
         "pipeline merged an independently mutable alias with its source binding\n--- output ---\n{output}"
+    );
+}
+
+#[test]
+fn parameter_recovery_does_not_introduce_tdz() {
+    let source = r#"
+function select(source, key) {
+    const { [key]: picked, ...rest } = source;
+    return [picked, rest];
+}
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "pipeline introduced TDZ warnings: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
     );
 }

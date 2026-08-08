@@ -806,7 +806,8 @@ fn fold_destructured_param_aliases(
         let Some(param_idx) = find_param_alias_idx(params, &alias) else {
             break;
         };
-        if destructured_pat_references_alias(&destructured_pat, &alias)
+        if destructured_pat_references_current_or_later_param(params, param_idx, &destructured_pat)
+            || destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
             || destructured_pat_references_later_decl_name(
                 &destructured_pat,
@@ -1149,7 +1150,11 @@ fn fold_destructured_arrow_param_aliases(
         let Some(param_idx) = find_arrow_param_alias_idx(params, &alias) else {
             break;
         };
-        if destructured_pat_references_alias(&destructured_pat, &alias)
+        if destructured_pat_references_current_or_later_arrow_param(
+            params,
+            param_idx,
+            &destructured_pat,
+        ) || destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
             || destructured_pat_references_later_decl_name(&destructured_pat, &body.stmts[1..])
             || stmts_reference_ident(&body.stmts[1..], &alias)
@@ -2020,6 +2025,56 @@ fn destructured_pat_references_alias(pat: &Pat, alias: &Ident) -> bool {
             ObjectPatProp::Rest(rest) => destructured_pat_references_alias(&rest.arg, alias),
         }),
         Pat::Rest(rest) => destructured_pat_references_alias(&rest.arg, alias),
+        _ => false,
+    }
+}
+
+fn destructured_pat_references_current_or_later_param(
+    params: &[Param],
+    param_idx: usize,
+    pat: &Pat,
+) -> bool {
+    let blocked = current_or_later_param_bindings(params, param_idx);
+    destructured_pat_expr_references_any_binding(pat, &blocked)
+}
+
+fn destructured_pat_references_current_or_later_arrow_param(
+    params: &[Pat],
+    param_idx: usize,
+    pat: &Pat,
+) -> bool {
+    let blocked = current_or_later_arrow_param_bindings(params, param_idx);
+    destructured_pat_expr_references_any_binding(pat, &blocked)
+}
+
+fn destructured_pat_expr_references_any_binding(pat: &Pat, bindings: &[BindingId]) -> bool {
+    match pat {
+        Pat::Assign(assign) => {
+            expr_references_any_binding(&assign.right, bindings)
+                || destructured_pat_expr_references_any_binding(&assign.left, bindings)
+        }
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| destructured_pat_expr_references_any_binding(elem, bindings)),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => {
+                matches!(
+                    &kv.key,
+                    PropName::Computed(computed)
+                        if expr_references_any_binding(&computed.expr, bindings)
+                ) || destructured_pat_expr_references_any_binding(&kv.value, bindings)
+            }
+            ObjectPatProp::Assign(assign) => assign
+                .value
+                .as_ref()
+                .is_some_and(|value| expr_references_any_binding(value, bindings)),
+            ObjectPatProp::Rest(rest) => {
+                destructured_pat_expr_references_any_binding(&rest.arg, bindings)
+            }
+        }),
+        Pat::Rest(rest) => destructured_pat_expr_references_any_binding(&rest.arg, bindings),
         _ => false,
     }
 }

@@ -1206,6 +1206,82 @@ function foo(_ref) {
 }
 
 #[test]
+fn computed_destructuring_before_later_param_stays_in_body() {
+    let input = r#"
+function select(source, key) {
+  const { [key]: picked, ...rest } = source;
+  return [picked, rest];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_computed_destructuring_before_later_param_stays_in_body() {
+    let input = r#"
+const select = (source, key) => {
+  const { [key]: picked, ...rest } = source;
+  return [picked, rest];
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn destructuring_default_referencing_later_param_stays_in_body() {
+    let input = r#"
+function select(source, fallback) {
+  const { value = fallback } = source;
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_destructuring_default_referencing_later_param_stays_in_body() {
+    let input = r#"
+const select = (source, fallback) => {
+  const { value = fallback } = source;
+  return value;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn destructuring_expressions_from_earlier_params_fold_when_alias_is_last() {
+    let input = r#"
+function select(key, fallback, source) {
+  const { [key]: picked, value = fallback } = source;
+  return [picked, value];
+}
+"#;
+    let expected = r#"
+function select(key, fallback, { [key]: picked, value = fallback }) {
+  return [picked, value];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arrow_computed_destructuring_with_outer_key_still_folds() {
+    let input = r#"
+const select = (source) => {
+  const { [propertyKey]: picked, ...rest } = source;
+  return [picked, rest];
+};
+"#;
+    let expected = r#"
+const select = ({ [propertyKey]: picked, ...rest }) => {
+  return [picked, rest];
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn destructured_param_alias_after_bare_decls_becomes_param_pattern() {
     let input = r#"
 function foo(_ref) {
