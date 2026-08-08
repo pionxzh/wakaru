@@ -723,6 +723,45 @@ Object.defineProperty(Foo.prototype, "value", {
 // ============================================================
 
 #[test]
+fn default_export_before_hoisted_constructor_preserves_runtime_order() {
+    let input = r#"
+export default Legacy;
+function Legacy(value) {
+    this.value = value;
+}
+Legacy.prototype.read = function() {
+    return this.value;
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn named_export_before_hoisted_constructor_still_recovers_class() {
+    let input = r#"
+export { Legacy as default };
+function Legacy(value) {
+    this.value = value;
+}
+Legacy.prototype.read = function() {
+    return this.value;
+};
+"#;
+    let expected = r#"
+export { Legacy as default };
+class Legacy {
+    constructor(value) {
+        this.value = value;
+    }
+    read() {
+        return this.value;
+    }
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn test_pre_ref_module_exports() {
     let input = r#"
 module.exports = Foo;

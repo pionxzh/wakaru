@@ -5,8 +5,8 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember,
     ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident,
-    IdentName, Lit, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName,
-    SimpleAssignTarget, Stmt, VarDeclKind,
+    IdentName, Lit, MemberProp, MethodKind, ModuleDecl, ModuleItem, Param, ParamOrTsParamProp, Pat,
+    PropName, SimpleAssignTarget, Stmt, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -73,7 +73,16 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         })
         .collect();
 
-    let candidates = find_candidates(&stmts, true);
+    let candidates: Vec<_> = find_candidates(&stmts, true)
+        .into_iter()
+        .filter(|candidate| {
+            candidate.constructor_kind != ConstructorKind::FunctionDeclaration
+                || !items
+                    .iter()
+                    .take(candidate.fn_decl_idx)
+                    .any(|item| module_decl_references_binding(item, &candidate.binding))
+        })
+        .collect();
     if candidates.is_empty() {
         return;
     }
@@ -523,6 +532,41 @@ fn references_binding(stmt: &Stmt, binding: &BindingKey, include_nested: bool) -
         found: false,
     };
     stmt.visit_with(&mut finder);
+    finder.found
+}
+
+/// Return whether a module declaration before a constructor refers to its
+/// binding from an expression that cannot be relocated with an ordinary
+/// statement. In particular, `export default Foo` observes a hoisted function
+/// before its declaration; recovering `Foo` as a class would turn that read
+/// into a TDZ failure.
+fn module_decl_references_binding(item: &ModuleItem, binding: &BindingKey) -> bool {
+    let ModuleItem::ModuleDecl(decl) = item else {
+        return false;
+    };
+    let expr = match decl {
+        ModuleDecl::ExportDefaultExpr(export) => export.expr.as_ref(),
+        ModuleDecl::TsExportAssignment(export) => export.expr.as_ref(),
+        _ => return false,
+    };
+
+    struct BindingRefFinder<'a> {
+        binding: &'a BindingKey,
+        found: bool,
+    }
+    impl Visit for BindingRefFinder<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            if binding_key(id) == *self.binding {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = BindingRefFinder {
+        binding,
+        found: false,
+    };
+    expr.visit_with(&mut finder);
     finder.found
 }
 
