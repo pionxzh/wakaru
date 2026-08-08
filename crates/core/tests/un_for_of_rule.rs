@@ -262,6 +262,27 @@ function f(items) {
 }
 
 #[test]
+fn for_of_destructuring_preserves_mixed_var_binding_kind() {
+    let input = r#"
+function recover(rows) {
+  var key = 0;
+  consume(key);
+  for (var index = 0; index < rows.length; index++) {
+    var pair = rows[index], key = pair[0];
+  }
+}
+"#;
+    let expected = r#"
+function recover(rows) {
+  var key = 0;
+  consume(key);
+  for (var [key] of rows) {}
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn for_of_destructuring_from_ts_index_form() {
     let input = r#"for (let i = 0, entries_1 = entries; i < entries_1.length; i++) { const _a = entries_1[i], key = _a[0], value = _a[1]; use(key, value); }"#;
     let expected = r#"for (const [key, value] of entries) { use(key, value); }"#;
@@ -409,6 +430,36 @@ for (const [key, value] of entries) {
 }
 
 #[test]
+fn iterator_value_destructuring_preserves_mixed_var_binding_kind() {
+    let input = r#"
+function recover(entries) {
+  var key = 0;
+  consume(key);
+  const iterator = _createForOfIteratorHelper(entries);
+  let step;
+  try {
+    for (iterator.s(); !(step = iterator.n()).done;) {
+      const pair = step.value;
+      var key = pair[0];
+    }
+  } catch (err) {
+    iterator.e(err);
+  } finally {
+    iterator.f();
+  }
+}
+"#;
+    let expected = r#"
+function recover(entries) {
+  var key = 0;
+  consume(key);
+  for (var [key] of entries) {}
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn for_of_destructuring_from_iterator_helper_read_call() {
     let input = r#"
 const iterator = _createForOfIteratorHelper(entries);
@@ -429,6 +480,36 @@ try {
     let expected = r#"
 for (const [key, value] of entries) {
   use(key, value);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn iterator_call_destructuring_preserves_mixed_var_binding_kind() {
+    let input = r#"
+function recover(entries) {
+  var key = 0;
+  consume(key);
+  const iterator = _createForOfIteratorHelper(entries);
+  let step;
+  try {
+    for (iterator.s(); !(step = iterator.n()).done;) {
+      const pair = _slicedToArray(step.value, 1);
+      var key = pair[0];
+    }
+  } catch (err) {
+    iterator.e(err);
+  } finally {
+    iterator.f();
+  }
+}
+"#;
+    let expected = r#"
+function recover(entries) {
+  var key = 0;
+  consume(key);
+  for (var [key] of entries) {}
 }
 "#;
     assert_eq_normalized(&render(input), expected);

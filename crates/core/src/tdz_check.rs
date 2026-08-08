@@ -208,7 +208,12 @@ impl Visit for OrderedScopeChecker<'_> {
                 visit_pat_expressions_and_declare(&decl.name, self);
             }
         } else {
-            var.visit_children_with(self);
+            for decl in &var.decls {
+                if let Some(init) = &decl.init {
+                    init.visit_with(self);
+                }
+                visit_pat_expressions(&decl.name, self);
+            }
         }
     }
 
@@ -393,6 +398,46 @@ fn visit_class_members(class: &Class, checker: &mut OrderedScopeChecker<'_>) {
     }
 }
 
+/// Visit expressions evaluated by a binding pattern without treating the
+/// binding identifiers themselves as references.
+fn visit_pat_expressions(pat: &Pat, checker: &mut OrderedScopeChecker<'_>) {
+    match pat {
+        Pat::Ident(_) => {}
+        Pat::Assign(assign) => {
+            assign.right.visit_with(checker);
+            visit_pat_expressions(&assign.left, checker);
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        if let PropName::Computed(computed) = &key_value.key {
+                            computed.visit_with(checker);
+                        }
+                        visit_pat_expressions(&key_value.value, checker);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        if let Some(default) = &assign.value {
+                            default.visit_with(checker);
+                        }
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        visit_pat_expressions(&rest.arg, checker);
+                    }
+                }
+            }
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                visit_pat_expressions(elem, checker);
+            }
+        }
+        Pat::Rest(rest) => visit_pat_expressions(&rest.arg, checker),
+        Pat::Expr(expr) => expr.visit_with(checker),
+        Pat::Invalid(_) => {}
+    }
+}
+
 /// Like `visit_pat_expressions` + `collect_pat_ids`, but interleaved:
 /// visit each property's default, then mark that property's binding as declared,
 /// before processing the next. This matches JS sequential evaluation of defaults.
@@ -488,6 +533,75 @@ mod tests {
     #[test]
     fn var_is_hoisted() {
         assert!(violation_names("console.log(x);\nvar x = 1;").is_empty());
+    }
+
+    #[test]
+    fn var_pattern_expressions_still_check_later_lexical_bindings() {
+        assert_eq!(
+            violation_names(
+                "var { [key]: value = fallback } = input;\nlet key = 'value';\nlet fallback = 1;"
+            ),
+            vec!["key", "fallback"]
+        );
+    }
+
+    #[test]
+    fn var_binding_position_is_not_a_reference_when_transform_reuses_identity() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let fm = cm.new_source_file(
+                FileName::Custom("test.js".to_string()).into(),
+                r#"
+function recover(rows) {
+  var key = 0;
+  consume(key);
+  for (const [shadow] of rows) {}
+}
+"#
+                .to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*fm),
+                None,
+            );
+            let mut parser = Parser::new_from(lexer);
+            let mut module = parser.parse_module().expect("failed to parse");
+            module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = &mut module.body[0] else {
+                panic!("expected function declaration");
+            };
+            let body = function.function.body.as_mut().expect("expected body");
+            let Stmt::Decl(Decl::Var(var_decl)) = &body.stmts[0] else {
+                panic!("expected var declaration");
+            };
+            let Pat::Ident(var_binding) = &var_decl.decls[0].name else {
+                panic!("expected identifier binding");
+            };
+            let reused_id = (var_binding.id.sym.clone(), var_binding.id.ctxt);
+            let var_binding_pos = var_binding.id.span.lo;
+
+            let Stmt::ForOf(for_of) = &mut body.stmts[2] else {
+                panic!("expected for-of statement");
+            };
+            let swc_core::ecma::ast::ForHead::VarDecl(loop_decl) = &mut for_of.left else {
+                panic!("expected declaration loop head");
+            };
+            let Pat::Array(array) = &mut loop_decl.decls[0].name else {
+                panic!("expected array binding");
+            };
+            let Some(Pat::Ident(loop_binding)) = &mut array.elems[0] else {
+                panic!("expected loop identifier binding");
+            };
+            loop_binding.id.sym = reused_id.0;
+            loop_binding.id.ctxt = reused_id.1;
+
+            let violations = check_tdz(&module);
+            assert_eq!(violations.len(), 1, "{violations:?}");
+            assert_ne!(violations[0].ref_pos, var_binding_pos);
+        });
     }
 
     #[test]

@@ -1177,6 +1177,7 @@ fn extract_iterator_call_destructuring_element(
     let temp_ident = &temp_binding.id;
     let mut elems = Vec::new();
     let mut bindings = Vec::new();
+    let mut kind = VarDeclKind::Const;
     let mut consumed_stmts = 1;
 
     for stmt in &stmts[1..] {
@@ -1200,6 +1201,7 @@ fn extract_iterator_call_destructuring_element(
             type_ann: binding.type_ann.clone(),
         })));
         bindings.push(binding.id.clone());
+        kind = join_recovered_binding_kind(kind, decl.kind);
         consumed_stmts += 1;
     }
 
@@ -1215,7 +1217,7 @@ fn extract_iterator_call_destructuring_element(
             type_ann: None,
         }),
         bindings,
-        kind: first_decl.kind,
+        kind,
         temp_ident: Some(temp_ident.clone()),
         consumed_stmts,
     })
@@ -1266,6 +1268,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
     let temp_ident = &binding.id;
     let mut elems = Vec::new();
     let mut bindings = Vec::new();
+    let mut kind = VarDeclKind::Const;
     let mut consumed_stmts = 1;
 
     for stmt in &stmts[1..] {
@@ -1289,6 +1292,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
             type_ann: binding.type_ann.clone(),
         })));
         bindings.push(binding.id.clone());
+        kind = join_recovered_binding_kind(kind, decl.kind);
         consumed_stmts += 1;
     }
 
@@ -1301,7 +1305,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
                 type_ann: None,
             }),
             bindings,
-            kind: first_decl.kind,
+            kind,
             temp_ident: Some(temp_ident.clone()),
             consumed_stmts,
         });
@@ -1875,6 +1879,20 @@ struct LoopElement {
     consumed_stmts: usize,
 }
 
+/// Join declaration kinds for the bindings that survive in a recovered loop
+/// pattern. The tuple temporary is deliberately excluded because it is
+/// removed; a surviving function-scoped binding must keep the whole emitted
+/// declaration function-scoped.
+fn join_recovered_binding_kind(current: VarDeclKind, next: VarDeclKind) -> VarDeclKind {
+    if current == VarDeclKind::Var || next == VarDeclKind::Var {
+        VarDeclKind::Var
+    } else if current == VarDeclKind::Let || next == VarDeclKind::Let {
+        VarDeclKind::Let
+    } else {
+        VarDeclKind::Const
+    }
+}
+
 fn extract_indexed_iterable(init_decl: &VarDecl, length_expr: &Expr) -> Option<IndexedIterable> {
     let length_obj = extract_length_obj(length_expr)?;
 
@@ -1935,6 +1953,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
 
     let mut elems = Vec::new();
     let mut bindings = Vec::new();
+    let mut kind = VarDeclKind::Const;
     let mut consumed_stmts = 1;
 
     for stmt in &stmts[1..] {
@@ -1958,6 +1977,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
             type_ann: binding.type_ann.clone(),
         })));
         bindings.push(binding.id.clone());
+        kind = join_recovered_binding_kind(kind, decl.kind);
         consumed_stmts += 1;
     }
 
@@ -1979,7 +1999,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
             type_ann: None,
         }),
         bindings,
-        kind: first_decl.kind,
+        kind,
         temp_ident: Some(temp_ident.clone()),
         consumed_stmts,
     })
