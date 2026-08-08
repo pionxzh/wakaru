@@ -187,6 +187,60 @@ const x = 42;
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn dynamic_computed_method_stays_at_its_original_position() {
+    let input = r#"
+const Cursor = function(next) {
+    this.next = next;
+};
+Cursor.prototype.toString = function() {
+    return "[Cursor]";
+};
+const iteratorKey = Symbol.iterator;
+Cursor.prototype[iteratorKey] = function() {
+    return this;
+};
+"#;
+    let expected = r#"
+class Cursor {
+    constructor(next) {
+        this.next = next;
+    }
+    toString() {
+        return "[Cursor]";
+    }
+}
+const iteratorKey = Symbol.iterator;
+Cursor.prototype[iteratorKey] = function() {
+    return this;
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn literal_computed_method_can_recover() {
+    let input = r#"
+function Cursor(next) {
+    this.next = next;
+}
+Cursor.prototype[1] = function() {
+    return this;
+};
+"#;
+    let expected = r#"
+class Cursor {
+    constructor(next) {
+        this.next = next;
+    }
+    1() {
+        return this;
+    }
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
 // ============================================================
 // Inheritance via Object.create
 // ============================================================

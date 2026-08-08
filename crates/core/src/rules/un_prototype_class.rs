@@ -1181,17 +1181,18 @@ fn extract_prop_name(prop: &MemberProp) -> Option<PropName> {
             Some(PropName::Ident(IdentName::new(name.sym.clone(), DUMMY_SP)))
         }
         MemberProp::Computed(c) => {
-            if let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = c.expr.as_ref() {
-                Some(PropName::Str(swc_core::ecma::ast::Str {
+            match strip_parens(&c.expr) {
+                Expr::Lit(Lit::Str(s)) => Some(PropName::Str(swc_core::ecma::ast::Str {
                     span: DUMMY_SP,
                     value: s.value.clone(),
                     raw: None,
-                }))
-            } else {
-                Some(PropName::Computed(swc_core::ecma::ast::ComputedPropName {
-                    span: DUMMY_SP,
-                    expr: c.expr.clone(),
-                }))
+                })),
+                Expr::Lit(Lit::Num(number)) => Some(PropName::Num(number.clone())),
+                Expr::Lit(Lit::BigInt(bigint)) => Some(PropName::BigInt(bigint.clone())),
+                // A dynamic key is evaluated at the prototype assignment's
+                // original position. Moving it into the class body can read an
+                // uninitialized binding or reorder an effectful expression.
+                _ => None,
             }
         }
         _ => None,

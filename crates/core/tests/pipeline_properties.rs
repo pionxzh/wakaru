@@ -171,3 +171,39 @@ function select(source, key) {
         output.code
     );
 }
+
+#[test]
+fn prototype_recovery_does_not_move_computed_keys_before_initialization() {
+    let source = r#"
+var Cursor = function(next) {
+    this.next = next;
+};
+Cursor.prototype.toString = function() {
+    return "[Cursor]";
+};
+var iteratorKey = getIteratorKey();
+Cursor.prototype[iteratorKey] = function() {
+    return this;
+};
+consume(iteratorKey);
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "pipeline moved a computed method key before initialization: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}
