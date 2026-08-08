@@ -762,6 +762,45 @@ class Legacy {
 }
 
 #[test]
+fn export_var_init_before_hoisted_constructor_preserves_runtime_order() {
+    let input = r#"
+export const cached = Legacy;
+function Legacy(value) {
+    this.value = value;
+}
+Legacy.prototype.read = function() {
+    return this.value;
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn deferred_export_closure_reference_still_recovers_class() {
+    let input = r#"
+export const make = (value)=>new Legacy(value);
+function Legacy(value) {
+    this.value = value;
+}
+Legacy.prototype.read = function() {
+    return this.value;
+};
+"#;
+    let expected = r#"
+export const make = (value)=>new Legacy(value);
+class Legacy {
+    constructor(value) {
+        this.value = value;
+    }
+    read() {
+        return this.value;
+    }
+}
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn test_pre_ref_module_exports() {
     let input = r#"
 module.exports = Foo;

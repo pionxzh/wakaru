@@ -535,19 +535,17 @@ fn references_binding(stmt: &Stmt, binding: &BindingKey, include_nested: bool) -
     finder.found
 }
 
-/// Return whether a module declaration before a constructor refers to its
-/// binding from an expression that cannot be relocated with an ordinary
-/// statement. In particular, `export default Foo` observes a hoisted function
-/// before its declaration; recovering `Foo` as a class would turn that read
-/// into a TDZ failure.
+/// Return whether a module declaration before a constructor evaluates its
+/// binding during module initialization. `export default Foo` and
+/// `export const cached = Foo` both observe a hoisted function before its
+/// declaration; recovering `Foo` as a class would turn that read into a TDZ
+/// failure. References inside function and arrow bodies are deferred past
+/// module initialization (matching the `include_nested: false` policy for
+/// hoisted-constructor candidates in `references_binding`), so they do not
+/// block recovery.
 fn module_decl_references_binding(item: &ModuleItem, binding: &BindingKey) -> bool {
     let ModuleItem::ModuleDecl(decl) = item else {
         return false;
-    };
-    let expr = match decl {
-        ModuleDecl::ExportDefaultExpr(export) => export.expr.as_ref(),
-        ModuleDecl::TsExportAssignment(export) => export.expr.as_ref(),
-        _ => return false,
     };
 
     struct BindingRefFinder<'a> {
@@ -560,13 +558,30 @@ fn module_decl_references_binding(item: &ModuleItem, binding: &BindingKey) -> bo
                 self.found = true;
             }
         }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
     }
 
     let mut finder = BindingRefFinder {
         binding,
         found: false,
     };
-    expr.visit_with(&mut finder);
+    match decl {
+        ModuleDecl::ExportDefaultExpr(export) => export.expr.visit_with(&mut finder),
+        ModuleDecl::TsExportAssignment(export) => export.expr.visit_with(&mut finder),
+        ModuleDecl::ExportDecl(export) => {
+            if let Decl::Var(var) = &export.decl {
+                for declarator in &var.decls {
+                    if let Some(init) = &declarator.init {
+                        init.visit_with(&mut finder);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
     finder.found
 }
 
