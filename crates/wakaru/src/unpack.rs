@@ -1050,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn angular_evidence_imports_follow_recovered_module_filenames() {
+    fn angular_evidence_imports_follow_reserved_physical_module_paths() {
         let child = r#"
             import * as core from "@angular/core";
             const sentryMarker = {
@@ -1095,10 +1095,22 @@ mod tests {
         )
         .expect("renamed ESM modules should recover linked Angular artifacts");
 
+        assert!(
+            output
+                .modules
+                .iter()
+                .any(|module| module.filename == "src/child.js"),
+            "module names: {:?}",
+            output
+                .modules
+                .iter()
+                .map(|module| &module.filename)
+                .collect::<Vec<_>>()
+        );
         assert!(output
-            .modules
+            .artifacts
             .iter()
-            .any(|module| module.filename == "src/renamed-child.js"));
+            .any(|artifact| artifact.filename == "src/child.angular.ts"));
         let parent = output
             .artifacts
             .iter()
@@ -1106,14 +1118,15 @@ mod tests {
             .expect("the renamed parent artifact should recover");
         assert_eq!(parent.status, crate::ArtifactStatus::Complete);
         assert!(
-            parent.code.contains(
-                r#"import { RenamedChildCardComponent } from "./src/renamed-child.angular";"#
-            ),
+            parent
+                .code
+                .contains(r#"import { RenamedChildCardComponent } from "./child.angular";"#),
             "{}",
             parent.code
         );
         assert!(parent.code.contains("imports: [RenamedChildCardComponent]"));
         assert!(!parent.code.contains(r#"from "./child.js""#));
+        assert!(!parent.code.contains("renamed-child.angular"));
     }
 
     #[test]
