@@ -60,7 +60,7 @@ unless the source map includes original names.)
 npx wakaru input.js -o output.js               # decompile a file
 npx wakaru bundle.js --unpack -o out/          # unpack and decompile a bundle
 npx wakaru dist/ --unpack -o out/              # scan a bundle output directory
-npx wakaru ./compiled-app --unpack -o out/     # extract a Bun standalone executable
+npx wakaru ./compiled-app --unpack -o out/     # extract a Bun single-file executable
 npx wakaru bun extract ./compiled-app -o raw/  # dump every embedded Bun file byte-for-byte
 ```
 
@@ -69,7 +69,7 @@ Full flag reference: [docs/cli.md](./docs/cli.md).
 ## What it handles
 
 - **Bundle and container splitting** — byte-exact extraction of every file in
-  Bun standalone PE/Mach-O/ELF executables, plus JavaScript unpacking;
+  Bun single-file PE/Mach-O/ELF executables, plus JavaScript unpacking;
   webpack 4/5 (including Vercel ncc CommonJS output
   with an IIFE webpack bootstrap), esbuild, Bun, Browserify (including Cocos
   Creator 2.x project-script bundles), Metro, Closure ModuleManager, SystemJS,

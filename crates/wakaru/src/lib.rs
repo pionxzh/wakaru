@@ -8,7 +8,7 @@
 //!   decompile each; [`UnpackJob`] is the incremental intake form of the same
 //!   operation for directory walkers.
 //!
-//! Optional workflows live in cohesive namespaces: [`bun`] (standalone
+//! Optional workflows live in cohesive namespaces: [`bun`] (single-file
 //! executable extraction), [`debug`] (normalization, rule tracing, rule
 //! metadata), [`sourcemap`] (embedded-source extraction), and [`vue`]
 //! (experimental standalone SFC recovery).

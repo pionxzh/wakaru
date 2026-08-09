@@ -40,9 +40,9 @@ Two main operations:
 
 ## Components
 
-### Bun standalone containers (`crates/wakaru/src/bun.rs`)
+### Bun single-file executable containers (`crates/wakaru/src/bun.rs`)
 
-A Bun standalone executable is a native PE, Mach-O, or ELF host followed by a
+A Bun single-file executable is a native PE, Mach-O, or ELF host followed by a
 serialized module graph. It is a container around compiled outputs, not itself
 a JavaScript bundle format. The parser finds Bun's
 `\n---- Bun! ----\n` trailer, reads the preceding offsets record, validates the
@@ -58,7 +58,7 @@ second stage can recover thousands of inner factory and scope-hoisted modules.
 The separate `bun extract` subcommand stops at the container boundary and
 writes every file record byte-for-byte, including non-JavaScript assets.
 
-Standalone entry bodies can be tens of megabytes, so this handoff moves the
+Single-file executable entry bodies can be tens of megabytes, so this handoff moves the
 wrapper body into the detector instead of cloning it, restoring the body if
 detection rejects the candidate. Once an esbuild/Bun factory shape is accepted,
 the detector moves unresolved factory bodies into their pending output modules

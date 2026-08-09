@@ -30,13 +30,13 @@ pub(crate) struct BunArgs {
 
 #[derive(Debug, Clone, Subcommand)]
 pub(crate) enum BunCommand {
-    /// Extract every file embedded in a Bun standalone executable.
+    /// Extract every file embedded in a Bun single-file executable.
     Extract(BunExtractArgs),
 }
 
 #[derive(Debug, Clone, Args)]
 pub(crate) struct BunExtractArgs {
-    /// Bun standalone PE, Mach-O, ELF, or bare serialized graph.
+    /// Bun single-file executable: PE, Mach-O, ELF, or bare serialized graph.
     pub(crate) input: PathBuf,
 
     /// Output directory. Embedded files are written below `files/`.
@@ -62,7 +62,12 @@ fn run_extract(args: BunExtractArgs, force: bool) -> Result<()> {
     let executable = fs::read(&args.input)
         .with_context(|| format!("failed to read {}", args.input.display()))?;
     let standalone = wakaru::bun::extract_standalone(&executable)
-        .with_context(|| format!("failed to extract Bun standalone {}", args.input.display()))?
+        .with_context(|| {
+            format!(
+                "failed to extract Bun single-file executable {}",
+                args.input.display()
+            )
+        })?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "{} does not contain a supported Bun standalone graph",

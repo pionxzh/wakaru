@@ -26,9 +26,9 @@ mangled locals stay short unless a source map is provided.
   webpack bootstrap, or an esbuild/Bun/Metro/Browserify/Cocos Creator 2.x/
   Closure ModuleManager/SystemJS/AMD/Rollup/Vite bundle and need the individual
   modules.
-- You have a Bun standalone PE, Mach-O, or ELF executable and need its embedded
+- You have a Bun single-file PE, Mach-O, or ELF executable and need its embedded
   JavaScript without running it.
-- You need every file stored in a Bun standalone, including binary assets,
+- You need every file stored in a Bun single-file executable, including binary assets,
   WebAssembly, native add-ons, or embedded databases.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`
   artifact for inspection.
@@ -86,11 +86,11 @@ Variants:
 ```bash
 wakaru dist/ --unpack --json -o out/          # scan a build-output directory
 wakaru entry.js chunk.js --unpack -o out/     # explicit entry + chunk files
-wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun standalone safely
+wakaru ./compiled-app --unpack --raw -o out/  # extract a Bun single-file executable safely
 wakaru bun extract ./compiled-app -o raw/     # dump every embedded Bun file byte-for-byte
 ```
 
-Bun standalone extraction accepts an explicit executable path. It validates
+Bun single-file executable extraction accepts an explicit executable path. It validates
 the embedded module graph; directory scans and stdin remain JavaScript-only
 inputs. `--unpack` selects the JavaScript-like records and sends them through
 bundle splitting. Prefer `--raw` when comparing their shipped representation.

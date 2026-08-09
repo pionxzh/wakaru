@@ -1,8 +1,12 @@
-# Bun standalone executables
+# Bun single-file executables
+
+"Single-file executable" is Bun's user-facing term for `bun build --compile`
+output; this doc's filename and the internal format names keep Bun's internal
+term ("standalone", as in `StandaloneModuleGraph`).
 
 ## What works
 
-Wakaru can extract JavaScript from Bun standalone PE, Mach-O, and ELF
+Wakaru can extract JavaScript from Bun single-file PE, Mach-O, and ELF
 executables without running them:
 
 ```bash
@@ -83,6 +87,6 @@ written as `source-map.bunmap`, not `.map`, because it is not v3 JSON.
 - Some tightly connected scope-hoisted regions can remain coarser than the
   original source files.
 
-See [public-api.md](public-api.md#bun-standalone-extraction) for the borrowed
+See [public-api.md](public-api.md#surface-overview) for the borrowed
 Rust API and [cli.md](cli.md) for both container extraction and normal unpack
 options.

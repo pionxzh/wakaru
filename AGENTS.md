@@ -1,6 +1,6 @@
 # Wakaru
 
-Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It extracts Bun standalone executable containers and unpacks bundles (webpack4/5, including Vercel ncc; Browserify, including Cocos Creator 2.x; Closure ModuleManager; SystemJS; esbuild/Bun; Metro; AMD/UMD; plus heuristic scope-hoisted splitting), restores transpiler helpers (Babel, TypeScript), and applies an ordered pipeline of rewrite rules to recover idiomatic source (the registry in `crates/core/src/rules/pipeline.rs` is the authoritative list). It can also experimentally recover Vue 3 SFC-like artifacts from compiled render modules (`--vue-sfc`).
+Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It extracts Bun single-file executable containers and unpacks bundles (webpack4/5, including Vercel ncc; Browserify, including Cocos Creator 2.x; Closure ModuleManager; SystemJS; esbuild/Bun; Metro; AMD/UMD; plus heuristic scope-hoisted splitting), restores transpiler helpers (Babel, TypeScript), and applies an ordered pipeline of rewrite rules to recover idiomatic source (the registry in `crates/core/src/rules/pipeline.rs` is the authoritative list). It can also experimentally recover Vue 3 SFC-like artifacts from compiled render modules (`--vue-sfc`).
 
 Written in Rust using the SWC AST ecosystem. The workspace is split into five crates under `crates/`: `core` (internal engine), `wakaru` (the published Rust façade), `cli`, `formatter`, and `wasm`.
 
@@ -17,7 +17,7 @@ reading everything:
 | New rule, or moving a rule | `docs/rule-dependency-inventory.md` — ordering rationale, fragile edges; `docs/rewrite-assumptions.md` — level gating, named assumptions |
 | Transpiler helper work | `docs/helper-detection.md` — detection design and what was already rejected |
 | Cross-module / unpack behavior | `docs/fact-system.md` — the two-phase barrier and module facts |
-| Bun standalone executables | `docs/bun-standalone.md` — binary graph format, CLI flow, safety, and public API limits |
+| Bun single-file executables | `docs/bun-standalone.md` — binary graph format, CLI flow, safety, and public API limits |
 | Public Rust API (`wakaru` crate) | `docs/public-api.md` — design decisions and boundaries; rustdoc (`cargo doc -p wakaru`) is the behavioral contract |
 | Vue SFC recovery (`--vue-sfc`) | `docs/vue-decompile.md` — the recovery path and CLI behavior; `docs/vue-sfc-recovery-status.md` — experimental status and known gaps |
 | Correctness / semantics questions | `docs/rewrite-assumptions.md`, `docs/test262-roundtrip.md` |

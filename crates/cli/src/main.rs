@@ -79,7 +79,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Input JavaScript/TypeScript file(s), or Bun standalone executables with
+    /// Input JavaScript/TypeScript file(s), or Bun single-file executables with
     /// --unpack. With --unpack, directories are scanned recursively for
     /// bundle/chunk files.
     ///
@@ -173,7 +173,7 @@ enum Command {
     /// Extract original source files embedded in a source map's sourcesContent.
     Extract(ExtractArgs),
 
-    /// Inspect and extract Bun standalone executable containers.
+    /// Inspect and extract Bun single-file executable containers.
     Bun(bun_extract::BunArgs),
 
     /// Internal debugging commands.
@@ -1215,7 +1215,12 @@ fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
     }
 
     let standalone = wakaru::bun::extract_standalone(&bytes)
-        .with_context(|| format!("failed to extract Bun standalone {}", path.display()))?
+        .with_context(|| {
+            format!(
+                "failed to extract Bun single-file executable {}",
+                path.display()
+            )
+        })?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "{} is an executable but does not contain a supported Bun standalone graph",
@@ -1230,7 +1235,7 @@ fn read_explicit_unpack_sources(path: &Path) -> Result<Vec<wakaru::Source>> {
     javascript.sort_by_key(|file| (!file.is_entry, file.index));
     if javascript.is_empty() {
         bail!(
-            "Bun standalone {} contains no JavaScript-like embedded files",
+            "Bun single-file executable {} contains no JavaScript-like embedded files",
             path.display()
         );
     }

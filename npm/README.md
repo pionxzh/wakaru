@@ -23,7 +23,7 @@ wakaru input.js -o output.js
 - Splits webpack 4/5 bundles (including supported Vercel ncc output), esbuild,
   Bun, Browserify (including Cocos Creator 2.x), Metro, Closure ModuleManager,
   SystemJS, and AMD/UMD, plus scope-hoisted Rollup/Vite output.
-- Extracts Bun standalone executables (PE, Mach-O, ELF) and unpacks their
+- Extracts Bun single-file executables (PE, Mach-O, ELF) and unpacks their
   embedded JavaScript.
 - Recovers readable JavaScript from transpiler and minifier output.
 - Supports source maps for name recovery and output mappings.
@@ -60,10 +60,10 @@ wakaru ./compiled-app --unpack -o out/
 - `--unpack=strict` uses structural bundle detection without heuristic fallback.
 - `--unpack=inspect` keeps finer module boundaries for static inspection.
 - Directory inputs are recursive and detect-only; skipped files are not copied.
-- A Bun standalone executable input has its embedded JavaScript entries sent
+- A Bun single-file executable input has its embedded JavaScript entries sent
   through the same unpack pipeline.
 
-### Extract a Bun standalone executable
+### Extract a Bun single-file executable
 
 ```bash
 wakaru bun extract ./compiled-app -o extracted/
