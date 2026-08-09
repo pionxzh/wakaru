@@ -911,6 +911,88 @@ exports.default = o.default(l);
     }
 
     #[test]
+    fn lowered_interop_residue_does_not_block_named_import_recovery() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.transform = function(value) { return value + 1; };".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+function interopRequireDefault(value) {
+    return value && value.__esModule ? value : { default: value };
+}
+var provider = require("./provider.js");
+interopRequireDefault(provider);
+module.exports = function(value) { return provider.transform(value); };
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("interop residue fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert_eq!(findings, vec![]);
+
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import { transform }") && !consumer.contains("provider;"),
+            "an inert lowered interop read must not retain a missing default import:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn substantive_namespace_use_still_blocks_named_import_recovery() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.transform = function(value) { return value + 1; };".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+function interopRequireDefault(value) {
+    return value && value.__esModule ? value : { default: value };
+}
+var provider = require("./provider.js");
+interopRequireDefault(provider);
+observe(provider);
+module.exports = function(value) { return provider.transform(value); };
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("substantive namespace fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "a substantive whole-object use must keep the namespace repair fail closed: {findings:#?}"
+        );
+    }
+
+    #[test]
     fn provider_facts_repair_recovered_commonjs_import_shapes() {
         let modules = || {
             vec![

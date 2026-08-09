@@ -17,13 +17,14 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
     ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, UnaryExpr,
-    UnaryOp, UpdateExpr,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::js_names::is_reserved_binding_name;
+use crate::utils::paren::strip_parens;
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
@@ -58,6 +59,10 @@ struct DecompCandidate {
     /// Whether the original default/namespace specifier can be removed. Partial
     /// decompositions keep it for properties that still need namespace access.
     remove_original: bool,
+    /// `UnInteropRequireDefault` can reduce an unused helper call to a bare
+    /// top-level read of the require binding. For a synthesized import, that
+    /// read is inert once a replacement named import still links the provider.
+    remove_inert_bare_reads: bool,
 }
 
 /// Run namespace decomposition on a single module, using cross-module facts.
@@ -143,7 +148,18 @@ fn find_decomposition_candidates(
             safe: true,
             in_import_decl: false,
         };
-        module.visit_with(&mut analyzer);
+        let import_is_synthesized = matches!(
+            &module.body[import_index],
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) if import.span.is_dummy()
+        );
+        let mut has_inert_bare_reads = false;
+        for item in &module.body {
+            if import_is_synthesized && is_top_level_bare_read(item, &local_sym, local_ctxt) {
+                has_inert_bare_reads = true;
+                continue;
+            }
+            item.visit_with(&mut analyzer);
+        }
 
         if !analyzer.safe || analyzer.accessed_props.is_empty() {
             continue;
@@ -271,6 +287,7 @@ fn find_decomposition_candidates(
             local_ctxt,
             props,
             remove_original,
+            remove_inert_bare_reads: has_inert_bare_reads,
         });
     }
 
@@ -662,11 +679,32 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
         module.body = new_body;
     }
 
+    let removable_bare_reads = candidates
+        .iter()
+        .filter(|candidate| candidate.remove_original && candidate.remove_inert_bare_reads)
+        .map(|candidate| (candidate.local_sym.clone(), candidate.local_ctxt))
+        .collect::<HashSet<_>>();
+    if !removable_bare_reads.is_empty() {
+        module.body.retain(|item| {
+            !removable_bare_reads
+                .iter()
+                .any(|(sym, ctxt)| is_top_level_bare_read(item, sym, *ctxt))
+        });
+    }
+
     // Rewrite usages: r.foo → local_name (which is `foo` or `foo_1` if aliased)
     let mut rewriter = UsageRewriter {
         decomp_map: &decomp_map,
     };
     module.visit_mut_with(&mut rewriter);
+}
+
+fn is_top_level_bare_read(item: &ModuleItem, sym: &Atom, ctxt: SyntaxContext) -> bool {
+    matches!(
+        item,
+        ModuleItem::Stmt(Stmt::Expr(stmt))
+            if matches!(strip_parens(&stmt.expr), Expr::Ident(ident) if ident.sym == *sym && ident.ctxt == ctxt)
+    )
 }
 
 /// Rewrites `r.prop` → `local_name` for decomposed namespace bindings.

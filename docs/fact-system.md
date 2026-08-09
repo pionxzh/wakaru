@@ -101,7 +101,10 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope
   shadowing, mixed default+named imports, and readability backoff when too many
-  collisions would force aliasing.
+  collisions would force aliasing. For imports synthesized from `require()`, it
+  also discards an otherwise-inert top-level binding read left by interop-helper
+  removal when the original namespace/default specifier can be removed in full;
+  substantive whole-object reads and every write still fail closed.
 - **`UnObjectSpread`** — in multi-module unpack, recognizes object spread
   helpers imported from a helper module whose default/named export fact proves
   it is Babel's `extends` or `objectSpread` helper. This covers helpers split
