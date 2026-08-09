@@ -2,9 +2,8 @@
 //!
 //! `UnEsm` must classify `require("./provider").name` before cross-module
 //! facts exist, so it initially emits a named import. When the provider is
-//! later proven to originate from `module.exports = {...}` with that statically
-//! declared property, the CommonJS operation was a property capture, not a
-//! live named binding:
+//! later proven to originate from an object assigned to `module.exports`, the
+//! CommonJS operation was a property capture, not a live named binding:
 //!
 //! ```text
 //! import { name } from "./provider.js";
@@ -14,9 +13,10 @@
 //! ```
 //!
 //! The pass is deliberately narrow. It touches only import declarations
-//! synthesized by `UnEsm` (dummy span), requires a statically proven raw
-//! CommonJS default-object property, and leaves export-star providers and
-//! unknown default values unchanged.
+//! synthesized by `UnEsm` (dummy span), requires a proven raw CommonJS default
+//! object, and leaves export-star providers and unknown default values
+//! unchanged. Capturing an undeclared property is intentional: CommonJS returns
+//! `undefined`, while a guessed ESM named import fails during module linking.
 
 use std::collections::{HashMap, HashSet};
 
@@ -72,7 +72,7 @@ pub(crate) fn run_provider_import_repair(
             continue;
         };
         if provider.has_export_all
-            || provider.default_object_properties.is_empty()
+            || provider.commonjs_default_object.is_none()
             || !provider
                 .exports
                 .iter()
@@ -87,12 +87,6 @@ pub(crate) fn run_provider_import_repair(
             .filter(|export| export.kind == ExportKind::Named)
             .map(|export| export.exported.as_ref())
             .collect::<HashSet<_>>();
-        let default_properties = provider
-            .default_object_properties
-            .iter()
-            .map(Atom::as_ref)
-            .collect::<HashSet<_>>();
-
         let mut retained = Vec::with_capacity(import.specifiers.len() + 1);
         let mut repaired = Vec::new();
         for specifier in std::mem::take(&mut import.specifiers) {
@@ -117,7 +111,6 @@ pub(crate) fn run_provider_import_repair(
             if named.is_type_only
                 || capture_site.is_none()
                 || named_exports.contains(property.as_ref())
-                || !default_properties.contains(property.as_ref())
             {
                 retained.push(specifier);
                 continue;
@@ -188,17 +181,75 @@ pub(crate) fn run_provider_import_repair(
         .count();
     captures.sort_by_key(|(origin, _)| *origin);
     for (origin, capture) in captures {
-        let insert_at = module
-            .body
-            .iter()
-            .enumerate()
-            .skip(first_non_import)
-            .find_map(|(index, item)| {
-                let span = item.span();
-                (!span.is_dummy() && span.lo > origin).then_some(index)
-            })
-            .unwrap_or(module.body.len());
-        module.body.insert(insert_at, capture);
+        insert_capture_at_origin(module, first_non_import, origin, capture);
+    }
+}
+
+enum CaptureInsertLocation {
+    Before(usize),
+    SplitVar {
+        body_index: usize,
+        declarator_index: usize,
+    },
+}
+
+/// Insert a property read where its original `require().property` declarator
+/// evaluated. `UnEsm` removes that declarator while leaving its siblings in
+/// one variable statement, whose outer span still begins before `origin`.
+/// Splitting at the first later declarator preserves JavaScript's left-to-right
+/// initializer order around the recovered capture.
+fn insert_capture_at_origin(
+    module: &mut Module,
+    first_non_import: usize,
+    origin: BytePos,
+    capture: ModuleItem,
+) {
+    let location = module
+        .body
+        .iter()
+        .enumerate()
+        .skip(first_non_import)
+        .find_map(|(body_index, item)| {
+            let span = item.span();
+            if !span.is_dummy() && span.lo > origin {
+                return Some(CaptureInsertLocation::Before(body_index));
+            }
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+                if let Some(declarator_index) = var.decls.iter().position(|declarator| {
+                    !declarator.span.is_dummy() && declarator.span.lo > origin
+                }) {
+                    return Some(if declarator_index == 0 {
+                        CaptureInsertLocation::Before(body_index)
+                    } else {
+                        CaptureInsertLocation::SplitVar {
+                            body_index,
+                            declarator_index,
+                        }
+                    });
+                }
+            }
+            None
+        })
+        .unwrap_or(CaptureInsertLocation::Before(module.body.len()));
+
+    match location {
+        CaptureInsertLocation::Before(index) => module.body.insert(index, capture),
+        CaptureInsertLocation::SplitVar {
+            body_index,
+            declarator_index,
+        } => {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut module.body[body_index] else {
+                unreachable!("capture split location must remain a variable declaration")
+            };
+            let mut trailing = (**var).clone();
+            trailing.span = DUMMY_SP;
+            trailing.decls = var.decls.split_off(declarator_index);
+            module.body.insert(body_index + 1, capture);
+            module.body.insert(
+                body_index + 2,
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(trailing)))),
+            );
+        }
     }
 }
 

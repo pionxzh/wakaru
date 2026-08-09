@@ -33,9 +33,7 @@ use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
-use crate::facts::{
-    collect_commonjs_default_object_properties, collect_module_facts, ModuleFactsMap,
-};
+use crate::facts::{collect_commonjs_default_object, collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
@@ -292,8 +290,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 unpacked.numeric_rewrite.as_ref(),
                 &numeric_rewrite_plan,
             );
-            let commonjs_default_object_properties =
-                collect_commonjs_default_object_properties(&module, unresolved_mark);
+            let commonjs_default_object =
+                collect_commonjs_default_object(&module, unresolved_mark);
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -339,7 +337,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let facts = collect_module_facts(&module);
                 (facts, None)
             };
-            facts.default_object_properties = commonjs_default_object_properties;
+            facts.commonjs_default_object = commonjs_default_object;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
@@ -1537,6 +1535,145 @@ module.exports = function(value) { return provider.transform(value); };
                     && finding.filename == "consumer.js"
             }),
             "a substantive whole-object use must keep the namespace repair fail closed: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn provider_facts_capture_missing_properties_from_proven_empty_default_objects() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "empty-stub".to_string(),
+                    code: "module.exports = {};".to_string(),
+                    filename: "empty-stub.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+before();
+var existsSync = require("./empty-stub.js").existsSync;
+after();
+module.exports = function(path) {
+    return Boolean(existsSync) && existsSync(path);
+};
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        for emit_source_map in [false, true] {
+            let output = unpack_multi_module(
+                modules(),
+                DecompileOptions {
+                    emit_source_map,
+                    ..Default::default()
+                },
+            )
+            .expect("proven empty default-object fixture should decompile");
+            assert_eq!(validate_prepared_output(&output), vec![]);
+
+            let consumer = output
+                .modules
+                .iter()
+                .find(|module| module.filename == "consumer.js")
+                .map(|module| module.code.as_str())
+                .expect("expected consumer module");
+            assert!(
+                !consumer.contains("import { existsSync"),
+                "a CommonJS property read must not remain a named import:\n{consumer}"
+            );
+            assert!(
+                consumer.contains(".existsSync"),
+                "the property must be captured from the proven default object:\n{consumer}"
+            );
+            let before = consumer
+                .find("before();")
+                .expect("leading effect should remain");
+            let capture = consumer[before..]
+                .find(".existsSync")
+                .map(|offset| before + offset)
+                .expect("property capture should remain");
+            let after = consumer
+                .find("after();")
+                .expect("trailing effect should remain");
+            assert!(
+                before < capture && capture < after,
+                "the property read must remain at its original require position:\n{consumer}"
+            );
+            if emit_source_map {
+                assert!(
+                    output
+                        .modules
+                        .iter()
+                        .all(|module| module.source_map.is_some()),
+                    "provider repair must preserve emitted source maps"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn provider_property_capture_preserves_same_declaration_order() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: r#"
+module.exports = {
+    capability: function() { return true; },
+    secondary: function() { return true; }
+};
+"#
+                .to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+let first = sideEffect(),
+    { capability, secondary } = require("./provider.js"),
+    available = Boolean(capability && secondary);
+observe(first, available);
+module.exports = available;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("same-declaration capture fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        let effect = consumer
+            .find("sideEffect()")
+            .expect("leading declarator should remain");
+        let capture = consumer
+            .find(".capability")
+            .or_else(|| consumer.find("{ capability"))
+            .expect("property capture should remain");
+        let secondary_capture = consumer[capture..]
+            .find("secondary")
+            .map(|offset| capture + offset)
+            .expect("second property capture should remain");
+        let feature_check = consumer
+            .find("Boolean(")
+            .expect("later declarator should remain");
+        assert!(
+            effect < capture && capture < secondary_capture && secondary_capture < feature_check,
+            "captures must remain ordered between surrounding declarators:\n{consumer}"
         );
     }
 

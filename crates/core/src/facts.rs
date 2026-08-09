@@ -144,6 +144,17 @@ pub struct TypeScriptHelperExportFact {
     pub kind: TypeScriptHelperKind,
 }
 
+/// A CommonJS value proven to originate from an object assigned directly to
+/// unresolved `module.exports` before `UnEsm`.
+///
+/// The object may have no statically declared properties. Keeping the proof
+/// separate from the property list distinguishes a proven empty object from
+/// an unknown CommonJS default value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonJsDefaultObjectFact {
+    pub declared_properties: Vec<Atom>,
+}
+
 /// Facts extracted from one module after Stage 2.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleFacts {
@@ -151,11 +162,11 @@ pub struct ModuleFacts {
     pub exports: Vec<ExportFact>,
     pub helper_exports: Vec<HelperExportFact>,
     pub default_object_helper_exports: Vec<HelperExportFact>,
-    /// Statically declared properties on an object assigned to
-    /// `module.exports` before `UnEsm`. A stable local alias to an object
-    /// literal is followed; `exports.default`, computed keys, and spreads are
+    /// The object assigned to `module.exports` before `UnEsm`, when that
+    /// identity is proven. A stable local alias to an object literal is
+    /// followed. `exports.default` and unknown or multiply-assigned values are
     /// deliberately excluded.
-    pub default_object_properties: Vec<Atom>,
+    pub commonjs_default_object: Option<CommonJsDefaultObjectFact>,
     /// True when the module contains `export *`. Its complete named surface
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.
@@ -421,7 +432,7 @@ impl fmt::Display for ModuleFacts {
             && self.exports.is_empty()
             && self.helper_exports.is_empty()
             && self.default_object_helper_exports.is_empty()
-            && self.default_object_properties.is_empty()
+            && self.commonjs_default_object.is_none()
             && !self.has_export_all
             && self.ts_helper_exports.is_empty()
             && self.ts_helper_namespace_factory_exports.is_empty()
@@ -500,20 +511,23 @@ impl fmt::Display for ModuleFacts {
             || !self.default_object_helper_exports.is_empty()
             || !self.ts_helper_exports.is_empty()
             || !self.ts_helper_namespace_factory_exports.is_empty();
-        if !self.default_object_properties.is_empty() {
+        if let Some(default_object) = &self.commonjs_default_object {
             if has_prior {
                 writeln!(f)?;
             }
-            let properties = self
-                .default_object_properties
-                .iter()
-                .map(Atom::as_ref)
-                .collect::<Vec<_>>()
-                .join(", ");
-            write!(f, "CommonJS default object properties: {properties}")?;
+            write!(f, "CommonJS default object")?;
+            if !default_object.declared_properties.is_empty() {
+                let properties = default_object
+                    .declared_properties
+                    .iter()
+                    .map(Atom::as_ref)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, " properties: {properties}")?;
+            }
         }
         if self.has_export_all {
-            if has_prior || !self.default_object_properties.is_empty() {
+            if has_prior || self.commonjs_default_object.is_some() {
                 writeln!(f)?;
             }
             write!(f, "contains export *")?;
@@ -992,16 +1006,17 @@ fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind>
     }
 }
 
-/// Collect statically declared properties of a value assigned directly to
-/// unresolved `module.exports` before `UnEsm` erases that CommonJS origin.
+/// Prove that unresolved `module.exports` receives an object value and collect
+/// any statically declared properties before `UnEsm` erases that CommonJS
+/// origin.
 ///
 /// `exports.default = {...}` is intentionally different: requiring that
 /// module returns a namespace-like object whose property is `default`, not the
 /// object literal itself.
-pub fn collect_commonjs_default_object_properties(
+pub fn collect_commonjs_default_object(
     module: &Module,
     unresolved_mark: Mark,
-) -> Vec<Atom> {
+) -> Option<CommonJsDefaultObjectFact> {
     let uses = BindingUseIndex::collect(module);
     let mut object_bindings: HashMap<_, &ObjectLit> = HashMap::new();
 
@@ -1032,7 +1047,7 @@ pub fn collect_commonjs_default_object_properties(
     };
     module.visit_with(&mut assignments);
     let [value] = assignments.values.as_slice() else {
-        return Vec::new();
+        return None;
     };
     let object = match strip_parens(value) {
         Expr::Object(object) => Some(object),
@@ -1041,9 +1056,7 @@ pub fn collect_commonjs_default_object_properties(
             .copied(),
         _ => None,
     };
-    let Some(object) = object else {
-        return Vec::new();
-    };
+    let object = object?;
 
     let mut properties = HashSet::new();
     for prop in &object.props {
@@ -1057,7 +1070,9 @@ pub fn collect_commonjs_default_object_properties(
 
     let mut properties = properties.into_iter().collect::<Vec<_>>();
     properties.sort();
-    properties
+    Some(CommonJsDefaultObjectFact {
+        declared_properties: properties,
+    })
 }
 
 struct ModuleExportsAssignmentCollector {

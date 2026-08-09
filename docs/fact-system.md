@@ -8,9 +8,11 @@ rules fit in the pipeline.
 
 A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 **other** modules in the same bundle. Most facts describe normalized ESM
-imports/exports. One deliberately narrow pre-`UnEsm` fact preserves statically
-declared properties of an object assigned directly to `module.exports`, so a
-consumer can distinguish that CommonJS value from a true ESM namespace.
+imports/exports. One deliberately narrow pre-`UnEsm` fact preserves the proven
+identity and statically declared properties of an object assigned directly to
+`module.exports`, so a consumer can distinguish that CommonJS value from a
+true ESM namespace. The identity proof is independent of the property list:
+an empty list may describe a proven empty object rather than an unknown value.
 
 ## Why it's simpler than the original proposal
 
@@ -34,7 +36,7 @@ them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
 ```
 Phase 1 (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
-    collect raw CommonJS default-object properties       ← narrow pre-UnEsm fact
+    collect raw CommonJS default-object identity         ← narrow pre-UnEsm fact
     rule range through UnEsm
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
@@ -70,17 +72,20 @@ parser-owned module coordinates.
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
 - `ModuleFacts { imports, exports, helper_exports,
-  default_object_properties, has_export_all, ts_helper_exports,
+  commonjs_default_object, has_export_all, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
 Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
-`collect_commonjs_default_object_properties` records only direct unresolved
-`module.exports = {...}` assignments and stable top-level object aliases.
-Multiple whole-value assignments, reassigned aliases, computed keys, spreads,
-nested callbacks, and `exports.default` fail closed. No collector mutates the
-AST or shared state.
+`collect_commonjs_default_object` records only direct unresolved
+`module.exports = {...}` assignments and stable top-level object aliases. Its
+`Option<CommonJsDefaultObjectFact>` distinguishes an unknown value from a
+proven object whose declared-property list is empty. Multiple whole-value
+assignments, reassigned aliases, non-object values, nested callbacks, and
+`exports.default` fail closed. Computed keys and spreads are omitted from the
+declared-property list without weakening the proven object identity. No
+collector mutates the AST or shared state.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 only when structural webpack detection proves that a normalized extracted
@@ -96,13 +101,15 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
 ## Rules that read facts
 
 - **`provider_import_repair`** — repairs only dummy-span imports synthesized by
-  `UnEsm` for `require("./x").name`. If the provider facts prove that `name` is
-  a declared property of its raw `module.exports` object rather than a true
-  named export, the pass imports the default value and captures `.name` into
-  the original local binding at the original `require` declaration position.
-  Authored ESM imports, unknown values, computed properties, synthesized
-  bindings without either a source position or a proven mutable-local capture,
-  and providers with `export *` remain unchanged. A whole-object CommonJS
+  `UnEsm` for `require("./x").name`. If provider facts prove that the raw
+  CommonJS value is the recovered default object and `name` is not a true named
+  export, the pass imports that default value and captures `.name` into the
+  original local binding at the original `require` declaration position. This
+  also covers a property absent from a proven empty object: CommonJS returns
+  `undefined`, whereas a guessed ESM named import fails during linking.
+  Authored ESM imports, unknown default values, synthesized bindings without
+  either a source position or a proven mutable-local capture, and providers
+  with `export *` remain unchanged. A whole-object CommonJS
   consumer that mutates provider properties is also deliberately unresolved:
   an ESM namespace is read-only, so preserving that case requires a separate
   mutable facade design.

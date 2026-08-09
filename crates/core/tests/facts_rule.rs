@@ -5,7 +5,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
-    collect_commonjs_default_object_properties, collect_module_facts, ExportFact, ExportKind,
+    collect_commonjs_default_object, collect_module_facts, ExportFact, ExportKind,
     HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
     TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
@@ -34,8 +34,7 @@ fn collect_facts(source: &str) -> ModuleFacts {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        let commonjs_default_object_properties =
-            collect_commonjs_default_object_properties(&module, unresolved_mark);
+        let commonjs_default_object = collect_commonjs_default_object(&module, unresolved_mark);
 
         // Run pipeline through end of Stage 2
         apply_rules(
@@ -45,7 +44,7 @@ fn collect_facts(source: &str) -> ModuleFacts {
         );
 
         let mut facts = collect_module_facts(&module);
-        facts.default_object_properties = commonjs_default_object_properties;
+        facts.commonjs_default_object = commonjs_default_object;
         facts
     })
 }
@@ -443,6 +442,21 @@ module.exports = {
 }
 
 #[test]
+fn empty_default_object_is_distinct_from_an_unknown_default_value() {
+    let empty = collect_facts("module.exports = {};");
+    let object = empty
+        .commonjs_default_object
+        .expect("an empty object assignment should still be proven");
+    assert!(object.declared_properties.is_empty());
+
+    let unknown = collect_facts("module.exports = makeProvider();");
+    assert!(
+        unknown.commonjs_default_object.is_none(),
+        "an arbitrary factory result must remain unknown: {unknown}"
+    );
+}
+
+#[test]
 fn default_object_properties_follow_a_stable_local_alias() {
     let facts = collect_facts(
         r#"
@@ -458,7 +472,10 @@ methods.enabled = true;
 "#,
     );
     assert_eq!(
-        facts.default_object_properties,
+        facts
+            .commonjs_default_object
+            .expect("the stable alias should prove the default object")
+            .declared_properties,
         vec!["filter", "map", "size"]
     );
 }
@@ -473,7 +490,7 @@ module.exports = methods;
 "#,
     );
     assert!(
-        facts.default_object_properties.is_empty(),
+        facts.commonjs_default_object.is_none(),
         "a reassigned alias does not prove the final default value's properties: {facts}"
     );
 }
@@ -488,7 +505,7 @@ exports.default = {
 "#,
     );
     assert!(
-        facts.default_object_properties.is_empty(),
+        facts.commonjs_default_object.is_none(),
         "exports.default is a namespace property, not the CommonJS value itself: {facts}"
     );
 }
@@ -502,7 +519,7 @@ module.exports = { map: second };
 "#,
     );
     assert!(
-        facts.default_object_properties.is_empty(),
+        facts.commonjs_default_object.is_none(),
         "multiple whole-value assignments require control-flow reasoning: {facts}"
     );
 }
@@ -516,7 +533,13 @@ export * from "./other.js";
 "#,
     );
     assert!(facts.has_export_all);
-    assert_eq!(facts.default_object_properties, vec!["local"]);
+    assert_eq!(
+        facts
+            .commonjs_default_object
+            .expect("the direct assignment should prove the default object")
+            .declared_properties,
+        vec!["local"]
+    );
 }
 
 #[test]
