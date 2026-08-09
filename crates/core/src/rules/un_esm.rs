@@ -150,6 +150,7 @@ impl VisitMut for UnEsm {
         split_compound_exports(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
+        preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
         let binding_uses = BindingUseIndex::collect(module);
         let require_bindings =
@@ -2523,6 +2524,79 @@ fn lower_exported_cjs_requires(module: &mut Module, unresolved_mark: Mark) {
     module.body = new_body;
 }
 
+/// Keep writes to a CommonJS require local separate from the immutable ESM
+/// import binding that will replace the require declaration.
+///
+/// For example, `var dependency = require("dep"); dependency = next` becomes
+/// `_dependency = require("dep"); var dependency = _dependency; ...` before
+/// classification. The ordinary require conversion then turns only the fresh
+/// capture into an import. Object patterns use the same whole-value capture so
+/// the original mutable destructuring binding remains local.
+fn preserve_mutable_cjs_require_bindings(module: &mut Module, unresolved_mark: Mark) {
+    let uses = BindingUseIndex::collect(module);
+    let mut used_names = collect_all_identifier_names(module);
+    let mut new_body = Vec::with_capacity(module.body.len());
+
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(mut var))) = item else {
+            new_body.push(item);
+            continue;
+        };
+
+        // A write to a `const` binding is already invalid in the input. Do not
+        // silently change that author-written contract while converting CJS.
+        if var.kind == VarDeclKind::Const || var.decls.len() != 1 {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        }
+
+        let declarator = &mut var.decls[0];
+        if try_classify_cjs_require_declarator(declarator, unresolved_mark).is_none() {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        }
+
+        let binding_ids = find_pat_ids(&declarator.name);
+        if !binding_ids.iter().any(|id| uses.has_direct_write(id)) {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        }
+
+        let Some(init) = declarator.init.take() else {
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        };
+        let Some((base_name, _)) = binding_ids.first() else {
+            declarator.init = Some(init);
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+            continue;
+        };
+
+        let import_local = make_ident(fresh_prefixed_name(base_name, &mut used_names));
+        declarator.init = Some(Box::new(Expr::Ident(import_local.clone())));
+
+        let capture = VarDecl {
+            span: var.span,
+            ctxt: var.ctxt,
+            kind: var.kind,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: declarator.span,
+                name: Pat::Ident(BindingIdent {
+                    id: import_local,
+                    type_ann: None,
+                }),
+                init: Some(init),
+                definite: false,
+            }],
+        };
+        new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(capture)))));
+        new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+    }
+
+    module.body = new_body;
+}
+
 fn export_specifiers_for_pat(pat: &Pat) -> Vec<ExportSpecifier> {
     find_pat_ids(pat)
         .into_iter()
@@ -3114,6 +3188,24 @@ fn collect_all_declared_names(module: &Module) -> HashSet<Atom> {
                 }
                 _ => decl.visit_children_with(self),
             }
+        }
+    }
+
+    let mut collector = Collector {
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names
+}
+
+fn collect_all_identifier_names(module: &Module) -> HashSet<Atom> {
+    struct Collector {
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.names.insert(ident.sym.clone());
         }
     }
 

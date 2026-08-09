@@ -3,7 +3,7 @@ mod common;
 use common::{
     assert_eq_normalized, render_pipeline, render_pipeline_until, render_pipeline_until_with_level,
 };
-use wakaru_core::RewriteLevel;
+use wakaru_core::{validate_output_modules, OutputFindingKind, RewriteLevel};
 
 // Stop before DeadImports (the final cleanup pass) so that synthetic inputs
 // with unused specifiers don't get stripped — these tests exercise UnEsm's
@@ -168,6 +168,155 @@ import foo from "foo";
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn mutable_require_binding_uses_a_separate_import_binding() {
+    let input = r#"
+var dependency = require("./dependency.js");
+dependency = replacement;
+consume(dependency);
+"#;
+    let expected = r#"
+import _dependency from "./dependency.js";
+let dependency = _dependency;
+dependency = replacement;
+consume(dependency);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+
+    let findings = validate_output_modules(&[
+        ("entry.js".to_string(), output),
+        (
+            "dependency.js".to_string(),
+            "export default {};".to_string(),
+        ),
+    ]);
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding.kind == OutputFindingKind::AssignToImport),
+        "mutable local must not write to the synthesized import: {findings:#?}"
+    );
+}
+
+#[test]
+fn nested_write_to_require_binding_stays_on_the_local() {
+    let input = r#"
+var dependency = require("./dependency.js");
+function replaceDependency(next) {
+    dependency = next;
+}
+consume(dependency, replaceDependency);
+"#;
+    let expected = r#"
+import _dependency from "./dependency.js";
+let dependency = _dependency;
+function replaceDependency(next) {
+    dependency = next;
+}
+consume(dependency, replaceDependency);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn update_to_require_binding_stays_on_the_local() {
+    let input = r#"
+var counter = require("./counter.js");
+counter++;
+consume(counter);
+"#;
+    let expected = r#"
+import _counter from "./counter.js";
+let counter = _counter;
+counter++;
+consume(counter);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn mutable_destructured_require_uses_a_separate_import_binding() {
+    let input = r#"
+var { value } = require("./dependency.js");
+value = replacement;
+consume(value);
+"#;
+    let expected = r#"
+import _value from "./dependency.js";
+let { value } = _value;
+value = replacement;
+consume(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn mutable_named_property_require_uses_a_separate_import_binding() {
+    let input = r#"
+var value = require("./dependency.js").value;
+value = replacement;
+consume(value);
+"#;
+    let expected = r#"
+import { value as value_1 } from "./dependency.js";
+let value = value_1;
+value = replacement;
+consume(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn mutable_default_property_require_uses_a_separate_import_binding() {
+    let input = r#"
+var value = require("./dependency.js").default;
+value = replacement;
+consume(value);
+"#;
+    let expected = r#"
+import _value from "./dependency.js";
+let value = _value;
+value = replacement;
+consume(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn exported_mutable_require_retains_the_local_export() {
+    let input = r#"
+export let dependency = require("./dependency.js");
+dependency = replacement;
+"#;
+    let expected = r#"
+import _dependency from "./dependency.js";
+export let dependency = _dependency;
+dependency = replacement;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn multiple_mutable_requires_share_the_canonical_import() {
+    let input = r#"
+var first = require("./dependency.js");
+var second = require("./dependency.js");
+first = replacementOne;
+second = replacementTwo;
+consume(first, second);
+"#;
+    let expected = r#"
+import _first from "./dependency.js";
+let first = _first;
+let second = _first;
+first = replacementOne;
+second = replacementTwo;
+consume(first, second);
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
