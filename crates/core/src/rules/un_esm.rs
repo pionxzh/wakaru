@@ -2528,8 +2528,17 @@ fn replace_called_module_exports_assignment_at_root(
     }
 }
 
-/// Split compound `var s = exports.X = expr` into `var s = expr; exports.X = s;`
-/// so the normal export classification can handle the extracted `exports.X = s` statement.
+/// Split compound export initializers so the normal export classification can
+/// handle the extracted assignment:
+///
+/// - `var value = module.exports = expr` becomes
+///   `var value = expr; module.exports = value`
+/// - `var value = exports.X = expr` becomes
+///   `var value = expr; exports.X = value`
+///
+/// The default-export form is restricted to a single declarator because moving
+/// its export assignment past sibling initializers could change evaluation
+/// order. The named-export path retains its existing multi-declarator support.
 fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in std::mem::take(&mut module.body) {
@@ -2537,6 +2546,26 @@ fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
             new_body.push(item);
             continue;
         };
+
+        if var.decls.len() == 1 {
+            let decl = &var.decls[0];
+            if let (Pat::Ident(binding), Some(init)) = (&decl.name, &decl.init) {
+                if let Some(real_init) =
+                    try_extract_module_exports_assign(init.as_ref(), unresolved_mark)
+                {
+                    let mut new_var = (**var).clone();
+                    new_var.decls[0].init = Some(real_init);
+                    new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(new_var)))));
+                    new_body.push(make_module_exports_assign_expr_item(
+                        var.span,
+                        Box::new(Expr::Ident(binding.id.clone())),
+                        unresolved_mark,
+                    ));
+                    continue;
+                }
+            }
+        }
+
         let mut any_split = false;
         let mut new_decls = Vec::new();
         let mut export_stmts = Vec::new();
@@ -2593,6 +2622,42 @@ fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
         }
     }
     module.body = new_body;
+}
+
+fn try_extract_module_exports_assign(expr: &Expr, unresolved_mark: Mark) -> Option<Box<Expr>> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    is_module_exports_member(member, unresolved_mark).then(|| assign.right.clone())
+}
+
+fn make_module_exports_assign_expr_item(
+    span: Span,
+    expr: Box<Expr>,
+    unresolved_mark: Mark,
+) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(make_unresolved_ident(
+                    "module".into(),
+                    unresolved_mark,
+                ))),
+                prop: MemberProp::Ident(IdentName::new("exports".into(), DUMMY_SP)),
+            })),
+            right: expr,
+        })),
+    }))
 }
 
 /// Lower `export const dep = require("dep")` into

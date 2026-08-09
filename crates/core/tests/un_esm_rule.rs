@@ -385,6 +385,54 @@ const module = { exports: null };
 }
 
 #[test]
+fn module_exports_assignment_in_single_var_initializer_preserves_binding() {
+    let input = r#"
+var value = module.exports = createValue();
+use(value);
+"#;
+    let expected = r#"
+const value = createValue();
+export default value;
+use(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn module_exports_assignment_in_single_var_initializer_evaluates_rhs_once() {
+    let input = r#"
+var value = module.exports = makeValue(sideEffect());
+consume(value);
+"#;
+    let output = apply(input);
+    assert_eq!(output.matches("makeValue(sideEffect())").count(), 1);
+    assert!(output.contains("export default value;"));
+}
+
+#[test]
+fn local_module_exports_assignment_in_var_initializer_is_not_transformed() {
+    let input = r#"
+const module = { exports: null };
+var value = module.exports = createValue();
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
+fn module_exports_assignment_in_split_multi_var_initializer_preserves_order() {
+    let input = r#"
+var before = observeBefore(), value = module.exports = createValue(), after = observeAfter();
+"#;
+    let expected = r#"
+var before = observeBefore();
+var value = createValue();
+export default value;
+var after = observeAfter();
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), expected);
+}
+
+#[test]
 fn module_exports_default_ident_not_affected() {
     // CJS module.exports = ident still produces export default (the declaration
     // is before the export, so no TDZ issue).
