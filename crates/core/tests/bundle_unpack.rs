@@ -1,7 +1,7 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::{BundleFormat, DecompileOptions};
+use wakaru_core::{validate_output_modules, BundleFormat, DecompileOptions};
 
 #[test]
 fn browserify_accepts_a_nonliteral_cache_argument() {
@@ -383,6 +383,63 @@ fn webpack4_string_module_ids_use_relative_output_imports() {
         !index.contains(r#""./src/value.js""#),
         "import must not be relative to the bundle root:\n{index}"
     );
+}
+
+#[test]
+fn webpack5_path_like_string_id_keeps_a_resolvable_consumer_edge() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    "pkg/side-effect": ((module) => {
+      module.exports = "loaded";
+    }),
+    "./src/index.js": ((module, exports, __webpack_require__) => {
+      __webpack_require__("pkg/side-effect");
+      module.exports = "entry";
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__("./src/index.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-path-id.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 path-like module id should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let index = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/index.js")
+        .map(|(_, code)| code)
+        .expect("expected index module");
+    assert!(
+        index.contains(r#""../pkg/side-effect""#),
+        "the path-like module id must be relative to its consumer:\n{index}"
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(name, _)| name == "pkg/side-effect"),
+        "expected the path-like module id to retain its output path"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
 
 #[test]
