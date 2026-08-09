@@ -424,7 +424,7 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    recovery) → run the registry range resuming after `UnEsm`, through `UnReturn` →
    targeted late cleanup/recovery → emit.
 
-The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }` or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
+The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., repairing a proven CommonJS default-object property edge, converting `ns.foo` to `import { foo }`, or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/provider_import_repair.rs`, `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
 
 Normal no-source-map unpack runs the through-`UnEsm` range once and carries the
 same `Globals`/`SyntaxContext` lineage across the barrier. If Phase 1 cannot

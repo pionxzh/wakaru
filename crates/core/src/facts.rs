@@ -1,8 +1,11 @@
-//! Post-Stage-2 fact extraction.
+//! Cross-module fact extraction.
 //!
-//! After Stage 2 (helper unwrapping + module-system reconstruction), the AST has
-//! clean `import`/`export` declarations. This module extracts a per-module fact
-//! summary from that reconstructed form.
+//! Most facts are collected after Stage 2 (helper unwrapping + module-system
+//! reconstruction), when the AST has clean `import`/`export` declarations. A
+//! narrow CommonJS provider-surface fact is collected from the resolved input
+//! before the rule range reaches `UnEsm`, because that rule intentionally
+//! erases the distinction between `module.exports = {...}` and
+//! `exports.default = {...}`.
 //!
 //! These facts are the foundation for cross-module analysis in the multi-module
 //! `unpack()` path. Single-file `decompile()` does not use them.
@@ -13,12 +16,15 @@ use std::{
 };
 
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, MemberProp,
-    Module, ModuleDecl, ModuleItem, Prop, PropName, PropOrSpread, ReturnStmt, Stmt,
+    ArrowExpr, AssignExpr, AssignTarget, Callee, Decl, DefaultDecl, ExportSpecifier, Expr,
+    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::analysis::binding_uses::BindingUseIndex;
 use crate::module_path::resolve_relative_specifier;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
@@ -145,6 +151,15 @@ pub struct ModuleFacts {
     pub exports: Vec<ExportFact>,
     pub helper_exports: Vec<HelperExportFact>,
     pub default_object_helper_exports: Vec<HelperExportFact>,
+    /// Statically declared properties on an object assigned to
+    /// `module.exports` before `UnEsm`. A stable local alias to an object
+    /// literal is followed; `exports.default`, computed keys, and spreads are
+    /// deliberately excluded.
+    pub default_object_properties: Vec<Atom>,
+    /// True when the module contains `export *`. Its complete named surface
+    /// may depend on another provider, so local absence is not proof that a
+    /// requested name should come from the default object.
+    pub has_export_all: bool,
     pub ts_helper_exports: Vec<TypeScriptHelperExportFact>,
     /// Exported zero-argument functions proven to return a CommonJS namespace
     /// object containing registered TypeScript helpers.
@@ -406,6 +421,8 @@ impl fmt::Display for ModuleFacts {
             && self.exports.is_empty()
             && self.helper_exports.is_empty()
             && self.default_object_helper_exports.is_empty()
+            && self.default_object_properties.is_empty()
+            && !self.has_export_all
             && self.ts_helper_exports.is_empty()
             && self.ts_helper_namespace_factory_exports.is_empty()
         {
@@ -476,6 +493,30 @@ impl fmt::Display for ModuleFacts {
                 }
                 write!(f, "ts helper namespace factory export {factory}")?;
             }
+        }
+        let has_prior = !self.imports.is_empty()
+            || !self.exports.is_empty()
+            || !self.helper_exports.is_empty()
+            || !self.default_object_helper_exports.is_empty()
+            || !self.ts_helper_exports.is_empty()
+            || !self.ts_helper_namespace_factory_exports.is_empty();
+        if !self.default_object_properties.is_empty() {
+            if has_prior {
+                writeln!(f)?;
+            }
+            let properties = self
+                .default_object_properties
+                .iter()
+                .map(Atom::as_ref)
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "CommonJS default object properties: {properties}")?;
+        }
+        if self.has_export_all {
+            if has_prior || !self.default_object_properties.is_empty() {
+                writeln!(f)?;
+            }
+            write!(f, "contains export *")?;
         }
         Ok(())
     }
@@ -610,9 +651,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                     }
                 }
             }
-            ModuleDecl::ExportAll(_) => {
-                // `export * from "..."` — not enumerable locally, skip for v1
-            }
+            ModuleDecl::ExportAll(_) => facts.has_export_all = true,
             _ => {}
         }
     }
@@ -950,6 +989,120 @@ fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind>
         TranspilerHelperKind::DefineProperty => None,
         TranspilerHelperKind::CreateClass => None,
         TranspilerHelperKind::HelperDependency => None,
+    }
+}
+
+/// Collect statically declared properties of a value assigned directly to
+/// unresolved `module.exports` before `UnEsm` erases that CommonJS origin.
+///
+/// `exports.default = {...}` is intentionally different: requiring that
+/// module returns a namespace-like object whose property is `default`, not the
+/// object literal itself.
+pub fn collect_commonjs_default_object_properties(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<Atom> {
+    let uses = BindingUseIndex::collect(module);
+    let mut object_bindings: HashMap<_, &ObjectLit> = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for declarator in &var.decls {
+            let Pat::Ident(binding) = &declarator.name else {
+                continue;
+            };
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            let Expr::Object(object) = strip_parens(init) else {
+                continue;
+            };
+            let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
+            if !uses.has_direct_write(&binding_id) {
+                object_bindings.insert(binding_id, object);
+            }
+        }
+    }
+
+    let mut assignments = ModuleExportsAssignmentCollector {
+        unresolved_mark,
+        values: Vec::new(),
+    };
+    module.visit_with(&mut assignments);
+    let [value] = assignments.values.as_slice() else {
+        return Vec::new();
+    };
+    let object = match strip_parens(value) {
+        Expr::Object(object) => Some(object),
+        Expr::Ident(local) => object_bindings
+            .get(&(local.sym.clone(), local.ctxt))
+            .copied(),
+        _ => None,
+    };
+    let Some(object) = object else {
+        return Vec::new();
+    };
+
+    let mut properties = HashSet::new();
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            continue;
+        };
+        if let Some(name) = static_object_property_name(prop) {
+            properties.insert(name);
+        }
+    }
+
+    let mut properties = properties.into_iter().collect::<Vec<_>>();
+    properties.sort();
+    properties
+}
+
+struct ModuleExportsAssignmentCollector {
+    unresolved_mark: Mark,
+    values: Vec<Box<Expr>>,
+}
+
+impl Visit for ModuleExportsAssignmentCollector {
+    // Assignments inside callbacks or deferred functions are not module
+    // initialization surface facts. Generated wrappers must be proven and
+    // lifted before this collector runs.
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if assign.op == swc_core::ecma::ast::AssignOp::Assign
+            && is_unresolved_module_exports_target(&assign.left, self.unresolved_mark)
+        {
+            self.values.push(assign.right.clone());
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+fn is_unresolved_module_exports_target(target: &AssignTarget, unresolved_mark: Mark) -> bool {
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+        return false;
+    };
+    let Expr::Ident(module) = member.obj.as_ref() else {
+        return false;
+    };
+    module.sym.as_ref() == "module"
+        && module.ctxt.outer() == unresolved_mark
+        && matches!(&member.prop, MemberProp::Ident(property) if property.sym.as_ref() == "exports")
+}
+
+fn static_object_property_name(prop: &Prop) -> Option<Atom> {
+    match prop {
+        Prop::Shorthand(ident) => Some(ident.sym.clone()),
+        Prop::KeyValue(prop) => prop_name_to_atom(&prop.key),
+        Prop::Assign(prop) => Some(prop.key.sym.clone()),
+        Prop::Getter(prop) => prop_name_to_atom(&prop.key),
+        Prop::Setter(prop) => prop_name_to_atom(&prop.key),
+        Prop::Method(prop) => prop_name_to_atom(&prop.key),
     }
 }
 

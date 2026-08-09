@@ -5,8 +5,9 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
-    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_default_object_properties, collect_module_facts, ExportFact, ExportKind,
+    HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
+    TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -33,6 +34,8 @@ fn collect_facts(source: &str) -> ModuleFacts {
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        let commonjs_default_object_properties =
+            collect_commonjs_default_object_properties(&module, unresolved_mark);
 
         // Run pipeline through end of Stage 2
         apply_rules(
@@ -41,7 +44,9 @@ fn collect_facts(source: &str) -> ModuleFacts {
             RulePipelineOptions::until("UnEsm"),
         );
 
-        collect_module_facts(&module)
+        let mut facts = collect_module_facts(&module);
+        facts.default_object_properties = commonjs_default_object_properties;
+        facts
     })
 }
 
@@ -435,6 +440,83 @@ module.exports = {
         facts.default_object_helper_exports.is_empty(),
         "property name alone should not prove helper semantics"
     );
+}
+
+#[test]
+fn default_object_properties_follow_a_stable_local_alias() {
+    let facts = collect_facts(
+        r#"
+var methods = {
+    map: function(value) { return value; },
+    filter(value) { return value; },
+    get size() { return 2; },
+    [dynamicKey]: dynamicValue,
+    ...extra
+};
+module.exports = methods;
+methods.enabled = true;
+"#,
+    );
+    assert_eq!(
+        facts.default_object_properties,
+        vec!["filter", "map", "size"]
+    );
+}
+
+#[test]
+fn default_object_properties_reject_a_reassigned_alias() {
+    let facts = collect_facts(
+        r#"
+var methods = { map: function(value) { return value; } };
+methods = decorate(methods);
+module.exports = methods;
+"#,
+    );
+    assert!(
+        facts.default_object_properties.is_empty(),
+        "a reassigned alias does not prove the final default value's properties: {facts}"
+    );
+}
+
+#[test]
+fn default_object_properties_distinguish_exports_default() {
+    let facts = collect_facts(
+        r#"
+exports.default = {
+    map: function(value) { return value; }
+};
+"#,
+    );
+    assert!(
+        facts.default_object_properties.is_empty(),
+        "exports.default is a namespace property, not the CommonJS value itself: {facts}"
+    );
+}
+
+#[test]
+fn default_object_properties_reject_multiple_module_exports_assignments() {
+    let facts = collect_facts(
+        r#"
+module.exports = { map: first };
+module.exports = { map: second };
+"#,
+    );
+    assert!(
+        facts.default_object_properties.is_empty(),
+        "multiple whole-value assignments require control-flow reasoning: {facts}"
+    );
+}
+
+#[test]
+fn export_all_marks_the_provider_surface_as_open() {
+    let facts = collect_facts(
+        r#"
+module.exports = { local: 1 };
+export * from "./other.js";
+"#,
+    );
+    assert!(facts.has_export_all);
+    assert_eq!(facts.default_object_properties, vec!["local"]);
 }
 
 #[test]

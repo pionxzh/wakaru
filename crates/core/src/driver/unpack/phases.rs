@@ -30,8 +30,11 @@ use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
-use crate::facts::{collect_module_facts, ModuleFactsMap};
+use crate::facts::{
+    collect_commonjs_default_object_properties, collect_module_facts, ModuleFactsMap,
+};
 use crate::namespace_decomposition::run_namespace_decomposition;
+use crate::provider_import_repair::run_provider_import_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, DeadImports, ImportDedup, RewriteLevel,
@@ -244,6 +247,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 unpacked.numeric_rewrite.as_ref(),
                 &numeric_rewrite_plan,
             );
+            let commonjs_default_object_properties =
+                collect_commonjs_default_object_properties(&module, unresolved_mark);
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -261,7 +266,7 @@ pub(super) fn unpack_multi_module_with_plan(
             // `module`. When the AST will be reused (no-sourcemap path), clone
             // before recovering for facts. When it won't be reused (sourcemap
             // path discards `module`), recover in place and skip the clone.
-            let (facts, prepared) = if can_reuse_phase1_ast {
+            let (mut facts, prepared) = if can_reuse_phase1_ast {
                 let mut facts_module = module.clone();
                 {
                     let span = tracing::info_span!("phase1: fact recovery");
@@ -289,6 +294,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let facts = collect_module_facts(&module);
                 (facts, None)
             };
+            facts.default_object_properties = commonjs_default_object_properties;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
@@ -378,6 +384,7 @@ pub(super) fn unpack_multi_module_with_plan(
             let rules_span = tracing::info_span!("phase2: rules");
             let rules_enter = rules_span.enter();
             // Late pass at the barrier
+            run_provider_import_repair(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
             // Preserve specifiers that were already dead at the barrier, then
@@ -672,7 +679,16 @@ mod tests {
     use super::*;
     use crate::test_tracing::record_spans;
     use crate::unpacker::UnpackedModule;
-    use crate::DceMode;
+    use crate::{validate_output_modules, DceMode, OutputFindingKind};
+
+    fn validate_prepared_output(output: &PreparedUnpackOutput) -> Vec<crate::OutputFinding> {
+        let modules = output
+            .modules
+            .iter()
+            .map(|module| (module.filename.clone(), module.code.clone()))
+            .collect::<Vec<_>>();
+        validate_output_modules(&modules)
+    }
 
     #[test]
     fn profiler_reports_phase_operation_boundaries() {
@@ -891,6 +907,247 @@ exports.default = o.default(l);
         assert!(
             code.contains("a;\nclass l extends a.Component"),
             "expected lowered interop binding read to survive until import recovery:\n{code}"
+        );
+    }
+
+    #[test]
+    fn provider_facts_repair_recovered_commonjs_import_shapes() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "default-provider".to_string(),
+                    code: r#"
+var methods = {
+    map: function(value) { return value + 1; },
+    filter: function(value) { return value > 0; }
+};
+module.exports = methods;
+"#
+                    .to_string(),
+                    filename: "default-provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "named-consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+before();
+var map = require("./default-provider.js").map;
+between();
+var filter = require("./default-provider.js").filter;
+map = replacement;
+module.exports = function(value) { return filter(map(value)); };
+"#
+                    .to_string(),
+                    filename: "named-consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        let output = unpack_multi_module(modules(), DecompileOptions::default())
+            .expect("provider-aware fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+
+        let named_consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "named-consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected named consumer");
+        assert!(
+            !named_consumer.contains("import { map")
+                && !named_consumer.contains("filter } from"),
+            "properties of a proven default object must be captured from its default import:\n{named_consumer}"
+        );
+        assert!(
+            (named_consumer.contains("{ map:") && named_consumer.contains("filter }"))
+                || (named_consumer.contains(".map") && named_consumer.contains(".filter")),
+            "property captures must come from the proven default object:\n{named_consumer}"
+        );
+        assert!(
+            named_consumer.contains("let map") || named_consumer.contains("let { map"),
+            "a reassigned property local must remain mutable instead of becoming an import binding:\n{named_consumer}"
+        );
+        let before = named_consumer
+            .find("before();")
+            .expect("leading effect should remain");
+        let map_capture = named_consumer[before..]
+            .find("map")
+            .map(|offset| before + offset)
+            .expect("map capture should remain");
+        let between = named_consumer
+            .find("between();")
+            .expect("middle effect should remain");
+        let filter_capture = named_consumer[between..]
+            .find("filter")
+            .map(|offset| between + offset)
+            .expect("filter capture should remain");
+        assert!(
+            before < map_capture && map_capture < between && between < filter_capture,
+            "property captures must stay at their original require positions around effects:\n{named_consumer}"
+        );
+
+        let source_map_output = unpack_multi_module(
+            modules(),
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("provider-aware fixture should decompile through the source-map path");
+        assert_eq!(validate_prepared_output(&source_map_output), vec![]);
+        assert!(
+            source_map_output
+                .modules
+                .iter()
+                .all(|module| module.source_map.is_some()),
+            "provider repair must survive the source-map path's second parse"
+        );
+    }
+
+    #[test]
+    fn provider_facts_leave_unproven_default_properties_unchanged() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "module.exports = makeProvider();".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var missing = require("./provider.js").missing;
+module.exports = function() { return missing; };
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("unproven provider fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "an unknown default value must fail closed instead of fabricating a property capture: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn provider_facts_leave_mutated_commonjs_namespaces_unresolved() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.value = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var provider = require("./provider.js");
+provider.value = 2;
+module.exports = provider;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("mutable namespace fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "a mutable CommonJS exports object needs a provider facade and must fail closed: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn provider_facts_leave_export_star_surfaces_unresolved() {
+        let modules = vec![
+            UnpackedModule {
+                id: "star-source".to_string(),
+                code: "exports.other = 1;".to_string(),
+                filename: "star-source.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: r#"
+module.exports = { value: 1 };
+export * from "./star-source.js";
+"#
+                .to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var value = require("./provider.js").value;
+module.exports = value;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("export-star provider fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "an open export-star surface must fail closed instead of treating local absence as proof: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn provider_facts_do_not_rewrite_authored_esm_imports() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "export default { value: 1 };".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"import { value } from "./provider.js"; console.log(value);"#.to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("authored ESM fixture should decompile");
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected ESM consumer");
+        assert!(
+            consumer.contains("import { value }"),
+            "authored ESM imports must remain outside CommonJS repair:\n{consumer}"
         );
     }
 
