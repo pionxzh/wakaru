@@ -5,9 +5,9 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
-    collect_commonjs_default_object, collect_module_facts, ExportFact, ExportKind,
-    HelperExportFact, HelperKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap,
-    TypeScriptHelperExportFact, TypeScriptHelperKind,
+    collect_commonjs_default_attached_properties, collect_commonjs_default_object,
+    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
+    ImportKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -35,6 +35,8 @@ fn collect_facts(source: &str) -> ModuleFacts {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         let commonjs_default_object = collect_commonjs_default_object(&module, unresolved_mark);
+        let commonjs_default_attached_properties =
+            collect_commonjs_default_attached_properties(&module, unresolved_mark);
 
         // Run pipeline through end of Stage 2
         apply_rules(
@@ -45,6 +47,7 @@ fn collect_facts(source: &str) -> ModuleFacts {
 
         let mut facts = collect_module_facts(&module);
         facts.commonjs_default_object = commonjs_default_object;
+        facts.commonjs_default_attached_properties = commonjs_default_attached_properties;
         facts
     })
 }
@@ -453,6 +456,49 @@ fn empty_default_object_is_distinct_from_an_unknown_default_value() {
     assert!(
         unknown.commonjs_default_object.is_none(),
         "an arbitrary factory result must remain unknown: {unknown}"
+    );
+}
+
+#[test]
+fn callable_default_properties_require_stable_unconditional_writes() {
+    let facts = collect_facts(
+        r#"
+function api(value) { return value; }
+api.parse = parse;
+api.Rule = Rule;
+module.exports = api;
+api.default = api;
+"#,
+    );
+    assert_eq!(
+        facts.commonjs_default_attached_properties,
+        vec!["Rule", "parse"],
+        "only properties attached unconditionally before the CommonJS export should be proven"
+    );
+
+    let reassigned = collect_facts(
+        r#"
+function api(value) { return value; }
+api.parse = parse;
+api = decorate(api);
+module.exports = api;
+"#,
+    );
+    assert!(
+        reassigned.commonjs_default_attached_properties.is_empty(),
+        "a reassigned callable binding must fail closed: {reassigned}"
+    );
+
+    let conditional = collect_facts(
+        r#"
+function api(value) { return value; }
+if (enabled) api.parse = parse;
+module.exports = api;
+"#,
+    );
+    assert!(
+        conditional.commonjs_default_attached_properties.is_empty(),
+        "a conditional property write does not prove the callable surface: {conditional}"
     );
 }
 

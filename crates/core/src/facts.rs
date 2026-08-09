@@ -167,6 +167,11 @@ pub struct ModuleFacts {
     /// followed. `exports.default` and unknown or multiply-assigned values are
     /// deliberately excluded.
     pub commonjs_default_object: Option<CommonJsDefaultObjectFact>,
+    /// Static properties assigned unconditionally to a stable top-level
+    /// function binding before that exact binding is assigned to
+    /// `module.exports`. Unlike a proven object value, absence from this list
+    /// is not evidence that a callable property is missing.
+    pub commonjs_default_attached_properties: Vec<Atom>,
     /// True when the module contains `export *`. Its complete named surface
     /// may depend on another provider, so local absence is not proof that a
     /// requested name should come from the default object.
@@ -433,6 +438,7 @@ impl fmt::Display for ModuleFacts {
             && self.helper_exports.is_empty()
             && self.default_object_helper_exports.is_empty()
             && self.commonjs_default_object.is_none()
+            && self.commonjs_default_attached_properties.is_empty()
             && !self.has_export_all
             && self.ts_helper_exports.is_empty()
             && self.ts_helper_namespace_factory_exports.is_empty()
@@ -526,8 +532,23 @@ impl fmt::Display for ModuleFacts {
                 write!(f, " properties: {properties}")?;
             }
         }
-        if self.has_export_all {
+        if !self.commonjs_default_attached_properties.is_empty() {
             if has_prior || self.commonjs_default_object.is_some() {
+                writeln!(f)?;
+            }
+            let properties = self
+                .commonjs_default_attached_properties
+                .iter()
+                .map(Atom::as_ref)
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "CommonJS callable default properties: {properties}")?;
+        }
+        if self.has_export_all {
+            if has_prior
+                || self.commonjs_default_object.is_some()
+                || !self.commonjs_default_attached_properties.is_empty()
+            {
                 writeln!(f)?;
             }
             write!(f, "contains export *")?;
@@ -1073,6 +1094,103 @@ pub fn collect_commonjs_default_object(
     Some(CommonJsDefaultObjectFact {
         declared_properties: properties,
     })
+}
+
+/// Collect static properties attached unconditionally to a stable top-level
+/// function before that exact binding becomes the CommonJS default value.
+///
+/// Only direct assignment statements and direct elements of a top-level comma
+/// sequence are considered. Conditional/logical writes, nested scopes,
+/// computed keys, writes after `module.exports`, and reassigned callables fail
+/// closed rather than guessing a provider surface.
+pub fn collect_commonjs_default_attached_properties(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Vec<Atom> {
+    let function_bindings = module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = item else {
+                return None;
+            };
+            Some((function.ident.sym.clone(), function.ident.ctxt))
+        })
+        .collect::<HashSet<_>>();
+    if function_bindings.is_empty() {
+        return Vec::new();
+    }
+
+    let mut default_assignments = Vec::new();
+    let mut property_assignments = Vec::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+            continue;
+        };
+        visit_direct_sequence_expressions(&expr_stmt.expr, &mut |expr| {
+            let Expr::Assign(assign) = strip_parens(expr) else {
+                return;
+            };
+            if assign.op != swc_core::ecma::ast::AssignOp::Assign {
+                return;
+            }
+            if is_unresolved_module_exports_target(&assign.left, unresolved_mark) {
+                if let Expr::Ident(value) = strip_parens(&assign.right) {
+                    default_assignments
+                        .push((assign.span.lo, Some((value.sym.clone(), value.ctxt))));
+                } else {
+                    default_assignments.push((assign.span.lo, None));
+                }
+                return;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+                return;
+            };
+            let Expr::Ident(object) = member.obj.as_ref() else {
+                return;
+            };
+            let MemberProp::Ident(property) = &member.prop else {
+                return;
+            };
+            property_assignments.push((
+                assign.span.lo,
+                (object.sym.clone(), object.ctxt),
+                property.sym.clone(),
+            ));
+        });
+    }
+
+    let [(export_position, Some(binding))] = default_assignments.as_slice() else {
+        return Vec::new();
+    };
+    if !function_bindings.contains(binding) {
+        return Vec::new();
+    }
+    let uses = BindingUseIndex::collect(module);
+    if uses.has_direct_write(binding) {
+        return Vec::new();
+    }
+
+    let mut properties = property_assignments
+        .into_iter()
+        .filter_map(|(position, object, property)| {
+            (position < *export_position && object == *binding).then_some(property)
+        })
+        .collect::<Vec<_>>();
+    properties.sort();
+    properties.dedup();
+    properties
+}
+
+fn visit_direct_sequence_expressions(expr: &Expr, visitor: &mut impl FnMut(&Expr)) {
+    match strip_parens(expr) {
+        Expr::Seq(sequence) => {
+            for expr in &sequence.exprs {
+                visit_direct_sequence_expressions(expr, visitor);
+            }
+        }
+        expr => visitor(expr),
+    }
 }
 
 struct ModuleExportsAssignmentCollector {

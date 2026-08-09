@@ -13,10 +13,13 @@
 //! ```
 //!
 //! The pass is deliberately narrow. It touches only import declarations
-//! synthesized by `UnEsm` (dummy span), requires a proven raw CommonJS default
-//! object, and leaves export-star providers and unknown default values
-//! unchanged. Capturing an undeclared property is intentional: CommonJS returns
-//! `undefined`, while a guessed ESM named import fails during module linking.
+//! synthesized by `UnEsm` (dummy span), requires either a proven raw CommonJS
+//! default object or a property explicitly attached to a stable callable
+//! default, and leaves export-star providers and unknown default values
+//! unchanged. Capturing an undeclared property from a proven object is
+//! intentional: CommonJS returns `undefined`, while a guessed ESM named import
+//! fails during module linking. Callable defaults require a positive property
+//! fact and do not use that absence inference.
 
 use std::collections::{HashMap, HashSet};
 
@@ -72,7 +75,8 @@ pub(crate) fn run_provider_import_repair(
             continue;
         };
         if provider.has_export_all
-            || provider.commonjs_default_object.is_none()
+            || (provider.commonjs_default_object.is_none()
+                && provider.commonjs_default_attached_properties.is_empty())
             || !provider
                 .exports
                 .iter()
@@ -86,6 +90,11 @@ pub(crate) fn run_provider_import_repair(
             .iter()
             .filter(|export| export.kind == ExportKind::Named)
             .map(|export| export.exported.as_ref())
+            .collect::<HashSet<_>>();
+        let attached_properties = provider
+            .commonjs_default_attached_properties
+            .iter()
+            .map(Atom::as_ref)
             .collect::<HashSet<_>>();
         let mut retained = Vec::with_capacity(import.specifiers.len() + 1);
         let mut repaired = Vec::new();
@@ -111,6 +120,8 @@ pub(crate) fn run_provider_import_repair(
             if named.is_type_only
                 || capture_site.is_none()
                 || named_exports.contains(property.as_ref())
+                || (provider.commonjs_default_object.is_none()
+                    && !attached_properties.contains(property.as_ref()))
             {
                 retained.push(specifier);
                 continue;

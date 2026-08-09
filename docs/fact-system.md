@@ -8,11 +8,14 @@ rules fit in the pipeline.
 
 A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 **other** modules in the same bundle. Most facts describe normalized ESM
-imports/exports. One deliberately narrow pre-`UnEsm` fact preserves the proven
-identity and statically declared properties of an object assigned directly to
-`module.exports`, so a consumer can distinguish that CommonJS value from a
-true ESM namespace. The identity proof is independent of the property list:
-an empty list may describe a proven empty object rather than an unknown value.
+imports/exports. Two deliberately narrow pre-`UnEsm` facts preserve CommonJS
+provider shape that `UnEsm` would otherwise erase: the proven identity and
+statically declared properties of an object assigned directly to
+`module.exports`, and positively observed properties attached to a stable
+callable before it becomes `module.exports`. For object defaults, the identity
+proof is independent of the property list: an empty list may describe a proven
+empty object rather than an unknown value. An empty callable-property list is
+not such a proof.
 
 ## Why it's simpler than the original proposal
 
@@ -20,13 +23,14 @@ The original design imagined rules writing per-module "observations" into
 shared state, merging them at a barrier, and reading back immutable facts.
 We do not need that. After `UnEsm` runs, ESM `import`/`export` declarations are
 already a normalized, AST-level representation of module shape. That AST *is*
-the fact. The one exception is a syntactic fact collected from the resolved
-input before the rule range reaches `UnEsm`: whether raw `module.exports`
-receives an object literal (or a stable local alias to one), and which
-non-computed properties it declares. `UnEsm` otherwise erases the important
-distinction between `module.exports = {...}` and `exports.default = {...}`.
-Both collectors remain pure functions of one module — no rule-written
-observations and no merge step.
+the fact. The exceptions are syntactic facts collected from the resolved input
+before the rule range reaches `UnEsm`: whether raw `module.exports` receives an
+object literal (or a stable local alias to one), and whether a stable top-level
+function has static properties assigned unconditionally before that exact
+binding becomes `module.exports`. `UnEsm` otherwise erases the important
+distinction between these CommonJS values and ESM named exports. All collectors
+remain pure functions of one module — no rule-written observations and no
+merge step.
 
 ## Shape
 
@@ -72,7 +76,8 @@ parser-owned module coordinates.
 - `ExportFact { exported, local, kind: Default | Named }`
 - `HelperExportFact { exported, local, kind }`
 - `ModuleFacts { imports, exports, helper_exports,
-  commonjs_default_object, has_export_all, ts_helper_exports,
+  commonjs_default_object, commonjs_default_attached_properties,
+  has_export_all, ts_helper_exports,
   ts_helper_namespace_factory_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
@@ -84,8 +89,15 @@ Extraction (`collect_module_facts`) reads the post-Stage-2 AST. Before Stage 2,
 proven object whose declared-property list is empty. Multiple whole-value
 assignments, reassigned aliases, non-object values, nested callbacks, and
 `exports.default` fail closed. Computed keys and spreads are omitted from the
-declared-property list without weakening the proven object identity. No
-collector mutates the AST or shared state.
+declared-property list without weakening the proven object identity.
+
+`collect_commonjs_default_attached_properties` separately records static
+identifier properties assigned directly and unconditionally to a stable
+top-level function before the sole direct `module.exports = functionBinding`
+assignment. It is a positive-membership fact only: a recorded property can be
+repaired, but an absent property says nothing about the callable's runtime
+surface. Computed, conditional, nested, post-export, or reassigned shapes fail
+closed. Neither collector mutates the AST or shared state.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 only when structural webpack detection proves that a normalized extracted
@@ -102,11 +114,13 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
 
 - **`provider_import_repair`** — repairs only dummy-span imports synthesized by
   `UnEsm` for `require("./x").name`. If provider facts prove that the raw
-  CommonJS value is the recovered default object and `name` is not a true named
+  CommonJS value is the recovered default object, or positively prove `name`
+  was attached to a stable callable default, and `name` is not a true named
   export, the pass imports that default value and captures `.name` into the
-  original local binding at the original `require` declaration position. This
-  also covers a property absent from a proven empty object: CommonJS returns
-  `undefined`, whereas a guessed ESM named import fails during linking.
+  original local binding at the original `require` declaration position. An
+  object property absent from a proven empty object is also covered: CommonJS
+  returns `undefined`, whereas a guessed ESM named import fails during linking.
+  Callable-property absence is never inferred.
   Authored ESM imports, unknown default values, synthesized bindings without
   either a source position or a proven mutable-local capture, and providers
   with `export *` remain unchanged. A whole-object CommonJS

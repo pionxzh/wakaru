@@ -33,7 +33,10 @@ use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
-use crate::facts::{collect_commonjs_default_object, collect_module_facts, ModuleFactsMap};
+use crate::facts::{
+    collect_commonjs_default_attached_properties, collect_commonjs_default_object,
+    collect_module_facts, ModuleFactsMap,
+};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
 use crate::provider_namespace_repair::run_provider_namespace_repair;
@@ -292,6 +295,8 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             let commonjs_default_object =
                 collect_commonjs_default_object(&module, unresolved_mark);
+            let commonjs_default_attached_properties =
+                collect_commonjs_default_attached_properties(&module, unresolved_mark);
             {
                 let span = tracing::info_span!("phase1: rules");
                 let _enter = span.enter();
@@ -338,6 +343,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 (facts, None)
             };
             facts.commonjs_default_object = commonjs_default_object;
+            facts.commonjs_default_attached_properties =
+                commonjs_default_attached_properties;
             (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
@@ -1615,6 +1622,135 @@ module.exports = function(path) {
                 );
             }
         }
+    }
+
+    #[test]
+    fn provider_facts_capture_proven_callable_default_properties() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: r#"
+function api(value) { return value; }
+api.parse = function(value) { return value.length; };
+api.Rule = class Rule {};
+module.exports = api;
+api.default = api;
+"#
+                    .to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+before();
+var parse = require("./provider.js").parse;
+var Rule = require("./provider.js").Rule;
+after();
+module.exports = [parse("value"), new Rule()];
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        for emit_source_map in [false, true] {
+            let output = unpack_multi_module(
+                modules(),
+                DecompileOptions {
+                    emit_source_map,
+                    ..Default::default()
+                },
+            )
+            .expect("proven callable-property fixture should decompile");
+            assert_eq!(validate_prepared_output(&output), vec![]);
+
+            let consumer = output
+                .modules
+                .iter()
+                .find(|module| module.filename == "consumer.js")
+                .map(|module| module.code.as_str())
+                .expect("expected consumer module");
+            assert!(
+                !consumer.contains("import { parse") && !consumer.contains("Rule } from"),
+                "attached CommonJS properties must not remain guessed named imports:\n{consumer}"
+            );
+            assert!(
+                (consumer.contains(".parse") && consumer.contains(".Rule"))
+                    || consumer.contains("{ parse, Rule }"),
+                "attached properties must be captured from the callable default:\n{consumer}"
+            );
+            let before = consumer
+                .find("before();")
+                .expect("leading effect should remain");
+            let parse_capture = consumer
+                .find(".parse")
+                .or_else(|| consumer.find("{ parse"))
+                .expect("parse capture should remain");
+            let rule_capture = consumer[parse_capture..]
+                .find("Rule")
+                .map(|offset| parse_capture + offset)
+                .expect("Rule capture should remain");
+            let after = consumer
+                .find("after();")
+                .expect("trailing effect should remain");
+            assert!(
+                before < parse_capture && parse_capture < rule_capture && rule_capture < after,
+                "callable property reads must stay at their original require positions:\n{consumer}"
+            );
+            if emit_source_map {
+                assert!(
+                    output
+                        .modules
+                        .iter()
+                        .all(|module| module.source_map.is_some()),
+                    "callable property repair must preserve emitted source maps"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn provider_facts_do_not_infer_absent_callable_properties() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: r#"
+function api(value) { return value; }
+api.parse = function(value) { return value.length; };
+module.exports = api;
+"#
+                .to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var missing = require("./provider.js").missing;
+module.exports = function() { return missing; };
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("absent callable-property fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "callable facts prove only observed properties and must not infer an absent one: {findings:#?}"
+        );
     }
 
     #[test]
