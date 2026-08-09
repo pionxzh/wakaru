@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, AssignTargetPat, CallExpr, Callee, Decl, Expr, ForHead, ForInStmt,
     ForOfStmt, Id, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem,
@@ -33,6 +33,10 @@ use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 pub struct OutputFinding {
     /// The module the defect was found in.
     pub filename: String,
+    /// One-based source line within `filename`.
+    pub line: usize,
+    /// One-based source column within `filename`.
+    pub column: usize,
     pub kind: OutputFindingKind,
     /// Human-readable detail (specifier, binding name, parse message).
     pub message: String,
@@ -88,10 +92,12 @@ fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
                 findings.append(&mut local_findings);
                 infos.push(info);
             }
-            Err(message) => findings.push(OutputFinding {
+            Err(error) => findings.push(OutputFinding {
                 filename: filename.clone(),
+                line: error.line,
+                column: error.column,
                 kind: OutputFindingKind::ParseError,
-                message,
+                message: error.message,
             }),
         }
     }
@@ -108,6 +114,8 @@ fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
             if !target_exports.names.contains(&import.name) {
                 findings.push(OutputFinding {
                     filename: info.filename.clone(),
+                    line: import.line,
+                    column: import.column,
                     kind: OutputFindingKind::MissingImportedName,
                     message: format!("\"{}\" is not exported by {}", import.name, import.target),
                 });
@@ -122,7 +130,7 @@ struct ModuleInfo {
     filename: String,
     /// Explicitly exported names, including "default". Star re-exports are
     /// tracked separately and excluded from duplicate detection.
-    explicit_exports: Vec<Atom>,
+    explicit_exports: Vec<ExplicitExport>,
     /// Resolved in-set targets of `export * from`.
     star_targets: Vec<String>,
     /// The export set is unknowable: `export * from` an external package or
@@ -137,6 +145,14 @@ struct NamedImport {
     /// The external name requested from the provider ("default" for default
     /// imports).
     name: Atom,
+    line: usize,
+    column: usize,
+}
+
+struct ExplicitExport {
+    name: Atom,
+    line: usize,
+    column: usize,
 }
 
 struct ExportClosure {
@@ -153,7 +169,11 @@ fn resolve_export_closures(infos: &[ModuleInfo]) -> HashMap<String, ExportClosur
             (
                 info.filename.clone(),
                 ExportClosure {
-                    names: info.explicit_exports.iter().cloned().collect(),
+                    names: info
+                        .explicit_exports
+                        .iter()
+                        .map(|export| export.name.clone())
+                        .collect(),
                     open: info.open_exports,
                 },
             )
@@ -197,8 +217,11 @@ fn analyze_module(
     filename: &str,
     source: &str,
     filenames: &HashSet<&str>,
-) -> Result<(ModuleInfo, Vec<OutputFinding>), String> {
-    let mut module = parse_for_validation(filename, source)?;
+) -> Result<(ModuleInfo, Vec<OutputFinding>), ValidationParseError> {
+    let ParsedModule {
+        mut module,
+        source_map,
+    } = parse_for_validation(filename, source)?;
 
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
@@ -220,39 +243,57 @@ fn analyze_module(
         };
         match decl {
             ModuleDecl::Import(import) => {
-                let target =
-                    check_relative_ref(filename, &import.src, "import", filenames, &mut findings);
+                let target = check_relative_ref(
+                    filename,
+                    &import.src,
+                    "import",
+                    filenames,
+                    &source_map,
+                    &mut findings,
+                );
                 for spec in &import.specifiers {
-                    let (local, requested) = match spec {
+                    let (local, requested, span) = match spec {
                         ImportSpecifier::Named(named) => {
                             let requested = named
                                 .imported
                                 .as_ref()
                                 .map(module_export_name_atom)
                                 .unwrap_or_else(|| named.local.sym.clone());
-                            (&named.local, Some(requested))
+                            (&named.local, Some(requested), named.span)
                         }
                         ImportSpecifier::Default(default) => {
-                            (&default.local, Some(Atom::from("default")))
+                            (&default.local, Some(Atom::from("default")), default.span)
                         }
-                        ImportSpecifier::Namespace(ns) => (&ns.local, None),
+                        ImportSpecifier::Namespace(ns) => (&ns.local, None, ns.span),
                     };
                     import_bindings.insert(local.to_id(), local.sym.clone());
                     if let (Some(target), Some(name)) = (&target, requested) {
+                        let (line, column) = source_location(&source_map, span);
                         info.named_imports.push(NamedImport {
                             target: target.clone(),
                             name,
+                            line,
+                            column,
                         });
                     }
                 }
             }
             ModuleDecl::ExportDecl(export) => {
-                info.explicit_exports
-                    .extend(export_decl_names(&export.decl));
+                for name in export_decl_names(&export.decl) {
+                    info.explicit_exports
+                        .push(explicit_export(name, export.span, &source_map));
+                }
             }
             ModuleDecl::ExportNamed(named) => {
                 let target = named.src.as_ref().and_then(|src| {
-                    check_relative_ref(filename, src, "export", filenames, &mut findings)
+                    check_relative_ref(
+                        filename,
+                        src,
+                        "export",
+                        filenames,
+                        &source_map,
+                        &mut findings,
+                    )
                 });
                 for spec in &named.specifiers {
                     match spec {
@@ -263,26 +304,44 @@ fn analyze_module(
                                 .as_ref()
                                 .map(module_export_name_atom)
                                 .unwrap_or_else(|| orig.clone());
-                            info.explicit_exports.push(exported);
+                            info.explicit_exports.push(explicit_export(
+                                exported,
+                                spec.span,
+                                &source_map,
+                            ));
                             if let Some(target) = &target {
+                                let (line, column) = source_location(&source_map, spec.span);
                                 info.named_imports.push(NamedImport {
                                     target: target.clone(),
                                     name: orig,
+                                    line,
+                                    column,
                                 });
                             }
                         }
                         swc_core::ecma::ast::ExportSpecifier::Namespace(spec) => {
-                            info.explicit_exports
-                                .push(module_export_name_atom(&spec.name));
+                            info.explicit_exports.push(explicit_export(
+                                module_export_name_atom(&spec.name),
+                                spec.span,
+                                &source_map,
+                            ));
                         }
                         swc_core::ecma::ast::ExportSpecifier::Default(spec) => {
-                            info.explicit_exports.push(spec.exported.sym.clone());
+                            info.explicit_exports.push(explicit_export(
+                                spec.exported.sym.clone(),
+                                spec.span(),
+                                &source_map,
+                            ));
                         }
                     }
                 }
             }
             ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_) => {
-                info.explicit_exports.push(Atom::from("default"));
+                info.explicit_exports.push(explicit_export(
+                    Atom::from("default"),
+                    decl.span(),
+                    &source_map,
+                ));
             }
             ModuleDecl::ExportAll(export_all) => {
                 match check_relative_ref(
@@ -290,6 +349,7 @@ fn analyze_module(
                     &export_all.src,
                     "export",
                     filenames,
+                    &source_map,
                     &mut findings,
                 ) {
                     Some(target) => info.star_targets.push(target),
@@ -306,12 +366,14 @@ fn analyze_module(
 
     let mut duplicates_seen: HashSet<Atom> = HashSet::new();
     let mut counted: HashSet<Atom> = HashSet::new();
-    for name in &info.explicit_exports {
-        if !counted.insert(name.clone()) && duplicates_seen.insert(name.clone()) {
+    for export in &info.explicit_exports {
+        if !counted.insert(export.name.clone()) && duplicates_seen.insert(export.name.clone()) {
             findings.push(OutputFinding {
                 filename: filename.to_string(),
+                line: export.line,
+                column: export.column,
                 kind: OutputFindingKind::DuplicateExport,
-                message: format!("duplicate export \"{name}\""),
+                message: format!("duplicate export \"{}\"", export.name),
             });
         }
     }
@@ -324,6 +386,7 @@ fn analyze_module(
     let mut ref_visitor = BodyVisitor {
         filename,
         filenames,
+        source_map: &source_map,
         unresolved_mark,
         writes: Vec::new(),
         dangling: Vec::new(),
@@ -331,19 +394,23 @@ fn analyze_module(
     module.visit_with(&mut ref_visitor);
     findings.extend(ref_visitor.dangling);
 
-    for (id, name) in &ref_visitor.writes {
+    for (id, name, span) in &ref_visitor.writes {
         if import_bindings.contains_key(id) {
-            findings.push(OutputFinding {
-                filename: filename.to_string(),
-                kind: OutputFindingKind::AssignToImport,
-                message: format!("assignment to imported binding \"{name}\""),
-            });
+            findings.push(finding_at_span(
+                filename,
+                &source_map,
+                *span,
+                OutputFindingKind::AssignToImport,
+                format!("assignment to imported binding \"{name}\""),
+            ));
         } else if const_collector.bindings.contains_key(id) {
-            findings.push(OutputFinding {
-                filename: filename.to_string(),
-                kind: OutputFindingKind::AssignToConst,
-                message: format!("assignment to const binding \"{name}\""),
-            });
+            findings.push(finding_at_span(
+                filename,
+                &source_map,
+                *span,
+                OutputFindingKind::AssignToConst,
+                format!("assignment to const binding \"{name}\""),
+            ));
         }
     }
 
@@ -353,17 +420,35 @@ fn analyze_module(
 /// Parse with the module goal; when that only fails on recoverable errors and
 /// the file contains no import/export syntax, retry as a classic script
 /// (single-file decompile output can legitimately be sloppy-mode code).
-fn parse_for_validation(filename: &str, source: &str) -> Result<Module, String> {
+fn parse_for_validation(
+    filename: &str,
+    source: &str,
+) -> Result<ParsedModule, ValidationParseError> {
     match parse_program(filename, source, true) {
         Ok(module) => Ok(module),
         Err(module_error) => match parse_program(filename, source, false) {
-            Ok(module) if !has_module_syntax(&module) => Ok(module),
+            Ok(parsed) if !has_module_syntax(&parsed.module) => Ok(parsed),
             _ => Err(module_error),
         },
     }
 }
 
-fn parse_program(filename: &str, source: &str, as_module: bool) -> Result<Module, String> {
+struct ParsedModule {
+    module: Module,
+    source_map: Lrc<SourceMap>,
+}
+
+struct ValidationParseError {
+    message: String,
+    line: usize,
+    column: usize,
+}
+
+fn parse_program(
+    filename: &str,
+    source: &str,
+    as_module: bool,
+) -> Result<ParsedModule, ValidationParseError> {
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(
         FileName::Custom(filename.to_string()).into(),
@@ -383,18 +468,75 @@ fn parse_program(filename: &str, source: &str, as_module: bool) -> Result<Module
     } else {
         parser.parse_script().map(Program::Script)
     };
-    let module = parsed.map_err(|error| format!("parse failed: {:?}", error.kind()))?;
+    let module = parsed.map_err(|error| {
+        parse_error_at_span(
+            &cm,
+            error.span(),
+            format!("parse failed: {:?}", error.kind()),
+        )
+    })?;
     if let Some(error) = parser.take_errors().into_iter().next() {
-        return Err(format!("parse failed: {:?}", error.kind()));
+        return Err(parse_error_at_span(
+            &cm,
+            error.span(),
+            format!("parse failed: {:?}", error.kind()),
+        ));
     }
-    Ok(match module {
+    let module = match module {
         Program::Module(module) => module,
         Program::Script(script) => Module {
             span: script.span,
             body: script.body.into_iter().map(ModuleItem::Stmt).collect(),
             shebang: script.shebang,
         },
+    };
+    Ok(ParsedModule {
+        module,
+        source_map: cm,
     })
+}
+
+fn source_location(source_map: &SourceMap, span: Span) -> (usize, usize) {
+    if span.lo.0 == 0 {
+        return (1, 1);
+    }
+    let location = source_map.lookup_char_pos(span.lo);
+    (location.line, location.col_display + 1)
+}
+
+fn explicit_export(name: Atom, span: Span, source_map: &SourceMap) -> ExplicitExport {
+    let (line, column) = source_location(source_map, span);
+    ExplicitExport { name, line, column }
+}
+
+fn finding_at_span(
+    filename: &str,
+    source_map: &SourceMap,
+    span: Span,
+    kind: OutputFindingKind,
+    message: String,
+) -> OutputFinding {
+    let (line, column) = source_location(source_map, span);
+    OutputFinding {
+        filename: filename.to_string(),
+        line,
+        column,
+        kind,
+        message,
+    }
+}
+
+fn parse_error_at_span(
+    source_map: &SourceMap,
+    span: Span,
+    message: String,
+) -> ValidationParseError {
+    let (line, column) = source_location(source_map, span);
+    ValidationParseError {
+        message,
+        line,
+        column,
+    }
 }
 
 fn has_module_syntax(module: &Module) -> bool {
@@ -435,20 +577,23 @@ fn check_relative_ref(
     spec: &Str,
     context: &str,
     filenames: &HashSet<&str>,
+    source_map: &SourceMap,
     findings: &mut Vec<OutputFinding>,
 ) -> Option<String> {
-    let spec = spec.value.as_str()?;
-    if !(spec.starts_with("./") || spec.starts_with("../")) {
+    let spec_value = spec.value.as_str()?;
+    if !(spec_value.starts_with("./") || spec_value.starts_with("../")) {
         return None;
     }
-    match resolve_in_set(from_filename, spec, filenames) {
+    match resolve_in_set(from_filename, spec_value, filenames) {
         Some(target) => Some(target),
         None => {
-            findings.push(OutputFinding {
-                filename: from_filename.to_string(),
-                kind: OutputFindingKind::DanglingRelativeRef,
-                message: format!("unresolved relative {context} \"{spec}\""),
-            });
+            findings.push(finding_at_span(
+                from_filename,
+                source_map,
+                spec.span,
+                OutputFindingKind::DanglingRelativeRef,
+                format!("unresolved relative {context} \"{spec_value}\""),
+            ));
             None
         }
     }
@@ -492,14 +637,16 @@ impl Visit for ConstBindingCollector {
 struct BodyVisitor<'a> {
     filename: &'a str,
     filenames: &'a HashSet<&'a str>,
+    source_map: &'a SourceMap,
     unresolved_mark: Mark,
-    writes: Vec<(Id, Atom)>,
+    writes: Vec<(Id, Atom, Span)>,
     dangling: Vec<OutputFinding>,
 }
 
 impl BodyVisitor<'_> {
     fn record_write(&mut self, ident: &Ident) {
-        self.writes.push((ident.to_id(), ident.sym.clone()));
+        self.writes
+            .push((ident.to_id(), ident.sym.clone(), ident.span));
     }
 
     fn write_target_expr(&mut self, expr: &Expr) {
@@ -630,6 +777,7 @@ impl Visit for BodyVisitor<'_> {
                             s,
                             context,
                             self.filenames,
+                            self.source_map,
                             &mut self.dangling,
                         );
                     }

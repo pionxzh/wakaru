@@ -121,6 +121,23 @@ physical filenames. Raw output only skips readability transforms, keeps
 provisional extraction names, and has no public-path reservation or usable
 module-graph contract.
 
+For development or benchmark triage, validate a normal output tree as one
+emitted-module graph:
+
+```bash
+wakaru debug validate out/
+wakaru debug validate out/ --json
+```
+
+This reports dangling relative references, missing imported or re-exported
+names, duplicate exports, and writes to imported or `const` bindings, then
+exits nonzero on findings. Text output uses `filename:line:column`; JSON
+findings include one-based `line` and `column`. The recursive scan accepts
+`.js`, `.mjs`, `.cjs`, `.jsx`, and extensionless emitted modules, including
+modules emitted beneath `node_modules`; hidden paths and unrelated extensions
+stay excluded. Do not use it to grade raw output, which has no usable
+module-graph contract.
+
 ### 3. Recover names / original source when a map exists
 
 ```bash

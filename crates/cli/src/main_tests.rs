@@ -138,6 +138,32 @@ fn parses_debug_validate_command() {
 }
 
 #[test]
+fn debug_validate_formats_source_locations_for_text_and_json() {
+    let finding = wakaru_core::OutputFinding {
+        filename: "nested/entry.js".into(),
+        line: 12,
+        column: 7,
+        kind: wakaru_core::OutputFindingKind::AssignToImport,
+        message: "assignment to imported binding \"value\"".into(),
+    };
+
+    assert_eq!(
+        format_validate_finding(&finding),
+        "nested/entry.js:12:7: assign_to_import: assignment to imported binding \"value\""
+    );
+    assert_eq!(
+        validate_finding_json(&finding),
+        serde_json::json!({
+            "filename": "nested/entry.js",
+            "line": 12,
+            "column": 7,
+            "kind": "assign_to_import",
+            "message": "assignment to imported binding \"value\"",
+        })
+    );
+}
+
+#[test]
 fn parses_debug_normalize_command() {
     let cli = Cli::try_parse_from(["wakaru", "debug", "normalize", "input.js", "--rename"])
         .expect("debug normalize command should parse");

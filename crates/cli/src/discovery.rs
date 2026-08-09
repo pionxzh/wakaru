@@ -21,19 +21,23 @@ pub struct DirectoryScanStats {
 /// Recursively collect `.js`/`.mjs`/`.cjs` files under `root`, skipping hidden
 /// entries and `node_modules`. Results are sorted by their string path.
 pub fn collect_directory_js_inputs(root: &Path) -> Result<Vec<PathBuf>> {
-    collect_sorted(root, is_js_like_input)
+    collect_sorted(root, is_js_like_input, true)
 }
 
 /// Like [`collect_directory_js_inputs`] but for `debug validate`: emitted
 /// module trees can carry `.jsx` and extensionless filenames, so those are
 /// accepted too. Source maps and other extensions stay excluded.
 pub fn collect_validate_inputs(root: &Path) -> Result<Vec<PathBuf>> {
-    collect_sorted(root, is_emitted_module_file)
+    collect_sorted(root, is_emitted_module_file, false)
 }
 
-fn collect_sorted(root: &Path, accepts: fn(&Path) -> bool) -> Result<Vec<PathBuf>> {
+fn collect_sorted(
+    root: &Path,
+    accepts: fn(&Path) -> bool,
+    skip_node_modules: bool,
+) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
-    collect_directory_js_inputs_inner(root, &mut paths, accepts)?;
+    collect_directory_js_inputs_inner(root, &mut paths, accepts, skip_node_modules)?;
     paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
     Ok(paths)
 }
@@ -42,6 +46,7 @@ fn collect_directory_js_inputs_inner(
     dir: &Path,
     paths: &mut Vec<PathBuf>,
     accepts: fn(&Path) -> bool,
+    skip_node_modules: bool,
 ) -> Result<()> {
     let mut entries = fs::read_dir(dir)
         .with_context(|| format!("failed to read input directory {}", dir.display()))?
@@ -58,10 +63,10 @@ fn collect_directory_js_inputs_inner(
             .with_context(|| format!("failed to inspect {}", path.display()))?;
 
         if file_type.is_dir() {
-            if is_hidden_name(&file_name) || file_name == "node_modules" {
+            if is_hidden_name(&file_name) || (skip_node_modules && file_name == "node_modules") {
                 continue;
             }
-            collect_directory_js_inputs_inner(&path, paths, accepts)?;
+            collect_directory_js_inputs_inner(&path, paths, accepts, skip_node_modules)?;
         } else if file_type.is_file() && !is_hidden_name(&file_name) && accepts(&path) {
             paths.push(path);
         }
@@ -131,22 +136,47 @@ mod tests {
     }
 
     #[test]
-    fn collect_validate_inputs_accepts_jsx_and_extensionless() {
+    fn collect_validate_inputs_accepts_emitted_shapes_and_node_modules() {
         let dir = temp_test_dir("validate");
+        let node_modules = dir.join("node_modules/pkg");
         fs::create_dir_all(&dir).expect("create dir");
+        fs::create_dir_all(&node_modules).expect("create emitted node_modules dir");
 
-        fs::write(dir.join("a.js"), "1").expect("write js");
+        fs::write(dir.join("a.js"), "import \"./node_modules/pkg/index.js\";").expect("write js");
         fs::write(dir.join("b.jsx"), "1").expect("write jsx");
         fs::write(dir.join("module"), "1").expect("write extensionless");
         fs::write(dir.join("map.js.map"), "1").expect("write source map (ignored)");
         fs::write(dir.join(".hidden"), "1").expect("write hidden (ignored)");
+        fs::write(node_modules.join("index.js"), "1").expect("write emitted node_modules module");
 
         let collected = collect_validate_inputs(&dir).expect("collect");
         let names: Vec<String> = collected
             .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .expect("collected path should be below root")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
             .collect();
-        assert_eq!(names, vec!["a.js", "b.jsx", "module"]);
+        assert_eq!(
+            names,
+            vec!["a.js", "b.jsx", "module", "node_modules/pkg/index.js"]
+        );
+
+        let modules: Vec<(String, String)> = collected
+            .iter()
+            .map(|path| {
+                let relative = path
+                    .strip_prefix(&dir)
+                    .expect("collected path should be below root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let source = fs::read_to_string(path).expect("read collected module");
+                (relative, source)
+            })
+            .collect();
+        assert_eq!(wakaru_core::validate_output_modules(&modules), vec![]);
 
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }

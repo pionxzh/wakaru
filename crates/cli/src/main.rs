@@ -833,24 +833,13 @@ fn run_validate(args: ValidateArgs) -> Result<()> {
             "modules": modules.len(),
             "findings": findings
                 .iter()
-                .map(|finding| {
-                    serde_json::json!({
-                        "filename": finding.filename,
-                        "kind": finding.kind.as_str(),
-                        "message": finding.message,
-                    })
-                })
+                .map(validate_finding_json)
                 .collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         for finding in &findings {
-            println!(
-                "{}: {}: {}",
-                finding.filename,
-                finding.kind.as_str(),
-                finding.message
-            );
+            println!("{}", format_validate_finding(finding));
         }
         if io::stderr().is_terminal() {
             eprintln!(
@@ -865,6 +854,27 @@ fn run_validate(args: ValidateArgs) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn validate_finding_json(finding: &wakaru_core::OutputFinding) -> serde_json::Value {
+    serde_json::json!({
+        "filename": finding.filename,
+        "line": finding.line,
+        "column": finding.column,
+        "kind": finding.kind.as_str(),
+        "message": finding.message,
+    })
+}
+
+fn format_validate_finding(finding: &wakaru_core::OutputFinding) -> String {
+    format!(
+        "{}:{}:{}: {}: {}",
+        finding.filename,
+        finding.line,
+        finding.column,
+        finding.kind.as_str(),
+        finding.message
+    )
 }
 
 fn run_normalize(args: NormalizeArgs) -> Result<()> {

@@ -20,6 +20,13 @@ fn kinds(pairs: &[(&str, &str)]) -> Vec<(OutputFindingKind, String)> {
         .collect()
 }
 
+fn locations(pairs: &[(&str, &str)]) -> Vec<(OutputFindingKind, String, usize, usize)> {
+    validate_output_modules(&modules(pairs))
+        .into_iter()
+        .map(|finding| (finding.kind, finding.filename, finding.line, finding.column))
+        .collect()
+}
+
 #[test]
 fn clean_module_graph_reports_nothing() {
     let findings = kinds(&[
@@ -46,6 +53,49 @@ fn dangling_static_import_is_reported() {
     assert_eq!(
         findings,
         vec![(OutputFindingKind::DanglingRelativeRef, "entry.js".into())]
+    );
+}
+
+#[test]
+fn findings_include_one_based_source_locations() {
+    let findings = locations(&[
+        (
+            "entry.js",
+            r#"
+import { missing } from "./util.js";
+missing = 1;
+export const duplicate = 1;
+export { missing as duplicate };
+"#,
+        ),
+        ("util.js", "export const other = 1;\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![
+            (OutputFindingKind::DuplicateExport, "entry.js".into(), 5, 10,),
+            (OutputFindingKind::AssignToImport, "entry.js".into(), 3, 1,),
+            (
+                OutputFindingKind::MissingImportedName,
+                "entry.js".into(),
+                2,
+                10,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn dangling_reference_location_points_to_the_specifier() {
+    let findings = locations(&[("entry.js", "\nimport \"./missing.js\";\n")]);
+    assert_eq!(
+        findings,
+        vec![(
+            OutputFindingKind::DanglingRelativeRef,
+            "entry.js".into(),
+            2,
+            8,
+        )]
     );
 }
 
@@ -332,10 +382,10 @@ for (const item of [1, 2]) {
 
 #[test]
 fn parse_error_is_reported() {
-    let findings = kinds(&[("entry.js", "function {\n")]);
+    let findings = locations(&[("entry.js", "const ok = 1;\nfunction {\n")]);
     assert_eq!(
         findings,
-        vec![(OutputFindingKind::ParseError, "entry.js".into())]
+        vec![(OutputFindingKind::ParseError, "entry.js".into(), 2, 10,)]
     );
 }
 

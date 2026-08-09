@@ -242,6 +242,23 @@ wakaru input.js --profile trace.json           # Chrome trace (open with chrome:
 wakaru input.js --profile trace.json --profile-rules  # include per-rule spans
 ```
 
+For development and benchmark triage, validate a normal unpack output tree as
+one emitted-module graph:
+
+```bash
+wakaru debug validate out/
+wakaru debug validate out/ --json
+```
+
+The validator reports dangling relative references, imports or re-exports of
+missing names, duplicate exports, and writes to imported or `const` bindings.
+Human-readable findings use `filename:line:column`; JSON findings carry
+one-based `line` and `column` fields. The recursive scan accepts `.js`, `.mjs`,
+`.cjs`, `.jsx`, and extensionless emitted modules, including modules emitted
+beneath `node_modules`; hidden paths and unrelated extensions remain excluded.
+The command exits nonzero when it finds anything. Validate normal output only:
+raw output has no usable module-graph contract.
+
 ## Overwrite protection
 
 Wakaru refuses to overwrite existing files unless `--force` is passed.
