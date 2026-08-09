@@ -38,6 +38,7 @@ use crate::facts::{
 };
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::provider_import_repair::run_provider_import_repair;
+use crate::provider_namespace_repair::run_provider_namespace_repair;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, apply_rules_to_recovered_module, DeadImports, ImportDedup, RewriteLevel,
@@ -428,6 +429,12 @@ pub(super) fn unpack_multi_module_with_plan(
             let rules_enter = rules_span.enter();
             // Late pass at the barrier
             run_provider_import_repair(&mut module, facts_ref, Some(&unpacked.module.filename));
+            run_provider_namespace_repair(
+                &mut module,
+                facts_ref,
+                Some(&unpacked.module.filename),
+                unresolved_mark,
+            );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
             // Preserve specifiers that were already dead at the barrier, then
@@ -998,6 +1005,279 @@ module.exports = function(value) { return provider.transform(value); };
         assert!(
             consumer.contains("import { transform }") && !consumer.contains("provider;"),
             "an inert lowered interop read must not retain a missing default import:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn named_only_provider_repairs_synthetic_default_to_namespace_import() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: r#"
+exports.alpha = 1;
+exports.beta = 2;
+"#
+                    .to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+var provider = require("./provider.js");
+function read(alpha, beta) {
+    return provider.alpha + provider.beta + alpha + beta;
+}
+module.exports = read;
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        let output = unpack_multi_module(modules(), DecompileOptions::default())
+            .expect("named-only provider fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";"),
+            "colliding local names should retain a valid namespace fallback:\n{consumer}"
+        );
+
+        let source_map_output = unpack_multi_module(
+            modules(),
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("namespace repair should survive the source-map path");
+        assert_eq!(validate_prepared_output(&source_map_output), vec![]);
+        assert!(
+            source_map_output
+                .modules
+                .iter()
+                .all(|module| module.source_map.is_some()),
+            "namespace repair must preserve emitted source maps"
+        );
+    }
+
+    #[test]
+    fn named_only_provider_namespace_supports_enumeration_and_copy_sources() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1; exports.beta = 2;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var provider = require("./provider.js");
+var copy = {};
+Object.assign(copy, provider);
+module.exports = Object.keys(provider).join(",") + copy.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("namespace enumeration fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";"),
+            "whole-namespace enumeration and copy must use a namespace import:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn recovered_export_star_surface_repairs_downstream_namespace_copy() {
+        let modules = vec![
+            UnpackedModule {
+                id: "source".to_string(),
+                code: "exports.alpha = 1; exports.beta = 2;".to_string(),
+                filename: "source.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "facade".to_string(),
+                code: r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+    key !== "default" && key !== "__esModule" &&
+        (key in exports && exports[key] === source[key] ||
+            (exports[key] = source[key]));
+});
+"#
+                .to_string(),
+                filename: "facade.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var facade = require("./facade.js");
+var copy = {};
+Object.assign(copy, facade);
+module.exports = copy.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("recovered export-star fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let facade = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "facade.js")
+            .map(|module| module.code.as_str())
+            .expect("expected facade module");
+        assert_eq!(facade, "export * from \"./source.js\";\n");
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as facade from \"./facade.js\";"),
+            "the downstream copy must consume the recovered namespace surface:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn export_star_provider_supports_synthetic_namespace_require() {
+        let modules = vec![
+            UnpackedModule {
+                id: "source".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "source.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "export * from \"./source.js\";".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var provider = require("./provider.js");
+module.exports = Object.keys(provider);
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("export-star namespace fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as provider from \"./provider.js\";"),
+            "an export-star surface is valid through a namespace import:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn authored_default_import_is_not_provider_repaired() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+import provider from "./provider.js";
+console.log(Object.keys(provider));
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("authored import fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "provider repair must not reinterpret authored default imports: {findings:#?}"
+        );
+    }
+
+    #[test]
+    fn provider_namespace_repair_rejects_esmodule_meta_observation() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var provider = require("./provider.js");
+module.exports = provider.__esModule;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("namespace metadata fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "observing CommonJS interop metadata must keep namespace repair fail closed: {findings:#?}"
         );
     }
 
