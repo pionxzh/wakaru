@@ -1,0 +1,39 @@
+name: "\U0001F4E6 Package Inventory — Register Interest"
+description: Tell us you want the upcoming feature that lists which npm packages a bundle ships.
+title: "Package inventory: "
+labels: ["package-inventory"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We're building **package inventory** on top of Wakaru's unpacking: point it at a
+        production bundle, get back which npm packages — and which versions — the bundle
+        ships. Interest recorded here decides how soon it ships and what shape it takes.
+
+        You can also reach us directly at [hello@wakarujs.com](mailto:hello@wakarujs.com).
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What would you use it for?
+      placeholder: |
+        e.g. checking a site for vulnerable library versions; producing an SBOM for a shipped app; auditing a vendor's bundle before integrating it
+    validations:
+      required: true
+  - type: checkboxes
+    id: shape
+    attributes:
+      label: How would you want to use it?
+      description: Pick everything that fits.
+      options:
+        - label: CLI output on my own machine
+        - label: A hosted page — paste a URL or drop a bundle
+        - label: An API I can call from my own tooling
+        - label: A dataset covering many sites
+        - label: A CI check that alerts when the packages in my bundle change
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else?
+      description: Packages you especially care about, how often you'd use it, constraints.
+    validations:
+      required: false

@@ -139,6 +139,19 @@ LLM renamer like [humanify](https://github.com/jehna/humanify), or use
 - **Supply-chain inspection** — see what's inside a dependency's shipped
   bundle rather than trusting the repo it claims to be built from.
 
+## In development: package inventory
+
+Unpacking shows you a bundle one module at a time. The feature we're building
+next answers the same question at the package level: which npm packages — and
+which versions — a production bundle actually ships. Think of it as an SBOM
+for a bundle you didn't build.
+
+If you want that,
+[register interest](https://github.com/pionxzh/wakaru/issues/new?template=package_inventory_interest.yml)
+and tell us your use case. What people ask for decides how soon it ships and
+what shape it takes. You can also reach us directly at
+[hello@wakarujs.com](mailto:hello@wakarujs.com).
+
 ## Use it from an agent
 
 Coding agents hit unreadable minified JS constantly. Wakaru ships a

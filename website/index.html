@@ -235,6 +235,12 @@
              claims to be built from.</p>
         </div>
         <div class="case case-cta">
+          <h3>In development: package inventory</h3>
+          <p>Which npm packages — and which versions — does a bundle actually ship?
+             We're building that on top of Wakaru's unpacking.
+             <a href="https://github.com/pionxzh/wakaru/issues/new?template=package_inventory_interest.yml">Register interest&nbsp;&rarr;</a></p>
+        </div>
+        <div class="case case-cta">
           <h3>Something we missed?</h3>
           <p>Tell us how you use Wakaru — or what's stopping you. Share real-world bundles,
              bugs, and feature requests on
@@ -288,6 +294,14 @@
 <span class="cmd-prompt">$</span> npx webcrack --no-unpack --no-unminify obfuscated.js &gt; deobfuscated.js
 <span class="tok-com"># 2. recover readable modules</span>
 <span class="cmd-prompt">$</span> npx wakaru deobfuscated.js --unpack -o out/</code></pre>
+      </details>
+      <details>
+        <summary>Can Wakaru tell me which npm packages a bundle uses?</summary>
+        <p>Not yet — package inventory (which npm packages, and which versions, a production
+           bundle ships — an SBOM for a bundle you didn't build) is in development on top of
+           Wakaru's unpacking. If you want it,
+           <a href="https://github.com/pionxzh/wakaru/issues/new?template=package_inventory_interest.yml">register interest</a>
+           and tell us your use case.</p>
       </details>
       <details>
         <summary>Can it recover original variable names?</summary>
