@@ -80,6 +80,13 @@ Multiple whole-value assignments, reassigned aliases, computed keys, spreads,
 nested callbacks, and `exports.default` fail closed. No collector mutates the
 AST or shared state.
 
+Normal processing also restores webpack's runtime-created `module.exports = {}`
+only when structural webpack detection proves that a normalized extracted
+factory body is empty. That synthetic statement passes through the ordinary
+`UnEsm` path, while `--raw` keeps the detector's empty-body passthrough
+unchanged. Non-empty factories are not generalized from this narrow runtime
+fact.
+
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
 export shape after Stage 2. They do not speculate from consumer-side usage.

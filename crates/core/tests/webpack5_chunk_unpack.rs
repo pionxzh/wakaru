@@ -1,5 +1,5 @@
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(
@@ -34,6 +34,61 @@ fn expect_heuristic_unpack_raw(source: &str, filename: &str) -> Vec<(String, Str
         output.warnings
     );
     output.modules
+}
+
+#[test]
+fn webpack5_empty_factory_recovers_runtime_default_object_across_phase2_paths() {
+    let source = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [0],
+  {
+    100: function(module, exports, require) {
+      var dependency = require(200);
+      module.exports = dependency.missing;
+    },
+    200: function(module, exports, require) {}
+  }
+]);
+"#;
+
+    for emit_source_map in [false, true] {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "chunk.js".to_string(),
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("webpack5 empty-factory chunk should unpack");
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+        let provider = output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == "module-200.js")
+            .map(|(_, code)| code.as_str())
+            .expect("empty factory should still be emitted");
+        assert_eq!(provider.trim(), "export default {};");
+    }
+
+    let raw = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw webpack5 empty-factory chunk should unpack");
+    let raw_provider = raw
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-200.js")
+        .map(|(_, code)| code.as_str())
+        .expect("raw output should retain the empty factory module");
+    assert!(
+        raw_provider.trim().is_empty(),
+        "raw output must remain detector passthrough, got:\n{raw_provider}"
+    );
 }
 
 #[test]

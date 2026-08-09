@@ -32,6 +32,10 @@ use crate::utils::paren::{strip_parens, strip_parens_mut};
 pub(super) struct MultiSourceModule {
     module: UnpackedModule,
     prepared: Option<PreparedModuleAst>,
+    /// Webpack initializes every factory's `module.exports` to `{}`. An empty
+    /// normalized factory has no statement that can carry that runtime value
+    /// into ESM recovery, so normal processing restores it explicitly.
+    implicit_commonjs_default_object: bool,
     allow_cross_chunk_rewrite: bool,
     report_import_cycle_warnings: bool,
     chunk_ids: Arc<HashSet<usize>>,
@@ -89,6 +93,7 @@ impl MultiSourceModule {
         Self {
             module,
             prepared,
+            implicit_commonjs_default_object: false,
             allow_cross_chunk_rewrite: true,
             report_import_cycle_warnings,
             chunk_ids: chunk_ids.into(),
@@ -96,6 +101,11 @@ impl MultiSourceModule {
             input_group,
             input,
         }
+    }
+
+    pub(super) fn with_implicit_commonjs_default_object(mut self, enabled: bool) -> Self {
+        self.implicit_commonjs_default_object = enabled;
+        self
     }
 
     pub(super) fn fallback_with_ast_from_input(
@@ -106,6 +116,7 @@ impl MultiSourceModule {
         Self {
             module,
             prepared,
+            implicit_commonjs_default_object: false,
             allow_cross_chunk_rewrite: false,
             report_import_cycle_warnings: false,
             chunk_ids: Arc::default(),
@@ -119,6 +130,7 @@ impl MultiSourceModule {
 pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
+    pub(super) implicit_commonjs_default_object: bool,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
@@ -132,6 +144,7 @@ impl PreparedUnpackModule {
         Self {
             module,
             prepared: None,
+            implicit_commonjs_default_object: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
@@ -148,6 +161,7 @@ impl PreparedUnpackModule {
         Self {
             module,
             prepared: None,
+            implicit_commonjs_default_object: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
@@ -265,6 +279,7 @@ pub(super) fn prepare_multi_source_modules(
                 reserved_public_path,
                 module: module.module,
                 prepared: module.prepared,
+                implicit_commonjs_default_object: module.implicit_commonjs_default_object,
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,

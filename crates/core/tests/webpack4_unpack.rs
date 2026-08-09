@@ -1,7 +1,7 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 #[test]
 fn webpack4_unpack_extracts_modules() {
@@ -98,6 +98,80 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
                     && raw_code != decompiled_code
             )),
         "raw unpack should preserve at least one pre-pipeline module difference"
+    );
+}
+
+#[test]
+fn webpack4_empty_factory_recovers_runtime_default_object_only_in_normal_output() {
+    let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) {
+            return installedModules[moduleId].exports;
+        }
+        var module = installedModules[moduleId] = { exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    return __webpack_require__(0);
+})([
+    function(module, exports, __webpack_require__) {
+        var dependency = __webpack_require__(1);
+        module.exports = dependency.missing;
+    },
+    function(module, exports, __webpack_require__) {},
+    function(module, exports, __webpack_require__) {
+        observeSideEffect();
+    }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 empty-factory bundle should unpack");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+    let provider = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-1.js")
+        .map(|(_, code)| code.as_str())
+        .expect("empty factory should still be emitted");
+    assert_eq!(provider.trim(), "export default {};");
+    let side_effect_only = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-2.js")
+        .map(|(_, code)| code.as_str())
+        .expect("non-empty side-effect factory should still be emitted");
+    assert!(
+        side_effect_only.contains("observeSideEffect()")
+            && !side_effect_only.contains("export default"),
+        "the runtime fact must not be generalized to non-empty factories:\n{side_effect_only}"
+    );
+
+    let raw = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw webpack4 empty-factory bundle should unpack");
+    let raw_provider = raw
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-1.js")
+        .map(|(_, code)| code.as_str())
+        .expect("raw output should retain the empty factory module");
+    assert!(
+        raw_provider.trim().is_empty(),
+        "raw output must remain detector passthrough, got:\n{raw_provider}"
     );
 }
 

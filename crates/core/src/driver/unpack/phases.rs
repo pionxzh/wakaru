@@ -3,8 +3,11 @@
 
 use anyhow::{bail, Result};
 use rayon::prelude::*;
-use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, GLOBALS};
-use swc_core::ecma::ast::Module;
+use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::ecma::ast::{
+    AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, Ident, IdentName, MemberExpr, MemberProp,
+    Module, ModuleItem, ObjectLit, SimpleAssignTarget, Stmt,
+};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
@@ -59,6 +62,41 @@ struct Phase1Module {
     /// `data-sentry-source-file`), if any. Used at the barrier to rename the
     /// module's output file and rewrite importers' references.
     suggested_filename: Option<String>,
+}
+
+/// Restore the default object that webpack creates before invoking an empty
+/// CommonJS factory. The detector body is intentionally left empty for raw
+/// output; only the normal ESM-recovery pipeline receives this synthetic fact.
+fn restore_empty_webpack_factory_default(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    enabled: bool,
+) {
+    if !enabled || !module.body.is_empty() {
+        return;
+    }
+
+    let module_ident = Ident::new(
+        "module".into(),
+        DUMMY_SP,
+        SyntaxContext::empty().apply_mark(unresolved_mark),
+    );
+    module.body.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(module_ident)),
+                prop: MemberProp::Ident(IdentName::new("exports".into(), DUMMY_SP)),
+            })),
+            right: Box::new(Expr::Object(ObjectLit {
+                span: DUMMY_SP,
+                props: Vec::new(),
+            })),
+        })),
+    })));
 }
 
 /// Multi-module unpack with cross-module late pass.
@@ -236,6 +274,11 @@ pub(super) fn unpack_multi_module_with_plan(
             } else {
                 None
             };
+            restore_empty_webpack_factory_default(
+                &mut module,
+                unresolved_mark,
+                unpacked.implicit_commonjs_default_object,
+            );
             apply_filename_rewrites(
                 &mut module,
                 unresolved_mark,
@@ -549,6 +592,11 @@ pub(super) fn unpack_multi_module_with_plan(
                     module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
                     unresolved_mark
                 };
+                restore_empty_webpack_factory_default(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.implicit_commonjs_default_object,
+                );
                 apply_filename_rewrites(
                     &mut module,
                     unresolved_mark,

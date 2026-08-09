@@ -447,6 +447,28 @@ pub fn unpack_prepared_inputs_with_policy(
                     continue;
                 }
                 let chunk_ids = Arc::new(detected.chunk_ids.clone());
+                // Capture this detector-owned fact before optional materialization or
+                // recursive scope splitting. Empty webpack factories cannot split, so
+                // their stable `(id, filename)` identity survives both paths, while an
+                // empty synthetic child can never acquire the factory runtime fact.
+                let implicit_commonjs_default_objects =
+                    if matches!(format, BundleFormat::Webpack4 | BundleFormat::Webpack5) {
+                        detected
+                            .result
+                            .modules
+                            .iter()
+                            .zip(&detected.prepared)
+                            .filter(|(module, prepared)| {
+                                prepared
+                                    .as_ref()
+                                    .map(|prepared| prepared.module.body.is_empty())
+                                    .unwrap_or_else(|| module.code.trim().is_empty())
+                            })
+                            .map(|(module, _)| (module.id.clone(), module.filename.clone()))
+                            .collect::<HashSet<_>>()
+                    } else {
+                        HashSet::new()
+                    };
                 let detected = if raw {
                     let result = detected.materialize()?;
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
@@ -471,6 +493,9 @@ pub fn unpack_prepared_inputs_with_policy(
                         .into_iter()
                         .zip(prepared)
                         .map(|(module, ast)| {
+                            let implicit_commonjs_default_object =
+                                implicit_commonjs_default_objects
+                                    .contains(&(module.id.clone(), module.filename.clone()));
                             MultiSourceModule::detected_with_ast_from_input(
                                 module,
                                 ast,
@@ -480,6 +505,7 @@ pub fn unpack_prepared_inputs_with_policy(
                                 input_group.clone(),
                                 report_import_cycle_warnings,
                             )
+                            .with_implicit_commonjs_default_object(implicit_commonjs_default_object)
                         }),
                 );
             }
