@@ -1380,7 +1380,7 @@ fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
 }
 
 #[test]
-fn angular_unpack_directory_processes_plain_production_modules() {
+fn angular_unpack_directory_preserves_plain_production_module_paths() {
     let dir = temp_test_dir("angular-plain-directory");
     let dist_dir = dir.join("dist");
     let nested_dir = dist_dir.join("chunks");
@@ -1405,9 +1405,10 @@ fn angular_unpack_directory_processes_plain_production_modules() {
     .expect("Angular directory CLI should parse");
     run_default(cli).expect("plain Angular directory should be processed");
 
-    assert!(out_dir.join("compiled.js").exists());
+    assert!(out_dir.join("chunks/compiled.js").exists());
     assert!(out_dir.join("plain.js").exists());
-    assert!(out_dir.join("compiled.angular.ts").exists());
+    assert!(out_dir.join("chunks/compiled.angular.ts").exists());
+    assert!(!out_dir.join("compiled.js").exists());
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
 }
