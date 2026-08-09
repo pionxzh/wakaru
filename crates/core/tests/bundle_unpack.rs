@@ -440,6 +440,124 @@ fn webpack4_non_javascript_module_ids_emit_javascript_filenames() {
 }
 
 #[test]
+fn webpack4_global_var_injection_exposes_named_exports() {
+    let source = r#"
+!function(modules) {
+  function require(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, require);
+    return module.exports;
+  }
+  return require("./src/entry.js");
+}({
+  "./node_modules/webpack/buildin/global.js": function(module) {
+    module.exports = globalThis;
+  },
+  "./src/global-user.js": function(module, exports, __webpack_require__) {
+    (function(injectedGlobal) {
+      exports.getGlobal = function() {
+        return injectedGlobal;
+      };
+    }).call(this, __webpack_require__("./node_modules/webpack/buildin/global.js"));
+  },
+  "./src/entry.js": function(module, exports, __webpack_require__) {
+    module.exports = __webpack_require__("./src/global-user.js").getGlobal();
+  }
+});
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-global-injection.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 global injection should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let provider = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/global-user.js")
+        .map(|(_, code)| code)
+        .expect("expected injected-global provider");
+    assert!(
+        provider.contains("export") && provider.contains("getGlobal"),
+        "the wrapper must expose its CommonJS assignment to UnEsm:\n{provider}"
+    );
+    assert!(
+        !provider.contains(".call(this") && !provider.contains("require("),
+        "the webpack wrapper and nested require must be recovered:\n{provider}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack4_injected_global_fallback_exposes_default_export() {
+    let source = r#"
+!function(modules) {
+  function require(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, require);
+    return module.exports;
+  }
+  return require(0);
+}([
+  function(module, exports, require) {
+    module.exports = require(1);
+  },
+  function(module, exports, require) {
+    (function(injectedGlobal) {
+      function selectGlobal(candidate) {
+        return candidate && candidate.Math === Math && candidate;
+      }
+      module.exports = selectGlobal("object" === typeof globalThis && globalThis)
+        || selectGlobal("object" === typeof self && self)
+        || selectGlobal("object" === typeof window && window)
+        || selectGlobal("object" === typeof injectedGlobal && injectedGlobal)
+        || Function("return this")();
+    }).call(this, require(99));
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-global-fallback.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 global fallback should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let provider = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-1.js")
+        .map(|(_, code)| code)
+        .expect("expected global detector module");
+    assert!(
+        provider.contains("export default"),
+        "the wrapper must expose module.exports to UnEsm:\n{provider}"
+    );
+    assert!(
+        !provider.contains("require(99)") && !provider.contains("injectedGlobal"),
+        "the obsolete injected fallback must be removed:\n{provider}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack4_reused_loader_parameter_becomes_a_local_after_module_loads() {
     let source = r#"
 !function(modules) {

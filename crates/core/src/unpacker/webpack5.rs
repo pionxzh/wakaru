@@ -16,7 +16,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::webpack4::{
-    rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
+    rewrite_require_n_accesses, unwrap_webpack_global_envelopes, RequireIdRewriter,
+    RequireStringIdRewriter,
 };
 use crate::unpacker::webpack_common::{numeric_id_from_expr, split_array_concat};
 use crate::unpacker::{
@@ -3212,6 +3213,11 @@ fn normalize_extracted_webpack_module(
             unresolved_mark,
         };
         synthetic_module.visit_mut_with(&mut normalizer);
+
+        // Webpack 4-era variable injection can appear inside containers that
+        // the shared structural detector prepares through this path. Expose
+        // the generated wrapper body before the driver reaches UnEsm.
+        unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
     }
 
     if let Some(parameter) = reused_require_sym {

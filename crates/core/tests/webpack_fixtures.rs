@@ -1,7 +1,7 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::unpack;
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn fixture(path: &str) -> String {
     let full = format!("tests/bundles/webpack-gen/dist/{path}");
@@ -227,6 +227,16 @@ fn wp4_var_inject() {
         pairs.len()
     );
     assert_has_entry(&pairs, "wp4-var-inject");
+    let global_user = pairs
+        .iter()
+        .find(|(name, _)| name == "src/global-user.js")
+        .map(|(_, code)| code)
+        .expect("expected generated global-user module");
+    assert!(
+        global_user.contains("export") && global_user.contains("getGlobal"),
+        "webpack's generated variable injection must expose its exports:\n{global_user}"
+    );
+    assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 
 // ========================================================================

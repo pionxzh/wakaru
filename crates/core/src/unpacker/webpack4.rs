@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, CondExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Id, Ident, IdentName, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, Prop, PropName,
-    PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr,
+    Function, Id, Ident, IdentName, Lit, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind,
+    Module, ModuleItem, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget,
+    Stmt, Str, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
@@ -16,6 +17,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
+use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
 use crate::unpacker::{
     deconflict_runtime_binding_renames, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
@@ -908,7 +910,7 @@ fn normalize_extracted_webpack_module(
     synthetic_module.visit_mut_with(&mut WebpackRuntimeNormalizer);
 
     // Step 2b: strip webpack's global-polyfill envelope
-    unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
+    unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
 
     if let Some(parameter) = reused_require_sym {
         if !super::webpack_common::localize_reused_runtime_parameter(
@@ -1144,10 +1146,20 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
 /// Strip webpack4's global-polyfill IIFE wrapper on matching top-level
 /// statements. Called once per extracted module, after the webpack runtime
 /// normalizer and before the driver decompile pipeline.
-fn unwrap_global_polyfill(module: &mut Module, unresolved_mark: Mark) {
+pub(crate) fn unwrap_webpack_global_envelopes(module: &mut Module, unresolved_mark: Mark) {
+    // A general webpack variable-injection envelope changes function scope
+    // into module scope when lifted. Restrict that recovery to the sole
+    // executable item in a factory; the older AMD-polyfill fingerprint below
+    // is independently strong enough to keep its existing per-item behavior.
+    let can_lift_injected_wrapper = module
+        .body
+        .iter()
+        .filter(|item| !is_use_strict_item(item))
+        .count()
+        == 1;
     let mut new_body: Vec<ModuleItem> = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {
-        match try_unwrap_polyfill_item(&item, unresolved_mark) {
+        match try_unwrap_global_envelope_item(&item, unresolved_mark, can_lift_injected_wrapper) {
             Some(replacement) => new_body.extend(replacement),
             None => new_body.push(item),
         }
@@ -1155,14 +1167,27 @@ fn unwrap_global_polyfill(module: &mut Module, unresolved_mark: Mark) {
     module.body = new_body;
 }
 
-fn try_unwrap_polyfill_item(item: &ModuleItem, unresolved_mark: Mark) -> Option<Vec<ModuleItem>> {
+fn is_use_strict_item(item: &ModuleItem) -> bool {
+    matches!(
+        item,
+        ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. }))
+            if matches!(expr.as_ref(), Expr::Lit(Lit::Str(value))
+                if value.value.as_str() == Some("use strict"))
+    )
+}
+
+fn try_unwrap_global_envelope_item(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+    can_lift_injected_wrapper: bool,
+) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(stmt) = item else {
         return None;
     };
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
-    let Expr::Call(call) = expr.as_ref() else {
+    let Expr::Call(call) = strip_parens(expr) else {
         return None;
     };
 
@@ -1200,46 +1225,83 @@ fn try_unwrap_polyfill_item(item: &ModuleItem, unresolved_mark: Mark) -> Option<
     // The defining fingerprint: at least one arg is `require(<str>)(module)`.
     // User code essentially never invokes a `require()` result with the raw
     // `module` binding — this shape is the webpack AMD-define polyfill.
-    if !call
+    if call
         .args
         .iter()
         .skip(1)
-        .any(|a| is_require_invoked_with_module(&a.expr))
+        .any(|a| is_require_invoked_with_module(&a.expr, unresolved_mark))
     {
+        // Rewrite a clone: replace the global-detect ternary with `globalThis`.
+        // If no ternary matches our signature, bail — we don't want to strip the
+        // wrapper without also neutralizing the param references inside it.
+        let mut candidate = body_stmts.clone();
+        let mut replacer = TernaryReplacer {
+            param_ids: &param_ids,
+            unresolved_mark,
+            replacements: 0,
+        };
+        for stmt in &mut candidate {
+            stmt.visit_mut_with(&mut replacer);
+        }
+        if replacer.replacements == 0 {
+            return None;
+        }
+
+        // After replacing the ternary(s), no param reference may remain — if
+        // anything survives, the wrapper was carrying real data and we can't
+        // safely drop its arguments.
+        if count_param_refs(&candidate, &param_ids) > 0 || !body_is_safe_to_lift(&candidate) {
+            return None;
+        }
+
+        return Some(candidate.into_iter().map(ModuleItem::Stmt).collect());
+    }
+
+    if !can_lift_injected_wrapper || param_ids.len() != 1 || call.args.len() != 2 {
+        return None;
+    }
+    let injected_arg = &call.args[1];
+    if !is_direct_literal_require(&injected_arg.expr, unresolved_mark) {
         return None;
     }
 
-    // Rewrite a clone: replace the global-detect ternary with `globalThis`.
-    // If no ternary matches our signature, bail — we don't want to strip the
-    // wrapper without also neutralizing the param references inside it.
+    // Some core-js global-object modules use webpack's injected `global`
+    // value only as the final guarded fallback after `globalThis`, `self`, and
+    // `window`. In post-ES2020 output that injected fallback is obsolete. Drop
+    // the wrapper and its eager polyfill require only when every reference to
+    // the parameter belongs to that exact guarded expression.
     let mut candidate = body_stmts.clone();
-    let mut replacer = TernaryReplacer {
-        param_ids: &param_ids,
+    let mut guard_replacer = GuardedGlobalFallbackReplacer {
+        param_id: &param_ids[0],
         unresolved_mark,
         replacements: 0,
     };
     for stmt in &mut candidate {
-        stmt.visit_mut_with(&mut replacer);
+        stmt.visit_mut_with(&mut guard_replacer);
     }
-    if replacer.replacements == 0 {
-        return None;
-    }
-
-    // After replacing the ternary(s), no param reference may remain — if
-    // anything survives, the wrapper was carrying real data and we can't
-    // safely drop its arguments.
-    let mut counter = ParamRefCounter {
-        param_ids: &param_ids,
-        count: 0,
-    };
-    for stmt in &candidate {
-        stmt.visit_with(&mut counter);
-    }
-    if counter.count > 0 {
-        return None;
+    if guard_replacer.replacements > 0
+        && contains_guarded_global_this(&candidate, unresolved_mark)
+        && count_param_refs(&candidate, &param_ids) == 0
+        && body_is_safe_to_lift(&candidate)
+    {
+        return Some(candidate.into_iter().map(ModuleItem::Stmt).collect());
     }
 
-    Some(candidate.into_iter().map(ModuleItem::Stmt).collect())
+    // Webpack 4's generated `global` injection passes its own
+    // `webpack/buildin/global.js` module into a wrapper around the authored
+    // CommonJS body. Preserve the call-time snapshot as a `var` initializer at
+    // the same statement position, then expose the body to UnEsm. The provider
+    // identity is deliberately required; a user-authored `.call(this,
+    // require(...))` remains untouched.
+    if !is_webpack_global_builtin_require(&injected_arg.expr, unresolved_mark)
+        || !body_is_safe_to_lift(&body_stmts)
+    {
+        return None;
+    }
+    let mut replacement = Vec::with_capacity(body_stmts.len() + 1);
+    replacement.push(param_capture_item(&param_ids[0], injected_arg.expr.clone()));
+    replacement.extend(body_stmts.into_iter().map(ModuleItem::Stmt));
+    Some(replacement)
 }
 
 /// Extract `(param_ids, body_stmts)` from an expression that is expected to
@@ -1251,14 +1313,20 @@ fn extract_inner_callee(expr: &Expr) -> Option<(Vec<Id>, Vec<Stmt>)> {
         unwrapped = p.expr.as_ref();
     }
     match unwrapped {
-        Expr::Fn(FnExpr { function, .. }) => {
+        Expr::Fn(FnExpr { ident, function }) => {
+            if ident.is_some() || function.is_async || function.is_generator {
+                return None;
+            }
             let params = collect_param_ids(function.params.iter().map(|p| &p.pat))?;
             let body = function.body.as_ref()?.stmts.clone();
             Some((params, body))
         }
-        Expr::Arrow(ArrowExpr { params, body, .. }) => {
-            let param_ids = collect_param_ids(params.iter())?;
-            let BlockStmtOrExpr::BlockStmt(BlockStmt { stmts, .. }) = body.as_ref() else {
+        Expr::Arrow(arrow) => {
+            if arrow.is_async || arrow.is_generator {
+                return None;
+            }
+            let param_ids = collect_param_ids(arrow.params.iter())?;
+            let BlockStmtOrExpr::BlockStmt(BlockStmt { stmts, .. }) = arrow.body.as_ref() else {
                 return None;
             };
             Some((param_ids, stmts.clone()))
@@ -1281,7 +1349,7 @@ fn collect_param_ids<'a, I: Iterator<Item = &'a Pat>>(pats: I) -> Option<Vec<Id>
 /// `require(<string literal>)(module)` — the AMD-define polyfill call site.
 /// The tail arg must be the raw `module` identifier; `module.exports` or any
 /// other shape doesn't qualify.
-fn is_require_invoked_with_module(expr: &Expr) -> bool {
+fn is_require_invoked_with_module(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Call(outer) = expr else {
         return false;
     };
@@ -1308,12 +1376,122 @@ fn is_require_invoked_with_module(expr: &Expr) -> bool {
     let Expr::Ident(id) = inner_callee.as_ref() else {
         return false;
     };
-    if id.sym.as_ref() != "require" {
+    if id.sym.as_ref() != "require" || id.ctxt.outer() != unresolved_mark {
         return false;
     }
     inner.args.len() == 1
         && inner.args[0].spread.is_none()
         && matches!(&*inner.args[0].expr, Expr::Lit(Lit::Str(_)))
+}
+
+fn direct_literal_require_source(expr: &Expr, unresolved_mark: Mark) -> Option<&Lit> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(require) = strip_parens(callee) else {
+        return None;
+    };
+    if require.sym.as_ref() != "require" || require.ctxt.outer() != unresolved_mark {
+        return None;
+    }
+    let Expr::Lit(lit @ (Lit::Str(_) | Lit::Num(_))) = strip_parens(&call.args[0].expr) else {
+        return None;
+    };
+    Some(lit)
+}
+
+fn is_direct_literal_require(expr: &Expr, unresolved_mark: Mark) -> bool {
+    direct_literal_require_source(expr, unresolved_mark).is_some()
+}
+
+fn is_webpack_global_builtin_require(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Some(Lit::Str(source)) = direct_literal_require_source(expr, unresolved_mark) else {
+        return false;
+    };
+    let normalized = source.value.to_string_lossy().replace('\\', "/");
+    normalized == "webpack/buildin/global.js" || normalized.ends_with("/webpack/buildin/global.js")
+}
+
+fn param_capture_item(param_id: &Id, init: Box<Expr>) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent::from(Ident::new(
+                param_id.0.clone(),
+                DUMMY_SP,
+                param_id.1,
+            ))),
+            init: Some(init),
+            definite: false,
+        }],
+    }))))
+}
+
+fn body_is_safe_to_lift(stmts: &[Stmt]) -> bool {
+    let mut scope_hazards = LiftedWrapperScopeHazards::default();
+    let mut eval = DirectEvalAnalyzer::default();
+    for stmt in stmts {
+        stmt.visit_with(&mut scope_hazards);
+        stmt.visit_with(&mut eval);
+    }
+    !scope_hazards.found && eval.known_direct_eval_sources.is_empty() && !eval.unknown_direct_eval
+}
+
+#[derive(Default)]
+struct LiftedWrapperScopeHazards {
+    found: bool,
+    arrow_depth: usize,
+}
+
+impl Visit for LiftedWrapperScopeHazards {
+    // Ordinary nested functions keep their own function-only bindings after
+    // the outer wrapper is lifted. Arrows deliberately recurse because they
+    // capture `this`, `arguments`, and `new.target` from that wrapper.
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.arrow_depth += 1;
+        arrow.visit_children_with(self);
+        self.arrow_depth -= 1;
+    }
+
+    fn visit_return_stmt(&mut self, stmt: &swc_core::ecma::ast::ReturnStmt) {
+        if self.arrow_depth == 0 {
+            self.found = true;
+            return;
+        }
+        stmt.visit_children_with(self);
+    }
+
+    fn visit_this_expr(&mut self, _: &ThisExpr) {
+        self.found = true;
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym.as_ref() == "arguments" {
+            self.found = true;
+        }
+    }
+
+    fn visit_meta_prop_expr(&mut self, meta: &MetaPropExpr) {
+        if meta.kind == MetaPropKind::NewTarget {
+            self.found = true;
+        }
+    }
+
+    fn visit_with_stmt(&mut self, _: &swc_core::ecma::ast::WithStmt) {
+        self.found = true;
+    }
 }
 
 // ---- ternary matching ----
@@ -1464,6 +1642,104 @@ impl<'a> VisitMut for TernaryReplacer<'a> {
     }
 }
 
+fn is_guarded_object_value(expr: &Expr, value_id: &Id) -> bool {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalAnd,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Expr::Ident(value) = right.as_ref() else {
+        return false;
+    };
+    if (value.sym.clone(), value.ctxt) != *value_id {
+        return false;
+    }
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = left.as_ref()
+    else {
+        return false;
+    };
+    if !matches!(op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+        return false;
+    }
+    let typeof_matches = |candidate: &Expr| {
+        matches!(
+            candidate,
+            Expr::Unary(UnaryExpr {
+                op: UnaryOp::TypeOf,
+                arg,
+                ..
+            }) if matches!(arg.as_ref(), Expr::Ident(id)
+                if (id.sym.clone(), id.ctxt) == *value_id)
+        )
+    };
+    (is_string_lit(left, "object") && typeof_matches(right))
+        || (typeof_matches(left) && is_string_lit(right, "object"))
+}
+
+struct GuardedGlobalFallbackReplacer<'a> {
+    param_id: &'a Id,
+    unresolved_mark: Mark,
+    replacements: usize,
+}
+
+impl VisitMut for GuardedGlobalFallbackReplacer<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if is_guarded_object_value(expr, self.param_id) {
+            let ctxt = SyntaxContext::empty().apply_mark(self.unresolved_mark);
+            *expr = Expr::Ident(Ident::new(Atom::from("globalThis"), DUMMY_SP, ctxt));
+            self.replacements += 1;
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
+fn contains_guarded_global_this(stmts: &[Stmt], unresolved_mark: Mark) -> bool {
+    let mut finder = GuardedGlobalThisFinder {
+        global_this_id: (
+            Atom::from("globalThis"),
+            SyntaxContext::empty().apply_mark(unresolved_mark),
+        ),
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.found
+}
+
+struct GuardedGlobalThisFinder {
+    global_this_id: Id,
+    found: bool,
+}
+
+impl Visit for GuardedGlobalThisFinder {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if is_guarded_object_value(expr, &self.global_this_id) {
+            self.found = true;
+            return;
+        }
+        expr.visit_children_with(self);
+    }
+}
+
+fn count_param_refs(stmts: &[Stmt], param_ids: &[Id]) -> usize {
+    let mut counter = ParamRefCounter {
+        param_ids,
+        count: 0,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut counter);
+    }
+    counter.count
+}
+
 struct ParamRefCounter<'a> {
     param_ids: &'a [Id],
     count: usize,
@@ -1506,7 +1782,7 @@ mod polyfill_tests {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-            unwrap_global_polyfill(&mut module, unresolved_mark);
+            unwrap_webpack_global_envelopes(&mut module, unresolved_mark);
             apply_fixer(&mut module).expect("fixer should not panic on fixture");
             emit_module(&module, cm).expect("emit")
         })
@@ -1577,6 +1853,43 @@ mod polyfill_tests {
 "#;
         let out = run_unwrap(input);
         assert!(!out.contains(".call(this"), "{out}");
+    }
+
+    #[test]
+    fn unwraps_webpack_global_injection_with_bound_require() {
+        let input = r#"((function(injectedGlobal) {
+    exports.getGlobal = function() {
+        return injectedGlobal;
+    };
+}).call(this, require("../node_modules/webpack/buildin/global.js")));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "{out}");
+        assert!(
+            out.contains(
+                r#"var injectedGlobal = require("../node_modules/webpack/buildin/global.js")"#
+            ),
+            "the call-time snapshot must become a local binding: {out}"
+        );
+        assert!(out.contains("exports.getGlobal = function()"), "{out}");
+    }
+
+    #[test]
+    fn unwraps_injected_global_used_only_as_a_guarded_fallback() {
+        let input = r#"(function(injectedGlobal) {
+    function selectGlobal(candidate) {
+        return candidate && candidate.Math === Math && candidate;
+    }
+    module.exports = selectGlobal("object" === typeof globalThis && globalThis)
+        || selectGlobal("object" === typeof injectedGlobal && injectedGlobal)
+        || Function("return this")();
+}).call(this, require(99));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "{out}");
+        assert!(!out.contains("require(99)"), "{out}");
+        assert!(!out.contains("injectedGlobal"), "{out}");
+        assert!(out.contains("module.exports"), "{out}");
     }
 
     // ---- negative cases ----
@@ -1659,6 +1972,40 @@ mod polyfill_tests {
             out.contains(".call(this"),
             "param used outside ternary — preserve: {out}"
         );
+    }
+
+    #[test]
+    fn skips_generic_require_argument_without_webpack_builtin_identity() {
+        let input = r#"(function(value) {
+    exports.value = value;
+}).call(this, require("./user-module.js"));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+    }
+
+    #[test]
+    fn skips_guarded_parameter_when_global_this_is_not_an_earlier_candidate() {
+        let input = r#"(function(value) {
+    module.exports = selectGlobal("object" === typeof value && value);
+}).call(this, require(99));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+        assert!(out.contains("require(99)"), "{out}");
+    }
+
+    #[test]
+    fn skips_webpack_global_injection_with_function_scope_observers() {
+        let input = r#"(function(injectedGlobal) {
+    exports.read = function() {
+        return injectedGlobal;
+    };
+    exports.wrapperThis = this;
+}).call(this, require("../node_modules/webpack/buildin/global.js"));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
     }
 
     #[test]
