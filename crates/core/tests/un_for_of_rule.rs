@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render, render_pipeline_until, render_rule};
 use wakaru_core::facts::{
     ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
-use wakaru_core::{rules::UnForOf, RewriteLevel};
+use wakaru_core::{rules::UnForOf, validate_output_modules, RewriteLevel};
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
     render_rule(input, |mark| UnForOf::new_with_mark(mark, level))
@@ -235,6 +235,49 @@ fn for_of_direct_array_index_uses_let_when_elem_reassigned() {
     let input = r#"for (let i = 0; i < items.length; i++) { let item = items[i]; item = normalize(item); use(item); }"#;
     let expected = r#"for (let item of items) { item = normalize(item); use(item); }"#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn indexed_loop_keeps_var_index_used_by_a_later_loop() {
+    let input = r#"
+const index = -1;
+function replay(items) {
+  const seen = [];
+  for (var index = 0; index < items.length; index++) {
+    var item = items[index];
+    seen.push(item);
+  }
+  for (index = 0; index < items.length; index++) {
+    seen.push(items[index]);
+  }
+  return seen;
+}
+"#;
+
+    let after_rule = apply_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&after_rule, input);
+
+    let output = render(input);
+    let findings = validate_output_modules(&[("input.js".to_string(), output.clone())]);
+    assert!(
+        findings.is_empty(),
+        "the later loop must retain the function-scoped index binding:\n{output}\n{findings:#?}"
+    );
+}
+
+#[test]
+fn indexed_loop_keeps_iterable_temp_used_after_the_loop() {
+    let input = r#"
+function replay(items) {
+  for (var index = 0, values = items; index < values.length; index++) {
+    var item = values[index];
+    use(item);
+  }
+  return values;
+}
+"#;
+
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Standard), input);
 }
 
 #[test]

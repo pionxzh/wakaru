@@ -505,7 +505,7 @@ impl VisitMut for UnForOf<'_> {
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
         stmt.visit_mut_children_with(self);
 
-        if let Some(for_of) = try_convert_for_of(stmt) {
+        if let Some(for_of) = try_convert_for_of(stmt, &self.helper_context) {
             *stmt = Stmt::ForOf(for_of);
         }
     }
@@ -574,7 +574,7 @@ fn process_stmt_vec(stmts: &mut Vec<Stmt>, helper_context: &ForOfHelperContext) 
         }
 
         let stmt = old[i].clone();
-        if let Some(for_of) = try_convert_for_of(&stmt) {
+        if let Some(for_of) = try_convert_for_of(&stmt, helper_context) {
             stmts.push(Stmt::ForOf(for_of));
         } else {
             stmts.push(stmt);
@@ -1726,7 +1726,7 @@ fn replace_iterator_value_refs(block: &mut BlockStmt, item_ident: &Ident) {
     });
 }
 
-fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
+fn try_convert_for_of(stmt: &Stmt, helper_context: &ForOfHelperContext) -> Option<ForOfStmt> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -1774,6 +1774,20 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
         iterable,
         temp_ident,
     } = extract_indexed_iterable(init_decl, right)?;
+
+    // The index and iterable temporary disappear from the recovered loop.
+    // `var` makes either binding function-scoped, so a later loop or statement
+    // can still observe it even when the candidate body does not. Retaining an
+    // empty declaration would not preserve the index's final value; reject the
+    // conversion whenever either removed binding has uses outside this loop.
+    let candidate = std::slice::from_ref(stmt);
+    if helper_context.binding_is_used_outside(candidate, idx_ident)
+        || temp_ident
+            .as_ref()
+            .is_some_and(|ident| helper_context.binding_is_used_outside(candidate, ident))
+    {
+        return None;
+    }
 
     // --- Update: `i++` ---
     let Some(update) = &for_stmt.update else {
