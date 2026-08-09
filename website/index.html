@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wakaru — JavaScript Decompiler &amp; Bundle Unpacker</title>
-  <meta name="description" content="Unminify JavaScript and unpack webpack, esbuild, Metro, Browserify, Closure ModuleManager, and other bundles into readable modules. Free, open-source decompiler.">
+  <meta name="description" content="Unminify JavaScript and unpack webpack, esbuild, Metro, Browserify bundles — even Bun single-file executables — into readable modules. Free, open-source decompiler.">
   <meta property="og:title" content="Wakaru — The JavaScript decompiler">
   <meta property="og:site_name" content="Wakaru">
   <meta property="og:description" content="Turn production JavaScript — bundled, transpiled, minified — back into readable modules. Free, open source, runs in your browser.">
@@ -101,13 +101,13 @@
           <p>webpack 4/5 (including Vercel ncc CommonJS output with an IIFE webpack
              bootstrap), esbuild, Bun, Metro, Browserify (including Cocos Creator 2.x),
              Closure ModuleManager, SystemJS, AMD/UMD, and scope-hoisted ESM output
-             (Rollup, Vite).</p>
+             (Rollup, Vite), plus Bun single-file executables.</p>
         </div>
         <div class="col">
           <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>transpilers</h3>
-          <p>Babel, TypeScript/tslib, and SWC helper recovery: async/await from generator
-             state machines, classes, spread/rest, enums, JSX, optional chaining, nullish
-             coalescing, default parameters, and more.</p>
+          <p>Babel, TypeScript/tslib, SWC, and Closure Compiler output recovery:
+             async/await from generator state machines, classes, spread/rest, enums, JSX,
+             optional chaining, nullish coalescing, default parameters, and more.</p>
         </div>
         <div class="col">
           <h3 class="mono-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M19 7l-5 5 5 5"/></svg>minifiers</h3>
@@ -267,8 +267,16 @@
         <summary>How do I decompile a webpack bundle and extract its modules?</summary>
         <p>Run <code>npx wakaru bundle.js --unpack -o out/</code>. Wakaru detects webpack 4/5,
            esbuild, Bun, Metro, Browserify and Cocos Creator 2.x, Closure ModuleManager, SystemJS,
-           AMD/UMD, and scope-hoisted Rollup/Vite output, then splits the bundle into individual
-           modules and decompiles each one.</p>
+           AMD/UMD, and scope-hoisted Rollup/Vite output, plus Bun single-file executables, then
+           splits the bundle into individual modules and decompiles each one.</p>
+      </details>
+      <details>
+        <summary>Can Wakaru extract JavaScript from a Bun single-file executable?</summary>
+        <p>Yes. Run <code>npx wakaru ./compiled-app --unpack -o out/</code> on a
+           <code>bun build --compile</code> binary (PE, Mach-O, or ELF) — Wakaru validates Bun's
+           embedded module graph and decompiles the JavaScript entries without ever executing the
+           binary. <code>npx wakaru bun extract ./compiled-app -o extracted/</code> dumps every
+           embedded file, assets included.</p>
       </details>
       <details>
         <summary>Can Wakaru deobfuscate JavaScript?</summary>
