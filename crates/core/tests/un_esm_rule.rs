@@ -350,6 +350,32 @@ _default(argument);
 }
 
 #[test]
+fn called_module_exports_assignment_as_member_receiver_preserves_export_and_call() {
+    let input = r#"
+(module.exports = factory)("versions", []).push(record);
+"#;
+    let expected = r#"
+const _default = factory;
+export default _default;
+_default("versions", []).push(record);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn called_module_exports_assignment_receiver_chain_evaluates_rhs_once() {
+    let input = r#"
+(module.exports = createFactory())(argument).result.consume();
+"#;
+    let expected = r#"
+const _default = createFactory();
+export default _default;
+_default(argument).result.consume();
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn called_local_module_exports_assignment_is_not_transformed() {
     let input = r#"
 const module = { exports: null };

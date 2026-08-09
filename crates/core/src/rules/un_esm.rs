@@ -2388,9 +2388,13 @@ impl Visit for UnsafeDefaultMirrorInterveningFinder {
 }
 
 /// Split `(module.exports = factory)(args)` into a single-evaluation local,
-/// an ordinary module export assignment, and the call. The export classifier
-/// can then lower the standalone assignment without losing the call or leaving
-/// an unresolved CommonJS `module` reference in the processed output.
+/// an ordinary module export assignment, and the call. The assigned call may
+/// be the receiver of a longer member/call chain, as in
+/// `(module.exports = factory)(args).push(value)`, provided it remains the
+/// root expression evaluated before the rest of the statement. The export
+/// classifier can then lower the standalone assignment without losing the
+/// call or leaving an unresolved CommonJS `module` reference in the processed
+/// output.
 fn split_called_module_exports_assignments(module: &mut Module, unresolved_mark: Mark) {
     let mut used_names = collect_all_identifier_names(module);
     let mut new_body = Vec::with_capacity(module.body.len());
@@ -2400,15 +2404,9 @@ fn split_called_module_exports_assignments(module: &mut Module, unresolved_mark:
             new_body.push(item);
             continue;
         };
-        let Expr::Call(call) = expr_stmt.expr.as_mut() else {
-            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
-            continue;
-        };
-        let Callee::Expr(callee) = &call.callee else {
-            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
-            continue;
-        };
-        let Expr::Assign(assign) = strip_parens(callee.as_ref()) else {
+        let Some(assign) =
+            called_module_exports_assignment_at_root(&expr_stmt.expr, unresolved_mark)
+        else {
             new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
             continue;
         };
@@ -2447,7 +2445,12 @@ fn split_called_module_exports_assignments(module: &mut Module, unresolved_mark:
                 right: Box::new(Expr::Ident(local.clone())),
             })),
         }));
-        call.callee = Expr::Ident(local).as_callee();
+        let replaced = replace_called_module_exports_assignment_at_root(
+            expr_stmt.expr.as_mut(),
+            unresolved_mark,
+            &local,
+        );
+        debug_assert!(replaced, "the immutable root match must remain replaceable");
 
         new_body.push(capture);
         new_body.push(export);
@@ -2455,6 +2458,74 @@ fn split_called_module_exports_assignments(module: &mut Module, unresolved_mark:
     }
 
     module.body = new_body;
+}
+
+fn called_module_exports_assignment_at_root(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<&AssignExpr> {
+    match strip_parens(expr) {
+        Expr::Call(call) => {
+            let callee = call.callee.as_expr()?;
+            if let Expr::Assign(assign) = strip_parens(callee) {
+                if assign.op == AssignOp::Assign
+                    && matches!(
+                        &assign.left,
+                        AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                            if is_module_exports_member(member, unresolved_mark)
+                    )
+                {
+                    return Some(assign);
+                }
+            }
+            called_module_exports_assignment_at_root(callee, unresolved_mark)
+        }
+        Expr::Member(member) => {
+            called_module_exports_assignment_at_root(&member.obj, unresolved_mark)
+        }
+        _ => None,
+    }
+}
+
+fn replace_called_module_exports_assignment_at_root(
+    expr: &mut Expr,
+    unresolved_mark: Mark,
+    local: &Ident,
+) -> bool {
+    match expr {
+        Expr::Paren(paren) => replace_called_module_exports_assignment_at_root(
+            paren.expr.as_mut(),
+            unresolved_mark,
+            local,
+        ),
+        Expr::Call(call) => {
+            let Some(callee) = call.callee.as_mut_expr() else {
+                return false;
+            };
+            let is_target = matches!(
+                strip_parens(callee),
+                Expr::Assign(assign)
+                    if assign.op == AssignOp::Assign
+                        && matches!(
+                            &assign.left,
+                            AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                                if is_module_exports_member(member, unresolved_mark)
+                        )
+            );
+            if is_target {
+                call.callee = Expr::Ident(local.clone()).as_callee();
+                true
+            } else {
+                replace_called_module_exports_assignment_at_root(callee, unresolved_mark, local)
+            }
+        }
+        Expr::Member(member) => replace_called_module_exports_assignment_at_root(
+            member.obj.as_mut(),
+            unresolved_mark,
+            local,
+        ),
+        _ => false,
+    }
 }
 
 /// Split compound `var s = exports.X = expr` into `var s = expr; exports.X = s;`
