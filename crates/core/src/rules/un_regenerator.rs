@@ -732,7 +732,8 @@ fn extract_async_to_gen_body_with_params(
                 try_transform_regenerator_wrap_with_reserved(&mut body, &reserved_names)
             {
                 mark_key
-            } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
+            } else if try_transform_ts_generator_body(&mut body, generator_helpers, &reserved_names)
+            {
                 None
             } else {
                 return None;
@@ -757,7 +758,8 @@ fn extract_async_to_gen_body_with_params(
                 try_transform_regenerator_wrap_with_reserved(&mut body, &reserved_names)
             {
                 mark_key
-            } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
+            } else if try_transform_ts_generator_body(&mut body, generator_helpers, &reserved_names)
+            {
                 None
             } else {
                 return None;
@@ -3855,7 +3857,8 @@ fn build_async_fn_expr_from_gen_arg(
                     try_transform_regenerator_wrap_with_reserved(body, &reserved_names)
                 {
                     mark_key
-                } else if try_transform_ts_generator_body(body, generator_helpers) {
+                } else if try_transform_ts_generator_body(body, generator_helpers, &reserved_names)
+                {
                     None
                 } else {
                     return None;
@@ -3890,7 +3893,8 @@ fn build_async_fn_expr_from_gen_arg(
                     try_transform_regenerator_wrap_with_reserved(body, &reserved_names)
                 {
                     mark_key
-                } else if try_transform_ts_generator_body(body, generator_helpers) {
+                } else if try_transform_ts_generator_body(body, generator_helpers, &reserved_names)
+                {
                     None
                 } else {
                     return None;
@@ -4032,7 +4036,7 @@ fn extract_async_to_gen_body(
             // Non-generator function that contains regeneratorRuntime.wrap
             let mut body = fn_expr.function.body?;
             if try_transform_regenerator_wrap(&mut body).is_some()
-                || try_transform_ts_generator_body(&mut body, generator_helpers)
+                || try_transform_ts_generator_body(&mut body, generator_helpers, &HashSet::new())
             {
                 return Some(body.stmts);
             }
@@ -4056,7 +4060,7 @@ fn extract_async_to_gen_body(
             };
             let mut body = fn_expr.function.body?;
             if try_transform_regenerator_wrap(&mut body).is_some()
-                || try_transform_ts_generator_body(&mut body, generator_helpers)
+                || try_transform_ts_generator_body(&mut body, generator_helpers, &HashSet::new())
             {
                 return Some(body.stmts);
             }

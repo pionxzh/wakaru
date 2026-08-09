@@ -5,6 +5,7 @@ use wakaru_core::facts::{
     ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::rules::UnAsyncAwait;
+use wakaru_core::validate_output_modules;
 
 // ── __generator only ────────────────────────────────────────────────────────
 
@@ -244,6 +245,118 @@ function* func() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_preserves_callback_locals_declared_after_state_switch() {
+    let input = r#"
+const localValue = "module";
+function loadValue() {
+  return __generator(this, function (_state) {
+    switch (_state.label) {
+      case 0:
+        localValue = createValue();
+        return [2 /*return*/, localValue];
+    }
+    var localValue;
+  });
+}
+"#;
+    let expected = r#"
+const localValue = "module";
+function* loadValue() {
+  var localValue;
+  localValue = createValue();
+  return localValue;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+
+    let pipeline_input = format!("{TS_HELPERS}\n{input}");
+    let pipeline_output = render(&pipeline_input);
+    assert!(
+        pipeline_output.contains("let localValue;"),
+        "the recovered callback local must remain a mutable function binding:\n{pipeline_output}"
+    );
+    let findings = validate_output_modules(&[("input.js".to_string(), pipeline_output.clone())]);
+    assert!(
+        findings.is_empty(),
+        "the callback-local writes must not resolve to the module const:\n{pipeline_output}\n{findings:#?}"
+    );
+}
+
+#[test]
+fn generator_callback_local_colliding_with_destination_param_fails_closed() {
+    let input = r#"
+function loadValue(localValue) {
+  return __generator(this, function (_state) {
+    switch (_state.label) {
+      case 0:
+        localValue = createValue();
+        return [2 /*return*/, localValue];
+    }
+    var localValue;
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return __generator(this, function(_state)"),
+        "moving a shadowing callback local onto a parameter must fail closed:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_callback_local_colliding_with_destination_param_fails_closed() {
+    let input = r#"
+function loadValue(localValue) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_state) {
+      switch (_state.label) {
+        case 0:
+          localValue = createValue();
+          return [2 /*return*/, localValue];
+      }
+      var localValue;
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function loadValue(localValue)")
+            && output.contains("return async function()")
+            && output.contains("var localValue;"),
+        "a collision may recover to a nested async IIFE, but must retain the function boundary:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(localValue)"),
+        "the shadowing callback local must not be lifted onto the outer parameter:\n{output}"
+    );
+}
+
+#[test]
+fn generator_callback_with_observable_trailing_statement_fails_closed() {
+    let input = r#"
+function loadValue() {
+  return __generator(this, function (_state) {
+    switch (_state.label) {
+      case 0:
+        return [2 /*return*/, createValue()];
+    }
+    observeStateCallback();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("observeStateCallback();"),
+        "a sibling statement must never be silently dropped:\n{output}"
+    );
+    assert!(
+        output.contains("return __generator(this, function(_state)"),
+        "an observable callback sibling must keep the state machine:\n{output}"
+    );
 }
 
 #[test]

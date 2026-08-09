@@ -3,15 +3,17 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CallExpr, Callee, Expr,
-    ExprOrSpread, ExprStmt, Function, Ident, IfStmt, MemberExpr, Module, Pat, Prop, PropName,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CallExpr, Callee, Decl,
+    Expr, ExprOrSpread, ExprStmt, Function, Ident, IfStmt, MemberExpr, Module, Param, Pat, Prop,
+    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDecl, VarDeclKind,
+    VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::cross_module_helper_refs::{
     collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
 };
+use super::decl_utils::{collect_decl_names, collect_pat_names, collect_var_decl_names};
 use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
 use super::state_machine::{
@@ -182,13 +184,14 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     // Recurse into children first
     func.visit_mut_children_with(&mut UnAsyncAwaitWithHelpers { helpers });
 
+    let reserved_names = binding_names_from_params(&func.params);
     let body = match func.body.as_mut() {
         Some(b) => b,
         None => return,
     };
 
     // Try __generator transform first (makes function a generator)
-    if try_transform_generator(body, helpers) {
+    if try_transform_generator(body, helpers, &reserved_names) {
         func.is_generator = true;
         return;
     }
@@ -196,8 +199,8 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     // Try __awaiter transform (makes function async).
     // After extracting the inner body, also run the generator transform
     // in case the inner function was a __generator state machine.
-    if let Some(saved_stmts) = try_transform_awaiter(body, helpers) {
-        try_transform_generator(body, helpers);
+    if let Some(saved_stmts) = try_transform_awaiter(body, helpers, &reserved_names) {
+        try_transform_generator(body, helpers, &reserved_names);
         if stmts_contain_state_opcode_return(&body.stmts, OpcodeReturnScan::SkipNestedFunctions)
             || contains_unresolved_generator_wrapper(body, helpers)
         {
@@ -254,6 +257,7 @@ fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelper
 pub(crate) fn try_transform_ts_generator_body(
     body: &mut BlockStmt,
     generator_helpers: &[BindingKey],
+    reserved_names: &HashSet<Atom>,
 ) -> bool {
     let helpers = AsyncHelperContext {
         awaiter_helpers: HashSet::new(),
@@ -263,10 +267,14 @@ pub(crate) fn try_transform_ts_generator_body(
         values_helpers: HashSet::new(),
         unresolved_mark: None,
     };
-    try_transform_generator(body, &helpers)
+    try_transform_generator(body, &helpers, reserved_names)
 }
 
-fn try_transform_generator(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
+fn try_transform_generator(
+    body: &mut BlockStmt,
+    helpers: &AsyncHelperContext,
+    reserved_names: &HashSet<Atom>,
+) -> bool {
     // Find: return __generator(this, function(_a) { switch(_a.label) { ... } })
     let return_idx = body
         .stmts
@@ -277,14 +285,22 @@ fn try_transform_generator(body: &mut BlockStmt, helpers: &AsyncHelperContext) -
         None => return false,
     };
 
-    let new_stmts = match extract_generator_stmts(body.stmts[return_idx].clone(), helpers) {
-        Some(stmts) => stmts,
+    let extracted = match extract_generator_stmts(body.stmts[return_idx].clone(), helpers) {
+        Some(extracted) => extracted,
         None => return false,
     };
+    if callback_locals_collide_with_destination(
+        &extracted.callback_local_names,
+        &body.stmts,
+        return_idx,
+        reserved_names,
+    ) {
+        return false;
+    }
     body.stmts.remove(return_idx);
 
     // Insert new statements where the return was
-    body.stmts.splice(return_idx..return_idx, new_stmts);
+    body.stmts.splice(return_idx..return_idx, extracted.stmts);
     true
 }
 
@@ -299,7 +315,12 @@ fn is_generator_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
     helpers.is_generator_call(call)
 }
 
-fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<Stmt>> {
+struct ExtractedGenerator {
+    stmts: Vec<Stmt>,
+    callback_local_names: HashSet<Atom>,
+}
+
+fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<ExtractedGenerator> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
     let Expr::Call(mut call) = arg else {
@@ -324,17 +345,90 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
         }
     })?;
     let body = fn_expr.function.body?;
-    let mut stmts = body.stmts.into_iter();
-    let first = stmts.next()?;
-    if let Stmt::Switch(sw) = first {
-        return decode_state_machine(state_name, sw.cases, &helpers.values_helpers);
-    }
-    if stmts.next().is_none() {
-        if let Some(decoded) = decode_return_opcode(&first, &helpers.values_helpers) {
-            return Some(decoded.into_iter().collect());
+    let mut state_stmt = None;
+    let mut callback_locals = Vec::new();
+    let mut callback_local_names = HashSet::new();
+    for stmt in body.stmts {
+        match stmt {
+            Stmt::Switch(_) | Stmt::Return(_) => {
+                if state_stmt.replace(stmt).is_some() {
+                    return None;
+                }
+            }
+            Stmt::Decl(Decl::Var(var))
+                if var.kind == VarDeclKind::Var
+                    && var.decls.iter().all(|decl| decl.init.is_none()) =>
+            {
+                collect_var_decl_names(&var, &mut callback_local_names);
+                callback_locals.push(Stmt::Decl(Decl::Var(var)));
+            }
+            Stmt::Empty(_) => {}
+            _ => return None,
         }
     }
-    None
+    let decoded = match state_stmt? {
+        Stmt::Switch(sw) => decode_state_machine(state_name, sw.cases, &helpers.values_helpers)?,
+        Stmt::Return(ret) => decode_return_opcode(&Stmt::Return(ret), &helpers.values_helpers)?
+            .into_iter()
+            .collect(),
+        _ => unreachable!("state_stmt is restricted above"),
+    };
+    callback_locals.extend(decoded);
+    Some(ExtractedGenerator {
+        stmts: callback_locals,
+        callback_local_names,
+    })
+}
+
+fn binding_names_from_params(params: &[Param]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for param in params {
+        collect_pat_names(&param.pat, &mut names);
+    }
+    names
+}
+
+fn callback_locals_collide_with_destination(
+    callback_local_names: &HashSet<Atom>,
+    destination_stmts: &[Stmt],
+    replaced_index: usize,
+    reserved_names: &HashSet<Atom>,
+) -> bool {
+    if callback_local_names.is_empty() {
+        return false;
+    }
+    let destination_names =
+        destination_identifier_names(destination_stmts, Some(replaced_index), reserved_names);
+    callback_local_names
+        .iter()
+        .any(|name| destination_names.contains(name))
+}
+
+fn destination_identifier_names(
+    stmts: &[Stmt],
+    excluded_index: Option<usize>,
+    reserved_names: &HashSet<Atom>,
+) -> HashSet<Atom> {
+    let mut collector = IdentifierNameCollector {
+        names: reserved_names.clone(),
+    };
+    for (index, stmt) in stmts.iter().enumerate() {
+        if excluded_index == Some(index) {
+            continue;
+        }
+        stmt.visit_with(&mut collector);
+    }
+    collector.names
+}
+
+struct IdentifierNameCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for IdentifierNameCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.insert(ident.sym.clone());
+    }
 }
 
 /// Expand Terser-compressed case body statements back into the form the
@@ -1478,7 +1572,11 @@ fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> 
 // __awaiter wrapper -> async function
 // ============================================================
 
-fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> Option<Vec<Stmt>> {
+fn try_transform_awaiter(
+    body: &mut BlockStmt,
+    helpers: &AsyncHelperContext,
+    reserved_names: &HashSet<Atom>,
+) -> Option<Vec<Stmt>> {
     // Find: return __awaiter(this, void0, void0, function*() { ... })
     let return_idx = body
         .stmts
@@ -1486,6 +1584,15 @@ fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> 
         .position(|stmt| is_awaiter_return(stmt, helpers))?;
 
     let inner_stmts = extract_awaiter_body(body.stmts[return_idx].clone(), helpers)?;
+    let moved_names = moved_function_scope_names(&inner_stmts);
+    if callback_locals_collide_with_destination(
+        &moved_names,
+        &body.stmts,
+        return_idx,
+        reserved_names,
+    ) {
+        return None;
+    }
     // Keep the original body only once a valid awaiter extraction is known to
     // mutate it. Post-transform validation can still require a full rollback.
     let saved_stmts = body.stmts.clone();
@@ -1498,6 +1605,44 @@ fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> 
     // Splice the inner statements in place of the return
     body.stmts.splice(return_idx..return_idx, inner_stmts);
     Some(saved_stmts)
+}
+
+/// Names whose binding scope changes when the awaiter callback body is spliced
+/// into its containing function. Function-scoped `var` declarations are
+/// collected through nested blocks, while top-level lexical/function/class
+/// declarations are collected directly. Nested callable and class scopes stay
+/// intact and are not part of the move.
+fn moved_function_scope_names(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Decl(decl) = stmt {
+            collect_decl_names(decl, &mut names);
+        }
+    }
+
+    struct FunctionVarNameCollector<'a> {
+        names: &'a mut HashSet<Atom>,
+    }
+
+    impl Visit for FunctionVarNameCollector<'_> {
+        fn visit_var_decl(&mut self, var: &VarDecl) {
+            if var.kind == VarDeclKind::Var {
+                collect_var_decl_names(var, self.names);
+            }
+        }
+
+        fn visit_function(&mut self, _function: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _class: &swc_core::ecma::ast::Class) {}
+    }
+
+    let mut collector = FunctionVarNameCollector { names: &mut names };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    names
 }
 
 fn is_awaiter_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
