@@ -49,7 +49,8 @@ pub enum OutputFindingKind {
     ParseError,
     /// A `./`-relative import/export/require target is not in the module set.
     DanglingRelativeRef,
-    /// A named or default import of a name the provider does not export.
+    /// A named or default import of a name the provider does not
+    /// unambiguously export.
     MissingImportedName,
     /// The same name is exported more than once by one module.
     DuplicateExport,
@@ -102,22 +103,36 @@ fn validate_inner(modules: &[(String, String)]) -> Vec<OutputFinding> {
         }
     }
 
-    let exports = resolve_export_closures(&infos);
+    let info_by_filename: HashMap<&str, &ModuleInfo> = infos
+        .iter()
+        .map(|info| (info.filename.as_str(), info))
+        .collect();
     for info in &infos {
         for import in &info.named_imports {
-            let Some(target_exports) = exports.get(import.target.as_str()) else {
-                continue; // dangling target: already reported, don't stack
+            let resolution = resolve_export(
+                &info_by_filename,
+                import.target.as_str(),
+                &import.name,
+                &mut HashSet::new(),
+            );
+            let detail = match resolution {
+                ResolvedExport::Ambiguous => Some(format!(
+                    "\"{}\" is ambiguous through star exports of {}",
+                    import.name, import.target
+                )),
+                ResolvedExport::NotFound => Some(format!(
+                    "\"{}\" is not exported by {}",
+                    import.name, import.target
+                )),
+                ResolvedExport::Found(_) | ResolvedExport::Unknown => None,
             };
-            if target_exports.open {
-                continue;
-            }
-            if !target_exports.names.contains(&import.name) {
+            if let Some(detail) = detail {
                 findings.push(OutputFinding {
                     filename: info.filename.clone(),
                     line: import.line,
                     column: import.column,
                     kind: OutputFindingKind::MissingImportedName,
-                    message: format!("\"{}\" is not exported by {}", import.name, import.target),
+                    message: detail,
                 });
             }
         }
@@ -131,6 +146,10 @@ struct ModuleInfo {
     /// Explicitly exported names, including "default". Star re-exports are
     /// tracked separately and excluded from duplicate detection.
     explicit_exports: Vec<ExplicitExport>,
+    /// How an explicit export resolves. The first entry wins here; duplicate
+    /// explicit names are reported separately and do not need a second graph
+    /// interpretation.
+    explicit_resolutions: HashMap<Atom, ExplicitExportResolution>,
     /// Resolved in-set targets of `export * from`.
     star_targets: Vec<String>,
     /// The export set is unknowable: `export * from` an external package or
@@ -155,61 +174,113 @@ struct ExplicitExport {
     column: usize,
 }
 
-struct ExportClosure {
-    names: HashSet<Atom>,
-    open: bool,
+enum ExplicitExportResolution {
+    /// A local binding declared or referenced by this module.
+    Local(Atom),
+    /// An indirect named re-export from another emitted module.
+    Reexport { target: String, imported: Atom },
+    /// A namespace object for another emitted module.
+    Namespace(String),
+    /// A definite explicit export whose precise binding is outside the
+    /// validated graph or otherwise unnecessary for ambiguity checks.
+    Synthetic,
 }
 
-/// Union star re-exports to a fixpoint so `export * from "./mid.js"` chains
-/// resolve, and propagate openness through them.
-fn resolve_export_closures(infos: &[ModuleInfo]) -> HashMap<String, ExportClosure> {
-    let mut closures: HashMap<String, ExportClosure> = infos
-        .iter()
-        .map(|info| {
-            (
-                info.filename.clone(),
-                ExportClosure {
-                    names: info
-                        .explicit_exports
-                        .iter()
-                        .map(|export| export.name.clone())
-                        .collect(),
-                    open: info.open_exports,
-                },
-            )
-        })
-        .collect();
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ExportOrigin {
+    module: String,
+    binding: Atom,
+}
 
-    loop {
-        let mut changed = false;
-        for info in infos {
-            for target in &info.star_targets {
-                let Some(source) = closures.get(target.as_str()) else {
-                    continue;
-                };
-                // `export *` never forwards default.
-                let forwarded: Vec<Atom> = source
-                    .names
-                    .iter()
-                    .filter(|name| name.as_ref() != "default")
-                    .cloned()
-                    .collect();
-                let source_open = source.open;
-                let own = closures
-                    .get_mut(info.filename.as_str())
-                    .expect("closure exists for every analyzed module");
-                for name in forwarded {
-                    changed |= own.names.insert(name);
-                }
-                if source_open && !own.open {
-                    own.open = true;
-                    changed = true;
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResolvedExport {
+    Found(ExportOrigin),
+    NotFound,
+    Ambiguous,
+    /// An external, missing, or unparsable provider prevents a safe claim.
+    Unknown,
+}
+
+/// Resolve one requested export using ESM's star-export ambiguity rule. Two
+/// star paths may forward the same origin (a diamond) without conflict, while
+/// distinct origins make the name ambiguous and therefore not exported.
+fn resolve_export(
+    infos: &HashMap<&str, &ModuleInfo>,
+    filename: &str,
+    name: &Atom,
+    resolving: &mut HashSet<(String, Atom)>,
+) -> ResolvedExport {
+    let key = (filename.to_string(), name.clone());
+    if !resolving.insert(key.clone()) {
+        return ResolvedExport::NotFound;
+    }
+
+    let result = resolve_export_inner(infos, filename, name, resolving);
+    resolving.remove(&key);
+    result
+}
+
+fn resolve_export_inner(
+    infos: &HashMap<&str, &ModuleInfo>,
+    filename: &str,
+    name: &Atom,
+    resolving: &mut HashSet<(String, Atom)>,
+) -> ResolvedExport {
+    let Some(info) = infos.get(filename).copied() else {
+        return ResolvedExport::Unknown;
+    };
+
+    if let Some(explicit) = info.explicit_resolutions.get(name) {
+        return match explicit {
+            ExplicitExportResolution::Local(binding) => ResolvedExport::Found(ExportOrigin {
+                module: filename.to_string(),
+                binding: binding.clone(),
+            }),
+            ExplicitExportResolution::Reexport { target, imported } => {
+                resolve_export(infos, target, imported, resolving)
+            }
+            ExplicitExportResolution::Namespace(target) => ResolvedExport::Found(ExportOrigin {
+                module: target.clone(),
+                binding: Atom::from("*namespace*"),
+            }),
+            ExplicitExportResolution::Synthetic => ResolvedExport::Found(ExportOrigin {
+                module: filename.to_string(),
+                binding: name.clone(),
+            }),
+        };
+    }
+
+    // `export *` never forwards default, including from an external module.
+    if name.as_ref() == "default" {
+        return ResolvedExport::NotFound;
+    }
+
+    let mut found = None;
+    let mut ambiguous = false;
+    let mut unknown = info.open_exports;
+    for target in &info.star_targets {
+        match resolve_export(infos, target, name, resolving) {
+            ResolvedExport::Found(origin) => {
+                if found.as_ref().is_some_and(|existing| existing != &origin) {
+                    ambiguous = true;
+                } else {
+                    found = Some(origin);
                 }
             }
+            ResolvedExport::NotFound => {}
+            ResolvedExport::Ambiguous => ambiguous = true,
+            ResolvedExport::Unknown => unknown = true,
         }
-        if !changed {
-            return closures;
-        }
+    }
+
+    if unknown {
+        ResolvedExport::Unknown
+    } else if ambiguous {
+        ResolvedExport::Ambiguous
+    } else if let Some(origin) = found {
+        ResolvedExport::Found(origin)
+    } else {
+        ResolvedExport::NotFound
     }
 }
 
@@ -231,6 +302,7 @@ fn analyze_module(
     let mut info = ModuleInfo {
         filename: filename.to_string(),
         explicit_exports: Vec::new(),
+        explicit_resolutions: HashMap::new(),
         star_targets: Vec::new(),
         open_exports: false,
         named_imports: Vec::new(),
@@ -280,8 +352,13 @@ fn analyze_module(
             }
             ModuleDecl::ExportDecl(export) => {
                 for name in export_decl_names(&export.decl) {
-                    info.explicit_exports
-                        .push(explicit_export(name, export.span, &source_map));
+                    record_explicit_export(
+                        &mut info,
+                        name.clone(),
+                        ExplicitExportResolution::Local(name),
+                        export.span,
+                        &source_map,
+                    );
                 }
             }
             ModuleDecl::ExportNamed(named) => {
@@ -304,11 +381,23 @@ fn analyze_module(
                                 .as_ref()
                                 .map(module_export_name_atom)
                                 .unwrap_or_else(|| orig.clone());
-                            info.explicit_exports.push(explicit_export(
+                            let resolution = if let Some(target) = &target {
+                                ExplicitExportResolution::Reexport {
+                                    target: target.clone(),
+                                    imported: orig.clone(),
+                                }
+                            } else if named.src.is_none() {
+                                ExplicitExportResolution::Local(orig.clone())
+                            } else {
+                                ExplicitExportResolution::Synthetic
+                            };
+                            record_explicit_export(
+                                &mut info,
                                 exported,
+                                resolution,
                                 spec.span,
                                 &source_map,
-                            ));
+                            );
                             if let Some(target) = &target {
                                 let (line, column) = source_location(&source_map, spec.span);
                                 info.named_imports.push(NamedImport {
@@ -320,28 +409,38 @@ fn analyze_module(
                             }
                         }
                         swc_core::ecma::ast::ExportSpecifier::Namespace(spec) => {
-                            info.explicit_exports.push(explicit_export(
+                            let resolution = target
+                                .clone()
+                                .map(ExplicitExportResolution::Namespace)
+                                .unwrap_or(ExplicitExportResolution::Synthetic);
+                            record_explicit_export(
+                                &mut info,
                                 module_export_name_atom(&spec.name),
+                                resolution,
                                 spec.span,
                                 &source_map,
-                            ));
+                            );
                         }
                         swc_core::ecma::ast::ExportSpecifier::Default(spec) => {
-                            info.explicit_exports.push(explicit_export(
+                            record_explicit_export(
+                                &mut info,
                                 spec.exported.sym.clone(),
+                                ExplicitExportResolution::Synthetic,
                                 spec.span(),
                                 &source_map,
-                            ));
+                            );
                         }
                     }
                 }
             }
             ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_) => {
-                info.explicit_exports.push(explicit_export(
+                record_explicit_export(
+                    &mut info,
                     Atom::from("default"),
+                    ExplicitExportResolution::Synthetic,
                     decl.span(),
                     &source_map,
-                ));
+                );
             }
             ModuleDecl::ExportAll(export_all) => {
                 match check_relative_ref(
@@ -504,9 +603,19 @@ fn source_location(source_map: &SourceMap, span: Span) -> (usize, usize) {
     (location.line, location.col_display + 1)
 }
 
-fn explicit_export(name: Atom, span: Span, source_map: &SourceMap) -> ExplicitExport {
+fn record_explicit_export(
+    info: &mut ModuleInfo,
+    name: Atom,
+    resolution: ExplicitExportResolution,
+    span: Span,
+    source_map: &SourceMap,
+) {
     let (line, column) = source_location(source_map, span);
-    ExplicitExport { name, line, column }
+    info.explicit_resolutions
+        .entry(name.clone())
+        .or_insert(resolution);
+    info.explicit_exports
+        .push(ExplicitExport { name, line, column });
 }
 
 fn finding_at_span(

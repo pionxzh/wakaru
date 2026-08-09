@@ -201,6 +201,95 @@ fn export_star_provides_names_transitively() {
 }
 
 #[test]
+fn conflicting_export_stars_do_not_provide_the_ambiguous_name() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        ("left.js", "export const shared = 1;\n"),
+        ("right.js", "export const shared = 2;\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::MissingImportedName, "entry.js".into())]
+    );
+}
+
+#[test]
+fn explicit_reexport_resolves_an_export_star_conflict() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export { shared } from "./left.js";
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        ("left.js", "export const shared = 1;\n"),
+        ("right.js", "export const shared = 2;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn diamond_export_stars_forward_the_same_origin_once() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        ("left.js", "export * from \"./base.js\";\n"),
+        ("right.js", "export * from \"./base.js\";\n"),
+        ("base.js", "export const shared = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn export_star_ambiguity_propagates_transitively() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./top.js"; console.log(shared);"#,
+        ),
+        ("top.js", "export * from \"./facade.js\";\n"),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        ("left.js", "export const shared = 1;\n"),
+        ("right.js", "export const shared = 2;\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::MissingImportedName, "entry.js".into())]
+    );
+}
+
+#[test]
 fn export_star_does_not_forward_default() {
     let findings = kinds(&[
         ("entry.js", r#"import a from "./a.js"; console.log(a);"#),
@@ -225,6 +314,21 @@ fn external_star_export_suppresses_name_checks() {
         ("a.js", "export * from \"some-pkg\";\n"),
     ]);
     assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn external_star_export_does_not_forward_default() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import fallback from "./a.js"; console.log(fallback);"#,
+        ),
+        ("a.js", "export * from \"some-pkg\";\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::MissingImportedName, "entry.js".into())]
+    );
 }
 
 #[test]

@@ -64,9 +64,9 @@ edges.
 `debug validate` checks a directory of emitted modules as one graph and
 reports structural defects that would make it fail to load as ESM: dangling
 relative references (static, re-export, dynamic `import()`, string
-`require()`), imports of names the provider doesn't export, duplicate
-exports, and writes to imported or `const` bindings. It exits nonzero when
-findings exist, so harnesses can gate on it.
+`require()`), imports of names the provider doesn't unambiguously export,
+duplicate exports, and writes to imported or `const` bindings. It exits
+nonzero when findings exist, so harnesses can gate on it.
 
 ```bash
 cargo run -p wakaru-cli -- --unpack bundle.js -o out/

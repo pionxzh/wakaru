@@ -129,9 +129,10 @@ wakaru debug validate out/
 wakaru debug validate out/ --json
 ```
 
-This reports dangling relative references, missing imported or re-exported
-names, duplicate exports, and writes to imported or `const` bindings, then
-exits nonzero on findings. Text output uses `filename:line:column`; JSON
+This reports dangling relative references, missing or star-ambiguous imported
+or re-exported names, duplicate exports, and writes to imported or `const`
+bindings, then exits nonzero on findings. Text output uses
+`filename:line:column`; JSON
 findings include one-based `line` and `column`. The recursive scan accepts
 `.js`, `.mjs`, `.cjs`, `.jsx`, and extensionless emitted modules, including
 modules emitted beneath `node_modules`; hidden paths and unrelated extensions

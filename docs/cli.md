@@ -251,7 +251,8 @@ wakaru debug validate out/ --json
 ```
 
 The validator reports dangling relative references, imports or re-exports of
-missing names, duplicate exports, and writes to imported or `const` bindings.
+missing or star-ambiguous names, duplicate exports, and writes to imported or
+`const` bindings.
 Human-readable findings use `filename:line:column`; JSON findings carry
 one-based `line` and `column` fields. The recursive scan accepts `.js`, `.mjs`,
 `.cjs`, `.jsx`, and extensionless emitted modules, including modules emitted
