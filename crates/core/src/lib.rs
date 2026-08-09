@@ -18,6 +18,7 @@ pub(crate) mod provider_namespace_repair;
 pub mod reexport_consolidation;
 pub mod rules;
 pub mod sourcemap_rename;
+pub(crate) mod synthetic_import_cleanup;
 pub mod tdz_check;
 pub mod unpacker;
 pub mod utils;

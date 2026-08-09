@@ -46,6 +46,7 @@ use crate::rules::{
     UnConditionalsAssignmentOnly, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
+use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
 
 struct Phase1PreparedModule {
     globals: Globals,
@@ -437,6 +438,7 @@ pub(super) fn unpack_multi_module_with_plan(
             );
             run_reexport_consolidation(&mut module, facts_ref, Some(&unpacked.module.filename));
             run_namespace_decomposition(&mut module, facts_ref, Some(&unpacked.module.filename));
+            downgrade_unused_synthetic_imports(&mut module);
             // Preserve specifiers that were already dead at the barrier, then
             // reuse this visitor after the standalone late cleanup to remove
             // only specifiers whose last use those rewrites eliminated.
@@ -1362,6 +1364,140 @@ module.exports = function(value) { return logger.warn(value); };
                 .iter()
                 .all(|module| module.source_map.is_some()),
             "getter-map default recovery must preserve emitted source maps"
+        );
+    }
+
+    #[test]
+    fn unused_synthetic_require_becomes_side_effect_import() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: "exports.alpha = 1;".to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+before();
+var unused = require("./provider.js");
+after();
+module.exports = 42;
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        let output = unpack_multi_module(modules(), DecompileOptions::default())
+            .expect("unused require fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import \"./provider.js\";"),
+            "provider evaluation must survive as a side-effect import:\n{consumer}"
+        );
+        assert!(
+            !consumer.contains("import unused") && !consumer.contains("var unused"),
+            "the unused guessed default binding should be removed:\n{consumer}"
+        );
+
+        let source_map_output = unpack_multi_module(
+            modules(),
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("unused require cleanup should survive the source-map path");
+        assert_eq!(validate_prepared_output(&source_map_output), vec![]);
+        assert!(
+            source_map_output
+                .modules
+                .iter()
+                .all(|module| module.source_map.is_some()),
+            "side-effect import recovery must preserve emitted source maps"
+        );
+    }
+
+    #[test]
+    fn unused_synthetic_default_is_removed_from_mixed_import() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var unused = require("./provider.js");
+var alpha = require("./provider.js").alpha;
+module.exports = alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("mixed import fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import { alpha }") && !consumer.contains("import unused"),
+            "only the used named binding should remain:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn unused_authored_import_is_not_synthetic_cleanup() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+import missing from "./provider.js";
+export const result = 1;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("authored unused import fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "cleanup must not reinterpret an authored dead import: {findings:#?}"
         );
     }
 
