@@ -37,6 +37,16 @@ use(Object.freeze(value));
 }
 
 #[test]
+fn public_exported_builtin_alias_remains_declared() {
+    let input = r#"
+var defineProperty = Object.defineProperty;
+export { defineProperty };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_var_alias_used_before_initializer() {
     let input = r#"
 use(e);

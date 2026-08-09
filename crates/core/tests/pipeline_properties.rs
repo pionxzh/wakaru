@@ -64,6 +64,19 @@ console.log(entry, a, Z, c, keep);
 }
 
 #[test]
+fn exported_builtin_alias_keeps_consumer_edge_valid() {
+    let provider = r#"
+var defineProperty = Object.defineProperty;
+export { defineProperty };
+"#;
+    let consumer = r#"
+import { defineProperty } from "./provider.js";
+export const define = defineProperty;
+"#;
+    assert_pipeline_pair_valid(&[("provider.js", provider), ("consumer.js", consumer)]);
+}
+
+#[test]
 fn jsx_component_tags_never_bind_lowercase() {
     // Lowercase component bindings (imported and local, including the
     // single-letter shape) must either be capitalized alias-preservingly or
