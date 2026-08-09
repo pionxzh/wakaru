@@ -146,6 +146,7 @@ impl VisitMut for UnEsm {
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
         split_called_module_exports_assignments(module, self.unresolved_mark);
+        split_chained_local_module_exports_assignments(module, self.unresolved_mark);
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
@@ -2526,6 +2527,107 @@ fn replace_called_module_exports_assignment_at_root(
         ),
         _ => false,
     }
+}
+
+/// Split a top-level `local = module.exports = expr` while preserving its
+/// right-to-left assignment order. A fresh capture evaluates the RHS once,
+/// then the ordinary export assignment runs before the original local write.
+///
+/// Only mutable module-level variable bindings are accepted. Unresolved
+/// globals, imports, constants, member targets, and nested expression contexts
+/// remain untouched rather than broadening this into a general expression
+/// lowering pass.
+fn split_chained_local_module_exports_assignments(module: &mut Module, unresolved_mark: Mark) {
+    let mutable_bindings = collect_mutable_module_var_bindings(module);
+    let mut used_names = collect_all_identifier_names(module);
+    let mut new_body = Vec::with_capacity(module.body.len());
+
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+            new_body.push(item);
+            continue;
+        };
+        let Some((local_target, value)) = (|| {
+            let Expr::Assign(local_assign) = strip_parens(expr_stmt.expr.as_ref()) else {
+                return None;
+            };
+            if local_assign.op != AssignOp::Assign {
+                return None;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(local)) = &local_assign.left else {
+                return None;
+            };
+            if !mutable_bindings.contains(&binding_id(&local.id)) {
+                return None;
+            }
+            let Expr::Assign(export_assign) = strip_parens(local_assign.right.as_ref()) else {
+                return None;
+            };
+            if export_assign.op != AssignOp::Assign {
+                return None;
+            }
+            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &export_assign.left
+            else {
+                return None;
+            };
+            if !is_module_exports_member(member, unresolved_mark) {
+                return None;
+            }
+            Some((local_assign.left.clone(), export_assign.right.clone()))
+        })() else {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        };
+
+        let local = make_ident(fresh_prefixed_name(&Atom::from("default"), &mut used_names));
+        new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: expr_stmt.span,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: expr_stmt.span,
+                name: Pat::Ident(BindingIdent {
+                    id: local.clone(),
+                    type_ann: None,
+                }),
+                init: Some(value),
+                definite: false,
+            }],
+        })))));
+        new_body.push(make_module_exports_assign_expr_item(
+            expr_stmt.span,
+            Box::new(Expr::Ident(local.clone())),
+            unresolved_mark,
+        ));
+        new_body.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: expr_stmt.span,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: expr_stmt.span,
+                op: AssignOp::Assign,
+                left: local_target,
+                right: Box::new(Expr::Ident(local)),
+            })),
+        })));
+    }
+
+    module.body = new_body;
+}
+
+fn collect_mutable_module_var_bindings(module: &Module) -> HashSet<BindingId> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                decl: Decl::Var(var),
+                ..
+            })) if var.kind != VarDeclKind::Const => Some(var),
+            _ => None,
+        })
+        .flat_map(|var| var.decls.iter().flat_map(|decl| find_pat_ids(&decl.name)))
+        .collect()
 }
 
 /// Split compound export initializers so the normal export classification can

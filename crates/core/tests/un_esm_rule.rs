@@ -433,6 +433,66 @@ var after = observeAfter();
 }
 
 #[test]
+fn chained_local_module_exports_assignment_preserves_order() {
+    let input = r#"
+let value;
+value = module.exports = createValue();
+consume(value);
+"#;
+    let expected = r#"
+let value;
+const _default = createValue();
+export default _default;
+value = _default;
+consume(value);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn chained_local_module_exports_assignment_evaluates_rhs_once() {
+    let input = r#"
+let value;
+value = module.exports = makeValue(sideEffect());
+"#;
+    let output = apply(input);
+    assert_eq!(output.matches("makeValue(sideEffect())").count(), 1);
+    assert!(output.contains("export default _default;"));
+    assert!(output.contains("value = _default;"));
+}
+
+#[test]
+fn chained_local_module_exports_assignment_with_local_module_is_not_transformed() {
+    let input = r#"
+const module = { exports: null };
+let value;
+value = module.exports = createValue();
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
+fn chained_unresolved_module_exports_assignment_is_not_transformed() {
+    let input = r#"value = module.exports = createValue();"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
+fn chained_const_module_exports_assignment_is_not_transformed() {
+    let input = r#"
+const value = initialValue;
+value = module.exports = createValue();
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
+fn chained_member_module_exports_assignment_is_not_transformed() {
+    let input = r#"holder.value = module.exports = createValue();"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
 fn module_exports_default_ident_not_affected() {
     // CJS module.exports = ident still produces export default (the declaration
     // is before the export, so no TDZ issue).
