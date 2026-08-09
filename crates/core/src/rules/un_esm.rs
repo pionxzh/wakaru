@@ -4,7 +4,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportDecl, ExportDefaultExpr,
+    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
     ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName,
     ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr,
     MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp,
@@ -150,6 +150,7 @@ impl VisitMut for UnEsm {
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
+        rewrite_commonjs_export_star_loops(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
@@ -702,6 +703,277 @@ fn get_or_insert<'a>(
             entry.insert(SourceEntry::default())
         }
     }
+}
+
+/// Recover Babel's compiled CommonJS form of `export * from "..."`:
+///
+/// ```text
+/// var source = require("./source.js");
+/// Object.keys(source).forEach(function(key) {
+///   key !== "default" && key !== "__esModule" &&
+///     (key in exports && exports[key] === source[key] ||
+///       (exports[key] = source[key]));
+/// });
+/// ```
+///
+/// The exact copy guard matters: a generic `Object.keys(require)` loop can
+/// perform arbitrary work. The require binding must also have no uses outside
+/// this adjacent pair before it is replaced with a native live re-export.
+fn rewrite_commonjs_export_star_loops(module: &mut Module, unresolved_mark: Mark) {
+    let binding_uses = BindingUseIndex::collect(module);
+    let mut body = std::mem::take(&mut module.body).into_iter().peekable();
+    let mut rewritten = Vec::with_capacity(body.size_hint().0);
+
+    while let Some(item) = body.next() {
+        let Some(next) = body.peek() else {
+            rewritten.push(item);
+            break;
+        };
+        let Some((binding, source, span)) = extract_single_require_binding(&item, unresolved_mark)
+        else {
+            rewritten.push(item);
+            continue;
+        };
+        if binding_uses.use_count(&binding_id(&binding)) != 3
+            || !is_commonjs_export_star_loop(next, &binding, unresolved_mark)
+        {
+            rewritten.push(item);
+            continue;
+        }
+
+        body.next();
+        rewritten.push(ModuleItem::ModuleDecl(ModuleDecl::ExportAll(ExportAll {
+            span,
+            src: Box::new(make_str(&source)),
+            type_only: false,
+            with: None,
+        })));
+    }
+
+    module.body = rewritten;
+}
+
+fn extract_single_require_binding(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<(Ident, String, Span)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+    let Pat::Ident(binding) = &declarator.name else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(declarator.init.as_deref()?) else {
+        return None;
+    };
+    Some((
+        binding.id.clone(),
+        is_require_call(call, unresolved_mark)?,
+        var.span,
+    ))
+}
+
+fn is_commonjs_export_star_loop(item: &ModuleItem, source: &Ident, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+        return false;
+    };
+    let Expr::Call(for_each_call) = strip_parens(expr_stmt.expr.as_ref()) else {
+        return false;
+    };
+    if for_each_call.args.len() != 1 || for_each_call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(for_each_callee) = &for_each_call.callee else {
+        return false;
+    };
+    let Expr::Member(for_each_member) = strip_parens(for_each_callee.as_ref()) else {
+        return false;
+    };
+    if !matches!(&for_each_member.prop, MemberProp::Ident(prop) if prop.sym == "forEach") {
+        return false;
+    }
+    let Expr::Call(keys_call) = strip_parens(for_each_member.obj.as_ref()) else {
+        return false;
+    };
+    if keys_call.args.len() != 1
+        || keys_call.args[0].spread.is_some()
+        || !matches!(keys_call.args[0].expr.as_ref(), Expr::Ident(id) if same_ident(id, source))
+    {
+        return false;
+    }
+    let Callee::Expr(keys_callee) = &keys_call.callee else {
+        return false;
+    };
+    if !is_unresolved_member_expr(keys_callee.as_ref(), "Object", "keys", unresolved_mark) {
+        return false;
+    }
+
+    let Some((key, copy_expr)) = export_star_callback(for_each_call.args[0].expr.as_ref()) else {
+        return false;
+    };
+    let mut operands = Vec::new();
+    flatten_logical_and(copy_expr, &mut operands);
+    operands.len() == 3
+        && is_key_not_string(operands[0], &key, "default")
+        && is_key_not_string(operands[1], &key, "__esModule")
+        && is_guarded_commonjs_export_copy(operands[2], source, &key, unresolved_mark)
+}
+
+fn export_star_callback(expr: &Expr) -> Option<(Ident, &Expr)> {
+    match strip_parens(expr) {
+        Expr::Fn(function) => {
+            if function.ident.is_some()
+                || function.function.params.len() != 1
+                || function.function.is_async
+                || function.function.is_generator
+            {
+                return None;
+            }
+            let Pat::Ident(key) = &function.function.params[0].pat else {
+                return None;
+            };
+            Some((
+                key.id.clone(),
+                single_expr_stmt(function.function.body.as_ref()?)?,
+            ))
+        }
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 || arrow.is_async || arrow.is_generator {
+                return None;
+            }
+            let Pat::Ident(key) = &arrow.params[0] else {
+                return None;
+            };
+            let expr = match arrow.body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(block) => single_expr_stmt(block)?,
+                BlockStmtOrExpr::Expr(expr) => expr.as_ref(),
+            };
+            Some((key.id.clone(), expr))
+        }
+        _ => None,
+    }
+}
+
+fn single_expr_stmt(block: &BlockStmt) -> Option<&Expr> {
+    if block.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Expr(expr_stmt) = &block.stmts[0] else {
+        return None;
+    };
+    Some(expr_stmt.expr.as_ref())
+}
+
+fn flatten_logical_and<'a>(expr: &'a Expr, operands: &mut Vec<&'a Expr>) {
+    let expr = strip_parens(expr);
+    if let Expr::Bin(binary) = expr {
+        if binary.op == BinaryOp::LogicalAnd {
+            flatten_logical_and(binary.left.as_ref(), operands);
+            flatten_logical_and(binary.right.as_ref(), operands);
+            return;
+        }
+    }
+    operands.push(expr);
+}
+
+fn is_key_not_string(expr: &Expr, key: &Ident, expected: &str) -> bool {
+    let Expr::Bin(binary) = strip_parens(expr) else {
+        return false;
+    };
+    if binary.op != BinaryOp::NotEqEq {
+        return false;
+    }
+    (matches!(strip_parens(binary.left.as_ref()), Expr::Ident(id) if same_ident(id, key))
+        && matches!(strip_parens(binary.right.as_ref()), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some(expected)))
+        || (matches!(strip_parens(binary.right.as_ref()), Expr::Ident(id) if same_ident(id, key))
+            && matches!(strip_parens(binary.left.as_ref()), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some(expected)))
+}
+
+fn is_guarded_commonjs_export_copy(
+    expr: &Expr,
+    source: &Ident,
+    key: &Ident,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Bin(or) = strip_parens(expr) else {
+        return false;
+    };
+    if or.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    let Expr::Bin(existing_and_equal) = strip_parens(or.left.as_ref()) else {
+        return false;
+    };
+    if existing_and_equal.op != BinaryOp::LogicalAnd
+        || !is_key_in_exports(existing_and_equal.left.as_ref(), key, unresolved_mark)
+        || !is_exports_key_equal_source_key(
+            existing_and_equal.right.as_ref(),
+            source,
+            key,
+            unresolved_mark,
+        )
+    {
+        return false;
+    }
+
+    let Expr::Assign(assign) = strip_parens(or.right.as_ref()) else {
+        return false;
+    };
+    assign.op == AssignOp::Assign
+        && matches!(&assign.left,
+            AssignTarget::Simple(SimpleAssignTarget::Member(member))
+                if is_computed_key_member(member, "exports", None, key, unresolved_mark))
+        && matches!(strip_parens(assign.right.as_ref()), Expr::Member(member)
+            if is_computed_key_member(member, "", Some(source), key, unresolved_mark))
+}
+
+fn is_key_in_exports(expr: &Expr, key: &Ident, unresolved_mark: Mark) -> bool {
+    let Expr::Bin(binary) = strip_parens(expr) else {
+        return false;
+    };
+    binary.op == BinaryOp::In
+        && matches!(strip_parens(binary.left.as_ref()), Expr::Ident(id) if same_ident(id, key))
+        && matches!(strip_parens(binary.right.as_ref()), Expr::Ident(id)
+            if is_unresolved_ident(id, "exports", unresolved_mark))
+}
+
+fn is_exports_key_equal_source_key(
+    expr: &Expr,
+    source: &Ident,
+    key: &Ident,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Bin(binary) = strip_parens(expr) else {
+        return false;
+    };
+    binary.op == BinaryOp::EqEqEq
+        && matches!(strip_parens(binary.left.as_ref()), Expr::Member(member)
+            if is_computed_key_member(member, "exports", None, key, unresolved_mark))
+        && matches!(strip_parens(binary.right.as_ref()), Expr::Member(member)
+            if is_computed_key_member(member, "", Some(source), key, unresolved_mark))
+}
+
+fn is_computed_key_member(
+    member: &MemberExpr,
+    unresolved_object: &str,
+    bound_object: Option<&Ident>,
+    key: &Ident,
+    unresolved_mark: Mark,
+) -> bool {
+    let object_matches = match (member.obj.as_ref(), bound_object) {
+        (Expr::Ident(object), Some(bound)) => same_ident(object, bound),
+        (Expr::Ident(object), None) => {
+            is_unresolved_ident(object, unresolved_object, unresolved_mark)
+        }
+        _ => false,
+    };
+    object_matches
+        && matches!(&member.prop, MemberProp::Computed(computed)
+            if matches!(strip_parens(computed.expr.as_ref()), Expr::Ident(id) if same_ident(id, key)))
 }
 
 fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {

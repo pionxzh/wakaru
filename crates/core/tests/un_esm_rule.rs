@@ -156,6 +156,39 @@ var { bar } = require('foo');
 }
 
 #[test]
+fn commonjs_object_keys_reexport_loop_becomes_export_star() {
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  key !== "default" && key !== "__esModule" &&
+    (key in exports && exports[key] === source[key] ||
+      (exports[key] = source[key]));
+});
+"#;
+    let expected = r#"export * from "./source.js";"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn commonjs_object_keys_reexport_loop_with_extra_binding_use_is_unchanged() {
+    let input = r#"
+var source = require("./source.js");
+Object.keys(source).forEach(function(key) {
+  key !== "default" && key !== "__esModule" &&
+    (key in exports && exports[key] === source[key] ||
+      (exports[key] = source[key]));
+});
+observe(source);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("export * from"),
+        "an escaped require binding must keep the re-export loop:\n{output}"
+    );
+    assert!(output.contains("Object.keys(source)"));
+}
+
+#[test]
 fn multiple_defaults_separate_imports() {
     // Two require() calls for the same module produce the same value;
     // ImportDedup canonicalizes to the first local binding.
