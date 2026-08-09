@@ -145,6 +145,7 @@ impl VisitMut for UnEsm {
         }
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
+        split_called_module_exports_assignments(module, self.unresolved_mark);
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
@@ -2384,6 +2385,76 @@ impl Visit for UnsafeDefaultMirrorInterveningFinder {
     fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {
         self.found = true;
     }
+}
+
+/// Split `(module.exports = factory)(args)` into a single-evaluation local,
+/// an ordinary module export assignment, and the call. The export classifier
+/// can then lower the standalone assignment without losing the call or leaving
+/// an unresolved CommonJS `module` reference in the processed output.
+fn split_called_module_exports_assignments(module: &mut Module, unresolved_mark: Mark) {
+    let mut used_names = collect_all_identifier_names(module);
+    let mut new_body = Vec::with_capacity(module.body.len());
+
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(Stmt::Expr(mut expr_stmt)) = item else {
+            new_body.push(item);
+            continue;
+        };
+        let Expr::Call(call) = expr_stmt.expr.as_mut() else {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        };
+        let Expr::Assign(assign) = strip_parens(callee.as_ref()) else {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        };
+        if assign.op != AssignOp::Assign || !is_module_exports_member(member, unresolved_mark) {
+            new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+            continue;
+        }
+
+        let value = assign.right.clone();
+        let local = make_ident(fresh_prefixed_name(&Atom::from("default"), &mut used_names));
+        let capture = ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+            span: expr_stmt.span,
+            ctxt: Default::default(),
+            kind: VarDeclKind::Var,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: expr_stmt.span,
+                name: Pat::Ident(BindingIdent {
+                    id: local.clone(),
+                    type_ann: None,
+                }),
+                init: Some(value),
+                definite: false,
+            }],
+        }))));
+        let export = ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: expr_stmt.span,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: assign.span,
+                op: AssignOp::Assign,
+                left: assign.left.clone(),
+                right: Box::new(Expr::Ident(local.clone())),
+            })),
+        }));
+        call.callee = Expr::Ident(local).as_callee();
+
+        new_body.push(capture);
+        new_body.push(export);
+        new_body.push(ModuleItem::Stmt(Stmt::Expr(expr_stmt)));
+    }
+
+    module.body = new_body;
 }
 
 /// Split compound `var s = exports.X = expr` into `var s = expr; exports.X = s;`

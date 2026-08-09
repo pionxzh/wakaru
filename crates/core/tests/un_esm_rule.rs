@@ -328,6 +328,37 @@ fn module_exports_default() {
 }
 
 #[test]
+fn called_module_exports_assignment_preserves_export_and_call() {
+    let input = r#"(module.exports = factory)(argument);"#;
+    let expected = r#"
+const _default = factory;
+export default _default;
+_default(argument);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn called_module_exports_assignment_evaluates_rhs_once() {
+    let input = r#"(module.exports = createFactory())(argument);"#;
+    let expected = r#"
+const _default = createFactory();
+export default _default;
+_default(argument);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn called_local_module_exports_assignment_is_not_transformed() {
+    let input = r#"
+const module = { exports: null };
+(module.exports = factory)(argument);
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEsm"), input);
+}
+
+#[test]
 fn module_exports_default_ident_not_affected() {
     // CJS module.exports = ident still produces export default (the declaration
     // is before the export, so no TDZ issue).
