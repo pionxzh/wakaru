@@ -597,7 +597,7 @@ fn vue_sfc_unpack_recovers_webpack_namespace_component() {
     );
     assert_eq!(
         fs::read_to_string(out_dir.join("src/App.vue")).expect("read recovered vue sfc"),
-        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./components/ChildPanel.vue\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
+        "<script>\nexport default {\n    name: \"WebpackPanel\",\n    props: {\n        message: String\n    }\n}\n</script>\n\n<script setup>\nimport ChildPanel from \"./components/ChildPanel.vue.js\";\n</script>\n\n<template>\n  <section class=\"notice\">\n    <ChildPanel :label=\"message\" />\n    <span>{{ message }}</span>\n  </section>\n</template>\n"
     );
 
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -1298,7 +1298,7 @@ fn unpack_cli_does_not_write_overlapping_dot_payload_outside_output_dir() {
     );
     assert!(
         out_dir
-            .join("..../node_modules/@wakaru/cli/bin/wakaru")
+            .join("..../node_modules/@wakaru/cli/bin/wakaru.js")
             .exists(),
         "payload should be written under the output directory"
     );

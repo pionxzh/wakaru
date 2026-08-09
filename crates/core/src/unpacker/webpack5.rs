@@ -2954,7 +2954,7 @@ fn is_false_module_placeholder(expr: &Expr) -> bool {
 fn collect_module_descriptors<'a>(
     modules_container: &Webpack5ModulesContainer<'a>,
 ) -> Option<Vec<Webpack5ModuleDescriptor<'a>>> {
-    match modules_container {
+    let mut descriptors = match modules_container {
         Webpack5ModulesContainer::Object(modules_object) => {
             if modules_object.props.is_empty() {
                 return None;
@@ -2963,7 +2963,7 @@ fn collect_module_descriptors<'a>(
                 .props
                 .iter()
                 .map(module_descriptor_from_prop)
-                .collect()
+                .collect::<Option<Vec<_>>>()?
         }
         Webpack5ModulesContainer::Array { array, id_offset } => {
             let mut descriptors = Vec::new();
@@ -2989,9 +2989,17 @@ fn collect_module_descriptors<'a>(
             if descriptors.is_empty() {
                 return None;
             }
-            Some(descriptors)
+            descriptors
         }
+    };
+
+    let filenames = super::webpack_common::unique_webpack_module_filenames(
+        descriptors.iter().map(|descriptor| descriptor.id.as_str()),
+    );
+    for (descriptor, filename) in descriptors.iter_mut().zip(filenames) {
+        descriptor.filename = filename;
     }
+    Some(descriptors)
 }
 
 /// Borrow the factory function from a prop, handling both `Prop::KeyValue` and `Prop::Method`.
@@ -3025,11 +3033,7 @@ fn module_descriptor_from_prop(prop: &PropOrSpread) -> Option<Webpack5ModuleDesc
 }
 
 fn descriptor_filename(module_id: &str) -> String {
-    if module_id.contains('/') || module_id.contains('.') {
-        sanitize_filename(module_id)
-    } else {
-        format!("module-{module_id}.js")
-    }
+    super::webpack_common::webpack_module_filename(module_id)
 }
 
 fn extract_webpack_modules_container(
@@ -3231,8 +3235,9 @@ fn extract_callee_body(callee: &Callee) -> Option<&swc_core::ecma::ast::BlockStm
     }
 }
 
+#[cfg(test)]
 fn sanitize_filename(module_id: &str) -> String {
-    crate::unpacker::sanitize_relative_path(module_id, "unknown.js")
+    super::webpack_common::webpack_module_filename(module_id)
 }
 
 /// Scan the bootstrap body for `__webpack_require__(__webpack_require__.s = <id>)` and return
@@ -3861,11 +3866,11 @@ const modules = Array(4).concat([
 
     #[test]
     fn sanitize_filename_strips_path_traversal() {
-        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd.js");
         assert_eq!(sanitize_filename("./../../foo.js"), "foo.js");
         assert_eq!(
             sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
-            "..../node_modules/@wakaru/cli/bin/wakaru"
+            "..../node_modules/@wakaru/cli/bin/wakaru.js"
         );
     }
 
@@ -3873,7 +3878,7 @@ const modules = Array(4).concat([
     fn sanitize_filename_strips_backslash_traversal() {
         assert_eq!(
             sanitize_filename("./\\..\\node_modules\\debug\\src\\index"),
-            "node_modules/debug/src/index"
+            "node_modules/debug/src/index.js"
         );
     }
 
@@ -3887,6 +3892,13 @@ const modules = Array(4).concat([
     fn sanitize_filename_preserves_normal_paths() {
         assert_eq!(sanitize_filename("src/utils.js"), "src/utils.js");
         assert_eq!(sanitize_filename("index.js"), "index.js");
+        assert_eq!(sanitize_filename("src/view.mts"), "src/view.mts");
+        assert_eq!(sanitize_filename("src/style.css"), "src/style.css.js");
+        assert_eq!(
+            sanitize_filename("src/App.vue?type=script"),
+            "src/App.vue.js"
+        );
+        assert_eq!(sanitize_filename("opaque"), "module-opaque.js");
     }
 
     #[test]

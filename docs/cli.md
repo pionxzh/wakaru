@@ -83,6 +83,14 @@ its inline startup as `entry.js`; separately emitted asset files remain
 external to the recovered JavaScript modules. ncc `.mjs` output uses a
 top-level runtime and is not structurally split.
 
+Webpack string module IDs keep their safe relative resource path, but emitted
+JavaScript never keeps a misleading non-JavaScript filename. IDs ending in
+`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, or `.cts` retain that
+extension; every other or extensionless resource appends `.js` (for example,
+`src/style.less` becomes `src/style.less.js`). Loader queries and URL fragments
+are removed from filesystem names, and modules that then collide receive
+stable numeric suffixes before consumer references are synthesized.
+
 In normal multi-input unpack, a heuristic scope-hoisted ESM input or structural
 esbuild ESM chunk keeps its original safe relative input path as its public
 entry filename. Generated children are namespaced beneath that filename's stem
@@ -255,8 +263,9 @@ missing or star-ambiguous names, duplicate exports, and writes to imported or
 `const` bindings.
 Human-readable findings use `filename:line:column`; JSON findings carry
 one-based `line` and `column` fields. The recursive scan accepts `.js`, `.mjs`,
-`.cjs`, `.jsx`, and extensionless emitted modules, including modules emitted
-beneath `node_modules`; hidden paths and unrelated extensions remain excluded.
+`.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless emitted
+modules, including modules emitted beneath `node_modules`; hidden paths and
+unrelated extensions remain excluded.
 The command exits nonzero when it finds anything. Validate normal output only:
 raw output has no usable module-graph contract.
 

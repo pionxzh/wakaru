@@ -386,7 +386,61 @@ fn webpack4_string_module_ids_use_relative_output_imports() {
 }
 
 #[test]
-fn webpack5_path_like_string_id_keeps_a_resolvable_consumer_edge() {
+fn webpack4_non_javascript_module_ids_emit_javascript_filenames() {
+    let source = r#"
+!function(__webpack_modules__) {
+  function __webpack_require__(moduleId) {
+    var module = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  return __webpack_require__("./src/index.ts");
+}({
+  "./src/style/index.less": function(module) {
+    module.exports = "compiled style";
+  },
+  "./src/index.ts": function(module, exports, __webpack_require__) {
+    module.exports = __webpack_require__("./src/style/index.less");
+  }
+});
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-non-js-id.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 non-JavaScript module id should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let index = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/index.ts")
+        .map(|(_, code)| code)
+        .expect("the JavaScript-like TypeScript path should be retained");
+    assert!(
+        index.contains(r#""./style/index.less.js""#),
+        "the consumer must use the derived JavaScript filename:\n{index}"
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(name, _)| name == "src/style/index.less.js"),
+        "expected loader-produced JavaScript to append .js"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_extensionless_string_id_gets_a_resolvable_javascript_filename() {
     let source = r#"
 (() => {
   var __webpack_modules__ = ({
@@ -429,16 +483,99 @@ fn webpack5_path_like_string_id_keeps_a_resolvable_consumer_edge() {
         .map(|(_, code)| code)
         .expect("expected index module");
     assert!(
-        index.contains(r#""../pkg/side-effect""#),
+        index.contains(r#""../pkg/side-effect.js""#),
         "the path-like module id must be relative to its consumer:\n{index}"
     );
     assert!(
         output
             .modules
             .iter()
-            .any(|(name, _)| name == "pkg/side-effect"),
-        "expected the path-like module id to retain its output path"
+            .any(|(name, _)| name == "pkg/side-effect.js"),
+        "expected the extensionless module id to append .js"
     );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_string_id_collisions_and_queries_keep_distinct_edges() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./widgets/Button.less": ((module) => {
+      module.exports = "compiled style";
+    }),
+    "./widgets/Button.less.js": ((module) => {
+      module.exports = "authored JavaScript";
+    }),
+    "./App.vue?vue&type=script": ((module) => {
+      module.exports = "script block";
+    }),
+    "./App.vue?vue&type=style&index=0": ((module) => {
+      module.exports = "style block";
+    }),
+    "./src/index.js": ((module, exports, __webpack_require__) => {
+      const style = __webpack_require__("./widgets/Button.less");
+      const authored = __webpack_require__("./widgets/Button.less.js");
+      const script = __webpack_require__("./App.vue?vue&type=script");
+      const vueStyle = __webpack_require__("./App.vue?vue&type=style&index=0");
+      module.exports = [style, authored, script, vueStyle];
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__("./src/index.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-string-id-collisions.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 colliding and queried module ids should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let names = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"widgets/Button.less.js"), "{names:?}");
+    assert!(names.contains(&"widgets/Button.less_2.js"), "{names:?}");
+    assert!(names.contains(&"App.vue.js"), "{names:?}");
+    assert!(names.contains(&"App.vue_2.js"), "{names:?}");
+    assert!(
+        names.iter().all(|name| !name.contains(['?', '#'])),
+        "{names:?}"
+    );
+
+    let index = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/index.js")
+        .map(|(_, code)| code)
+        .expect("expected index module");
+    for specifier in [
+        "../widgets/Button.less.js",
+        "../widgets/Button.less_2.js",
+        "../App.vue.js",
+        "../App.vue_2.js",
+    ] {
+        assert!(
+            index.contains(&format!(r#""{specifier}""#)),
+            "missing {specifier} in consumer:\n{index}"
+        );
+    }
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }
 
@@ -481,7 +618,7 @@ fn webpack5_string_module_id_with_overlapping_dots_cannot_emit_parent_path() {
         .map(|(name, _)| name.as_str())
         .collect();
     assert!(
-        names.contains(&"..../node_modules/@wakaru/cli/bin/wakaru"),
+        names.contains(&"..../node_modules/@wakaru/cli/bin/wakaru.js"),
         "expected sanitized overlap path, got {names:?}"
     );
     assert!(

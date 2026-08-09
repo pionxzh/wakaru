@@ -25,8 +25,8 @@ pub fn collect_directory_js_inputs(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Like [`collect_directory_js_inputs`] but for `debug validate`: emitted
-/// module trees can carry `.jsx` and extensionless filenames, so those are
-/// accepted too. Source maps and other extensions stay excluded.
+/// module trees can carry JSX/TypeScript-family and extensionless filenames,
+/// so those are accepted too. Source maps and other extensions stay excluded.
 pub fn collect_validate_inputs(root: &Path) -> Result<Vec<PathBuf>> {
     collect_sorted(root, is_emitted_module_file, false)
 }
@@ -89,7 +89,7 @@ fn is_emitted_module_file(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) => matches!(
             ext.to_ascii_lowercase().as_str(),
-            "js" | "mjs" | "cjs" | "jsx"
+            "js" | "mjs" | "cjs" | "jsx" | "ts" | "tsx" | "mts" | "cts"
         ),
         None => true,
     }
@@ -144,6 +144,8 @@ mod tests {
 
         fs::write(dir.join("a.js"), "import \"./node_modules/pkg/index.js\";").expect("write js");
         fs::write(dir.join("b.jsx"), "1").expect("write jsx");
+        fs::write(dir.join("component.tsx"), "1").expect("write tsx");
+        fs::write(dir.join("module.mts"), "1").expect("write mts");
         fs::write(dir.join("module"), "1").expect("write extensionless");
         fs::write(dir.join("map.js.map"), "1").expect("write source map (ignored)");
         fs::write(dir.join(".hidden"), "1").expect("write hidden (ignored)");
@@ -161,7 +163,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["a.js", "b.jsx", "module", "node_modules/pkg/index.js"]
+            vec![
+                "a.js",
+                "b.jsx",
+                "component.tsx",
+                "module",
+                "module.mts",
+                "node_modules/pkg/index.js"
+            ]
         );
 
         let modules: Vec<(String, String)> = collected

@@ -272,6 +272,14 @@ fn normalized_path_parts(path: &str) -> Vec<String> {
 
 fn vue_output_filename(filename: &str) -> String {
     let path = Path::new(filename);
+    let stem_preserves_vue_extension = path
+        .file_stem()
+        .and_then(|stem| Path::new(stem).extension())
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vue"));
+    if stem_preserves_vue_extension {
+        return path.with_extension("").to_string_lossy().to_string();
+    }
     if path.extension().is_some() {
         return path.with_extension("vue").to_string_lossy().to_string();
     }
@@ -388,6 +396,8 @@ mod tests {
             vue_output_filename("src/App.render.mjs"),
             "src/App.render.vue"
         );
+        assert_eq!(vue_output_filename("src/App.vue.js"), "src/App.vue");
+        assert_eq!(vue_output_filename("src/App.VUE.ts"), "src/App.VUE");
         assert_eq!(vue_output_filename("module-plain"), "module-plain.vue");
     }
 

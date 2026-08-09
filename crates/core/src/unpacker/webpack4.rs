@@ -621,10 +621,20 @@ fn extract_webpack4_object_modules(
         .all(|(key, _)| key.parse::<usize>().is_ok());
 
     // Build filename maps — numeric keys need a usize→String map for RequireIdRewriter,
-    // string keys need a String→String map for RequireStringIdRewriter
-    let str_id_to_filename: HashMap<String, String> = module_entries
-        .iter()
-        .map(|(key, _)| (key.clone(), sanitize_filename(key)))
+    // string keys need a String→String map for RequireStringIdRewriter. String
+    // filenames are made unique before edge synthesis so queried resources or
+    // `a.less` / `a.less.js` pairs retain distinct ownership.
+    let string_filenames = (!all_numeric).then(|| {
+        super::webpack_common::unique_webpack_module_filenames(
+            module_entries.iter().map(|(key, _)| key.as_str()),
+        )
+    });
+    let str_id_to_filename: HashMap<String, String> = string_filenames
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .zip(module_entries.iter())
+        .map(|(filename, (key, _))| (key.clone(), filename.clone()))
         .collect();
     let num_id_to_filename: std::collections::HashMap<usize, String> = if all_numeric {
         module_entries
@@ -650,7 +660,7 @@ fn extract_webpack4_object_modules(
 
     let mut modules = Vec::new();
 
-    for (key, fn_expr) in &module_entries {
+    for (entry_index, (key, fn_expr)) in module_entries.iter().enumerate() {
         let is_entry = if all_numeric {
             let idx = key.parse::<usize>().unwrap_or(usize::MAX);
             entry_ids.contains(&ModuleId::Numeric(idx))
@@ -664,10 +674,11 @@ fn extract_webpack4_object_modules(
                 .cloned()
                 .unwrap_or_else(|| format!("module-{key}.js"))
         } else {
-            str_id_to_filename
-                .get(key)
+            string_filenames
+                .as_ref()
+                .and_then(|filenames| filenames.get(entry_index))
                 .cloned()
-                .unwrap_or_else(|| sanitize_filename(key))
+                .unwrap_or_else(|| super::webpack_common::webpack_module_filename(key))
         };
 
         let (mut synthetic_module, _) = normalize_extracted_webpack_module(
@@ -838,8 +849,9 @@ fn normalize_extracted_webpack_module(
 /// Sanitize a webpack module path string into a safe filename.
 /// Strips leading `./`, removes path traversal (`../`, `..\`), and falls back
 /// to `"unknown.js"` when the result would be empty.
+#[cfg(test)]
 fn sanitize_filename(module_id: &str) -> String {
-    crate::unpacker::sanitize_relative_path(module_id, "unknown.js")
+    super::webpack_common::webpack_module_filename(module_id)
 }
 
 /// Scan the bootstrap function body for `n.s = <number>` or `n(n.s = <number>)` patterns
@@ -1881,11 +1893,15 @@ mod object_form_tests {
             sanitize_filename("./src/utils/helper.js"),
             "src/utils/helper.js"
         );
-        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd.js");
         assert_eq!(
             sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
-            "..../node_modules/@wakaru/cli/bin/wakaru"
+            "..../node_modules/@wakaru/cli/bin/wakaru.js"
         );
+        assert_eq!(sanitize_filename("./src/style.less"), "src/style.less.js");
+        assert_eq!(sanitize_filename("./src/view.tsx"), "src/view.tsx");
+        assert_eq!(sanitize_filename("./App.vue?type=style"), "App.vue.js");
+        assert_eq!(sanitize_filename("opaque"), "module-opaque.js");
         assert_eq!(sanitize_filename("./"), "unknown.js");
         assert_eq!(sanitize_filename("../"), "unknown.js");
         assert_eq!(sanitize_filename("index.js"), "index.js");

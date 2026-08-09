@@ -107,6 +107,13 @@ Ordinary Browserify bundles use unambiguous dependency-map request paths for
 readable module filenames. Conflicting or missing hints retain
 `module-<id>.js`, and entry names remain stable.
 
+Webpack string module IDs keep their safe relative resource path. JavaScript-
+like extensions (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, and
+`.cts`) stay unchanged; every other or extensionless resource appends `.js`
+(for example, `style.less` becomes `style.less.js`). Loader queries and URL
+fragments do not enter filesystem names, and collisions are made unique before
+consumer references are synthesized.
+
 For normal multi-input unpack, heuristic scope-hoisted ESM inputs and
 structural esbuild ESM chunks keep their original safe relative input paths as
 public entry filenames. Generated children live beneath each public filename's
@@ -134,10 +141,10 @@ or re-exported names, duplicate exports, and writes to imported or `const`
 bindings, then exits nonzero on findings. Text output uses
 `filename:line:column`; JSON
 findings include one-based `line` and `column`. The recursive scan accepts
-`.js`, `.mjs`, `.cjs`, `.jsx`, and extensionless emitted modules, including
-modules emitted beneath `node_modules`; hidden paths and unrelated extensions
-stay excluded. Do not use it to grade raw output, which has no usable
-module-graph contract.
+`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless
+emitted modules, including modules emitted beneath `node_modules`; hidden paths
+and unrelated extensions stay excluded. Do not use it to grade raw output,
+which has no usable module-graph contract.
 
 ### 3. Recover names / original source when a map exists
 
