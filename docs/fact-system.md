@@ -45,8 +45,10 @@ Phase 1 (per module, parallel):
 Phase 2 (per module, parallel):
     resume retained barrier AST
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
+    run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
+    downgrade_unused_synthetic_imports(&mut module)  ← preserve require effects
     registry rule range resuming after UnEsm, through UnReturn
     targeted late cleanup/recovery
 ```
@@ -104,6 +106,14 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   consumer that mutates provider properties is also deliberately unresolved:
   an ESM namespace is read-only, so preserving that case requires a separate
   mutable facade design.
+- **`provider_namespace_repair`** — changes a dummy-span default import
+  synthesized for a whole-object `require("./x")` into a namespace import when
+  the provider facts prove a named or `export *` surface and no default export.
+  It accepts static member reads, `Object.keys(namespace)`, and namespace values
+  used as `Object.assign` sources. Authored imports, mutation, arbitrary value
+  escape, computed/meta reads, and `__esModule` observation remain unchanged.
+  The existing namespace decomposition pass can then recover narrower named
+  imports where its own gates allow that rewrite.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
   `import { foo } from "./x"; foo()` when `./x` exports `foo` and no collision
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope
