@@ -521,7 +521,11 @@ fn webpack4_injected_global_fallback_exposes_default_export() {
         || selectGlobal("object" === typeof window && window)
         || selectGlobal("object" === typeof injectedGlobal && injectedGlobal)
         || Function("return this")();
-    }).call(this, require(99));
+    }).call(this, require(2));
+  },
+  function(module) {
+    globalThis.injectionLoads = (globalThis.injectionLoads || 0) + 1;
+    module.exports = globalThis;
   }
 ]);
 "#;
@@ -551,8 +555,19 @@ fn webpack4_injected_global_fallback_exposes_default_export() {
         "the wrapper must expose module.exports to UnEsm:\n{provider}"
     );
     assert!(
-        !provider.contains("require(99)") && !provider.contains("injectedGlobal"),
-        "the obsolete injected fallback must be removed:\n{provider}"
+        provider.contains(r#"import "./module-2.js""#),
+        "the unidentified provider must remain as an eager side-effect import:\n{provider}"
+    );
+    assert!(
+        !provider.contains("injectedGlobal"),
+        "the obsolete injected fallback binding must be removed:\n{provider}"
+    );
+    assert!(
+        output
+            .modules
+            .iter()
+            .any(|(name, code)| name == "module-2.js" && code.contains("injectionLoads")),
+        "the side-effectful injected provider must be emitted"
     );
     assert_eq!(validate_output_modules(&output.modules), vec![]);
 }

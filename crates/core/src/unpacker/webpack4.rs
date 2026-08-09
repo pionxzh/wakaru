@@ -1264,27 +1264,44 @@ fn try_unwrap_global_envelope_item(
     if !is_direct_literal_require(&injected_arg.expr, unresolved_mark) {
         return None;
     }
+    let is_known_webpack_global =
+        is_webpack_global_builtin_require(&injected_arg.expr, unresolved_mark);
 
     // Some core-js global-object modules use webpack's injected `global`
     // value only as the final guarded fallback after `globalThis`, `self`, and
     // `window`. In post-ES2020 output that injected fallback is obsolete. Drop
-    // the wrapper and its eager polyfill require only when every reference to
-    // the parameter belongs to that exact guarded expression.
+    // the wrapper only when every reference to the parameter belongs to an
+    // exact guarded candidate later in the same short-circuit chain as an
+    // equivalent guarded `globalThis` candidate. Nested logical chains are
+    // deliberately independent: broadening that relation would make a nearby
+    // `globalThis` guard look like proof for deferred or unrelated code.
     let mut candidate = body_stmts.clone();
     let mut guard_replacer = GuardedGlobalFallbackReplacer {
         param_id: &param_ids[0],
-        unresolved_mark,
+        global_this_id: (
+            Atom::from("globalThis"),
+            SyntaxContext::empty().apply_mark(unresolved_mark),
+        ),
         replacements: 0,
     };
     for stmt in &mut candidate {
         stmt.visit_mut_with(&mut guard_replacer);
     }
     if guard_replacer.replacements > 0
-        && contains_guarded_global_this(&candidate, unresolved_mark)
         && count_param_refs(&candidate, &param_ids) == 0
         && body_is_safe_to_lift(&candidate)
     {
-        return Some(candidate.into_iter().map(ModuleItem::Stmt).collect());
+        let mut replacement = Vec::with_capacity(candidate.len() + 1);
+        if !is_known_webpack_global {
+            // Require-ID rewriting runs before this unwrap pass. Clone the
+            // already-normalized call instead of synthesizing an import here;
+            // UnEsm will recover it as a side-effect import later. An unknown
+            // or missing provider must remain observable (`require(99)` stays
+            // unresolved when the module table cannot prove a target).
+            replacement.push(side_effect_expr_item(injected_arg.expr.clone()));
+        }
+        replacement.extend(candidate.into_iter().map(ModuleItem::Stmt));
+        return Some(replacement);
     }
 
     // Webpack 4's generated `global` injection passes its own
@@ -1293,9 +1310,7 @@ fn try_unwrap_global_envelope_item(
     // the same statement position, then expose the body to UnEsm. The provider
     // identity is deliberately required; a user-authored `.call(this,
     // require(...))` remains untouched.
-    if !is_webpack_global_builtin_require(&injected_arg.expr, unresolved_mark)
-        || !body_is_safe_to_lift(&body_stmts)
-    {
+    if !is_known_webpack_global || !body_is_safe_to_lift(&body_stmts) {
         return None;
     }
     let mut replacement = Vec::with_capacity(body_stmts.len() + 1);
@@ -1435,6 +1450,13 @@ fn param_capture_item(param_id: &Id, init: Box<Expr>) -> ModuleItem {
             definite: false,
         }],
     }))))
+}
+
+fn side_effect_expr_item(expr: Box<Expr>) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr,
+    }))
 }
 
 fn body_is_safe_to_lift(stmts: &[Stmt]) -> bool {
@@ -1682,51 +1704,129 @@ fn is_guarded_object_value(expr: &Expr, value_id: &Id) -> bool {
         || (typeof_matches(left) && is_string_lit(right, "object"))
 }
 
+/// Recognize the core-js-style `selectGlobal(guardedValue)` operand. Requiring
+/// the same resolved unary checker on both operands prevents an unrelated
+/// earlier global guard from authorizing the injected fallback.
+fn guarded_candidate_checker(expr: &Expr, value_id: &Id) -> Option<Id> {
+    let expr = strip_parens(expr);
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(checker) = strip_parens(callee) else {
+        return None;
+    };
+    is_guarded_object_value(strip_parens(&call.args[0].expr), value_id)
+        .then(|| (checker.sym.clone(), checker.ctxt))
+}
+
+fn replace_guarded_candidate(expr: &mut Expr, value_id: &Id, replacement: Ident) -> bool {
+    match expr {
+        Expr::Paren(paren) => {
+            return replace_guarded_candidate(&mut paren.expr, value_id, replacement)
+        }
+        Expr::Call(call) if call.args.len() == 1 && call.args[0].spread.is_none() => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            if !matches!(strip_parens(callee), Expr::Ident(_))
+                || !is_guarded_object_value(strip_parens(&call.args[0].expr), value_id)
+            {
+                return false;
+            }
+            *call.args[0].expr = Expr::Ident(replacement);
+            return true;
+        }
+        _ => {}
+    }
+    false
+}
+
 struct GuardedGlobalFallbackReplacer<'a> {
     param_id: &'a Id,
-    unresolved_mark: Mark,
+    global_this_id: Id,
     replacements: usize,
 }
 
-impl VisitMut for GuardedGlobalFallbackReplacer<'_> {
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        if is_guarded_object_value(expr, self.param_id) {
-            let ctxt = SyntaxContext::empty().apply_mark(self.unresolved_mark);
-            *expr = Expr::Ident(Ident::new(Atom::from("globalThis"), DUMMY_SP, ctxt));
-            self.replacements += 1;
+impl GuardedGlobalFallbackReplacer<'_> {
+    fn visit_logical_or_chain(
+        &mut self,
+        expr: &mut Expr,
+        earlier_global_checkers: &mut HashSet<Id>,
+    ) {
+        if let Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) = expr
+        {
+            // JavaScript parses `a || b || c` left-associatively. Walking the
+            // direct binary tree in source order gives every later operand the
+            // exact set of earlier candidates from this chain only.
+            self.visit_logical_or_chain(left, earlier_global_checkers);
+            self.visit_logical_or_chain(right, earlier_global_checkers);
             return;
         }
+
+        if let Some(checker) = guarded_candidate_checker(expr, &self.global_this_id) {
+            earlier_global_checkers.insert(checker);
+            return;
+        }
+        if let Some(checker) = guarded_candidate_checker(expr, self.param_id) {
+            if earlier_global_checkers.contains(&checker) {
+                let replacement = Ident::new(
+                    self.global_this_id.0.clone(),
+                    DUMMY_SP,
+                    self.global_this_id.1,
+                );
+                if replace_guarded_candidate(expr, self.param_id, replacement) {
+                    self.replacements += 1;
+                }
+            }
+            return;
+        }
+
+        // A nested logical-or expression reached through another operand
+        // starts its own proof context when normal visiting reaches it.
         expr.visit_mut_children_with(self);
     }
 }
 
-fn contains_guarded_global_this(stmts: &[Stmt], unresolved_mark: Mark) -> bool {
-    let mut finder = GuardedGlobalThisFinder {
-        global_this_id: (
-            Atom::from("globalThis"),
-            SyntaxContext::empty().apply_mark(unresolved_mark),
-        ),
-        found: false,
-    };
-    for stmt in stmts {
-        stmt.visit_with(&mut finder);
-    }
-    finder.found
-}
-
-struct GuardedGlobalThisFinder {
-    global_this_id: Id,
-    found: bool,
-}
-
-impl Visit for GuardedGlobalThisFinder {
-    fn visit_expr(&mut self, expr: &Expr) {
-        if is_guarded_object_value(expr, &self.global_this_id) {
-            self.found = true;
+impl VisitMut for GuardedGlobalFallbackReplacer<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if matches!(
+            expr,
+            Expr::Bin(BinExpr {
+                op: BinaryOp::LogicalOr,
+                ..
+            })
+        ) {
+            let mut earlier_global_checkers = HashSet::new();
+            self.visit_logical_or_chain(expr, &mut earlier_global_checkers);
             return;
         }
-        expr.visit_children_with(self);
+        expr.visit_mut_children_with(self);
     }
+
+    // These bodies run in their own or a deferred execution scope. An outer
+    // short-circuit chain cannot authorize replacing a captured wrapper
+    // parameter inside them; leaving the reference makes the enclosing unwrap
+    // fail closed through `count_param_refs`.
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+
+    fn visit_mut_constructor(&mut self, _: &mut swc_core::ecma::ast::Constructor) {}
+
+    fn visit_mut_getter_prop(&mut self, _: &mut swc_core::ecma::ast::GetterProp) {}
+
+    fn visit_mut_setter_prop(&mut self, _: &mut swc_core::ecma::ast::SetterProp) {}
 }
 
 fn count_param_refs(stmts: &[Stmt], param_ids: &[Id]) -> usize {
@@ -1887,7 +1987,31 @@ mod polyfill_tests {
 "#;
         let out = run_unwrap(input);
         assert!(!out.contains(".call(this"), "{out}");
-        assert!(!out.contains("require(99)"), "{out}");
+        assert!(
+            out.contains("require(99);"),
+            "an unidentified provider must keep its eager side effect: {out}"
+        );
+        assert!(!out.contains("injectedGlobal"), "{out}");
+        assert!(out.contains("module.exports"), "{out}");
+    }
+
+    #[test]
+    fn unwraps_known_builtin_guarded_fallback_without_runtime_edge() {
+        let input = r#"(function(injectedGlobal) {
+    function selectGlobal(candidate) {
+        return candidate && candidate.Math === Math && candidate;
+    }
+    module.exports = selectGlobal("object" === typeof globalThis && globalThis)
+        || selectGlobal("object" === typeof injectedGlobal && injectedGlobal)
+        || Function("return this")();
+}).call(this, require("../node_modules/webpack/buildin/global.js"));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "{out}");
+        assert!(
+            !out.contains("webpack/buildin/global.js"),
+            "the proven webpack runtime helper must not become a side-effect edge: {out}"
+        );
         assert!(!out.contains("injectedGlobal"), "{out}");
         assert!(out.contains("module.exports"), "{out}");
     }
@@ -1993,6 +2117,94 @@ mod polyfill_tests {
         let out = run_unwrap(input);
         assert!(out.contains(".call(this"), "{out}");
         assert!(out.contains("require(99)"), "{out}");
+    }
+
+    #[test]
+    fn skips_guarded_parameter_before_global_this_in_the_same_chain() {
+        let input = r#"(function(value) {
+    module.exports = selectGlobal("object" === typeof value && value)
+        || selectGlobal("object" === typeof globalThis && globalThis);
+}).call(this, require(99));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+        assert!(out.contains("require(99)"), "{out}");
+    }
+
+    #[test]
+    fn skips_guarded_parameter_when_global_this_is_in_another_statement() {
+        let input = r#"(function(value) {
+    const nativeGlobal = selectGlobal("object" === typeof globalThis && globalThis);
+    module.exports = selectGlobal("object" === typeof value && value) || nativeGlobal;
+}).call(this, require(99));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+        assert!(out.contains("require(99)"), "{out}");
+    }
+
+    #[test]
+    fn skips_guarded_parameter_with_a_different_candidate_checker() {
+        let input = r#"(function(value) {
+    module.exports = selectGlobal("object" === typeof globalThis && globalThis)
+        || selectFallback("object" === typeof value && value);
+}).call(this, require(99));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+        assert!(out.contains("require(99)"), "{out}");
+    }
+
+    #[test]
+    fn skips_guarded_parameter_inside_deferred_scopes() {
+        let cases = [
+            (
+                "function",
+                r#"module.exports = function deferred() {
+    selectGlobal("object" === typeof globalThis && globalThis)
+        || selectGlobal("object" === typeof value && value);
+};"#,
+            ),
+            (
+                "arrow",
+                r#"module.exports = () => selectGlobal("object" === typeof globalThis && globalThis)
+    || selectGlobal("object" === typeof value && value);"#,
+            ),
+            (
+                "constructor",
+                r#"module.exports = class Deferred {
+    constructor() {
+        selectGlobal("object" === typeof globalThis && globalThis)
+            || selectGlobal("object" === typeof value && value);
+    }
+};"#,
+            ),
+            (
+                "getter",
+                r#"module.exports = {
+    get deferred() {
+        selectGlobal("object" === typeof globalThis && globalThis)
+            || selectGlobal("object" === typeof value && value);
+    }
+};"#,
+            ),
+            (
+                "setter",
+                r#"module.exports = {
+    set deferred(next) {
+        selectGlobal("object" === typeof globalThis && globalThis)
+            || selectGlobal("object" === typeof value && value);
+    }
+};"#,
+            ),
+        ];
+
+        for (label, body) in cases {
+            let input = format!("(function(value) {{\n{body}\n}}).call(this, require(99));\n");
+            let out = run_unwrap(&input);
+            assert!(out.contains(".call(this"), "{label}: {out}");
+            assert!(out.contains("require(99)"), "{label}: {out}");
+        }
     }
 
     #[test]
