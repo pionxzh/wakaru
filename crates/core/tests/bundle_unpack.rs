@@ -440,6 +440,246 @@ fn webpack4_non_javascript_module_ids_emit_javascript_filenames() {
 }
 
 #[test]
+fn webpack4_reused_loader_parameter_becomes_a_local_after_module_loads() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(0);
+}([
+  function(module, exports, load) {
+    var dependency = load(1);
+    load = /compiled/;
+    module.exports = [dependency, load.test("compiled")];
+  },
+  function(module) {
+    module.exports = "dependency";
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-reused-loader.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 reused loader parameter should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("/compiled/"))
+        .map(|(_, code)| code)
+        .expect("expected webpack4 module that reuses the loader");
+    assert!(
+        entry.contains("import "),
+        "expected recovered import:\n{entry}"
+    );
+    assert!(
+        !entry.contains("require"),
+        "the reused factory parameter must not become a free require binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("const _load = /compiled/;") && entry.contains("_load.test"),
+        "the post-load value must be declared and read through the local:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_assignment_can_initialize_from_a_module() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      const get = (load = load(1)).get;
+      module.exports = get();
+    }),
+    1: ((module) => {
+      module.exports = { get: () => "ok" };
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-reused-loader.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 reused loader parameter should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains(".get"))
+        .map(|(_, code)| code)
+        .expect("expected webpack5 module that reuses the loader");
+    assert!(
+        entry.contains("import "),
+        "expected recovered import:\n{entry}"
+    );
+    assert!(
+        !entry.contains("require"),
+        "the nested loader assignment must not retain a free require:\n{entry}"
+    );
+    assert!(
+        entry.contains("import _load from") && entry.contains("const get = _load.get;"),
+        "the assigned module value must have a declared owner:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_function_keeps_followup_property_initialization() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      const dependency = load(1);
+      (load = function(value) { return value; }).normalize = value => String(value);
+      module.exports = [dependency, load("ok"), load.normalize(2)];
+    }),
+    1: ((module) => {
+      module.exports = "dependency";
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-reused-loader-function.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 function reuse should unpack");
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("normalize"))
+        .map(|(_, code)| code)
+        .expect("expected module with the recovered function local");
+    assert!(
+        entry.contains("import "),
+        "expected recovered import:\n{entry}"
+    );
+    assert!(
+        !entry.contains("require"),
+        "the function-valued local must not retain a free require:\n{entry}"
+    );
+    assert!(
+        entry.contains("const _load =") && entry.contains("_load.normalize ="),
+        "the property writer must target a declared recovered local:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_with_conditional_first_write_fails_closed() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      if (useAlternate) load = alternateLoader;
+      module.exports = load;
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "webpack5-conditional-loader-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unsupported loader reuse should preserve the input");
+    assert!(
+        output.detected_formats.is_empty(),
+        "an unprovable conditional boundary must reject structural extraction"
+    );
+    assert_eq!(output.modules.len(), 1, "expected one fallback module");
+    assert!(
+        output.modules[0].1.contains("if (useAlternate)"),
+        "fallback output must preserve the conditional write"
+    );
+}
+
+#[test]
+fn webpack5_reused_loader_initializer_that_reads_old_loader_fails_closed() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      load = (() => load.runtime)();
+      module.exports = load;
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "webpack5-read-before-loader-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("read-before-write loader reuse should preserve the input");
+    assert!(
+        output.detected_formats.is_empty(),
+        "an initializer that executes a read of the old loader must reject extraction"
+    );
+    assert_eq!(output.modules.len(), 1, "expected one fallback module");
+    assert!(
+        output.modules[0].1.contains("load.runtime"),
+        "fallback output must preserve the old loader read"
+    );
+}
+
+#[test]
 fn webpack5_extensionless_string_id_gets_a_resolvable_javascript_filename() {
     let source = r#"
 (() => {

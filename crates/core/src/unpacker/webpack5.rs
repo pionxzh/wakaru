@@ -1718,6 +1718,7 @@ fn normalize_extracted_webpack_entry_module(
         unresolved_mark,
         from_filename: "entry.js",
         id_to_filename,
+        canonicalize_loader: false,
     };
     synthetic_module.visit_mut_with(&mut id_rewriter);
     let mut str_rewriter = RequireStringIdRewriter {
@@ -1725,6 +1726,7 @@ fn normalize_extracted_webpack_entry_module(
         unresolved_mark,
         from_filename: "entry.js",
         id_to_filename: str_id_to_filename,
+        canonicalize_loader: false,
     };
     synthetic_module.visit_mut_with(&mut str_rewriter);
 
@@ -3143,6 +3145,18 @@ fn normalize_extracted_webpack_module(
         unresolved_mark
     };
 
+    let reused_require_sym = param_syms.get(2).and_then(|parameter| {
+        super::webpack_common::runtime_parameter_is_written(
+            &synthetic_module,
+            parameter,
+            unresolved_mark,
+        )
+        .then(|| parameter.clone())
+    });
+    if reused_require_sym.as_deref() == Some("require") {
+        return None;
+    }
+
     {
         let span = tracing::info_span!("webpack5: normalize");
         let _enter = span.enter();
@@ -3151,6 +3165,12 @@ fn normalize_extracted_webpack_module(
             .iter()
             .zip(["module", "exports", "require"])
             .filter(|(source, target)| source.as_ref() != *target)
+            .filter(|(source, target)| {
+                !(*target == "require"
+                    && reused_require_sym
+                        .as_ref()
+                        .is_some_and(|sym| sym == *source))
+            })
             .map(|(source, target)| BindingRename {
                 old: (source.clone(), unresolved_ctxt),
                 new: target.into(),
@@ -3164,13 +3184,16 @@ fn normalize_extracted_webpack_module(
             replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
         }
 
-        let require_sym = Atom::from("require");
+        let require_sym = reused_require_sym
+            .clone()
+            .unwrap_or_else(|| Atom::from("require"));
 
         let mut id_rewriter = RequireIdRewriter {
             require_sym: require_sym.clone(),
             unresolved_mark,
             from_filename: &descriptor.filename,
             id_to_filename,
+            canonicalize_loader: reused_require_sym.is_some(),
         };
         synthetic_module.visit_mut_with(&mut id_rewriter);
         let mut str_rewriter = RequireStringIdRewriter {
@@ -3178,6 +3201,7 @@ fn normalize_extracted_webpack_module(
             unresolved_mark,
             from_filename: &descriptor.filename,
             id_to_filename: str_id_to_filename,
+            canonicalize_loader: reused_require_sym.is_some(),
         };
         synthetic_module.visit_mut_with(&mut str_rewriter);
 
@@ -3188,6 +3212,16 @@ fn normalize_extracted_webpack_module(
             unresolved_mark,
         };
         synthetic_module.visit_mut_with(&mut normalizer);
+    }
+
+    if let Some(parameter) = reused_require_sym {
+        if !super::webpack_common::localize_reused_runtime_parameter(
+            &mut synthetic_module,
+            &parameter,
+            unresolved_mark,
+        ) {
+            return None;
+        }
     }
 
     Some((synthetic_module, unresolved_mark))
