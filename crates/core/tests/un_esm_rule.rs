@@ -1023,6 +1023,52 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
 }
 
 #[test]
+fn webpack_export_getter_iife_recovers_live_default_after_declaration() {
+    let input = r#"
+((target, getters) => {
+  for (const key in getters) {
+    Object.defineProperty(target, key, {
+      enumerable: true,
+      get: getters[key]
+    });
+  }
+})(exports, {
+  dim() { return dim; },
+  default() { return logger; }
+});
+function dim(value) {
+  return value;
+}
+const logger = {
+  warn(value) { console.warn(value); }
+};
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("Object.defineProperty") && !output.contains("getters"),
+        "the recognized getter-map helper should be removed:\n{output}"
+    );
+    assert!(
+        output.contains("export { dim };") || output.contains("export function dim"),
+        "the named getter should remain a live named export:\n{output}"
+    );
+    assert!(
+        output.contains("export { logger as default };"),
+        "the default getter should remain a live default export:\n{output}"
+    );
+    let declaration = output
+        .find("const logger")
+        .expect("logger declaration should remain");
+    let export = output
+        .find("export { logger as default };")
+        .expect("default export should be recovered");
+    assert!(
+        declaration < export,
+        "the default export must be deferred past its declaration:\n{output}"
+    );
+}
+
+#[test]
 fn webpack_getter_default_deferred_to_end() {
     // Webpack5 export getters place the getter map at the top of the module,
     // before declarations.  Named exports are fine (live bindings), but

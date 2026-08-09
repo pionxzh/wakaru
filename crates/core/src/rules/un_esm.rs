@@ -995,34 +995,11 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
         if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
             for (name, expr) in exports {
                 if name.as_ref() == "default" {
-                    if let Expr::Ident(ident) = *expr {
-                        // Webpack5 getter `() => ident` is a live accessor.
-                        // Emit `export { ident as default }` directly — this
-                        // preserves live-binding semantics and avoids TDZ,
-                        // bypassing CJS classification (which would snapshot).
-                        deferred_default.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
-                            NamedExport {
-                                span: item_span,
-                                specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
-                                    span: DUMMY_SP,
-                                    orig: ModuleExportName::Ident(ident),
-                                    exported: Some(ModuleExportName::Ident(
-                                        IdentName::new("default".into(), DUMMY_SP).into(),
-                                    )),
-                                    is_type_only: false,
-                                })],
-                                src: None,
-                                type_only: false,
-                                with: None,
-                            },
-                        )));
-                    } else {
-                        deferred_default.push(make_exports_assign_expr_item(
-                            item_span,
-                            (name, expr),
-                            unresolved_mark,
-                        ));
-                    }
+                    deferred_default.push(make_deferred_webpack_default_export(
+                        item_span,
+                        expr,
+                        unresolved_mark,
+                    ));
                 } else {
                     deferred_named.push(make_exports_assign_expr_item(
                         item_span,
@@ -1036,14 +1013,26 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 
         if let Some(exports) = extract_webpack_export_getter_iife(&item, unresolved_mark) {
             converted_getter_map = true;
-            // IIFE getters already reject `default` entries, so no TDZ risk.
-            // Keep them in-place to preserve adjacency with their declarations
-            // for merge_decl_and_named_export.
-            new_body.extend(
-                exports.into_iter().map(|export| {
-                    make_exports_assign_expr_item(item_span, export, unresolved_mark)
-                }),
-            );
+            for (name, expr) in exports {
+                if name.as_ref() == "default" {
+                    // The getter map commonly precedes the declaration it
+                    // references. Keep default live and defer it past the
+                    // declarations just like the direct `require.d` form.
+                    deferred_default.push(make_deferred_webpack_default_export(
+                        item_span,
+                        expr,
+                        unresolved_mark,
+                    ));
+                } else {
+                    // Keep named assignments in place so the ordinary export
+                    // classifier can merge them with nearby declarations.
+                    new_body.push(make_exports_assign_expr_item(
+                        item_span,
+                        (name, expr),
+                        unresolved_mark,
+                    ));
+                }
+            }
             continue;
         }
 
@@ -1059,6 +1048,34 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
+}
+
+fn make_deferred_webpack_default_export(
+    span: Span,
+    expr: Box<Expr>,
+    unresolved_mark: Mark,
+) -> ModuleItem {
+    if let Expr::Ident(ident) = *expr {
+        // Webpack getter `() => ident` is a live accessor. Emit a live export
+        // specifier directly instead of routing through CJS classification,
+        // which would snapshot the binding.
+        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+            span,
+            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                span: DUMMY_SP,
+                orig: ModuleExportName::Ident(ident),
+                exported: Some(ModuleExportName::Ident(
+                    IdentName::new("default".into(), DUMMY_SP).into(),
+                )),
+                is_type_only: false,
+            })],
+            src: None,
+            type_only: false,
+            with: None,
+        }))
+    } else {
+        make_exports_assign_expr_item(span, ("default".into(), expr), unresolved_mark)
+    }
 }
 
 fn expose_unused_iife_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
@@ -1271,10 +1288,7 @@ fn extract_webpack_export_getter_iife(
     };
 
     let exports = extract_export_getter_map(getter_map)?;
-    if exports.is_empty() || exports.iter().any(|(name, _)| name.as_ref() == "default") {
-        return None;
-    }
-    Some(exports)
+    (!exports.is_empty()).then_some(exports)
 }
 
 fn extract_two_ident_params(arrow: &ArrowExpr) -> Option<(Ident, Ident)> {

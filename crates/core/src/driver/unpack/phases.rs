@@ -1282,6 +1282,90 @@ module.exports = provider.__esModule;
     }
 
     #[test]
+    fn getter_map_default_provider_supports_synthetic_default_import() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: r#"
+((target, getters) => {
+    for (const key in getters) {
+        Object.defineProperty(target, key, {
+            enumerable: true,
+            get: getters[key]
+        });
+    }
+})(exports, {
+    dim() { return dim; },
+    default() { return logger; }
+});
+function dim(value) { return value; }
+const logger = {
+    warn(value) { console.warn(value); }
+};
+"#
+                    .to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+var logger = require("./provider.js");
+module.exports = function(value) { return logger.warn(value); };
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        let output = unpack_multi_module(modules(), DecompileOptions::default())
+            .expect("getter-map default fixture should decompile");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let provider = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "provider.js")
+            .map(|module| module.code.as_str())
+            .expect("expected provider module");
+        assert!(
+            provider.contains("export { logger as default };")
+                && !provider.contains("Object.defineProperty"),
+            "the provider should expose the recovered live default:\n{provider}"
+        );
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import logger from \"./provider.js\";"),
+            "the proven provider default should satisfy the synthetic require:\n{consumer}"
+        );
+
+        let source_map_output = unpack_multi_module(
+            modules(),
+            DecompileOptions {
+                emit_source_map: true,
+                ..Default::default()
+            },
+        )
+        .expect("getter-map default should survive the source-map path");
+        assert_eq!(validate_prepared_output(&source_map_output), vec![]);
+        assert!(
+            source_map_output
+                .modules
+                .iter()
+                .all(|module| module.source_map.is_some()),
+            "getter-map default recovery must preserve emitted source maps"
+        );
+    }
+
+    #[test]
     fn substantive_namespace_use_still_blocks_named_import_recovery() {
         let modules = vec![
             UnpackedModule {
