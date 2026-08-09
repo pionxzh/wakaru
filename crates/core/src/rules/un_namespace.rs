@@ -61,7 +61,12 @@ fn build_namespace_block(stmt: &Stmt) -> Option<BlockStmt> {
     let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
 
     let init = namespace_initializer(call)?;
-    if body.stmts.is_empty()
+    // Moving the parameter binding into the same block as the initializer can
+    // create a lexical self-reference after SyntaxContext is erased by the
+    // printer: `(e => { e.x = 1 })(e || (e = {}))` must not become
+    // `const e = e || (e = {})`. Preserve the IIFE for this minified shape.
+    if namespace_alias_shadows_initializer(&binding, &init)
+        || body.stmts.is_empty()
         || !body
             .stmts
             .iter()
@@ -152,6 +157,18 @@ fn namespace_initializer(call: &CallExpr) -> Option<Box<Expr>> {
         return None;
     }
     Some(init)
+}
+
+fn namespace_alias_shadows_initializer(binding: &BindingIdent, init: &Expr) -> bool {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        ..
+    }) = strip_parens(init)
+    else {
+        return false;
+    };
+    matches!(strip_parens(left), Expr::Ident(read) if read.sym == binding.id.sym)
 }
 
 fn is_namespace_member_assignment(stmt: &Stmt, binding: &BindingId) -> bool {

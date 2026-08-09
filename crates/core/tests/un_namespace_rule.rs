@@ -189,6 +189,28 @@ let helpers;
 }
 
 #[test]
+fn preserves_function_namespace_iife_when_alias_would_shadow_initializer() {
+    let input = r#"
+let namespace;
+(function (namespace) {
+  namespace.value = makeValue();
+})(namespace || (namespace = {}));
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_arrow_namespace_iife_when_alias_would_shadow_initializer() {
+    let input = r#"
+let namespace;
+((namespace) => {
+  namespace.value = makeValue();
+})(namespace || (namespace = {}));
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn preserves_non_namespace_iife_argument() {
     let input = r#"
 let helpers;
