@@ -13,6 +13,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
+use super::decl_utils::collect_pat_names;
 use super::helper_matcher::{
     binding_key, count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
     remove_var_declarators_by_binding,
@@ -725,8 +726,11 @@ fn extract_async_to_gen_body_with_params(
             if fn_expr.function.is_generator {
                 return Some((params, fn_expr.function.body?.stmts, None));
             }
+            let reserved_names = binding_names_from_params(&params);
             let mut body = fn_expr.function.body?;
-            let mark_key = if let Some(mark_key) = try_transform_regenerator_wrap(&mut body) {
+            let mark_key = if let Some(mark_key) =
+                try_transform_regenerator_wrap_with_reserved(&mut body, &reserved_names)
+            {
                 mark_key
             } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
                 None
@@ -747,8 +751,11 @@ fn extract_async_to_gen_body_with_params(
                 return None;
             };
             let params = fn_expr.function.params.clone();
+            let reserved_names = binding_names_from_params(&params);
             let mut body = fn_expr.function.body?;
-            let mark_key = if let Some(mark_key) = try_transform_regenerator_wrap(&mut body) {
+            let mark_key = if let Some(mark_key) =
+                try_transform_regenerator_wrap_with_reserved(&mut body, &reserved_names)
+            {
                 mark_key
             } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
                 None
@@ -871,13 +878,15 @@ impl VisitMut for FunctionTransformer<'_> {
 
         func.visit_mut_children_with(self);
 
+        let reserved_names = binding_names_from_params(&func.params);
         let body = match func.body.as_mut() {
-            Some(b) => b,
+            Some(body) => body,
             None => return,
         };
 
         // Try regeneratorRuntime.wrap() transform
-        if let Some(mark_key) = try_transform_regenerator_wrap(body) {
+        if let Some(mark_key) = try_transform_regenerator_wrap_with_reserved(body, &reserved_names)
+        {
             func.is_generator = true;
             if let Some(key) = mark_key {
                 self.consumed_marks.push(key);
@@ -984,6 +993,14 @@ impl VisitMut for FunctionTransformer<'_> {
 
 /// Returns the consumed mark binding key (sym + ctxt) on success.
 fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<BindingKey>> {
+    try_transform_regenerator_wrap_with_reserved(body, &HashSet::new())
+}
+
+fn try_transform_regenerator_wrap_with_reserved(
+    body: &mut BlockStmt,
+    reserved_names: &HashSet<Atom>,
+) -> Option<Option<BindingKey>> {
+    let mut outer_names = reserved_names.clone();
     let return_idx = body.stmts.iter().position(is_regenerator_wrap_return)?;
 
     // P1-1: Pre-check for nested control flow before extracting.
@@ -995,9 +1012,34 @@ fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<Binding
     let mark_name = extract_wrap_mark_key(&body.stmts[return_idx]);
 
     let ret_stmt = body.stmts[return_idx].clone();
-    let (state_name, cases, try_regions) = extract_wrap_args(ret_stmt)?;
+    let (state_name, cases, try_regions, hoisted_locals) = extract_wrap_args(ret_stmt)?;
 
-    let new_stmts = decode_babel_state_machine(&state_name, cases, try_regions);
+    let mut name_collector = IdentifierNameCollector::default();
+    for (idx, stmt) in body.stmts.iter().enumerate() {
+        if idx != return_idx {
+            stmt.visit_with(&mut name_collector);
+        }
+    }
+    outer_names.extend(name_collector.names);
+    if let Some(mark_key) = &mark_name {
+        outer_names.insert(mark_key.0.clone());
+    }
+
+    let mut local_names = HashSet::new();
+    for stmt in &hoisted_locals {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            unreachable!("state-machine locals are restricted to var declarations")
+        };
+        for decl in &var.decls {
+            collect_pat_names(&decl.name, &mut local_names);
+        }
+    }
+    if local_names.iter().any(|name| outer_names.contains(name)) {
+        return None;
+    }
+
+    let mut new_stmts = hoisted_locals;
+    new_stmts.extend(decode_babel_state_machine(&state_name, cases, try_regions));
     // Safety net: if a forward conditional jump could not be structured, an
     // opcode goto (`return [3, N]`) leaks into the output. Rather than emit
     // broken control flow, leave the function un-recovered.
@@ -1007,6 +1049,25 @@ fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<Binding
     body.stmts.remove(return_idx);
     body.stmts.splice(return_idx..return_idx, new_stmts);
     Some(mark_name)
+}
+
+fn binding_names_from_params(params: &[Param]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for param in params {
+        collect_pat_names(&param.pat, &mut names);
+    }
+    names
+}
+
+#[derive(Default)]
+struct IdentifierNameCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for IdentifierNameCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.insert(ident.sym.clone());
+    }
 }
 
 /// Extract the mark binding key (sym + ctxt) from the 2nd argument of .wrap(fn, markIdent, ...)
@@ -1369,7 +1430,9 @@ fn is_state_switch_discriminant(expr: &Expr, param_name: &Atom) -> bool {
     is_ident_with_name(&right_member.obj, param_name) && is_next_prop(&right_member.prop)
 }
 
-fn extract_wrap_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>, Vec<[Option<usize>; 4]>)> {
+fn extract_wrap_args(
+    stmt: Stmt,
+) -> Option<(Atom, Vec<SwitchCase>, Vec<[Option<usize>; 4]>, Vec<Stmt>)> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
     let Expr::Call(call) = arg else { return None };
@@ -1386,8 +1449,8 @@ fn extract_wrap_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>, Vec<[Option<u
 
     let try_regions = extract_wrap_try_regions_from_call(&call);
     let fn_arg = *call.args.into_iter().next()?.expr;
-    let (state_name, cases) = extract_state_machine_parts(fn_arg)?;
-    Some((state_name, cases, try_regions))
+    let (state_name, cases, hoisted_locals) = extract_state_machine_parts(fn_arg)?;
+    Some((state_name, cases, try_regions, hoisted_locals))
 }
 
 fn extract_wrap_try_regions_from_call(
@@ -1428,7 +1491,7 @@ fn parse_try_region_array(arr: &ArrayLit) -> Option<[Option<usize>; 4]> {
     Some(region)
 }
 
-fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>)> {
+fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>, Vec<Stmt>)> {
     match expr {
         Expr::Fn(fn_expr) => {
             let param_name = match &fn_expr.function.params.first()?.pat {
@@ -1436,8 +1499,8 @@ fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>)> {
                 _ => return None,
             };
             let body = fn_expr.function.body?;
-            let cases = extract_switch_cases_from_body(body)?;
-            Some((param_name, cases))
+            let (cases, hoisted_locals) = extract_switch_cases_from_body(body)?;
+            Some((param_name, cases, hoisted_locals))
         }
         Expr::Arrow(arrow) => {
             let param_name = match &arrow.params.first()? {
@@ -1448,31 +1511,46 @@ fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>)> {
                 swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(b) => b,
                 _ => return None,
             };
-            let cases = extract_switch_cases_from_body(body)?;
-            Some((param_name, cases))
+            let (cases, hoisted_locals) = extract_switch_cases_from_body(body)?;
+            Some((param_name, cases, hoisted_locals))
         }
         _ => None,
     }
 }
 
-fn extract_switch_cases_from_body(body: BlockStmt) -> Option<Vec<SwitchCase>> {
-    // Find the while(true) or for(;;) loop, then the switch inside
+fn extract_switch_cases_from_body(body: BlockStmt) -> Option<(Vec<SwitchCase>, Vec<Stmt>)> {
+    // The state callback may carry trailing uninitialized `var` declarations.
+    // They are runtime no-ops but their bindings scope assignments in the
+    // switch, so preserve them when the callback is folded into the recovered
+    // generator. Any other sibling statement has observable execution timing;
+    // fail closed instead of silently dropping it.
+    let mut cases = None;
+    let mut hoisted_locals = Vec::new();
     for stmt in body.stmts {
         match stmt {
             Stmt::While(while_stmt) => {
-                if let Some(cases) = switch_cases_from_loop_body(*while_stmt.body) {
-                    return Some(cases);
+                let found = switch_cases_from_loop_body(*while_stmt.body)?;
+                if cases.replace(found).is_some() {
+                    return None;
                 }
             }
             Stmt::For(for_stmt) => {
-                if let Some(cases) = switch_cases_from_loop_body(*for_stmt.body) {
-                    return Some(cases);
+                let found = switch_cases_from_loop_body(*for_stmt.body)?;
+                if cases.replace(found).is_some() {
+                    return None;
                 }
             }
-            _ => {}
+            Stmt::Decl(Decl::Var(var))
+                if var.kind == swc_core::ecma::ast::VarDeclKind::Var
+                    && var.decls.iter().all(|decl| decl.init.is_none()) =>
+            {
+                hoisted_locals.push(Stmt::Decl(Decl::Var(var)));
+            }
+            Stmt::Empty(_) => {}
+            _ => return None,
         }
     }
-    None
+    Some((cases?, hoisted_locals))
 }
 
 fn switch_cases_from_loop_body(stmt: Stmt) -> Option<Vec<SwitchCase>> {
@@ -3771,8 +3849,11 @@ fn build_async_fn_expr_from_gen_arg(
             let mark_key = if function.is_generator {
                 None
             } else {
+                let reserved_names = binding_names_from_params(&function.params);
                 let body = function.body.as_mut()?;
-                if let Some(mark_key) = try_transform_regenerator_wrap(body) {
+                if let Some(mark_key) =
+                    try_transform_regenerator_wrap_with_reserved(body, &reserved_names)
+                {
                     mark_key
                 } else if try_transform_ts_generator_body(body, generator_helpers) {
                     None
@@ -3803,8 +3884,11 @@ fn build_async_fn_expr_from_gen_arg(
             let mark_key = if function.is_generator {
                 None
             } else {
+                let reserved_names = binding_names_from_params(&function.params);
                 let body = function.body.as_mut()?;
-                if let Some(mark_key) = try_transform_regenerator_wrap(body) {
+                if let Some(mark_key) =
+                    try_transform_regenerator_wrap_with_reserved(body, &reserved_names)
+                {
                     mark_key
                 } else if try_transform_ts_generator_body(body, generator_helpers) {
                     None

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_between, render_rule};
 use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::UnRegenerator;
 
@@ -130,6 +130,74 @@ function* myGen() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_preserves_hoisted_locals_declared_after_state_loop() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(loadValue);
+function loadValue() {
+  return regeneratorRuntime.wrap(function(_context) {
+    while (true) {
+      switch (_context.prev = _context.next) {
+        case 0:
+          localValue = createValue();
+          return _context.abrupt("return", localValue);
+        case 2:
+        case "end":
+          return _context.stop();
+      }
+    }
+    var localValue;
+  }, _marked, this);
+}
+"#;
+    let expected = r#"
+function* loadValue() {
+  var localValue;
+  localValue = createValue();
+  return localValue;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+
+    let pipeline_output = render_pipeline_between(input, "UnRegenerator", "VarDeclToLetConst");
+    assert!(
+        pipeline_output.contains("let localValue;"),
+        "the recovered local is written and must not become const:\n{pipeline_output}"
+    );
+    assert!(
+        !pipeline_output.contains("const localValue"),
+        "the recovered local must not be misclassified as immutable:\n{pipeline_output}"
+    );
+}
+
+#[test]
+fn generator_with_colliding_callback_local_is_left_unchanged() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(loadValue);
+function loadValue(localValue) {
+  return regeneratorRuntime.wrap(function(_context) {
+    while (true) {
+      switch (_context.prev = _context.next) {
+        case 0:
+          localValue = createValue();
+          return _context.abrupt("return", localValue);
+        case 2:
+        case "end":
+          return _context.stop();
+      }
+    }
+    var localValue;
+  }, _marked, this);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("regeneratorRuntime.wrap"),
+        "a callback local that collides with the destination function scope must fail closed:\n{output}"
+    );
 }
 
 #[test]
