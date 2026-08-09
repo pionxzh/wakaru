@@ -36,6 +36,11 @@ pub(super) struct MultiSourceModule {
     /// normalized factory has no statement that can carry that runtime value
     /// into ESM recovery, so normal processing restores it explicitly.
     implicit_commonjs_default_object: bool,
+    /// The module retains the exact identity of a structurally extracted
+    /// webpack factory. Normal processing may therefore rely on webpack's
+    /// initialized `module` / `exports` runtime bindings; raw output remains
+    /// detector passthrough.
+    webpack_commonjs_runtime: bool,
     allow_cross_chunk_rewrite: bool,
     report_import_cycle_warnings: bool,
     chunk_ids: Arc<HashSet<usize>>,
@@ -94,6 +99,7 @@ impl MultiSourceModule {
             module,
             prepared,
             implicit_commonjs_default_object: false,
+            webpack_commonjs_runtime: false,
             allow_cross_chunk_rewrite: true,
             report_import_cycle_warnings,
             chunk_ids: chunk_ids.into(),
@@ -108,6 +114,11 @@ impl MultiSourceModule {
         self
     }
 
+    pub(super) fn with_webpack_commonjs_runtime(mut self, enabled: bool) -> Self {
+        self.webpack_commonjs_runtime = enabled;
+        self
+    }
+
     pub(super) fn fallback_with_ast_from_input(
         module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
@@ -117,6 +128,7 @@ impl MultiSourceModule {
             module,
             prepared,
             implicit_commonjs_default_object: false,
+            webpack_commonjs_runtime: false,
             allow_cross_chunk_rewrite: false,
             report_import_cycle_warnings: false,
             chunk_ids: Arc::default(),
@@ -131,6 +143,7 @@ pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
     pub(super) implicit_commonjs_default_object: bool,
+    pub(super) webpack_commonjs_runtime: bool,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
@@ -145,6 +158,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             implicit_commonjs_default_object: false,
+            webpack_commonjs_runtime: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
@@ -162,6 +176,7 @@ impl PreparedUnpackModule {
             module,
             prepared: None,
             implicit_commonjs_default_object: false,
+            webpack_commonjs_runtime: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
@@ -280,6 +295,7 @@ pub(super) fn prepare_multi_source_modules(
                 module: module.module,
                 prepared: module.prepared,
                 implicit_commonjs_default_object: module.implicit_commonjs_default_object,
+                webpack_commonjs_runtime: module.webpack_commonjs_runtime,
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,

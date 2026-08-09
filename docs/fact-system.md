@@ -40,7 +40,8 @@ them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
 ```
 Phase 1 (per module, parallel):
     obtain resolved AST (prepared detector AST, or parse → resolver)
-    collect raw CommonJS default-object identity         ← narrow pre-UnEsm fact
+    normalize exact detector-proven webpack runtime branches
+    collect raw CommonJS default-object / callable-property facts
     rule range through UnEsm
     clone barrier AST → recover webpack factory IIFE ESM shapes
     collect_module_facts(&facts_clone)                ← pure AST → facts
@@ -105,6 +106,16 @@ factory body is empty. That synthetic statement passes through the ordinary
 `UnEsm` path, while `--raw` keeps the detector's empty-body passthrough
 unchanged. Non-empty factories are not generalized from this narrow runtime
 fact.
+
+The same detector-owned boundary permits a normal-only webpack runtime
+normalizer for two exact inner-UMD expressions whose CommonJS branch is
+provable only because webpack initializes every factory's `module.exports`.
+It selects a truthy `module.exports` arm, or recovers an undefined-guarded
+`factory.apply(exports, [])` assignment only when the immediate factory returns
+a stable, non-reassigned function binding. The module shell must be exact,
+exactly one rewrite must match, and no unresolved CommonJS runtime references
+may remain. Synthetic children from recursive splitting do not inherit the
+proof; `--raw` remains detector passthrough.
 
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime

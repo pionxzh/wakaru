@@ -1,6 +1,6 @@
 use std::fs;
 
-use wakaru_core::driver::test_support::unpack;
+use wakaru_core::driver::test_support::{unpack, unpack_raw};
 use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn fixture(path: &str) -> String {
@@ -9,11 +9,16 @@ fn fixture(path: &str) -> String {
 }
 
 fn unpack_fixture(path: &str) -> Vec<(String, String)> {
+    unpack_fixture_with_options(path, false)
+}
+
+fn unpack_fixture_with_options(path: &str, emit_source_map: bool) -> Vec<(String, String)> {
     let source = fixture(path);
     let output = unpack(
         &source,
         DecompileOptions {
             filename: path.to_string(),
+            emit_source_map,
             ..Default::default()
         },
     )
@@ -137,6 +142,11 @@ fn wp4_cjs_min() {
         filenames(&pairs).join(", ")
     );
     assert_has_entry(&pairs, "wp4-cjs-min");
+}
+
+#[test]
+fn wp4_inner_umd_commonjs_branches_recover_defaults() {
+    assert_inner_umd_defaults("wp4-inner-umd-min/bundle.js");
 }
 
 #[test]
@@ -330,6 +340,62 @@ fn wp5_cjs_min() {
         pairs.len(),
         filenames(&pairs).join(", ")
     );
+}
+
+#[test]
+fn wp5_inner_umd_commonjs_branches_recover_defaults() {
+    assert_inner_umd_defaults("wp5-inner-umd-min/bundle.js");
+}
+
+fn assert_inner_umd_defaults(path: &str) {
+    let source = fixture(path);
+    let raw = unpack_raw(
+        &source,
+        &DecompileOptions {
+            filename: path.to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|_| panic!("raw unpack should succeed for {path}"));
+    assert_eq!(raw.modules.len(), 3, "{path}: raw detector output changed");
+    assert!(
+        raw.modules
+            .iter()
+            .any(|(_, code)| code.contains("syntheticChoose") && code.contains("module.exports")),
+        "{path}: raw output should preserve the truthy UMD expression"
+    );
+    assert!(
+        raw.modules.iter().any(|(_, code)| {
+            code.contains(".apply(exports") && code.contains("module.exports")
+        }),
+        "{path}: raw output should preserve the undefined-guarded UMD expression"
+    );
+
+    for emit_source_map in [false, true] {
+        let pairs = unpack_fixture_with_options(path, emit_source_map);
+        assert_eq!(pairs.len(), 3, "{path}: {}", filenames(&pairs).join(", "));
+        assert_eq!(
+            validate_output_modules(&pairs),
+            vec![],
+            "webpack's initialized CommonJS runtime should make both inner UMD defaults recoverable"
+        );
+
+        let providers = pairs
+            .iter()
+            .filter(|(_, code)| code.contains("export default"))
+            .map(|(filename, code)| (filename.as_str(), code.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(providers.len(), 3, "{path}: {providers:#?}");
+        for (provider, code) in providers {
+            if code.contains("chosen:") {
+                continue;
+            }
+            assert!(
+                code.contains("export default") && !code.contains("module.exports"),
+                "{provider} should expose its proven CommonJS value:\n{code}"
+            );
+        }
+    }
 }
 
 #[test]

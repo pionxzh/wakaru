@@ -32,6 +32,7 @@ use super::filename_recovery::{
 use super::merge::{
     apply_filename_rewrites, apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule,
 };
+use super::webpack_commonjs_runtime::normalize_webpack_commonjs_runtime;
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{
     collect_commonjs_default_attached_properties, collect_commonjs_default_object,
@@ -292,6 +293,11 @@ pub(super) fn unpack_multi_module_with_plan(
                 unresolved_mark,
                 unpacked.numeric_rewrite.as_ref(),
                 &numeric_rewrite_plan,
+            );
+            normalize_webpack_commonjs_runtime(
+                &mut module,
+                unresolved_mark,
+                unpacked.webpack_commonjs_runtime,
             );
             let commonjs_default_object =
                 collect_commonjs_default_object(&module, unresolved_mark);
@@ -621,6 +627,11 @@ pub(super) fn unpack_multi_module_with_plan(
                     unresolved_mark,
                     unpacked.numeric_rewrite.as_ref(),
                     &numeric_rewrite_plan,
+                );
+                normalize_webpack_commonjs_runtime(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.webpack_commonjs_runtime,
                 );
 
                 // Through-UnEsm range.

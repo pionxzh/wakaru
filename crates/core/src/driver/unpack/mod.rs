@@ -29,6 +29,7 @@ mod filename_recovery;
 mod merge;
 mod phases;
 mod scope_split;
+mod webpack_commonjs_runtime;
 
 use merge::{
     emit_raw_modules_with_numeric_rewrites, input_group_for_filename, prepare_multi_source_modules,
@@ -469,6 +470,20 @@ pub fn unpack_prepared_inputs_with_policy(
                     } else {
                         HashSet::new()
                     };
+                // Keep this proof on modules whose original detector identity
+                // survives optional recursive splitting. Synthetic children do
+                // not automatically inherit a webpack factory runtime.
+                let webpack_commonjs_runtime_modules =
+                    if matches!(format, BundleFormat::Webpack4 | BundleFormat::Webpack5) {
+                        detected
+                            .result
+                            .modules
+                            .iter()
+                            .map(|module| (module.id.clone(), module.filename.clone()))
+                            .collect::<HashSet<_>>()
+                    } else {
+                        HashSet::new()
+                    };
                 let detected = if raw {
                     let result = detected.materialize()?;
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
@@ -496,6 +511,8 @@ pub fn unpack_prepared_inputs_with_policy(
                             let implicit_commonjs_default_object =
                                 implicit_commonjs_default_objects
                                     .contains(&(module.id.clone(), module.filename.clone()));
+                            let webpack_commonjs_runtime = webpack_commonjs_runtime_modules
+                                .contains(&(module.id.clone(), module.filename.clone()));
                             MultiSourceModule::detected_with_ast_from_input(
                                 module,
                                 ast,
@@ -506,6 +523,7 @@ pub fn unpack_prepared_inputs_with_policy(
                                 report_import_cycle_warnings,
                             )
                             .with_implicit_commonjs_default_object(implicit_commonjs_default_object)
+                            .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
                         }),
                 );
             }

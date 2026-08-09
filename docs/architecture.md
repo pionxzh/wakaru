@@ -193,9 +193,11 @@ boundary as source-only payloads; there is no format-specific rule route.
 Bundler-specific extraction normalization (factory parameter renaming,
 dependency-map or module-ID rewriting, and runtime helper removal) remains in
 the relevant unpacker because those transforms are tightly coupled to the
-bundle format. Webpack5 and Metro can hand their normalized ASTs directly to
-Phase 1, avoiding an emit/parse cycle; raw unpack and source-map mode
-materialize the sidecar to source text.
+bundle format. Detector-owned metadata can additionally carry a narrowly
+proven runtime invariant into the normal driver when applying it during
+extraction would violate raw passthrough. Webpack5 and Metro can hand their
+normalized ASTs directly to Phase 1, avoiding an emit/parse cycle; raw unpack
+and source-map mode materialize the sidecar to source text.
 
 Development builds are a non-goal. Wakaru targets shipped, production
 bundles; artifacts that only appear in dev-mode output — such as webpack's
@@ -415,7 +417,8 @@ When unpacking bundles, the driver runs a two-phase pipeline:
 
 1. **Phase 1 (parallel):** Obtain a resolved module AST. Source-only detector
    output is parsed and resolved here; webpack5 can hand off its already
-   resolved, bundler-normalized AST directly. Run the rule registry through
+   resolved, bundler-normalized AST directly. Apply exact normal-only rewrites
+   backed by detector-owned runtime facts, then run the rule registry through
    `UnEsm`, clone that barrier AST for webpack factory-IIFE fact recovery, and
    extract import/export facts. Retain the pre-recovery AST together with its
    `Globals` and unresolved mark.
@@ -424,7 +427,14 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    recovery) → run the registry range resuming after `UnEsm`, through `UnReturn` →
    targeted late cleanup/recovery → emit.
 
-The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., repairing a proven CommonJS default-object property edge, converting `ns.foo` to `import { foo }`, or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/provider_import_repair.rs`, `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
+The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g.,
+repairing a proven CommonJS object or callable-property edge, converting
+`ns.foo` to `import { foo }`, or recognizing a split helper module). Facts are
+extracted in `crates/core/src/facts.rs` and consumed by
+`crates/core/src/provider_import_repair.rs`,
+`crates/core/src/namespace_decomposition.rs`,
+`crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See
+[fact-system.md](fact-system.md) for details.
 
 Normal no-source-map unpack runs the through-`UnEsm` range once and carries the
 same `Globals`/`SyntaxContext` lineage across the barrier. If Phase 1 cannot

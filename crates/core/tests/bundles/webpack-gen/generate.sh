@@ -52,6 +52,9 @@ npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-dynamic-min.co
 echo "  wp4-var-inject:    Var injection (.call(this, require(global.js)))"
 npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-var-inject.config.cjs 2>/dev/null
 
+echo "  wp4-inner-umd-min: Inner CommonJS modules with UMD export branches"
+npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-inner-umd-min.config.cjs 2>/dev/null
+
 echo ""
 echo "=== Webpack 5 ==="
 
@@ -112,6 +115,9 @@ webpack5_5_109 --config webpack5-array.config.cjs 2>/dev/null
 
 echo "  wp5-require-mutation-min: Entry mutates the raw require binding around startup (5.109.0)"
 webpack5_5_109 --config webpack5-require-mutation-min.config.cjs 2>/dev/null
+
+echo "  wp5-inner-umd-min: Inner CommonJS modules with UMD export branches (5.109.0)"
+webpack5_5_109 --config webpack5-inner-umd-min.config.cjs 2>/dev/null
 
 echo ""
 echo "=== Vercel ncc (0.44.1) ==="
