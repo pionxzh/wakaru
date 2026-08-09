@@ -5,7 +5,7 @@ use common::{
 };
 use wakaru_core::{
     format_trace_events, trace_rules, DecompileOptions, RewriteLevel, RuleTraceEvent,
-    RuleTraceOptions,
+    RuleTraceOptions, UnpackWarningKind,
 };
 
 // ============================================================
@@ -109,6 +109,51 @@ fn pipeline_between_single_rule() {
         result.contains("var "),
         "VarDeclToLetConst should not have run, got: {}",
         result
+    );
+}
+
+#[test]
+fn diagnostics_resolve_smart_rename_output_before_tdz_check() {
+    let input = r#"
+const api = {
+  visit: function (v) {
+    for (var queue = [{ entry: v }], index = 0; index < queue.length; index++) {
+      var entry = queue[index].entry;
+      consume(entry);
+    }
+  },
+};
+"#;
+    let expected = r#"
+const api = {
+  visit(entry) {
+    for (let queue = [{ entry }], index = 0; index < queue.length; index++) {
+      const entry = queue[index].entry;
+      consume(entry);
+    }
+  },
+};
+"#;
+
+    assert_eq_normalized(
+        &render_pipeline_between(input, "VarDeclToLetConst", "SmartRename"),
+        expected,
+    );
+    let output = wakaru_core::decompile(
+        input,
+        DecompileOptions {
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("fixture should decompile");
+    assert!(
+        output
+            .warnings
+            .iter()
+            .all(|warning| warning.kind != UnpackWarningKind::TdzViolation),
+        "diagnostics must use the binding identities in emitted output: {:?}",
+        output.warnings
     );
 }
 

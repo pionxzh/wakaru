@@ -11,10 +11,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
-use super::super::diagnostics::{
-    collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
-    verify_output_parses,
-};
+use super::super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
     print_js_with_srcmap,
@@ -508,14 +505,6 @@ pub(super) fn unpack_multi_module_with_plan(
             drop(rules_span);
 
             let mut diag_warnings = input_parse_warnings;
-            if options.diagnostics {
-                let warnings = &mut diag_warnings;
-                warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
-                warnings.extend(collect_duplicate_declaration_warnings(
-                    &module,
-                    &unpacked.module.filename,
-                ));
-            }
 
             // Final, isolated remap: rewrite import-source strings that point
             // at modules renamed via recovered filenames. Runs after every
@@ -575,7 +564,7 @@ pub(super) fn unpack_multi_module_with_plan(
             };
 
             if options.diagnostics {
-                diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
+                diag_warnings.extend(collect_output_diagnostics(&code, &unpacked.module.filename));
             }
 
             Ok((code, srcmap_json, diag_warnings, report))

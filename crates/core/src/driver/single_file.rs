@@ -3,10 +3,7 @@ use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 
-use super::diagnostics::{
-    collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
-    verify_output_parses,
-};
+use super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::error::DriverErrorKind;
 use super::io::{
     apply_fixer, build_output_sourcemap, parse_js_with_recovery_owned, print_js,
@@ -79,13 +76,6 @@ pub fn decompile_owned(
         }
 
         let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
-        if options.diagnostics {
-            warnings.extend(collect_tdz_warnings(&module, &options.filename));
-            warnings.extend(collect_duplicate_declaration_warnings(
-                &module,
-                &options.filename,
-            ));
-        }
 
         {
             let span = tracing::info_span!("fixer");
@@ -112,7 +102,7 @@ pub fn decompile_owned(
         };
 
         if options.diagnostics {
-            warnings.extend(verify_output_parses(&code, &options.filename));
+            warnings.extend(collect_output_diagnostics(&code, &options.filename));
         }
 
         Ok(DecompileOutput {

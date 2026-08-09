@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use swc_core::common::{sync::Lrc, BytePos, FileName, LineCol, SourceMap, Spanned};
-use swc_core::ecma::ast::Module;
+use swc_core::ecma::ast::{Module, ModuleItem};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 
@@ -95,7 +95,7 @@ pub(super) fn parse_script_with_recovery(
     source: &str,
     filename: &str,
     cm: Lrc<SourceMap>,
-) -> Result<Vec<ParseDiagnostic>> {
+) -> Result<ParsedModule> {
     let syntax = detect_syntax(filename);
     let fm = cm.new_source_file(
         FileName::Custom(filename.to_string()).into(),
@@ -123,7 +123,14 @@ pub(super) fn parse_script_with_recovery(
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(_), _) => Ok(parser_errors),
+        (Ok(script), _) => Ok(ParsedModule {
+            module: Module {
+                span: script.span,
+                body: script.body.into_iter().map(ModuleItem::Stmt).collect(),
+                shebang: script.shebang,
+            },
+            recoverable_errors: parser_errors,
+        }),
         (Err(error), true) => Err(anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow!(
             "failed to parse {filename}: {error:?}; {}",

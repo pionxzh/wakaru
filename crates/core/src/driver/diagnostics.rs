@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
     BindingIdent, ClassDecl, ForInStmt, ForOfStmt, ForStmt, ImportDecl, ImportSpecifier,
     ModuleItem, ObjectPatProp, Pat, VarDecl, VarDeclKind,
 };
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 use super::io::{parse_js_with_recovery, parse_script_with_recovery, ParseDiagnostic};
 use super::types::{UnpackWarning, UnpackWarningKind};
@@ -180,11 +181,17 @@ impl Visit for DuplicateDeclarationCollector {
     }
 }
 
-pub(super) fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarning> {
+/// Validate the text users receive, then resolve that emitted program from
+/// scratch before running identity-sensitive diagnostics. Transform rules can
+/// legally change lexical scope without rebuilding every pre-transform
+/// `SyntaxContext`; those internal contexts must not become user warnings.
+pub(super) fn collect_output_diagnostics(code: &str, filename: &str) -> Vec<UnpackWarning> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         match parse_js_with_recovery(code, filename, cm) {
-            Ok(parsed) if parsed.recoverable_errors.is_empty() => Vec::new(),
+            Ok(parsed) if parsed.recoverable_errors.is_empty() => {
+                collect_resolved_output_warnings(parsed.module, filename)
+            }
             Ok(parsed)
                 if parsed
                     .module
@@ -195,12 +202,18 @@ pub(super) fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarn
                 output_parse_warnings(parsed.recoverable_errors, filename)
             }
             Ok(parsed) => match parse_script_with_recovery(code, filename, Default::default()) {
-                Ok(errors) => output_parse_warnings(errors, filename),
+                Ok(script) if script.recoverable_errors.is_empty() => {
+                    collect_resolved_output_warnings(script.module, filename)
+                }
+                Ok(script) => output_parse_warnings(script.recoverable_errors, filename),
                 Err(_) => output_parse_warnings(parsed.recoverable_errors, filename),
             },
             Err(module_error) => {
                 match parse_script_with_recovery(code, filename, Default::default()) {
-                    Ok(errors) => output_parse_warnings(errors, filename),
+                    Ok(script) if script.recoverable_errors.is_empty() => {
+                        collect_resolved_output_warnings(script.module, filename)
+                    }
+                    Ok(script) => output_parse_warnings(script.recoverable_errors, filename),
                     Err(_) => vec![UnpackWarning::new(
                         filename,
                         UnpackWarningKind::OutputParseFailed,
@@ -210,6 +223,19 @@ pub(super) fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarn
             }
         }
     })
+}
+
+fn collect_resolved_output_warnings(
+    mut module: swc_core::ecma::ast::Module,
+    filename: &str,
+) -> Vec<UnpackWarning> {
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+    let mut warnings = collect_tdz_warnings(&module, filename);
+    warnings.extend(collect_duplicate_declaration_warnings(&module, filename));
+    warnings
 }
 
 fn output_parse_warnings(errors: Vec<ParseDiagnostic>, filename: &str) -> Vec<UnpackWarning> {
