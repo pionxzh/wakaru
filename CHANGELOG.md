@@ -1,5 +1,76 @@
 # Changelog
 
+## [1.9.0](https://github.com/pionxzh/wakaru/compare/v1.8.0...v1.9.0) (2026-08-09)
+
+### Features
+
+* **core:** add emitted-module graph validator ([bd17204f](https://github.com/pionxzh/wakaru/commit/bd17204f4d2dead9514421b0cb1fa4ced0dfa205))
+* **bun:** support older standalone records ([bb9415cd](https://github.com/pionxzh/wakaru/commit/bb9415cd62029b925c453ac09fb4c46f6da7debc))
+* **cli:** extract Bun standalone assets ([4edf6deb](https://github.com/pionxzh/wakaru/commit/4edf6deb9de4a484ad20135f29e78107d43305e6))
+* **npm:** add bare 'wakaru' alias package delegating to @wakaru/cli ([aa48e989](https://github.com/pionxzh/wakaru/commit/aa48e989d709e385b2a7c0e10dff444ca2e9726b))
+* **site:** add Vercel Web Analytics script tag ([e4584115](https://github.com/pionxzh/wakaru/commit/e45841152f3e2e72433c9db489430fa71ab447d5))
+* unpack Bun standalone executables ([26928ac1](https://github.com/pionxzh/wakaru/commit/26928ac19cb56a1acfaef0a219a49f14d0345098))
+* **playground:** add compiler round-trip demo ([920095dc](https://github.com/pionxzh/wakaru/commit/920095dc32d24b88bd2033ec718f5a2fba247d59))
+* **unpack:** recover webpack5 inline entry without exports anchor ([df32ff40](https://github.com/pionxzh/wakaru/commit/df32ff40e56c980778e4c54f6b32b7f2fcf373c5))
+* **unpack:** detect webpack5 bundles without an IIFE wrapper ([cf64fcee](https://github.com/pionxzh/wakaru/commit/cf64fcee5d2480ac36b379cb92cfd2240d984fa3))
+* **unpack:** extract webpack5 inline startup as entry module ([bae58b56](https://github.com/pionxzh/wakaru/commit/bae58b5648c5a584d67b139bf67d54753f276d99))
+* **unpack:** support array-form webpack5 module containers ([1a840606](https://github.com/pionxzh/wakaru/commit/1a8406069e3436f5adeb36d799ada234b4cbbfcf))
+* **unpack:** add inspection profile ([6dca3490](https://github.com/pionxzh/wakaru/commit/6dca349085cce3522245f8f16c4137e7ed8c9ea9))
+* **rules:** recover Closure Compiler patterns ([3074b76c](https://github.com/pionxzh/wakaru/commit/3074b76c5644ce8caf0112394c8c57ab61c65f6a))
+* implement compiler-style public API ([b8b6501a](https://github.com/pionxzh/wakaru/commit/b8b6501a0b7ac3ec31438bc7d8d11dee0b27e81c))
+
+### Bug Fixes
+
+* **rules:** block class recovery on evaluated export initializers ([7aa42430](https://github.com/pionxzh/wakaru/commit/7aa4243008f477577e2812499f3e9466b726e5fa))
+* **rules:** preserve mixed for-of declaration kinds ([e4725561](https://github.com/pionxzh/wakaru/commit/e4725561b04e31f383f78716518cd1d57fe34ba9))
+* **rules:** preserve default-exported constructor hoisting ([eed97eb6](https://github.com/pionxzh/wakaru/commit/eed97eb623f1ffd5d0506dc29f8ba4c3d475523f))
+* **rules:** preserve reused var class bindings ([43614c53](https://github.com/pionxzh/wakaru/commit/43614c53b9b7427a33048d6e3955e525f37cadc4))
+* **rules:** preserve dynamic prototype key order ([11f25aa3](https://github.com/pionxzh/wakaru/commit/11f25aa350f232939c339bcec4a7b8eda28f0a18))
+* **rules:** keep later-param patterns in body ([9ff7035c](https://github.com/pionxzh/wakaru/commit/9ff7035c9cded8742a847ef946ecd5d9876d93ca))
+* **rules:** preserve mutable export aliases ([e5b12ce8](https://github.com/pionxzh/wakaru/commit/e5b12ce8e9d0c58e484e252d2669a7d4be67d4b6))
+* **scope-hoist:** fold unreachable effectful clusters into the entry ([8a0fc5a9](https://github.com/pionxzh/wakaru/commit/8a0fc5a92418245f78649de92c88a7992dcec681))
+* **scope-hoist:** keep bare top-level statements in the executable entry ([545ad270](https://github.com/pionxzh/wakaru/commit/545ad2708dcd96364e463efc752413bfc8824bf1))
+* **core:** preserve plain input public paths so sibling imports resolve ([948946af](https://github.com/pionxzh/wakaru/commit/948946aff1b3e09e72a7920d0b82002bb3b02f91))
+* **rules:** block export renames that lowercase JSX component tags ([62aff9f4](https://github.com/pionxzh/wakaru/commit/62aff9f48f0599d3c79442b3ade43aede002ce61))
+* **rules:** keep capitalized JSX aliases through UnImportRename ([e1350589](https://github.com/pionxzh/wakaru/commit/e1350589816d73ed5ee130cb770108b050392ce8))
+* **rules:** narrow export-rename audit to declaration exports ([07a39a4c](https://github.com/pionxzh/wakaru/commit/07a39a4c75da35aedf0221a76a56e7461856f56b))
+* **core:** preserve processed input public paths ([e655e31d](https://github.com/pionxzh/wakaru/commit/e655e31de6f7b6f64d32ad8324b21bfb9b3fffa8))
+* **scope-hoist:** repartition pathological entry cycles ([e9179f01](https://github.com/pionxzh/wakaru/commit/e9179f010adcd5cf9e443154a88f47aafdc9365b))
+* **rules:** preserve directly exported rename bindings ([77f49411](https://github.com/pionxzh/wakaru/commit/77f49411a182eb7eb890247c5d21c13a95c626bb))
+* **rules:** bail class conversion on duplicate sloppy-mode params ([2a3e3426](https://github.com/pionxzh/wakaru/commit/2a3e342615fd5a0936a77da89870836e8128b69c))
+* **core:** preserve aliases when JSX renames bindings ([b6131111](https://github.com/pionxzh/wakaru/commit/b61311115de913eab195e4aa2f017a6fdd9fd735))
+* **core:** preserve minified webpack entry loader ([ac9c3dfc](https://github.com/pionxzh/wakaru/commit/ac9c3dfcb7a2c9ed300b3c6ce137feecfa9ad8b3))
+* **core:** rewrite imports after output filename dedup ([1e31dc87](https://github.com/pionxzh/wakaru/commit/1e31dc878a54278f23c1fa48c37a5cfdae0da85b))
+* **core:** keep scope-hoist writers with their bindings ([49a622e7](https://github.com/pionxzh/wakaru/commit/49a622e712b7b3d3be223a046789877823c90385))
+* **un-jsx:** guard optional-call callees ([7359d273](https://github.com/pionxzh/wakaru/commit/7359d273ddb75c82e23f26c5561b4d868aea9be2))
+* **un-export-rename:** count pattern plan claims in freed-name prepass ([1c5ed22b](https://github.com/pionxzh/wakaru/commit/1c5ed22bd1801bafae7b32af6421588d4259ce11))
+* **un-jsx:** guard paren-wrapped and callee-position createElement roots ([24e649ff](https://github.com/pionxzh/wakaru/commit/24e649ffbeb585a4c07bbe91cfebda8e93283bbe))
+* **diagnostics:** verify sloppy output as script ([3e15cd06](https://github.com/pionxzh/wakaru/commit/3e15cd069c6807469d407a612d2272c888673baa))
+* **namespace:** alias reserved decomposed imports ([cf289bd4](https://github.com/pionxzh/wakaru/commit/cf289bd464ebaf51de47cc6bb495910a38844fab))
+* **un-esm:** alias reserved export locals ([09e941db](https://github.com/pionxzh/wakaru/commit/09e941db948df6e9da6170b8e8aff1ed35a1e660))
+* **un-jsx:** preserve member-object createElement calls ([b0bbc52e](https://github.com/pionxzh/wakaru/commit/b0bbc52e661542a503e5562662b0a08f50f66f4b))
+* **amd:** handle terminal return before hoisted vars ([82b060d6](https://github.com/pionxzh/wakaru/commit/82b060d68e86aa0a500f84534b30303f2608d0e5))
+* **un-export-rename:** align freed-name planning ([f8fa0c19](https://github.com/pionxzh/wakaru/commit/f8fa0c19144150344427b1b70c2f775d1fbcad7b))
+* **smart-rename:** avoid duplicate JSX alias targets ([9baa857a](https://github.com/pionxzh/wakaru/commit/9baa857a3d576818009f40010d541e2394c7b346))
+* **un-regenerator:** bail out on decoder rollback ([8cdaeb31](https://github.com/pionxzh/wakaru/commit/8cdaeb31d0fe50a9e9a8634747c738b9e8c673d8))
+* **unpacker:** adopt inline export declarations ([42f54ef8](https://github.com/pionxzh/wakaru/commit/42f54ef86dad595a88d77e65ee746862aca52e4c))
+* **rules:** recover object literals from Babel loose computed properties ([99b04ddc](https://github.com/pionxzh/wakaru/commit/99b04ddc7a7a32f66576d1898ac32d8ed4cc9ea4))
+* **unpack:** recover webpack4 concat-offset and parenthesized factories ([92efcfb6](https://github.com/pionxzh/wakaru/commit/92efcfb636f0572a2445c20e1a66c8f8350ecef4))
+* **rules:** preserve constructor-sensitive function values ([fbf901b5](https://github.com/pionxzh/wakaru/commit/fbf901b56e16764ed57c95911a22e0bc6a694802))
+* **rules:** preserve new.target function semantics ([13836d9d](https://github.com/pionxzh/wakaru/commit/13836d9de9d9f661c67203e489ead69694dcf7e3))
+* **rules:** scope prototype class safety guard ([03e9d6fa](https://github.com/pionxzh/wakaru/commit/03e9d6fade9ad5d1e4d1b312f35d0cfc96149164))
+* **rules:** preserve constructible Reflect.construct newTarget ([ac1aada5](https://github.com/pionxzh/wakaru/commit/ac1aada5111bb791a0c5405a8d19f203af2e3946))
+* **core:** limit published package to library sources ([13c3fbdb](https://github.com/pionxzh/wakaru/commit/13c3fbdb32fdb4063efe2448a68ab3cff5c51f48))
+* recover parameter-rooted optional chains ([a721eea9](https://github.com/pionxzh/wakaru/commit/a721eea9f6d911d688e5a2bdd475b4821edf8ef1))
+* **unpacker:** handle scope-hoisted bundle detection ([d2f1dc57](https://github.com/pionxzh/wakaru/commit/d2f1dc57150b76f0e02c19ba6a0df6710007805b))
+
+### Performance
+
+* **scope-hoist:** index cross-cluster symbols ([b57715b1](https://github.com/pionxzh/wakaru/commit/b57715b18508916808bf60c5e994a1b80aad2351))
+* **un-export-rename:** batch shadow analysis ([2750a6f8](https://github.com/pionxzh/wakaru/commit/2750a6f8ced96dfdf1bf6883fdf1941a2ef6b926))
+* **unpacker:** reduce Bun factory extraction memory ([92b8883f](https://github.com/pionxzh/wakaru/commit/92b8883f19d0fbaf5b3af11c7db53fa96affe498))
+* **unpacker:** reduce Bun standalone AST retention ([46f7456f](https://github.com/pionxzh/wakaru/commit/46f7456ffe66805244bb277d7dba522287d5d670))
+
 ## [1.8.0](https://github.com/pionxzh/wakaru/compare/v1.7.0...v1.8.0) (2026-07-18)
 
 ### Features

@@ -21,8 +21,10 @@ wakaru input.js -o output.js
 ## What It Does
 
 - Splits webpack 4/5 bundles (including supported Vercel ncc output), esbuild,
-  Bun, Browserify (including Cocos Creator 2.x), Closure ModuleManager,
+  Bun, Browserify (including Cocos Creator 2.x), Metro, Closure ModuleManager,
   SystemJS, and AMD/UMD, plus scope-hoisted Rollup/Vite output.
+- Extracts Bun standalone executables (PE, Mach-O, ELF) and unpacks their
+  embedded JavaScript.
 - Recovers readable JavaScript from transpiler and minifier output.
 - Supports source maps for name recovery and output mappings.
 - Offers `minimal`, `standard`, and `aggressive` rewrite levels.
@@ -47,14 +49,30 @@ decompilation.
 wakaru bundle.js --unpack -o out/
 wakaru bundle.js --unpack --raw -o out/
 wakaru bundle.js --unpack=strict -o out/
+wakaru bundle.js --unpack=inspect -o out/
 wakaru entry.js chunk.js --unpack -o out/
 wakaru dist/ --unpack -o out/
+wakaru ./compiled-app --unpack -o out/
 ```
 
 - `--unpack` splits detected bundles and then decompiles each module.
 - `--unpack --raw` writes extracted modules before the readability pipeline.
 - `--unpack=strict` uses structural bundle detection without heuristic fallback.
+- `--unpack=inspect` keeps finer module boundaries for static inspection.
 - Directory inputs are recursive and detect-only; skipped files are not copied.
+- A Bun standalone executable input has its embedded JavaScript entries sent
+  through the same unpack pipeline.
+
+### Extract a Bun standalone executable
+
+```bash
+wakaru bun extract ./compiled-app -o extracted/
+```
+
+Writes every embedded file record — JavaScript, assets, and binaries — to
+`extracted/files/`, with a `manifest.json` mapping original Bun paths to safe
+output paths. Extraction only writes the files; it does not decompile or
+execute them.
 
 ### Formatter
 
