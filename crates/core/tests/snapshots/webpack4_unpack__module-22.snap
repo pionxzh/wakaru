@@ -2,12 +2,13 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import o, { q } from "./module-0.js";
-import i from "./module-6.js";
-import a from "./module-12.js";
-import u from "./module-2.js";
+import * as o from "./module-0.js";
+import { q } from "./module-0.js";
+import * as i from "./module-6.js";
+import * as a from "./module-12.js";
+import * as u from "./module-2.js";
 import { a as a_1 } from "./module-9.js";
-import w from "./module-10.js";
+import * as w from "./module-10.js";
 import E from "./module-17.js";
 export const utils = {
     get TASK () {

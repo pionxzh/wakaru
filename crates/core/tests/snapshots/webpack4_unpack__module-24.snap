@@ -6,7 +6,7 @@ import r from "./module-4.js";
 import { Children, Component, cloneElement, createElement, isValidElement } from "./module-50.js";
 import u from "./module-1.js";
 import { createBrowserHistory, createHashHistory, createLocation, createMemoryHistory, createPath, locationsAreEqual } from "./module-8.js";
-import s from "./module-16.js";
+import * as s from "./module-16.js";
 import b from "./module-5.js";
 import { a } from "./module-15.js";
 import { compile } from "./module-14.js";

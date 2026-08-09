@@ -3,7 +3,8 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_1, p, q, r, s, t } from "./module-2.js";
-import o, { d } from "./module-10.js";
+import * as o from "./module-10.js";
+import { d } from "./module-10.js";
 export function takeEvery(e, t, ...i) {
     return k(o.b, e, t, ...i);
 }

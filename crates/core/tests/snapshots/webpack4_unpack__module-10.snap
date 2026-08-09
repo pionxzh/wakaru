@@ -2,8 +2,10 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import r, { q } from "./module-0.js";
-import l, { k } from "./module-2.js";
+import * as r from "./module-0.js";
+import { q } from "./module-0.js";
+import * as l from "./module-2.js";
+import { k } from "./module-2.js";
 import { a as a_1 } from "./module-6.js";
 import { a as a_2 } from "./module-9.js";
 const o = {
