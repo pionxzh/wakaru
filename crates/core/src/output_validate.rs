@@ -174,6 +174,7 @@ struct ExplicitExport {
     column: usize,
 }
 
+#[derive(Clone)]
 enum ExplicitExportResolution {
     /// A local binding declared or referenced by this module.
     Local(Atom),
@@ -309,6 +310,54 @@ fn analyze_module(
     };
     let mut import_bindings: HashMap<Id, Atom> = HashMap::new();
 
+    // ESM resolves a local export of an imported binding to the *source*
+    // module's binding, so `import { x } from "./a.js"; export { x };` and
+    // `export { x } from "./a.js";` are the same edge. Map each import local
+    // to that indirect resolution up front (exports may precede imports in
+    // the body). External and dangling specifiers keep their raw text, which
+    // `resolve_export` treats as an unknown provider.
+    let mut import_reexports: HashMap<Id, ExplicitExportResolution> = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let Some(spec_value) = import.src.value.as_str() else {
+            continue;
+        };
+        let target = resolve_in_set(filename, spec_value, filenames)
+            .unwrap_or_else(|| spec_value.to_string());
+        for spec in &import.specifiers {
+            let (local, resolution) = match spec {
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(module_export_name_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    (
+                        &named.local,
+                        ExplicitExportResolution::Reexport {
+                            target: target.clone(),
+                            imported,
+                        },
+                    )
+                }
+                ImportSpecifier::Default(default) => (
+                    &default.local,
+                    ExplicitExportResolution::Reexport {
+                        target: target.clone(),
+                        imported: Atom::from("default"),
+                    },
+                ),
+                ImportSpecifier::Namespace(ns) => (
+                    &ns.local,
+                    ExplicitExportResolution::Namespace(target.clone()),
+                ),
+            };
+            import_reexports.insert(local.to_id(), resolution);
+        }
+    }
+
     for item in &module.body {
         let ModuleItem::ModuleDecl(decl) = item else {
             continue;
@@ -387,7 +436,7 @@ fn analyze_module(
                                     imported: orig.clone(),
                                 }
                             } else if named.src.is_none() {
-                                ExplicitExportResolution::Local(orig.clone())
+                                local_export_resolution(&spec.orig, &import_reexports)
                             } else {
                                 ExplicitExportResolution::Synthetic
                             };
@@ -601,6 +650,21 @@ fn source_location(source_map: &SourceMap, span: Span) -> (usize, usize) {
     }
     let location = source_map.lookup_char_pos(span.lo);
     (location.line, location.col_display + 1)
+}
+
+/// `export { x }` where `x` is an import binding is an indirect export of the
+/// source module's binding, not a local one.
+fn local_export_resolution(
+    orig: &ModuleExportName,
+    import_reexports: &HashMap<Id, ExplicitExportResolution>,
+) -> ExplicitExportResolution {
+    let ModuleExportName::Ident(ident) = orig else {
+        return ExplicitExportResolution::Local(module_export_name_atom(orig));
+    };
+    import_reexports
+        .get(&ident.to_id())
+        .cloned()
+        .unwrap_or_else(|| ExplicitExportResolution::Local(ident.sym.clone()))
 }
 
 fn record_explicit_export(

@@ -290,6 +290,122 @@ export * from "./right.js";
 }
 
 #[test]
+fn import_then_reexport_diamond_resolves_to_the_same_origin() {
+    // `import { x } ...; export { x };` is an indirect export of the source
+    // binding, so two star paths carrying it from the same origin are not
+    // ambiguous — the runtime loads this graph.
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        (
+            "left.js",
+            "import { shared } from \"./base.js\";\nexport { shared };\n",
+        ),
+        (
+            "right.js",
+            "import { shared } from \"./base.js\";\nexport { shared };\n",
+        ),
+        ("base.js", "export const shared = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn import_then_reexport_of_distinct_origins_stays_ambiguous() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        (
+            "left.js",
+            "import { shared } from \"./base1.js\";\nexport { shared };\n",
+        ),
+        (
+            "right.js",
+            "import { shared } from \"./base2.js\";\nexport { shared };\n",
+        ),
+        ("base1.js", "export const shared = 1;\n"),
+        ("base2.js", "export const shared = 2;\n"),
+    ]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::MissingImportedName, "entry.js".into())]
+    );
+}
+
+#[test]
+fn namespace_import_reexport_diamond_resolves_to_the_same_origin() {
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { ns } from "./facade.js"; console.log(ns);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        (
+            "left.js",
+            "import * as ns from \"./base.js\";\nexport { ns };\n",
+        ),
+        (
+            "right.js",
+            "import * as ns from \"./base.js\";\nexport { ns };\n",
+        ),
+        ("base.js", "export const shared = 1;\n"),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn external_import_reexport_is_not_claimed_ambiguous() {
+    // Both re-exports resolve through an external package; the surface is
+    // unknowable, so the validator must not claim ambiguity either way.
+    let findings = kinds(&[
+        (
+            "entry.js",
+            r#"import { shared } from "./facade.js"; console.log(shared);"#,
+        ),
+        (
+            "facade.js",
+            r#"
+export * from "./left.js";
+export * from "./right.js";
+"#,
+        ),
+        (
+            "left.js",
+            "import { shared } from \"some-pkg\";\nexport { shared };\n",
+        ),
+        (
+            "right.js",
+            "import { shared } from \"some-pkg\";\nexport { shared };\n",
+        ),
+    ]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
 fn export_star_does_not_forward_default() {
     let findings = kinds(&[
         ("entry.js", r#"import a from "./a.js"; console.log(a);"#),
