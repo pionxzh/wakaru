@@ -2163,6 +2163,7 @@ dependencies = [
  "anyhow",
  "insta",
  "rayon",
+ "serde_json",
  "similar",
  "sourcemap",
  "swc_core",

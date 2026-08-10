@@ -51,6 +51,58 @@ pub(crate) enum ScopeHoistRenderMode {
     Inspect,
 }
 
+/// Stable, source-oriented description of one top-level item used by the
+/// scope-hoist research trace. This is an internal-core debugging surface, not
+/// part of the supported `wakaru` facade API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeHoistTraceItem {
+    pub index: usize,
+    pub source_range: Option<(u32, u32)>,
+    pub declared_names: Vec<String>,
+    pub referenced_items: Vec<usize>,
+    pub written_items: Vec<usize>,
+    /// Canonical cluster id after Signals 1–5 (the lowest member index).
+    pub signal_cluster: usize,
+    /// Canonical cluster id after the current Inspect cross-write policy.
+    pub post_write_cluster: usize,
+}
+
+/// One cross-cluster writer/owner edge after Signals 1–5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeHoistCrossWriteTraceEdge {
+    pub writer_item: usize,
+    pub owner_item: usize,
+    pub writer_cluster: usize,
+    pub owner_cluster: usize,
+    /// Distinct owner clusters written by the writer's Signal 1–5 cluster.
+    pub writer_target_cluster_degree: usize,
+    /// Signal 1–5 clusters in the undirected write-connected component.
+    pub component_cluster_count: usize,
+    /// Clusters in the residual component formed only by degree-one writers.
+    pub leaf_component_cluster_count: usize,
+    pub kept_by_inspect_policy: bool,
+}
+
+/// Opt-in analysis data for corpus research on heuristic scope splitting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeHoistTrace {
+    pub source_bytes: usize,
+    pub minimum_declarations: usize,
+    pub declaration_count: usize,
+    pub eligible: bool,
+    pub would_split: bool,
+    pub signal_cluster_count: usize,
+    pub post_write_cluster_count: usize,
+    /// Modules the component-cap policy would expose after singleton folding.
+    pub component_cap_output_cluster_count: usize,
+    /// Modules bounded leaf restoration would expose before its backoff.
+    pub leaf_candidate_output_cluster_count: usize,
+    /// Whether bounded leaf restoration survived the output-count backoff.
+    pub bounded_leaf_restoration_accepted: bool,
+    pub items: Vec<ScopeHoistTraceItem>,
+    pub cross_write_edges: Vec<ScopeHoistCrossWriteTraceEdge>,
+}
+
 pub fn split_scope_hoisted(source: &str) -> Option<UnpackResult> {
     split_scope_hoisted_with_mode(source, ScopeHoistRenderMode::Executable)
 }
@@ -72,6 +124,147 @@ pub(crate) fn split_scope_hoisted_module_with_mode(
     render_mode: ScopeHoistRenderMode,
 ) -> Option<UnpackResult> {
     split_from_module(module, cm, render_mode)
+}
+
+/// Analyze the same direct top-level source consumed by the heuristic
+/// splitter, retaining byte ranges and cross-write topology for an external
+/// source-map oracle. Parse failures are reported as `None`.
+pub fn trace_scope_hoisted(source: &str) -> Option<ScopeHoistTrace> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::parse_es_module(source, "bundle.js", cm.clone()).ok()?;
+        let iife_body = unwrap_iife(&module);
+        let body = iife_body.as_deref().unwrap_or(&module.body);
+        Some(trace_scope_hoist_body(source.len(), body, &cm))
+    })
+}
+
+fn trace_scope_hoist_body(
+    source_bytes: usize,
+    body: &[ModuleItem],
+    cm: &SourceMap,
+) -> ScopeHoistTrace {
+    let items = collect_top_level_items(body);
+    let declaration_count = items
+        .iter()
+        .filter(|item| !item.declared_names.is_empty())
+        .count();
+    let eligible = declaration_count >= MIN_DECLARATIONS;
+    let graph = build_reference_graph(&items);
+    let mut signal_uf = UnionFind::new(items.len());
+    if eligible {
+        apply_merge_signals(&items, &graph, &mut signal_uf);
+    }
+    let topology = analyze_cross_item_writes(&graph, &signal_uf);
+    let signal_clusters = canonical_cluster_ids(&signal_uf, items.len());
+
+    let mut post_write_uf = signal_uf.clone();
+    let inspect_decision = eligible.then(|| {
+        merge_bounded_cross_item_writes(
+            &items,
+            &graph,
+            &mut post_write_uf,
+            INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+        )
+    });
+    let post_write_clusters = canonical_cluster_ids(&post_write_uf, items.len());
+    let would_split = if eligible {
+        let mut final_uf = post_write_uf.clone();
+        let roots = extract_root_clusters(&items, &mut final_uf);
+        extract_inspection_clusters(&items, &roots).len() >= 2
+    } else {
+        false
+    };
+
+    let mut cross_write_edges = Vec::new();
+    if eligible {
+        for (writer_item, targets) in graph.writes.iter().enumerate() {
+            for &owner_item in targets {
+                let writer_root = topology.signal_root_by_item[writer_item];
+                let owner_root = topology.signal_root_by_item[owner_item];
+                if writer_root == owner_root {
+                    continue;
+                }
+                let component_cluster_count = topology.component_cluster_count_by_root[writer_root];
+                let leaf_component_cluster_count =
+                    topology.leaf_component_cluster_count_by_root[writer_root];
+                cross_write_edges.push(ScopeHoistCrossWriteTraceEdge {
+                    writer_item,
+                    owner_item,
+                    writer_cluster: signal_clusters[writer_item],
+                    owner_cluster: signal_clusters[owner_item],
+                    writer_target_cluster_degree: topology.writer_target_degrees[writer_root],
+                    component_cluster_count,
+                    leaf_component_cluster_count,
+                    kept_by_inspect_policy: retain_inspect_cross_write_edge(
+                        &topology,
+                        writer_root,
+                        INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+                        inspect_decision.as_ref().is_some_and(|decision| {
+                            decision
+                                .restored_components
+                                .contains(&topology.write_component_by_root[writer_root])
+                        }),
+                    ),
+                });
+            }
+        }
+        cross_write_edges.sort_by_key(|edge| (edge.writer_item, edge.owner_item));
+    }
+
+    let traced_items = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let mut declared_names = item
+                .declared_names
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            declared_names.sort();
+            let mut referenced_items = graph.references[index].iter().copied().collect::<Vec<_>>();
+            referenced_items.sort_unstable();
+            let mut written_items = graph.writes[index].iter().copied().collect::<Vec<_>>();
+            written_items.sort_unstable();
+            ScopeHoistTraceItem {
+                index,
+                source_range: super::span_byte_range(cm, body[index].span()),
+                declared_names,
+                referenced_items,
+                written_items,
+                signal_cluster: signal_clusters[index],
+                post_write_cluster: post_write_clusters[index],
+            }
+        })
+        .collect();
+
+    ScopeHoistTrace {
+        source_bytes,
+        minimum_declarations: MIN_DECLARATIONS,
+        declaration_count,
+        eligible,
+        would_split,
+        signal_cluster_count: signal_clusters
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len(),
+        post_write_cluster_count: post_write_clusters
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len(),
+        component_cap_output_cluster_count: inspect_decision
+            .as_ref()
+            .map_or(0, |decision| decision.component_cap_output_clusters),
+        leaf_candidate_output_cluster_count: inspect_decision
+            .as_ref()
+            .map_or(0, |decision| decision.leaf_candidate_output_clusters),
+        bounded_leaf_restoration_accepted: inspect_decision
+            .is_some_and(|decision| decision.bounded_leaf_restoration_accepted),
+        items: traced_items,
+        cross_write_edges,
+    }
 }
 
 fn split_from_module(
@@ -116,11 +309,14 @@ fn analyze_scope_hoist(
     apply_merge_signals(&items, &graph, &mut uf);
     match render_mode {
         ScopeHoistRenderMode::Executable => merge_cross_item_writes(&graph, &mut uf),
-        ScopeHoistRenderMode::Inspect => merge_bounded_cross_item_writes(
-            &graph,
-            &mut uf,
-            INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
-        ),
+        ScopeHoistRenderMode::Inspect => {
+            merge_bounded_cross_item_writes(
+                &items,
+                &graph,
+                &mut uf,
+                INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+            );
+        }
     }
 
     // Phase 4: extract the finest useful clusters and identify the entry.
@@ -1118,48 +1314,210 @@ fn merge_cross_item_writes(graph: &ReferenceGraph, uf: &mut UnionFind) {
     }
 }
 
-/// Keep useful writer/owner evidence for Inspect without allowing one
-/// write-connected runtime component to glue a large plan together. The cap
-/// counts clusters already formed by Signals 1–5, not raw top-level items.
-/// Every edge in an oversized component is skipped so the result does not
-/// depend on hash iteration order.
-fn merge_bounded_cross_item_writes(
-    graph: &ReferenceGraph,
-    uf: &mut UnionFind,
-    max_component_clusters: usize,
-) {
+struct CrossWriteTopology {
+    signal_root_by_item: Vec<usize>,
+    writer_target_degrees: Vec<usize>,
+    write_component_by_root: Vec<usize>,
+    component_cluster_count_by_root: Vec<usize>,
+    leaf_component_cluster_count_by_root: Vec<usize>,
+}
+
+fn analyze_cross_item_writes(graph: &ReferenceGraph, uf: &UnionFind) -> CrossWriteTopology {
     let item_count = graph.writes.len();
     let mut signal_uf = uf.clone();
     let signal_root_by_item: Vec<_> = (0..item_count).map(|item| signal_uf.find(item)).collect();
-
+    let mut writer_targets = vec![HashSet::new(); item_count];
     let mut write_components = UnionFind::new(item_count);
+
     for (writer, targets) in graph.writes.iter().enumerate() {
         let writer_root = signal_root_by_item[writer];
         for &target in targets {
             let target_root = signal_root_by_item[target];
             if writer_root != target_root {
+                writer_targets[writer_root].insert(target_root);
                 write_components.union(writer_root, target_root);
             }
         }
     }
 
     let signal_roots: HashSet<_> = signal_root_by_item.iter().copied().collect();
-    let mut component_cluster_counts = HashMap::new();
-    for signal_root in signal_roots {
+    let mut component_counts = HashMap::new();
+    let mut component_minimums = HashMap::new();
+    for &signal_root in &signal_roots {
         let component = write_components.find(signal_root);
-        *component_cluster_counts.entry(component).or_insert(0usize) += 1;
+        *component_counts.entry(component).or_insert(0usize) += 1;
+        component_minimums
+            .entry(component)
+            .and_modify(|minimum: &mut usize| *minimum = (*minimum).min(signal_root))
+            .or_insert(signal_root);
     }
 
+    let mut write_component_by_root = (0..item_count).collect::<Vec<_>>();
+    let mut component_cluster_count_by_root = vec![1; item_count];
+    for signal_root in signal_roots {
+        let component = write_components.find(signal_root);
+        write_component_by_root[signal_root] = component_minimums[&component];
+        component_cluster_count_by_root[signal_root] = component_counts[&component];
+    }
+
+    let writer_target_degrees = writer_targets.iter().map(HashSet::len).collect::<Vec<_>>();
+    let mut leaf_components = UnionFind::new(item_count);
     for (writer, targets) in graph.writes.iter().enumerate() {
         let writer_root = signal_root_by_item[writer];
-        let component = write_components.find(writer_root);
-        let component_clusters = component_cluster_counts[&component];
-        if component_clusters <= max_component_clusters {
-            for &target in targets {
-                uf.union(writer, target);
+        if writer_target_degrees[writer_root] != 1 {
+            continue;
+        }
+        for &target in targets {
+            let target_root = signal_root_by_item[target];
+            if writer_root != target_root {
+                leaf_components.union(writer_root, target_root);
             }
         }
     }
+
+    let signal_roots: HashSet<_> = signal_root_by_item.iter().copied().collect();
+    let mut leaf_component_counts = HashMap::new();
+    for &signal_root in &signal_roots {
+        let component = leaf_components.find(signal_root);
+        *leaf_component_counts.entry(component).or_insert(0usize) += 1;
+    }
+    let mut leaf_component_cluster_count_by_root = vec![1; item_count];
+    for signal_root in signal_roots {
+        let component = leaf_components.find(signal_root);
+        leaf_component_cluster_count_by_root[signal_root] = leaf_component_counts[&component];
+    }
+
+    CrossWriteTopology {
+        signal_root_by_item,
+        writer_target_degrees,
+        write_component_by_root,
+        component_cluster_count_by_root,
+        leaf_component_cluster_count_by_root,
+    }
+}
+
+fn retain_inspect_cross_write_edge(
+    topology: &CrossWriteTopology,
+    writer_root: usize,
+    max_component_clusters: usize,
+    restore_bounded_leaves: bool,
+) -> bool {
+    topology.component_cluster_count_by_root[writer_root] <= max_component_clusters
+        || (restore_bounded_leaves
+            && topology.writer_target_degrees[writer_root] == 1
+            && topology.leaf_component_cluster_count_by_root[writer_root] <= max_component_clusters)
+}
+
+fn canonical_cluster_ids(uf: &UnionFind, item_count: usize) -> Vec<usize> {
+    let mut uf = uf.clone();
+    let roots: Vec<_> = (0..item_count).map(|item| uf.find(item)).collect();
+    let mut minimum_by_root = HashMap::new();
+    for (item, &root) in roots.iter().enumerate() {
+        minimum_by_root
+            .entry(root)
+            .and_modify(|minimum: &mut usize| *minimum = (*minimum).min(item))
+            .or_insert(item);
+    }
+    roots
+        .into_iter()
+        .map(|root| minimum_by_root[&root])
+        .collect()
+}
+
+/// Keep useful writer/owner evidence for Inspect without allowing one
+/// write-connected runtime component to glue a large plan together. The cap
+/// counts clusters already formed by Signals 1–5, not raw top-level items.
+/// In an oversized component, tentatively retain only degree-one writer edges
+/// whose leaf-only residual component also fits under the cap. This preserves
+/// local mutable-owner evidence while pruning write hubs and long leaf chains.
+/// Because changing the emitted module count produced mixed corpus tradeoffs
+/// (including singleton promotion and purity regressions), back off to the
+/// component cap unless each write component preserves the post-folding
+/// inspection cluster count exactly when applied in canonical component order.
+/// This prevents opposite count changes in independent components from
+/// cancelling out. Decisions are computed before any union so edge discovery
+/// is independent of hash order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InspectCrossWriteDecision {
+    component_cap_output_clusters: usize,
+    leaf_candidate_output_clusters: usize,
+    bounded_leaf_restoration_accepted: bool,
+    restored_components: HashSet<usize>,
+}
+
+fn merge_bounded_cross_item_writes(
+    items: &[TopLevelItem],
+    graph: &ReferenceGraph,
+    uf: &mut UnionFind,
+    max_component_clusters: usize,
+) -> InspectCrossWriteDecision {
+    let topology = analyze_cross_item_writes(graph, uf);
+    let mut component_cap_uf = uf.clone();
+    let mut leaf_candidate_uf = uf.clone();
+    let mut leaf_edges_by_component: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+
+    for (writer, targets) in graph.writes.iter().enumerate() {
+        let writer_root = topology.signal_root_by_item[writer];
+        let retained_by_component_cap =
+            retain_inspect_cross_write_edge(&topology, writer_root, max_component_clusters, false);
+        let retained_by_leaf_candidate =
+            retain_inspect_cross_write_edge(&topology, writer_root, max_component_clusters, true);
+        if retained_by_component_cap {
+            for &target in targets {
+                component_cap_uf.union(writer, target);
+            }
+        }
+        if retained_by_leaf_candidate {
+            for &target in targets {
+                leaf_candidate_uf.union(writer, target);
+                if !retained_by_component_cap && topology.signal_root_by_item[target] != writer_root
+                {
+                    leaf_edges_by_component
+                        .entry(topology.write_component_by_root[writer_root])
+                        .or_default()
+                        .push((writer, target));
+                }
+            }
+        }
+    }
+
+    let component_cap_output_clusters = inspection_output_cluster_count(items, &component_cap_uf);
+    let leaf_candidate_output_clusters = if leaf_edges_by_component.is_empty() {
+        component_cap_output_clusters
+    } else {
+        inspection_output_cluster_count(items, &leaf_candidate_uf)
+    };
+
+    let mut selected_uf = component_cap_uf;
+    let mut restored_components = HashSet::new();
+    let mut component_ids = leaf_edges_by_component.keys().copied().collect::<Vec<_>>();
+    component_ids.sort_unstable();
+    for component_id in component_ids {
+        let mut candidate_uf = selected_uf.clone();
+        for &(writer, target) in &leaf_edges_by_component[&component_id] {
+            candidate_uf.union(writer, target);
+        }
+        if inspection_output_cluster_count(items, &candidate_uf) == component_cap_output_clusters {
+            selected_uf = candidate_uf;
+            restored_components.insert(component_id);
+        }
+    }
+
+    let bounded_leaf_restoration_accepted = !restored_components.is_empty();
+    *uf = selected_uf;
+
+    InspectCrossWriteDecision {
+        component_cap_output_clusters,
+        leaf_candidate_output_clusters,
+        bounded_leaf_restoration_accepted,
+        restored_components,
+    }
+}
+
+fn inspection_output_cluster_count(items: &[TopLevelItem], uf: &UnionFind) -> usize {
+    let mut uf = uf.clone();
+    let roots = extract_root_clusters(items, &mut uf);
+    extract_inspection_clusters(items, &roots).len()
 }
 
 #[allow(clippy::needless_range_loop)]

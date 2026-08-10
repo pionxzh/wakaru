@@ -185,8 +185,20 @@ initialization order. Small plans retain the established clustering behavior.
 `--unpack=inspect` renders the original fine-grained plan recursively without
 merging cyclic components; its finer module graph is for static inspection and
 may not execute. It retains cross-item write merges when they connect at most
-eight pre-existing clusters, but skips larger write-connected components that
-otherwise act as transitive glue across unrelated scope-hoisted modules.
+eight pre-existing clusters. Inside a larger write-connected component it also
+retains degree-one writer edges when their leaf-only residual component stays
+within that same cap, preserving local mutable-owner evidence while skipping
+write hubs and long leaf chains that act as transitive glue across unrelated
+scope-hoisted modules. Because changing the emitted module count produced mixed
+corpus tradeoffs, Inspect applies this leaf restoration only when it leaves the
+final post-folding cluster count unchanged for each write component; both
+increases and decreases fall back to the conservative component cap instead of
+being allowed to cancel across independent components.
+
+For corpus analysis, `cargo run -p wakaru-core --example scope_hoist_trace --
+path/to/bundle.js` emits item ranges, Signal 1–5 clusters, cross-write topology,
+and the selected Inspect partition as JSON. This is an internal research
+surface rather than part of the supported `wakaru` façade API.
 
 Unpackers emit module metadata with source text and, when available, a private
 prepared normalized AST sidecar. They do not run the normal decompile rule

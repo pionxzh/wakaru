@@ -91,6 +91,91 @@ fn cross_write_component_fixture(owner_count: usize) -> String {
     input
 }
 
+fn cross_write_hub_with_local_writers_fixture(owner_count: usize) -> String {
+    let mut input = String::new();
+    for owner in 0..owner_count {
+        input.push_str(&format!(
+            "var state{owner} = 0;\nfunction read{owner}() {{ return state{owner}; }}\n"
+        ));
+    }
+    input.push_str(
+        r#"
+            function spacer0() { return 0; }
+            function spacer1() { return spacer0() + 1; }
+            function spacer2() { return spacer1() + 1; }
+            function spacer3() { return spacer2() + 1; }
+        "#,
+    );
+    input.push_str("function mutateLocal0() { state0++; }\n");
+    for separator in 0..4 {
+        input.push_str(&format!(
+            "function localSeparator{separator}() {{ return {separator}; }}\n"
+        ));
+    }
+    input.push_str("function mutateAll() {\n");
+    for owner in 0..owner_count {
+        input.push_str(&format!("state{owner}++;\n"));
+    }
+    input.push_str(
+        r#"
+                return spacer3();
+            }
+            console.log(mutateAll());
+        "#,
+    );
+    input
+}
+
+fn cross_write_hub_with_singleton_leaves_fixture(owner_count: usize) -> String {
+    let mut input = String::new();
+    for owner in 0..owner_count {
+        input.push_str(&format!("var state{owner} = 0;\n"));
+    }
+    for owner in 0..owner_count {
+        input.push_str(&format!(
+            "function mutateLocal{owner}() {{ state{owner}++; }}\n"
+        ));
+    }
+    input.push_str("function mutateAll() {\n");
+    for owner in 0..owner_count {
+        input.push_str(&format!("state{owner}++;\n"));
+    }
+    input.push_str(
+        r#"
+            }
+            function separateA() { return 1; }
+            function separateB() { return separateA() + 1; }
+            console.log(mutateAll(), separateB());
+        "#,
+    );
+    input
+}
+
+fn cross_write_hub_with_module_leaves_fixture(owner_count: usize) -> String {
+    let mut input = String::new();
+    for owner in 0..owner_count {
+        input.push_str(&format!(
+            "var state{owner} = 0;\nfunction read{owner}() {{ return state{owner}; }}\n"
+        ));
+    }
+    for owner in 0..owner_count {
+        input.push_str(&format!(
+            "function mutateLocal{owner}() {{ state{owner}++; }}\nfunction runLocal{owner}() {{ mutateLocal{owner}(); }}\n"
+        ));
+    }
+    input.push_str("function mutateAll() {\n");
+    for owner in 0..owner_count {
+        input.push_str(&format!("state{owner}++;\n"));
+    }
+    input.push_str(
+        r#"
+            }
+            console.log(mutateAll());
+        "#,
+    );
+    input
+}
+
 fn assert_splits(source: &str, reason: &str) {
     let n = count_modules(source);
     assert!(n >= 2, "{reason}, got {n} modules");
@@ -233,6 +318,176 @@ fn inspection_bounds_cross_item_write_components() {
         "executable output must keep every mutable owner with the writer:\n{}",
         executable_writer.code
     );
+}
+
+#[test]
+fn inspection_retains_bounded_leaf_writes_inside_a_hub_component() {
+    let input =
+        cross_write_hub_with_local_writers_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
+    let trace = trace_scope_hoisted(&input).expect("the research trace should parse");
+    assert_eq!(
+        trace.leaf_candidate_output_cluster_count,
+        trace.component_cap_output_cluster_count
+    );
+    assert!(trace.bounded_leaf_restoration_accepted);
+    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
+        .expect("the hub fixture should split");
+
+    let local_writer = inspection
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateLocal0"))
+        .expect("inspection output should contain the local writer");
+    assert!(
+        local_writer.code.contains("var state0"),
+        "a bounded degree-one write should retain its mutable owner:\n{}",
+        local_writer.code
+    );
+
+    let hub = inspection
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("inspection output should contain the hub writer");
+    assert!(
+        !hub.code.contains("var state0"),
+        "the high-degree writer must not glue the owner clusters together:\n{}",
+        hub.code
+    );
+}
+
+#[test]
+fn inspection_backs_off_when_leaf_writes_reduce_module_count() {
+    let input =
+        cross_write_hub_with_module_leaves_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
+    let trace = trace_scope_hoisted(&input).expect("the research trace should parse");
+
+    assert!(trace.eligible);
+    assert!(
+        trace.leaf_candidate_output_cluster_count < trace.component_cap_output_cluster_count,
+        "the fixture must exercise module-cluster contraction: {trace:#?}"
+    );
+    assert!(!trace.bounded_leaf_restoration_accepted);
+    assert_eq!(
+        trace.post_write_cluster_count, trace.signal_cluster_count,
+        "every write edge belongs to the oversized component and should be skipped"
+    );
+}
+
+#[test]
+fn inspection_does_not_accept_offsetting_component_count_changes() {
+    fn declaration(name: &str, writes: &[&str]) -> TopLevelItem {
+        let written_names: HashSet<Atom> = writes.iter().map(|name| Atom::from(*name)).collect();
+        TopLevelItem {
+            declared_names: vec![Atom::from(name)],
+            referenced_names: written_names.clone(),
+            written_names,
+            is_module_decl: false,
+        }
+    }
+
+    let items = vec![
+        declaration("singletonOwner", &[]),
+        declaration("singletonWriter", &["singletonOwner"]),
+        declaration("moduleOwnerA", &[]),
+        declaration("moduleOwnerB", &[]),
+        declaration("moduleWriterA", &["moduleOwnerA"]),
+        declaration("moduleWriterB", &[]),
+        TopLevelItem {
+            declared_names: Vec::new(),
+            referenced_names: HashSet::new(),
+            written_names: HashSet::new(),
+            is_module_decl: false,
+        },
+    ];
+    let graph = build_reference_graph(&items);
+    let mut uf = UnionFind::new(items.len());
+    uf.union(2, 3);
+    uf.union(4, 5);
+    let before = canonical_cluster_ids(&uf, items.len());
+
+    // With a cap of one, each two-root write component is oversized. Merging
+    // the singleton pair would add one output module, while merging the two
+    // established module roots would remove one. A file-level count check
+    // would see a misleading net zero; component-wise checks reject both.
+    let decision = merge_bounded_cross_item_writes(&items, &graph, &mut uf, 1);
+
+    assert_eq!(decision.component_cap_output_clusters, 3);
+    assert_eq!(decision.leaf_candidate_output_clusters, 3);
+    assert!(!decision.bounded_leaf_restoration_accepted);
+    assert!(decision.restored_components.is_empty());
+    assert_eq!(canonical_cluster_ids(&uf, items.len()), before);
+}
+
+#[test]
+fn inspection_backs_off_when_leaf_writes_promote_singletons_to_modules() {
+    let input =
+        cross_write_hub_with_singleton_leaves_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
+    let trace = trace_scope_hoisted(&input).expect("the research trace should parse");
+
+    assert!(trace.eligible);
+    assert!(
+        trace.leaf_candidate_output_cluster_count > trace.component_cap_output_cluster_count,
+        "the fixture must exercise singleton promotion: {trace:#?}"
+    );
+    assert!(!trace.bounded_leaf_restoration_accepted);
+    let local_writer_item = trace
+        .items
+        .iter()
+        .find(|item| {
+            item.declared_names
+                .iter()
+                .any(|name| name == "mutateLocal0")
+        })
+        .expect("the trace should contain the local writer")
+        .index;
+    let local_owner_item = trace
+        .items
+        .iter()
+        .find(|item| item.declared_names.iter().any(|name| name == "state0"))
+        .expect("the trace should contain the local owner")
+        .index;
+    let local_write_edge = trace
+        .cross_write_edges
+        .iter()
+        .find(|edge| edge.writer_item == local_writer_item && edge.owner_item == local_owner_item)
+        .expect("the trace should contain the local writer/owner edge");
+    assert!(!local_write_edge.kept_by_inspect_policy);
+
+    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
+        .expect("the independent pair should preserve a split after backoff");
+    assert_eq!(
+        inspection.modules.len(),
+        trace.component_cap_output_cluster_count,
+        "the output-count backoff should restore the component-cap partition"
+    );
+}
+
+#[test]
+fn scope_hoist_trace_reports_cross_write_hub_topology() {
+    let input = cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
+    let trace = trace_scope_hoisted(&input).expect("the research trace should parse");
+
+    assert!(trace.eligible);
+    assert!(trace.would_split);
+    assert_eq!(
+        trace.cross_write_edges.len(),
+        INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS
+    );
+    assert!(trace.items.iter().all(|item| item.source_range.is_some()));
+    for edge in &trace.cross_write_edges {
+        assert_eq!(
+            edge.writer_target_cluster_degree,
+            INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS
+        );
+        assert_eq!(
+            edge.component_cluster_count,
+            INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS + 1
+        );
+        assert_eq!(edge.leaf_component_cluster_count, 1);
+        assert!(!edge.kept_by_inspect_policy);
+        assert_ne!(edge.writer_cluster, edge.owner_cluster);
+    }
 }
 
 #[test]
