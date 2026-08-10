@@ -158,28 +158,46 @@ struct WebpackCommonJsRuntimeNormalizer {
 }
 
 impl VisitMut for WebpackCommonJsRuntimeNormalizer {
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        expr.visit_mut_children_with(self);
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        for item in &mut module.body {
+            if let ModuleItem::Stmt(Stmt::Expr(statement)) = item {
+                self.rewrite_immediate_expression(&mut statement.expr);
+            }
+        }
+    }
+}
 
-        if let Some(replacement) = self.truthy_module_exports_branch(expr) {
-            *expr = replacement;
+impl WebpackCommonJsRuntimeNormalizer {
+    /// Rewrite only an expression that is guaranteed to run on the module's
+    /// straight-line execution path. Parentheses and unary wrappers preserve
+    /// unconditional evaluation; a direct synchronous IIFE grants the same
+    /// proof to its leading declaration/expression statement list.
+    fn rewrite_immediate_expression(&mut self, expression: &mut Box<Expr>) {
+        let expression = strip_parens_mut(expression);
+        if let Some(replacement) = self.truthy_module_exports_branch(expression) {
+            *expression = replacement;
             self.matches += 1;
             return;
         }
-        if let Some(replacement) = self.non_undefined_factory_export(expr) {
-            *expr = replacement;
+        if let Some(replacement) = self.non_undefined_factory_export(expression) {
+            *expression = replacement;
             self.matches += 1;
+            return;
+        }
+
+        match expression {
+            Expr::Unary(unary) => self.rewrite_immediate_expression(&mut unary.arg),
+            Expr::Seq(sequence) => {
+                for expression in &mut sequence.exprs {
+                    self.rewrite_immediate_expression(expression);
+                }
+            }
+            Expr::Call(call) => self.rewrite_direct_iife(call),
+            _ => {}
         }
     }
 
-    fn visit_mut_call_expr(&mut self, call: &mut swc_core::ecma::ast::CallExpr) {
-        // Arguments are evaluated immediately even when the callee is not, but
-        // function-valued arguments remain deferred through the boundary
-        // overrides below.
-        for argument in &mut call.args {
-            argument.expr.visit_mut_with(self);
-        }
-
+    fn rewrite_direct_iife(&mut self, call: &mut swc_core::ecma::ast::CallExpr) {
         let Callee::Expr(callee) = &mut call.callee else {
             return;
         };
@@ -188,32 +206,33 @@ impl VisitMut for WebpackCommonJsRuntimeNormalizer {
                 if !function.function.is_async && !function.function.is_generator =>
             {
                 if let Some(body) = &mut function.function.body {
-                    body.visit_mut_with(self);
+                    self.rewrite_immediate_statements(&mut body.stmts);
                 }
             }
             Expr::Arrow(arrow) if !arrow.is_async => {
-                arrow.body.visit_mut_with(self);
+                if let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) = &mut *arrow.body {
+                    self.rewrite_immediate_statements(&mut body.stmts);
+                }
             }
-            _ => callee.visit_mut_with(self),
+            _ => {}
         }
     }
 
-    // A recovered default is exported at module completion, so a matching
-    // assignment is sound only on the module's immediate execution path.
-    // Direct synchronous IIFEs are entered explicitly above; all other
-    // function-like and class bodies may run later (or never) and are skipped.
-    fn visit_mut_function(&mut self, _: &mut swc_core::ecma::ast::Function) {}
+    fn rewrite_immediate_statements(&mut self, statements: &mut [Stmt]) {
+        for statement in statements {
+            match statement {
+                Stmt::Expr(statement) => {
+                    self.rewrite_immediate_expression(&mut statement.expr);
+                }
+                Stmt::Decl(_) | Stmt::Empty(_) | Stmt::Debugger(_) => {}
+                // A branch, loop, switch, try, jump, or nested statement shell
+                // may skip both its own body and every following statement.
+                // Stop instead of claiming dominance that has not been proven.
+                _ => break,
+            }
+        }
+    }
 
-    fn visit_mut_arrow_expr(&mut self, _: &mut swc_core::ecma::ast::ArrowExpr) {}
-
-    fn visit_mut_class(&mut self, _: &mut swc_core::ecma::ast::Class) {}
-
-    fn visit_mut_getter_prop(&mut self, _: &mut swc_core::ecma::ast::GetterProp) {}
-
-    fn visit_mut_setter_prop(&mut self, _: &mut swc_core::ecma::ast::SetterProp) {}
-}
-
-impl WebpackCommonJsRuntimeNormalizer {
     /// Webpack has already initialized `module.exports`, so the CommonJS arm
     /// of `module.exports ? module.exports = value : browserFallback` is the
     /// only reachable arm inside an extracted factory.
@@ -509,6 +528,41 @@ setTimeout(() => {
     }
 
     #[test]
+    fn control_dependent_runtime_shapes_fail_closed() {
+        for guarded_body in [
+            r#"if (window.flag) {
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+}"#,
+            r#"if (window.flag) return;
+module.exports ? module.exports = choose : window.syntheticChoose = choose;"#,
+            r#"window.flag && (module.exports ? module.exports = choose : window.syntheticChoose = choose);"#,
+            r#"window.ready || (module.exports ? module.exports = choose : window.syntheticChoose = choose);"#,
+            r#"window.flag
+    ? (module.exports ? module.exports = choose : window.syntheticChoose = choose)
+    : observe();"#,
+            r#"try {
+    observe();
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+} catch (error) {}"#,
+        ] {
+            let input = format!(
+                r#"
+!function() {{
+    function choose(value) {{ return value; }}
+    {guarded_body}
+}}();
+"#
+            );
+            let output = normalize(&input, true);
+
+            assert!(output.contains("module.exports"), "{output}");
+            assert!(output.contains("syntheticChoose"), "{output}");
+            assert!(!output.contains("_webpackDefault"), "{output}");
+            assert!(!output.contains("export default"), "{output}");
+        }
+    }
+
+    #[test]
     fn synchronous_arrow_iife_remains_supported() {
         let output = normalize(
             r#"
@@ -520,6 +574,29 @@ setTimeout(() => {
             true,
         );
 
+        assert!(output.contains("_webpackDefault = choose"), "{output}");
+        assert!(
+            output.contains("export default _webpackDefault"),
+            "{output}"
+        );
+        assert!(!output.contains("module.exports"), "{output}");
+        assert!(!output.contains("syntheticChoose"), "{output}");
+    }
+
+    #[test]
+    fn unconditional_sequence_elements_remain_supported() {
+        let output = normalize(
+            r#"
+!function() {
+    function choose(value) { return value; }
+    choose.enabled = true,
+        module.exports ? module.exports = choose : window.syntheticChoose = choose;
+}();
+"#,
+            true,
+        );
+
+        assert!(output.contains("choose.enabled = true"), "{output}");
         assert!(output.contains("_webpackDefault = choose"), "{output}");
         assert!(
             output.contains("export default _webpackDefault"),
