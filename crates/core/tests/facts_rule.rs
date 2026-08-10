@@ -503,6 +503,22 @@ module.exports = api;
 }
 
 #[test]
+fn callable_default_properties_reject_a_conditional_default_rewrite() {
+    let facts = collect_facts(
+        r#"
+function api(value) { return value; }
+api.parse = function(value) { return value.length; };
+module.exports = api;
+if (globalThis.legacy) { module.exports = globalThis.wrap(api); }
+"#,
+    );
+    assert!(
+        facts.commonjs_default_attached_properties.is_empty(),
+        "a second module.exports assignment must make the callable default unknown: {facts}"
+    );
+}
+
+#[test]
 fn default_object_properties_follow_a_stable_local_alias() {
     let facts = collect_facts(
         r#"

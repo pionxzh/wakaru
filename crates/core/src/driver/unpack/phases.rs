@@ -1726,6 +1726,67 @@ module.exports = [parse("value"), new Rule()];
     }
 
     #[test]
+    fn provider_facts_reject_a_conditionally_rewritten_callable_default() {
+        let modules = || {
+            vec![
+                UnpackedModule {
+                    id: "provider".to_string(),
+                    code: r#"
+function api(value) { return value; }
+api.parse = function(value) { return value.length; };
+module.exports = api;
+if (globalThis.legacy) { module.exports = globalThis.wrap(api); }
+"#
+                    .to_string(),
+                    filename: "provider.js".to_string(),
+                    ..Default::default()
+                },
+                UnpackedModule {
+                    id: "consumer".to_string(),
+                    is_entry: true,
+                    code: r#"
+var parse = require("./provider.js").parse;
+module.exports = function(value) { return parse(value); };
+"#
+                    .to_string(),
+                    filename: "consumer.js".to_string(),
+                    ..Default::default()
+                },
+            ]
+        };
+
+        for emit_source_map in [false, true] {
+            let output = unpack_multi_module(
+                modules(),
+                DecompileOptions {
+                    emit_source_map,
+                    ..Default::default()
+                },
+            )
+            .expect("conditional callable-default fixture should decompile");
+            let findings = validate_prepared_output(&output);
+            assert!(
+                findings.iter().any(|finding| {
+                    finding.kind == OutputFindingKind::MissingImportedName
+                        && finding.filename == "consumer.js"
+                }),
+                "an unproven callable surface must remain visible to validation: {findings:#?}"
+            );
+
+            let consumer = output
+                .modules
+                .iter()
+                .find(|module| module.filename == "consumer.js")
+                .map(|module| module.code.as_str())
+                .expect("expected consumer module");
+            assert!(
+                consumer.contains("import { parse } from \"./provider.js\""),
+                "an unproven property import must not be rewritten through the default export:\n{consumer}"
+            );
+        }
+    }
+
+    #[test]
     fn provider_facts_do_not_infer_absent_callable_properties() {
         let modules = vec![
             UnpackedModule {

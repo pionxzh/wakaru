@@ -1163,6 +1163,17 @@ pub fn collect_commonjs_default_attached_properties(
     let [(export_position, Some(binding))] = default_assignments.as_slice() else {
         return Vec::new();
     };
+    // The direct-statement scan above identifies the candidate export and its
+    // ordering relative to attached properties. Prove separately that no
+    // other module-initialization path can replace that default value.
+    let mut all_default_assignments = ModuleExportsAssignmentCollector {
+        unresolved_mark,
+        values: Vec::new(),
+    };
+    module.visit_with(&mut all_default_assignments);
+    if all_default_assignments.values.len() != 1 {
+        return Vec::new();
+    }
     if !function_bindings.contains(binding) {
         return Vec::new();
     }
