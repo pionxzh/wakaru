@@ -184,7 +184,9 @@ regions of a stable topological order; the final SCC merge still protects
 initialization order. Small plans retain the established clustering behavior.
 `--unpack=inspect` renders the original fine-grained plan recursively without
 merging cyclic components; its finer module graph is for static inspection and
-may not execute.
+may not execute. It retains cross-item write merges when they connect at most
+eight pre-existing clusters, but skips larger write-connected components that
+otherwise act as transitive glue across unrelated scope-hoisted modules.
 
 Unpackers emit module metadata with source text and, when available, a private
 prepared normalized AST sidecar. They do not run the normal decompile rule

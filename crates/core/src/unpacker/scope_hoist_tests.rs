@@ -61,6 +61,36 @@ fn pathological_entry_fixture(region_count: usize) -> String {
     input
 }
 
+fn cross_write_component_fixture(owner_count: usize) -> String {
+    let mut input = String::new();
+    for owner in 0..owner_count {
+        input.push_str(&format!(
+            "var state{owner} = 0;\nfunction read{owner}() {{ return state{owner}; }}\n"
+        ));
+    }
+    input.push_str(
+        r#"
+            function spacer0() { return 0; }
+            function spacer1() { return spacer0() + 1; }
+            function spacer2() { return spacer1() + 1; }
+            function spacer3() { return spacer2() + 1; }
+            function mutateAll() {
+        "#,
+    );
+    for owner in 0..owner_count {
+        input.push_str(&format!("state{owner}++;\n"));
+    }
+    input.push_str(
+        r#"
+                return spacer3();
+            }
+            function runMutation() { return mutateAll(); }
+            console.log(runMutation());
+        "#,
+    );
+    input
+}
+
 fn assert_splits(source: &str, reason: &str) {
     let n = count_modules(source);
     assert!(n >= 2, "{reason}, got {n} modules");
@@ -136,6 +166,72 @@ fn writer_stays_with_mutable_top_level_binding() {
         writer.1.contains("var state"),
         "the writer must stay in the module that declares the mutable binding, not import it:\n{}",
         writer.1
+    );
+}
+
+#[test]
+fn inspection_bounds_cross_item_write_components() {
+    // Seven owner clusters plus the writer cluster sit exactly at the cap, so
+    // the mutable bindings remain with their writer as useful same-module
+    // evidence even though inspection output is not required to execute.
+    let at_limit =
+        cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS.saturating_sub(1));
+    let at_limit = split_scope_hoisted_with_mode(&at_limit, ScopeHoistRenderMode::Inspect)
+        .expect("the at-limit fixture should split");
+    let at_limit_writer = at_limit
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("inspection output should contain the writer");
+    assert!(
+        at_limit_writer.code.contains("var state0"),
+        "an at-limit write component should remain merged:\n{}",
+        at_limit_writer.code
+    );
+
+    // Adding one owner takes the write-connected component above the cap. In
+    // Inspect mode every write edge in that component is skipped, avoiding a
+    // transitive merge of otherwise independent owner clusters.
+    let above_limit = cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
+    let inspection = split_scope_hoisted_with_mode(&above_limit, ScopeHoistRenderMode::Inspect)
+        .expect("the above-limit fixture should split");
+    let inspection_writer = inspection
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("inspection output should contain the writer");
+    assert!(
+        !inspection_writer.code.contains("var state0"),
+        "an oversized write component should preserve its finer boundaries:\n{}",
+        inspection_writer.code
+    );
+    assert_eq!(
+        inspection
+            .modules
+            .iter()
+            .filter(|module| module.code.contains("var state"))
+            .count(),
+        INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+        "each mutable owner cluster should remain separately visible"
+    );
+
+    // Executable mode cannot import a binding and then assign to it, so its
+    // correctness merge remains unconditional for the same large component.
+    let executable =
+        split_scope_hoisted(&above_limit).expect("the executable fixture should split");
+    let executable_writer = executable
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("executable output should contain the writer");
+    assert!(
+        executable_writer.code.contains("var state0")
+            && executable_writer.code.contains(&format!(
+                "var state{}",
+                INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS - 1
+            )),
+        "executable output must keep every mutable owner with the writer:\n{}",
+        executable_writer.code
     );
 }
 

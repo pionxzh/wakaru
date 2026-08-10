@@ -19,6 +19,7 @@ use super::{
 const MIN_DECLARATIONS: usize = 10;
 const PATHOLOGICAL_ENTRY_SCC_MIN_CLUSTERS: usize = 64;
 const PATHOLOGICAL_ENTRY_SCC_MIN_FRACTION_DENOMINATOR: usize = 4;
+const INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS: usize = 8;
 
 #[cfg(test)]
 thread_local! {
@@ -82,7 +83,7 @@ fn split_from_module(
     let iife_body = unwrap_iife(module);
     let body = iife_body.as_deref().unwrap_or(&module.body);
 
-    let plan = analyze_scope_hoist(body)?;
+    let plan = analyze_scope_hoist(body, render_mode)?;
     render_scope_hoist_plan(body, plan, cm, render_mode)
 }
 
@@ -93,7 +94,10 @@ struct ScopeHoistPlan {
     clusters: Vec<Cluster>,
 }
 
-fn analyze_scope_hoist(body: &[ModuleItem]) -> Option<ScopeHoistPlan> {
+fn analyze_scope_hoist(
+    body: &[ModuleItem],
+    render_mode: ScopeHoistRenderMode,
+) -> Option<ScopeHoistPlan> {
     // Phase 1: collect top-level items with metadata.
     let items = collect_top_level_items(body);
     let decl_count = items
@@ -110,7 +114,14 @@ fn analyze_scope_hoist(body: &[ModuleItem]) -> Option<ScopeHoistPlan> {
     // Phase 3: cluster via union-find.
     let mut uf = UnionFind::new(items.len());
     apply_merge_signals(&items, &graph, &mut uf);
-    merge_cross_item_writes(&graph, &mut uf);
+    match render_mode {
+        ScopeHoistRenderMode::Executable => merge_cross_item_writes(&graph, &mut uf),
+        ScopeHoistRenderMode::Inspect => merge_bounded_cross_item_writes(
+            &graph,
+            &mut uf,
+            INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+        ),
+    }
 
     // Phase 4: extract the finest useful clusters and identify the entry.
     let roots = extract_root_clusters(&items, &mut uf);
@@ -1057,6 +1068,7 @@ fn build_reference_graph(items: &[TopLevelItem]) -> ReferenceGraph {
 // Phase 3: Clustering
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct UnionFind {
     parent: Vec<usize>,
     rank: Vec<usize>,
@@ -1102,6 +1114,50 @@ fn merge_cross_item_writes(graph: &ReferenceGraph, uf: &mut UnionFind) {
     for (writer, targets) in graph.writes.iter().enumerate() {
         for &target in targets {
             uf.union(writer, target);
+        }
+    }
+}
+
+/// Keep useful writer/owner evidence for Inspect without allowing one
+/// write-connected runtime component to glue a large plan together. The cap
+/// counts clusters already formed by Signals 1–5, not raw top-level items.
+/// Every edge in an oversized component is skipped so the result does not
+/// depend on hash iteration order.
+fn merge_bounded_cross_item_writes(
+    graph: &ReferenceGraph,
+    uf: &mut UnionFind,
+    max_component_clusters: usize,
+) {
+    let item_count = graph.writes.len();
+    let mut signal_uf = uf.clone();
+    let signal_root_by_item: Vec<_> = (0..item_count).map(|item| signal_uf.find(item)).collect();
+
+    let mut write_components = UnionFind::new(item_count);
+    for (writer, targets) in graph.writes.iter().enumerate() {
+        let writer_root = signal_root_by_item[writer];
+        for &target in targets {
+            let target_root = signal_root_by_item[target];
+            if writer_root != target_root {
+                write_components.union(writer_root, target_root);
+            }
+        }
+    }
+
+    let signal_roots: HashSet<_> = signal_root_by_item.iter().copied().collect();
+    let mut component_cluster_counts = HashMap::new();
+    for signal_root in signal_roots {
+        let component = write_components.find(signal_root);
+        *component_cluster_counts.entry(component).or_insert(0usize) += 1;
+    }
+
+    for (writer, targets) in graph.writes.iter().enumerate() {
+        let writer_root = signal_root_by_item[writer];
+        let component = write_components.find(writer_root);
+        let component_clusters = component_cluster_counts[&component];
+        if component_clusters <= max_component_clusters {
+            for &target in targets {
+                uf.union(writer, target);
+            }
         }
     }
 }
