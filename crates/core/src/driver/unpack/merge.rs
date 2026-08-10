@@ -23,7 +23,7 @@ use super::super::types::{
     PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance, PreparedUnpackOutput,
     UnpackWarning, UnpackWarningKind,
 };
-use super::filename_recovery::rewrite_import_sources;
+use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_after_move};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::PreparedModuleAst;
 use crate::unpacker::UnpackedModule;
@@ -193,6 +193,7 @@ pub(super) struct NumericRewriteModuleContext {
 
 pub(super) struct FilenameRewriteModuleContext {
     original_filename: String,
+    authored_from_filename: Option<String>,
     rename_map: Arc<HashMap<String, String>>,
 }
 
@@ -287,6 +288,11 @@ pub(super) fn prepare_multi_source_modules(
                     .cloned()
                     .map(|rename_map| FilenameRewriteModuleContext {
                         original_filename,
+                        authored_from_filename: if module.module.is_entry {
+                            None
+                        } else {
+                            public_paths.facade.get(&input).cloned()
+                        },
                         rename_map,
                     })
             });
@@ -315,12 +321,22 @@ pub(super) fn apply_filename_rewrites(
     let Some(context) = context else {
         return;
     };
-    rewrite_import_sources(
-        module,
-        &context.original_filename,
-        &context.rename_map,
-        unresolved_mark,
-    );
+    if let Some(authored_from_filename) = &context.authored_from_filename {
+        rewrite_import_sources_after_move(
+            module,
+            &context.original_filename,
+            authored_from_filename,
+            &context.rename_map,
+            unresolved_mark,
+        );
+    } else {
+        rewrite_import_sources(
+            module,
+            &context.original_filename,
+            &context.rename_map,
+            unresolved_mark,
+        );
+    }
 }
 
 fn apply_public_path_reservations(

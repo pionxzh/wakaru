@@ -960,6 +960,129 @@ fn esbuild_processed_chunk_keeps_public_esm_path() {
 }
 
 #[test]
+fn scope_hoist_facade_children_rebase_carried_relative_references() {
+    let target = r#"
+function helperA1() { return import("../shared/dynamic.js"); }
+function helperA2() { return helperA1(); }
+function helperA3() { return helperA2(); }
+function helperA4() { return helperA3(); }
+function publicA() { return helperA4(); }
+
+function helperB1() { return require("../shared/required.js"); }
+function helperB2() { return helperB1(); }
+function helperB3() { return helperB2(); }
+function helperB4() { return helperB3(); }
+function publicB() { return helperB4(); }
+
+console.log(publicA(), publicB());
+export { publicA, publicB };
+"#;
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: "import { publicA } from \"./assets/index-hash.js\"; console.log(publicA);"
+                    .to_string(),
+            },
+            UnpackInput {
+                filename: "assets/index-hash.js".to_string(),
+                source: target.to_string(),
+            },
+            UnpackInput {
+                filename: "shared/dynamic.js".to_string(),
+                source: "export const dynamicValue = 1;".to_string(),
+            },
+            UnpackInput {
+                filename: "shared/required.js".to_string(),
+                source: "export default 2;".to_string(),
+            },
+        ],
+        DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("scope-hoisted child references should follow the facade move");
+
+    let moved_references = output
+        .modules
+        .iter()
+        .filter(|(filename, _)| filename.starts_with("assets/index-hash/"))
+        .map(|(_, code)| code.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        moved_references.contains("../../shared/dynamic.js")
+            && moved_references.contains("../../shared/required.js"),
+        "carried references must remain relative to the physical input after child namespacing:\n{moved_references}"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
+fn esbuild_facade_children_rebase_carried_relative_references() {
+    let target = r#"
+var lazy = (init, cache) => () => (init && (cache = init(init = 0)), cache);
+var init_a = lazy(() => { value_a = import("../shared/dynamic.js"); });
+var init_b = lazy(() => { value_b = require("../shared/required.js"); });
+var init_c = lazy(() => { value_c = 3; });
+var init_d = lazy(() => { value_d = 4; });
+var init_e = lazy(() => { value_e = 5; });
+var value_a, value_b, value_c, value_d, value_e;
+init_a();
+init_b();
+init_c();
+init_d();
+init_e();
+var total = value_a && value_b && value_c + value_d + value_e;
+export { total };
+"#;
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: "import { total } from \"./assets/chunk-hash.js\"; console.log(total);"
+                    .to_string(),
+            },
+            UnpackInput {
+                filename: "assets/chunk-hash.js".to_string(),
+                source: target.to_string(),
+            },
+            UnpackInput {
+                filename: "shared/dynamic.js".to_string(),
+                source: "export const dynamicValue = 1;".to_string(),
+            },
+            UnpackInput {
+                filename: "shared/required.js".to_string(),
+                source: "export default 2;".to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("esbuild child references should follow the facade move");
+
+    assert!(
+        output
+            .detected_formats
+            .contains(&wakaru_core::BundleFormat::Esbuild),
+        "synthetic chunk must exercise structural esbuild handling"
+    );
+    let moved_references = output
+        .modules
+        .iter()
+        .filter(|(filename, _)| filename.starts_with("assets/chunk-hash/"))
+        .map(|(_, code)| code.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        moved_references.contains("../../shared/dynamic.js")
+            && moved_references.contains("../../shared/required.js"),
+        "carried references must remain relative to the physical input after child namespacing:\n{moved_references}"
+    );
+    assert_valid_module_graph(&output.modules);
+}
+
+#[test]
 fn reserved_public_path_wins_generated_chunk_collision() {
     let output = unpack_files(
         vec![

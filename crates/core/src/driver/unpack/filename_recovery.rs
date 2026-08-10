@@ -171,8 +171,38 @@ pub(super) fn rewrite_import_sources(
     rename_map: &HashMap<String, String>,
     unresolved_mark: Mark,
 ) {
+    rewrite_import_sources_with_origin(module, from_filename, None, rename_map, unresolved_mark);
+}
+
+/// Rewrite generated intra-input edges through `rename_map`, while rebasing
+/// every other relative edge from the physical input path that originally
+/// owned code now moved into a generated child.
+pub(super) fn rewrite_import_sources_after_move(
+    module: &mut Module,
+    from_filename: &str,
+    authored_from_filename: &str,
+    rename_map: &HashMap<String, String>,
+    unresolved_mark: Mark,
+) {
+    rewrite_import_sources_with_origin(
+        module,
+        from_filename,
+        Some(authored_from_filename),
+        rename_map,
+        unresolved_mark,
+    );
+}
+
+fn rewrite_import_sources_with_origin(
+    module: &mut Module,
+    from_filename: &str,
+    authored_from_filename: Option<&str>,
+    rename_map: &HashMap<String, String>,
+    unresolved_mark: Mark,
+) {
     let mut rewriter = ImportSourceRewriter {
         from_filename,
+        authored_from_filename,
         rename_map,
         unresolved_mark,
     };
@@ -181,6 +211,7 @@ pub(super) fn rewrite_import_sources(
 
 struct ImportSourceRewriter<'a> {
     from_filename: &'a str,
+    authored_from_filename: Option<&'a str>,
     rename_map: &'a HashMap<String, String>,
     unresolved_mark: Mark,
 }
@@ -190,18 +221,25 @@ impl ImportSourceRewriter<'_> {
         let Some(spec) = src.value.as_str() else {
             return;
         };
-        let Some(target) = resolve_relative_specifier(self.from_filename, spec) else {
-            return;
-        };
-        let Some(recovered) = self.rename_map.get(&target) else {
-            return;
-        };
         let from_final = self
             .rename_map
             .get(self.from_filename)
             .map(String::as_str)
             .unwrap_or(self.from_filename);
-        let new_spec = relative_import_specifier(from_final, recovered);
+        let internal_target = resolve_relative_specifier(self.from_filename, spec)
+            .and_then(|target| self.rename_map.get(&target));
+        let new_spec = if let Some(recovered) = internal_target {
+            relative_import_specifier(from_final, recovered)
+        } else {
+            let Some(authored_from_filename) = self.authored_from_filename else {
+                return;
+            };
+            let Some(authored_target) = resolve_relative_specifier(authored_from_filename, spec)
+            else {
+                return;
+            };
+            relative_import_specifier(from_final, &authored_target)
+        };
         src.value = new_spec.into();
         src.raw = None;
     }
@@ -449,5 +487,61 @@ export default require("./a.js");
             got.contains(r#"require("./a.js")"#),
             "local require binding should not be treated as CommonJS:\n{got}"
         );
+    }
+
+    #[test]
+    fn rebases_carried_edges_but_keeps_generated_sibling_edges() {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                r#"
+import value from "./static.js";
+export { value as forwarded } from "./forward.js";
+export * from "./star.js";
+const dynamicValue = import("../shared/dynamic.js");
+const requiredValue = require("../shared/required.js");
+import { internal } from "./chunk_internal.js";
+"#,
+                "chunk_feature.js",
+                cm.clone(),
+            )
+            .expect("source should parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            let rename_map = HashMap::from([
+                (
+                    "chunk_feature.js".to_string(),
+                    "assets/index/chunk_feature.js".to_string(),
+                ),
+                (
+                    "chunk_internal.js".to_string(),
+                    "assets/index/chunk_internal.js".to_string(),
+                ),
+            ]);
+
+            rewrite_import_sources_after_move(
+                &mut module,
+                "chunk_feature.js",
+                "assets/index.js",
+                &rename_map,
+                unresolved_mark,
+            );
+            let output = print_js(&module, cm).expect("module should print");
+
+            for expected in [
+                r#"from "../static.js""#,
+                r#"from "../forward.js""#,
+                r#"from "../star.js""#,
+                r#"import("../../shared/dynamic.js")"#,
+                r#"require("../../shared/required.js")"#,
+                r#"from "./chunk_internal.js""#,
+            ] {
+                assert!(
+                    output.contains(expected),
+                    "expected {expected:?} after rebasing:\n{output}"
+                );
+            }
+        });
     }
 }

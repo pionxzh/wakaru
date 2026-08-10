@@ -268,9 +268,12 @@ paths need to be planned before generated names:
    its generated chunks beneath that path's stem where practical, matching the
    recursive scope-split design.
 5. Run global deduplication for generated outputs, then apply the existing
-   per-input old-to-final rewrite to the facade/entry and its chunks. This keeps
-   all internal import, re-export, dynamic-import, and supported string
-   `require` references aligned with final filenames.
+   per-input old-to-final rewrite to the facade/entry and its chunks. Generated
+   intra-input edges follow that map, while relative references carried from
+   the physical input are rebased from the reserved facade path after a child
+   moves beneath the facade stem. This keeps internal and sibling import,
+   re-export, dynamic-import, and supported string `require` references aligned
+   with final filenames.
 6. Do not add cross-input owner guesses to the filename rewriter. Consumers
    continue to target the unchanged public path. Pass the reserved path set to
    `build_rename_map` so later Sentry-based readability recovery cannot rename
@@ -297,6 +300,9 @@ Use synthetic multi-input fixtures only. Normal-output tests should cover:
 - two processed inputs whose generated chunk names collide, proving the
   existing dedup rewrite updates facade internals while both public paths stay
   unchanged;
+- a generated child carrying relative static, re-export, dynamic-import, and
+  supported string `require` references from its physical input, proving those
+  references are rebased after child namespacing;
 - duplicate normalized public paths, proving Wakaru falls back or reports the
   ambiguity rather than suffixing a facade;
 - a Sentry-annotated facade paired with an ordinary annotated module, proving
@@ -324,11 +330,9 @@ processed module at the public path instead of approximating the boundary.
 
 ## Adjacent plain-input path issue
 
-`filename_for_fallback_input` currently flattens a plain input to its basename.
-That can break cross-directory references between two plain inputs in a
-multi-input job, even though neither input was split. Public-path reservation
-does not naturally repair that case: the adopted mechanism promotes a proven
-synthetic entry, while a plain input already is its own entry and loses path
-information earlier during fallback naming. Covering plain inputs would require
-a separate safe common-root policy for retaining their relative directory
-structure. That issue remains documented but out of scope for this change.
+Plain multi-input modules now use the same safe common-root derivation and
+reserved-path namespace as facades. Each plain module keeps its relative input
+path, so cross-directory references and same-basename inputs remain stable;
+single-input output keeps its historical basename. This adjacent follow-up was
+implemented after the facade decision rather than by adding a second path
+identity mechanism.
