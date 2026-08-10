@@ -19,6 +19,29 @@ fn prepared_input_classifies_unrecoverable_parse_errors() {
 }
 
 #[test]
+fn prepared_input_coalesces_repeated_recoverable_parse_signatures() {
+    let input = prepare_unpack_input(
+        "classic-script.js".to_string(),
+        "with (first) { consume(first); }\nwith (second) { consume(second); }".to_string(),
+        false,
+        true,
+    )
+    .expect("classic script should recover during preparation");
+    let output = unpack_prepared_inputs(vec![input], DecompileOptions::default(), false, false)
+        .expect("prepared classic script should decompile");
+    let warnings = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::InputParseRecovered)
+        .collect::<Vec<_>>();
+
+    assert_eq!(warnings.len(), 1, "warnings should coalesce: {warnings:#?}");
+    assert!(warnings[0].message.contains("WithInStrict"));
+    assert!(warnings[0].message.contains("2 occurrences"));
+    assert!(warnings[0].message.contains("classic-script.js:1:1"));
+}
+
+#[test]
 fn prepared_plain_input_reuses_detection_ast_in_phase1() {
     let (output, spans) = record_spans(|| {
         let input = prepare_unpack_input(

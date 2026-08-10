@@ -334,7 +334,14 @@ pub(crate) struct PreparedModuleAst {
     pub(crate) globals: Globals,
     pub(crate) module: Module,
     pub(crate) unresolved_mark: Mark,
-    pub(crate) recoverable_parse_errors: Vec<String>,
+    pub(crate) recoverable_parse_errors: Vec<RecoverableParseError>,
+}
+
+/// Parser recovery details retained across the detector/driver boundary.
+pub(crate) struct RecoverableParseError {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+    pub(crate) message: String,
 }
 
 /// Internal detector result. `prepared` is always aligned one-for-one with
@@ -523,7 +530,7 @@ pub(crate) fn try_prepare_source(
         Plain {
             module: Module,
             unresolved_mark: Mark,
-            recoverable_parse_errors: Vec<String>,
+            recoverable_parse_errors: Vec<RecoverableParseError>,
         },
         PlainUnprepared,
     }
@@ -771,7 +778,7 @@ fn parse_es_module_with_recovery(
     source: &str,
     filename: &str,
     cm: Lrc<SourceMap>,
-) -> anyhow::Result<(Module, Vec<String>)> {
+) -> anyhow::Result<(Module, Vec<RecoverableParseError>)> {
     let fm = cm.new_source_file(
         FileName::Custom(filename.to_string()).into(),
         source.to_string(),
@@ -790,10 +797,17 @@ fn parse_es_module_with_recovery(
         Ok(result) => result,
         Err(_) => return Err(anyhow::anyhow!("SWC parser panicked on {filename}")),
     };
-    let parser_errors: Vec<String> = parser
+    let parser_errors: Vec<RecoverableParseError> = parser
         .take_errors()
         .into_iter()
-        .map(|error| format!("{error:?}"))
+        .map(|error| {
+            let loc = cm.lookup_char_pos(error.span().lo());
+            RecoverableParseError {
+                line: loc.line,
+                column: loc.col_display + 1,
+                message: format!("{:?}", error.kind()),
+            }
+        })
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
@@ -801,7 +815,14 @@ fn parse_es_module_with_recovery(
         (Err(error), true) => Err(anyhow::anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow::anyhow!(
             "failed to parse {filename}: {error:?}; {}",
-            parser_errors.join("; ")
+            parser_errors
+                .iter()
+                .map(|error| format!(
+                    "{}:{}:{}: {}",
+                    filename, error.line, error.column, error.message
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
         )),
     }
 }

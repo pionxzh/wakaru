@@ -222,6 +222,28 @@ mod tests {
     }
 
     #[test]
+    fn repeated_input_parse_signatures_are_coalesced() {
+        let output = decompile(
+            "with (first) { consume(first); }\nwith (second) { consume(second); }",
+            DecompileOptions {
+                filename: "classic-script.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("classic script should recover under the module parser");
+        let warnings = output
+            .warnings
+            .iter()
+            .filter(|warning| warning.kind == UnpackWarningKind::InputParseRecovered)
+            .collect::<Vec<_>>();
+
+        assert_eq!(warnings.len(), 1, "warnings should coalesce: {warnings:#?}");
+        assert!(warnings[0].message.contains("WithInStrict"));
+        assert!(warnings[0].message.contains("2 occurrences"));
+        assert!(warnings[0].message.contains("classic-script.js:1:1"));
+    }
+
+    #[test]
     fn diagnostics_opt_in_reports_recovered_output_parse_errors() {
         let output = decompile(
             "label: label: break label;",

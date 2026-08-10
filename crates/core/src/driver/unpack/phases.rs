@@ -14,7 +14,7 @@ use swc_core::ecma::visit::VisitMutWith;
 use super::super::diagnostics::{collect_input_parse_warnings, collect_output_diagnostics};
 use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
-    print_js_with_srcmap,
+    print_js_with_srcmap, ParseDiagnostic,
 };
 use super::super::types::{
     DecompileOptions, PreparedInputId, PreparedModuleOutput, PreparedModuleProvenance,
@@ -203,17 +203,18 @@ pub(super) fn unpack_multi_module_with_plan(
     let collect_facts = |unpacked: &mut PreparedUnpackModule| -> Phase1Module {
         let (globals, prepared_input, input_parse_warnings) = match unpacked.prepared.take() {
             Some(prepared) => {
-                let warnings = prepared
+                let filename = unpacked.module.filename.clone();
+                let errors = prepared
                     .recoverable_parse_errors
                     .into_iter()
-                    .map(|error| {
-                        UnpackWarning::new(
-                            unpacked.module.filename.clone(),
-                            UnpackWarningKind::InputParseRecovered,
-                            format!("input parse recovered: {error}"),
-                        )
+                    .map(|error| ParseDiagnostic {
+                        filename: filename.clone(),
+                        line: error.line,
+                        column: error.column,
+                        message: error.message,
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
+                let warnings = collect_input_parse_warnings(&errors);
                 (
                     prepared.globals,
                     Some((prepared.module, prepared.unresolved_mark)),

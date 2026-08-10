@@ -29,13 +29,37 @@ pub(super) fn collect_tdz_warnings(
 }
 
 pub(super) fn collect_input_parse_warnings(errors: &[ParseDiagnostic]) -> Vec<UnpackWarning> {
-    errors
-        .iter()
-        .map(|error| {
+    // Source locations identify occurrences, not distinct parser conditions.
+    // Keep the first-seen signature order while collapsing repeated conditions
+    // within one parsed file.
+    let mut group_indexes: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut groups: Vec<(&ParseDiagnostic, usize)> = Vec::new();
+
+    for error in errors {
+        let signature = (error.filename.as_str(), error.message.as_str());
+        if let Some(index) = group_indexes.get(&signature).copied() {
+            groups[index].1 += 1;
+        } else {
+            group_indexes.insert(signature, groups.len());
+            groups.push((error, 1));
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(first, occurrences)| {
+            let message = if occurrences == 1 {
+                format!("input parse recovered from parser error: {first}")
+            } else {
+                format!(
+                    "input parse recovered from repeated parser error {} ({occurrences} occurrences; first at {}:{}:{})",
+                    first.message, first.filename, first.line, first.column
+                )
+            };
             UnpackWarning::new(
-                &error.filename,
+                &first.filename,
                 UnpackWarningKind::InputParseRecovered,
-                format!("input parse recovered from parser error: {error}"),
+                message,
             )
         })
         .collect()
@@ -249,4 +273,36 @@ fn output_parse_warnings(errors: Vec<ParseDiagnostic>, filename: &str) -> Vec<Un
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_diagnostic(line: usize, message: &str) -> ParseDiagnostic {
+        ParseDiagnostic {
+            filename: "classic-script.js".to_string(),
+            line,
+            column: 1,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn input_parse_warning_coalescing_preserves_signature_order() {
+        let warnings = collect_input_parse_warnings(&[
+            parse_diagnostic(2, "WithInStrict"),
+            parse_diagnostic(3, "TS1102"),
+            parse_diagnostic(5, "WithInStrict"),
+            parse_diagnostic(8, "TS1102"),
+        ]);
+
+        assert_eq!(warnings.len(), 2, "warnings should coalesce: {warnings:#?}");
+        assert!(warnings[0].message.contains("WithInStrict"));
+        assert!(warnings[0].message.contains("2 occurrences"));
+        assert!(warnings[0].message.contains("classic-script.js:2:1"));
+        assert!(warnings[1].message.contains("TS1102"));
+        assert!(warnings[1].message.contains("2 occurrences"));
+        assert!(warnings[1].message.contains("classic-script.js:3:1"));
+    }
 }
