@@ -19,7 +19,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::rules::rename_utils::collect_module_names;
-use crate::utils::paren::strip_parens;
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) fn normalize_webpack_commonjs_runtime(
     module: &mut Module,
@@ -171,6 +171,46 @@ impl VisitMut for WebpackCommonJsRuntimeNormalizer {
             self.matches += 1;
         }
     }
+
+    fn visit_mut_call_expr(&mut self, call: &mut swc_core::ecma::ast::CallExpr) {
+        // Arguments are evaluated immediately even when the callee is not, but
+        // function-valued arguments remain deferred through the boundary
+        // overrides below.
+        for argument in &mut call.args {
+            argument.expr.visit_mut_with(self);
+        }
+
+        let Callee::Expr(callee) = &mut call.callee else {
+            return;
+        };
+        match strip_parens_mut(callee) {
+            Expr::Fn(function)
+                if !function.function.is_async && !function.function.is_generator =>
+            {
+                if let Some(body) = &mut function.function.body {
+                    body.visit_mut_with(self);
+                }
+            }
+            Expr::Arrow(arrow) if !arrow.is_async => {
+                arrow.body.visit_mut_with(self);
+            }
+            _ => callee.visit_mut_with(self),
+        }
+    }
+
+    // A recovered default is exported at module completion, so a matching
+    // assignment is sound only on the module's immediate execution path.
+    // Direct synchronous IIFEs are entered explicitly above; all other
+    // function-like and class bodies may run later (or never) and are skipped.
+    fn visit_mut_function(&mut self, _: &mut swc_core::ecma::ast::Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_mut_class(&mut self, _: &mut swc_core::ecma::ast::Class) {}
+
+    fn visit_mut_getter_prop(&mut self, _: &mut swc_core::ecma::ast::GetterProp) {}
+
+    fn visit_mut_setter_prop(&mut self, _: &mut swc_core::ecma::ast::SetterProp) {}
 }
 
 impl WebpackCommonJsRuntimeNormalizer {
@@ -417,6 +457,76 @@ mod tests {
             true,
         );
         assert!(output.contains("syntheticChoose"), "{output}");
+    }
+
+    #[test]
+    fn deferred_runtime_shapes_fail_closed() {
+        for input in [
+            r#"
+setTimeout(function() {
+    function choose(value) { return value; }
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+}, 0);
+"#,
+            r#"
+setTimeout(() => {
+    function choose(value) { return value; }
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+}, 0);
+"#,
+            r#"
+({
+    get value() {
+        function choose(value) { return value; }
+        module.exports ? module.exports = choose : window.syntheticChoose = choose;
+        return choose;
+    }
+});
+"#,
+            r#"
+(class {
+    constructor() {
+        function choose(value) { return value; }
+        module.exports ? module.exports = choose : window.syntheticChoose = choose;
+    }
+});
+"#,
+            r#"
+(async function() {
+    function choose(value) { return value; }
+    await ready;
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+})();
+"#,
+        ] {
+            let output = normalize(input, true);
+
+            assert!(output.contains("module.exports"), "{output}");
+            assert!(output.contains("syntheticChoose"), "{output}");
+            assert!(!output.contains("_webpackDefault"), "{output}");
+            assert!(!output.contains("export default"), "{output}");
+        }
+    }
+
+    #[test]
+    fn synchronous_arrow_iife_remains_supported() {
+        let output = normalize(
+            r#"
+(() => {
+    function choose(value) { return value; }
+    module.exports ? module.exports = choose : window.syntheticChoose = choose;
+})();
+"#,
+            true,
+        );
+
+        assert!(output.contains("_webpackDefault = choose"), "{output}");
+        assert!(
+            output.contains("export default _webpackDefault"),
+            "{output}"
+        );
+        assert!(!output.contains("module.exports"), "{output}");
+        assert!(!output.contains("syntheticChoose"), "{output}");
     }
 
     #[test]
