@@ -354,6 +354,7 @@ pub(super) fn detect_runtime_entry_from_module(
                     code: source.to_string(),
                     filename: "entry.js".to_string(),
                     source_ranges: vec![(0, source.len() as u32)],
+                    inspection_context_ranges: Vec::new(),
                     source_input: String::new(),
                     generated_source_map: Vec::new(),
                 }],
@@ -1475,6 +1476,7 @@ fn extract_modules_from_container(
             code: source_fallback_for_stmts(&cm, entry.body_stmts),
             filename: entry.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
@@ -1566,6 +1568,7 @@ fn extract_webpack5_modules_with_plan(
                 code: source_fallback_for_stmts(&cm, entry.body_stmts),
                 filename: entry.filename.clone(),
                 source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
+                inspection_context_ranges: Vec::new(),
                 source_input: String::new(),
                 generated_source_map: Vec::new(),
             });
@@ -1669,6 +1672,7 @@ fn append_synthetic_entry(
         code,
         filename: "entry.js".to_string(),
         source_ranges,
+        inspection_context_ranges: Vec::new(),
         source_input: String::new(),
         generated_source_map: Vec::new(),
     });

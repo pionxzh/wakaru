@@ -185,6 +185,7 @@ fn prepared_raw_scope_split_keeps_runnable_normalization() {
                 is_entry: true,
                 filename: "entry.js".to_string(),
                 source_ranges: vec![(0, 18)],
+                inspection_context_ranges: Vec::new(),
                 source_input: String::new(),
                 generated_source_map: Vec::new(),
                 code: "if (ready) run();".to_string(),

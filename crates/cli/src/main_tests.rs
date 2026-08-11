@@ -1634,16 +1634,19 @@ fn renders_provenance_json_with_final_names_and_default_input() {
             filename: "b.js".to_string(),
             input: String::new(),
             ranges: vec![(10, 20), (30, 40)],
+            inspection_context_ranges: Vec::new(),
         },
         CliModuleProvenance {
             filename: "a \"quoted\".js".to_string(),
             input: "chunk-1.js".to_string(),
             ranges: vec![(0, 5)],
+            inspection_context_ranges: Vec::new(),
         },
         CliModuleProvenance {
             filename: "module-1/chunk_a.js".to_string(),
             input: String::new(),
             ranges: vec![(50, 60)],
+            inspection_context_ranges: vec![(40, 80), (90, 120)],
         },
     ];
     let mut final_names = HashMap::new();
@@ -1674,7 +1677,7 @@ fn renders_provenance_json_with_final_names_and_default_input() {
         "escaped filename with explicit input missing:\n{json}"
     );
     assert!(
-        json.contains(r#""module-1/chunk_a.js": {"input": "bundle.js", "ranges": [[50,60]], "extraction": "heuristic"}"#),
+        json.contains(r#""module-1/chunk_a.js": {"input": "bundle.js", "ranges": [[50,60]], "extraction": "heuristic", "context_ranges": [[40,80],[90,120]]}"#),
         "nested heuristic module metadata missing:\n{json}"
     );
     // Must be alphabetically sorted and valid JSON shape.

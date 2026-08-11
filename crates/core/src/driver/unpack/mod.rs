@@ -370,6 +370,7 @@ fn public_boundary_fallback_module(
             is_entry: true,
             filename: public_path,
             source_ranges: vec![(0, source_len)],
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
             code: source,
@@ -577,6 +578,7 @@ pub fn unpack_prepared_inputs_with_policy(
                             .cloned()
                             .unwrap_or_else(|| filename_for_fallback_input(&filename)),
                         source_ranges: vec![(0, source_len)],
+                        inspection_context_ranges: Vec::new(),
                         source_input: String::new(),
                         generated_source_map: Vec::new(),
                         code: source,
@@ -719,6 +721,7 @@ fn into_legacy_unpack_output(
             filename: module.filename.clone(),
             input,
             ranges: module.provenance.ranges,
+            inspection_context_ranges: module.provenance.inspection_context_ranges,
             is_entry: module.provenance.is_entry,
         });
         if let Some(source_map) = module.source_map {

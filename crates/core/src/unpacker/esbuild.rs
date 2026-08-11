@@ -870,6 +870,7 @@ fn detect_from_prepared_factories(
             code,
             filename: factory.filename,
             source_ranges: span_byte_range(&cm, factory.span).into_iter().collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
@@ -890,6 +891,7 @@ fn detect_from_prepared_factories(
             code,
             filename: "entry.js".to_string(),
             source_ranges: entry_ranges,
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
@@ -3078,6 +3080,7 @@ fn emit_scope_modules(
             code,
             filename: meta.filename.clone(),
             source_ranges: spans_byte_ranges(&cm, body_spans.into_iter()),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });

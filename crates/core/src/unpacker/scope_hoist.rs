@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, Spanned, GLOBALS};
+use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, GLOBALS};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -285,6 +285,7 @@ struct ScopeHoistPlan {
     graph: ReferenceGraph,
     roots: Vec<Cluster>,
     clusters: Vec<Cluster>,
+    inspection_context_by_item: Option<Vec<usize>>,
 }
 
 fn analyze_scope_hoist(
@@ -307,17 +308,27 @@ fn analyze_scope_hoist(
     // Phase 3: cluster via union-find.
     let mut uf = UnionFind::new(items.len());
     apply_merge_signals(&items, &graph, &mut uf);
-    match render_mode {
-        ScopeHoistRenderMode::Executable => merge_cross_item_writes(&graph, &mut uf),
+    let inspection_context_by_item = match render_mode {
+        ScopeHoistRenderMode::Executable => {
+            merge_cross_item_writes(&graph, &mut uf);
+            None
+        }
         ScopeHoistRenderMode::Inspect => {
+            let topology = analyze_cross_item_writes(&graph, &uf);
+            let context_by_item = topology
+                .signal_root_by_item
+                .iter()
+                .map(|&root| topology.write_component_by_root[root])
+                .collect();
             merge_bounded_cross_item_writes(
                 &items,
                 &graph,
                 &mut uf,
                 INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
             );
+            Some(context_by_item)
         }
-    }
+    };
 
     // Phase 4: extract the finest useful clusters and identify the entry.
     let roots = extract_root_clusters(&items, &mut uf);
@@ -327,6 +338,7 @@ fn analyze_scope_hoist(
         graph,
         roots,
         clusters,
+        inspection_context_by_item,
     })
 }
 
@@ -341,6 +353,7 @@ fn render_scope_hoist_plan(
         graph,
         roots,
         clusters,
+        inspection_context_by_item,
     } = plan;
     let clusters = match render_mode {
         ScopeHoistRenderMode::Executable => {
@@ -381,7 +394,13 @@ fn render_scope_hoist_plan(
     }
 
     // Phase 5: emit modules.
-    let modules = emit_clusters(body, &items, clusters, cm);
+    let modules = emit_clusters(
+        body,
+        &items,
+        clusters,
+        inspection_context_by_item.as_deref(),
+        cm,
+    );
     Some(UnpackResult::without_cycle_warnings(
         modules,
         BundleFormat::ScopeHoisted,
@@ -2265,11 +2284,51 @@ fn emit_clusters(
     body: &[ModuleItem],
     items: &[TopLevelItem],
     clusters: Vec<Cluster>,
+    inspection_context_by_item: Option<&[usize]>,
     cm: Lrc<SourceMap>,
 ) -> Vec<UnpackedModule> {
     let dynamic_require_helpers = collect_dynamic_require_helpers(body);
     let esbuild_to_esm_helpers = collect_esbuild_to_esm_helpers(body);
     let import_decls = collect_import_decls(body);
+
+    // A fine cluster may use coarse component evidence only when every item
+    // in that emitted module belongs to one write component. The synthetic
+    // entry often folds unrelated singleton components together; leaving its
+    // context empty avoids turning that garbage-bag boundary into new glue.
+    let cluster_contexts = inspection_context_by_item.map(|context_by_item| {
+        clusters
+            .iter()
+            .map(|cluster| {
+                let mut contexts = cluster
+                    .item_indices
+                    .iter()
+                    .map(|&item| context_by_item[item]);
+                let first = contexts.next()?;
+                contexts.all(|context| context == first).then_some(first)
+            })
+            .collect::<Vec<_>>()
+    });
+    let mut context_cluster_counts = HashMap::new();
+    if let Some(cluster_contexts) = &cluster_contexts {
+        for context in cluster_contexts.iter().flatten() {
+            *context_cluster_counts.entry(*context).or_insert(0usize) += 1;
+        }
+    }
+    let mut context_spans = HashMap::<usize, Vec<Span>>::new();
+    if let Some(context_by_item) = inspection_context_by_item {
+        for (item, &context) in context_by_item.iter().enumerate() {
+            if context_cluster_counts.get(&context).copied().unwrap_or(0) >= 2 {
+                context_spans
+                    .entry(context)
+                    .or_default()
+                    .push(body[item].span());
+            }
+        }
+    }
+    let context_ranges = context_spans
+        .into_iter()
+        .map(|(context, spans)| (context, spans_byte_ranges(&cm, spans.into_iter())))
+        .collect::<HashMap<_, _>>();
 
     // Pre-compute: which names does each cluster declare?
     let cluster_declared: Vec<HashSet<Atom>> = clusters
@@ -2420,6 +2479,11 @@ fn emit_clusters(
                 &cm,
                 cluster.item_indices.iter().map(|&i| body[i].span()),
             ),
+            inspection_context_ranges: cluster_contexts
+                .as_ref()
+                .and_then(|contexts| contexts[ci])
+                .and_then(|context| context_ranges.get(&context).cloned())
+                .unwrap_or_default(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });

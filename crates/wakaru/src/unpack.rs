@@ -349,6 +349,16 @@ fn convert_core_output(
                         .map(move |&(start, end)| SourceSpan { input, start, end })
                 })
                 .collect::<Vec<_>>();
+            let inspection_context = provenance_input
+                .into_iter()
+                .flat_map(|input| {
+                    module
+                        .provenance
+                        .inspection_context_ranges
+                        .iter()
+                        .map(move |&(start, end)| SourceSpan { input, start, end })
+                })
+                .collect::<Vec<_>>();
             let mut associated: HashSet<_> = spans.iter().map(|span| span.input).collect();
             if associated.is_empty() {
                 if let Some(input) = provenance_input {
@@ -375,6 +385,7 @@ fn convert_core_output(
                 filename: module.filename,
                 code: module.code,
                 provenance: spans,
+                inspection_context,
             }
         })
         .collect();
@@ -471,6 +482,7 @@ fn append_preserved_modules(
                 start: 0,
                 end: source_len,
             }],
+            inspection_context: Vec::new(),
             entry: EntryStatus::Unknown,
             status: ModuleStatus::Preserved,
         });
@@ -550,6 +562,56 @@ mod tests {
             .modules
             .iter()
             .any(|module| module.code.contains("from \"./entry.js\"")));
+    }
+
+    #[test]
+    fn inspect_mode_exposes_shared_coarse_context_for_split_write_components() {
+        let mut source = String::new();
+        for owner in 0..8 {
+            source.push_str(&format!(
+                "var state{owner} = 0; function read{owner}() {{ return state{owner}; }}\n"
+            ));
+        }
+        source.push_str(
+            r#"
+                function spacer0() { return 0; }
+                function spacer1() { return spacer0() + 1; }
+                function spacer2() { return spacer1() + 1; }
+                function spacer3() { return spacer2() + 1; }
+                function mutateAll() {
+            "#,
+        );
+        for owner in 0..8 {
+            source.push_str(&format!("state{owner}++;\n"));
+        }
+        source.push_str("} console.log(mutateAll(), spacer3());");
+
+        let inspect = unpack(
+            vec![Source::new("bundle.js", source.clone())],
+            UnpackOptions::default()
+                .with_modules(ModuleMode::Raw)
+                .with_mode(UnpackMode::Inspect),
+        )
+        .expect("inspection split should unpack");
+        let contexts = inspect
+            .modules
+            .iter()
+            .filter(|module| !module.inspection_context.is_empty())
+            .map(|module| &module.inspection_context)
+            .collect::<Vec<_>>();
+        assert!(contexts.len() > 1, "fine siblings should expose context");
+        assert!(contexts.iter().all(|context| *context == contexts[0]));
+        assert!(contexts[0].iter().all(|span| span.input.get() == 0));
+
+        let normal = unpack(
+            vec![Source::new("bundle.js", source)],
+            UnpackOptions::default().with_modules(ModuleMode::Raw),
+        )
+        .expect("normal split should unpack");
+        assert!(normal
+            .modules
+            .iter()
+            .all(|module| module.inspection_context.is_empty()));
     }
 
     #[test]

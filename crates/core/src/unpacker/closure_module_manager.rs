@@ -113,6 +113,7 @@ pub(super) fn detect_from_module(
             code: emitted.code,
             filename,
             source_ranges,
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: emitted.source_map,
         });

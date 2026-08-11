@@ -133,13 +133,27 @@ fn namespace_scope_hoisted_split(
 
     let mut modules = Vec::with_capacity(split_modules.len());
     for mut module in split_modules {
-        let source_ranges = if parent.generated_source_map.is_empty() {
-            parent.source_ranges.clone()
-        } else {
+        let has_generated_map = !parent.generated_source_map.is_empty();
+        let source_ranges = if has_generated_map {
             map_generated_ranges_to_source(&parent.generated_source_map, &module.source_ranges)
                 .unwrap_or_default()
+        } else {
+            parent.source_ranges.clone()
+        };
+        let inspection_context_ranges = if has_generated_map {
+            map_generated_ranges_to_source(
+                &parent.generated_source_map,
+                &module.inspection_context_ranges,
+            )
+            .unwrap_or_default()
+        } else {
+            // Copying the parent's whole provenance is a conservative module
+            // fallback, but would falsely merge every nested context. Context
+            // is useful only when its narrower ranges map back exactly.
+            Vec::new()
         };
         module.source_ranges = source_ranges;
+        module.inspection_context_ranges = inspection_context_ranges;
         module.source_input = parent.source_input.clone();
         module.generated_source_map.clear();
         if module.is_entry {
@@ -704,6 +718,81 @@ export const value = init + 1;
 
         let missing_entry = HashSet::from(["module-11111/chunk_value.js".to_string()]);
         assert!(!scope_split_imports_resolve(&modules, &missing_entry));
+    }
+
+    #[test]
+    fn namespace_scope_split_maps_inspection_context_separately() {
+        let parent = UnpackedModule {
+            id: "100".to_string(),
+            filename: "module-100.js".to_string(),
+            source_input: "bundle.js".to_string(),
+            generated_source_map: vec![
+                GeneratedSourceMapPoint {
+                    generated_offset: 0,
+                    source_offset: 100,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 10,
+                    source_offset: 110,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 20,
+                    source_offset: 120,
+                },
+                GeneratedSourceMapPoint {
+                    generated_offset: 30,
+                    source_offset: 130,
+                },
+            ],
+            ..Default::default()
+        };
+        let split_modules = vec![
+            UnpackedModule {
+                id: "left".to_string(),
+                filename: "chunk_left.js".to_string(),
+                source_ranges: vec![(10, 20)],
+                inspection_context_ranges: vec![(0, 30)],
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "right".to_string(),
+                filename: "chunk_right.js".to_string(),
+                source_ranges: vec![(20, 30)],
+                inspection_context_ranges: vec![(0, 30)],
+                ..Default::default()
+            },
+        ];
+
+        let modules = namespace_scope_hoisted_split(&parent, split_modules);
+        assert_eq!(modules[0].source_ranges, vec![(110, 120)]);
+        assert_eq!(modules[1].source_ranges, vec![(120, 130)]);
+        assert_eq!(modules[0].inspection_context_ranges, vec![(100, 130)]);
+        assert_eq!(
+            modules[0].inspection_context_ranges,
+            modules[1].inspection_context_ranges
+        );
+        assert!(modules
+            .iter()
+            .all(|module| module.generated_source_map.is_empty()
+                && module.source_input == "bundle.js"));
+
+        let without_map = namespace_scope_hoisted_split(
+            &UnpackedModule {
+                id: "200".to_string(),
+                filename: "module-200.js".to_string(),
+                source_ranges: vec![(500, 600)],
+                ..Default::default()
+            },
+            vec![UnpackedModule {
+                id: "child".to_string(),
+                filename: "chunk_child.js".to_string(),
+                source_ranges: vec![(10, 20)],
+                inspection_context_ranges: vec![(0, 30)],
+                ..Default::default()
+            }],
+        );
+        assert_eq!(without_map[0].source_ranges, vec![(500, 600)]);
+        assert!(without_map[0].inspection_context_ranges.is_empty());
     }
 
     #[test]

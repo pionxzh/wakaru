@@ -111,6 +111,9 @@ pub struct PreparedModuleProvenance {
     pub input: Option<PreparedInputId>,
     /// 0-based byte ranges `(start, end)` into the physical input.
     pub ranges: Vec<(u32, u32)>,
+    /// Inspect-only coarse write-component ranges used as analysis context.
+    /// Empty for normal output and when a nested mapping is unavailable.
+    pub inspection_context_ranges: Vec<(u32, u32)>,
     /// Whether the detector identified this output as an entry module.
     pub is_entry: bool,
 }
@@ -153,6 +156,8 @@ pub struct ModuleProvenance {
     pub input: String,
     /// 0-based byte ranges `(start, end)` into the input source.
     pub ranges: Vec<(u32, u32)>,
+    /// Inspect-only coarse write-component ranges. Empty in normal output.
+    pub inspection_context_ranges: Vec<(u32, u32)>,
     /// Whether the detector identified this output as an entry module.
     pub is_entry: bool,
 }

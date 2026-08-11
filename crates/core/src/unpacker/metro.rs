@@ -158,6 +158,7 @@ pub(super) fn detect_from_module_prepared(
             source_ranges: span_byte_range(&cm, descriptor.body.span)
                 .into_iter()
                 .collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });

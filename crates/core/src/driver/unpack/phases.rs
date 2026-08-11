@@ -164,7 +164,12 @@ pub(super) fn unpack_multi_module_with_plan(
     // appear with their final names.
     let provenance_by_provisional: std::collections::HashMap<
         String,
-        (Option<PreparedInputId>, Vec<(u32, u32)>, bool),
+        (
+            Option<PreparedInputId>,
+            Vec<(u32, u32)>,
+            Vec<(u32, u32)>,
+            bool,
+        ),
     > = modules
         .iter()
         .map(|prepared| {
@@ -173,6 +178,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 (
                     prepared.input,
                     prepared.module.source_ranges.clone(),
+                    prepared.module.inspection_context_ranges.clone(),
                     prepared.module.is_entry,
                 ),
             )
@@ -713,7 +719,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 .get(final_filename.as_str())
                 .copied()
                 .unwrap_or(final_filename.as_str());
-            let (input, ranges, is_entry) = provenance_by_provisional
+            let (input, ranges, inspection_context_ranges, is_entry) = provenance_by_provisional
                 .get(provisional)
                 .expect("every surviving module retains its provenance");
             let source_map = srcmap_by_filename.remove(&final_filename);
@@ -724,6 +730,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 provenance: PreparedModuleProvenance {
                     input: *input,
                     ranges: ranges.clone(),
+                    inspection_context_ranges: inspection_context_ranges.clone(),
                     is_entry: *is_entry,
                 },
             }

@@ -526,6 +526,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
                     provenance: PreparedModuleProvenance {
                         input: prepared.input,
                         ranges: prepared.module.source_ranges,
+                        inspection_context_ranges: prepared.module.inspection_context_ranges,
                         is_entry: prepared.module.is_entry,
                     },
                 })
@@ -541,6 +542,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
             let provenance = PreparedModuleProvenance {
                 input: unpacked.input,
                 ranges: unpacked.module.source_ranges,
+                inspection_context_ranges: unpacked.module.inspection_context_ranges,
                 is_entry: unpacked.module.is_entry,
             };
             match GLOBALS.set(&Default::default(), || {

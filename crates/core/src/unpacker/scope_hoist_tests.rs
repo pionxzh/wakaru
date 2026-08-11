@@ -299,6 +299,24 @@ fn inspection_bounds_cross_item_write_components() {
         INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
         "each mutable owner cluster should remain separately visible"
     );
+    let mut oversized_contexts = inspection
+        .modules
+        .iter()
+        .filter(|module| {
+            module.code.contains("var state") || module.code.contains("function mutateAll")
+        })
+        .map(|module| &module.inspection_context_ranges);
+    let first_context = oversized_contexts
+        .next()
+        .expect("oversized component should expose context provenance");
+    assert!(
+        !first_context.is_empty(),
+        "split write-component modules should retain their shared coarse context"
+    );
+    assert!(
+        oversized_contexts.all(|context| context == first_context),
+        "every fine module from one write component should share one context range set"
+    );
 
     // Executable mode cannot import a binding and then assign to it, so its
     // correctness merge remains unconditional for the same large component.
@@ -317,6 +335,13 @@ fn inspection_bounds_cross_item_write_components() {
             )),
         "executable output must keep every mutable owner with the writer:\n{}",
         executable_writer.code
+    );
+    assert!(
+        executable
+            .modules
+            .iter()
+            .all(|module| module.inspection_context_ranges.is_empty()),
+        "normal executable output must not expose Inspect-only context"
     );
 }
 

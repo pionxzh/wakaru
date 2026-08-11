@@ -148,6 +148,7 @@ fn emit_define_modules(defines: Vec<AmdDefine<'_>>, cm: Lrc<SourceMap>) -> Optio
             code: emit_module(module, cm.clone()).ok()?,
             filename,
             source_ranges: span_byte_range(&cm, define.span).into_iter().collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
@@ -183,6 +184,7 @@ fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackRe
             code: emit_module(synthetic, cm.clone()).ok()?,
             filename: "module.js".to_string(),
             source_ranges: span_byte_range(&cm, wrapper_span).into_iter().collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         }],

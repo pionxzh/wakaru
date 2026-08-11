@@ -1093,6 +1093,7 @@ struct CliModuleProvenance {
     filename: String,
     input: String,
     ranges: Vec<(u32, u32)>,
+    inspection_context_ranges: Vec<(u32, u32)>,
 }
 
 struct CliUnpackOutput {
@@ -1389,6 +1390,11 @@ fn adapt_public_unpack_output(output: wakaru::UnpackOutput) -> CliUnpackOutput {
                     .iter()
                     .map(|span| (span.start, span.end))
                     .collect(),
+                inspection_context_ranges: module
+                    .inspection_context
+                    .iter()
+                    .map(|span| (span.start, span.end))
+                    .collect(),
             }
         })
         .collect();
@@ -1509,12 +1515,24 @@ fn render_provenance_json(
             .collect::<Vec<_>>()
             .join(",");
         let extraction = provenance_extraction(name, strategy);
+        let context_ranges = if entry.inspection_context_ranges.is_empty() {
+            String::new()
+        } else {
+            let ranges = entry
+                .inspection_context_ranges
+                .iter()
+                .map(|(start, end)| format!("[{start},{end}]"))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(", \"context_ranges\": [{ranges}]")
+        };
         json.push_str(&format!(
-            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}], \"extraction\": \"{}\"}}{}\n",
+            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}], \"extraction\": \"{}\"{}}}{}\n",
             json_escape(name),
             json_escape(input),
             ranges,
             extraction,
+            context_ranges,
             if i + 1 < entries.len() { "," } else { "" }
         ));
     }

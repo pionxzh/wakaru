@@ -200,6 +200,14 @@ path/to/bundle.js` emits item ranges, Signal 1–5 clusters, cross-write topolog
 and the selected Inspect partition as JSON. This is an internal research
 surface rather than part of the supported `wakaru` façade API.
 
+When Inspect splits one oversized write component into multiple fine modules,
+each unambiguous child also carries the full pre-cap component ranges as
+analysis context. Siblings therefore share one context identity without
+sharing a package identity. A synthetic entry that folds items from several
+components receives no context, and normal executable output always leaves the
+field empty. Nested context is retained only when its generated ranges map
+precisely back to the physical input.
+
 Unpackers emit module metadata with source text and, when available, a private
 prepared normalized AST sidecar. They do not run the normal decompile rule
 pipeline — that's the driver's job. Prepared payloads cross the same Phase 1

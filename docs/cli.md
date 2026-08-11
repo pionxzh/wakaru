@@ -117,6 +117,12 @@ warning for this mode. `--raw` remains independent: without it Wakaru still
 runs the normal readability pipeline over each inspection module. Normal
 `--unpack` continues to merge cyclic components before emission.
 
+With `--provenance`, fine modules split from the same oversized write component
+also receive identical optional `context_ranges`. These ranges identify a
+coarse evidence-pooling context in the original input; they do not assert that
+the children came from one source package. Normal output and ambiguous
+synthetic entries omit the field.
+
 For ordinary Browserify numeric module tables, unambiguous dependency-map
 request paths become readable output filenames. Missing or conflicting hints
 retain the stable `module-<id>.js` fallback; entry names remain stable and

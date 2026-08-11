@@ -202,6 +202,7 @@ fn extract_commonjs_table(
             source_ranges: span_byte_range(&cm, descriptor.source_span)
                 .into_iter()
                 .collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });

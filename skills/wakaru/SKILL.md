@@ -203,7 +203,10 @@ npx wakaru deobfuscated.js --unpack -o out/
 - `--unpack=inspect` — recursively retain finer scope-hoist boundaries for
   static inspection. The resulting module graph may not preserve runtime
   initialization order; the CLI prints a warning whenever this mode is used.
-  Add `--raw` independently to skip readability transforms.
+  Add `--raw` independently to skip readability transforms. With
+  `--provenance`, optional `context_ranges` group fine siblings that share a
+  coarse evidence context; they do not claim that the siblings share one
+  package identity.
 
 By default, Wakaru removes only dead code introduced by its own transforms and
 preserves dead code already present in the input. Use `--dce` when a full

@@ -602,6 +602,7 @@ fn extract_webpack4_array_modules(
             source_ranges: span_byte_range(&cm, fn_expr.function.span)
                 .into_iter()
                 .collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });
@@ -768,6 +769,7 @@ fn extract_webpack4_object_modules(
             source_ranges: span_byte_range(&cm, fn_expr.function.span)
                 .into_iter()
                 .collect(),
+            inspection_context_ranges: Vec::new(),
             source_input: String::new(),
             generated_source_map: Vec::new(),
         });

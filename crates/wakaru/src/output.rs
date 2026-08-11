@@ -73,6 +73,12 @@ pub struct ModuleOutput {
     pub code: String,
     pub source_map: Option<String>,
     pub provenance: Vec<SourceSpan>,
+    /// Inspect-only source context for static analysis. When
+    /// [`UnpackMode::Inspect`](crate::UnpackMode::Inspect) splits one large
+    /// scope-hoist write component into finer modules, siblings carry the
+    /// same coarse source spans here. This is evidence context, not package
+    /// identity, and is empty for normal unpack output.
+    pub inspection_context: Vec<SourceSpan>,
     pub entry: EntryStatus,
     pub status: ModuleStatus,
 }

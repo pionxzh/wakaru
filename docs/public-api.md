@@ -67,6 +67,11 @@ SFC recovery). See rustdoc for everything else.
 - Represent heuristic scope-hoist recovery as
   `InputDetection::HeuristicScopeHoisted` instead of pretending it identified
   a bundler; `BundleFormat` stays structural-only.
+- Keep Inspect evidence context separate from module provenance:
+  `ModuleOutput::inspection_context` repeats the pre-cap scope-hoist component
+  spans on unambiguous fine siblings, while `provenance` continues to describe
+  only the bytes attributed to that output module. Empty context is the normal
+  case and does not imply missing module provenance.
 - CLI defaults may differ from library defaults (the CLI selects
   `DceMode::TransformOnly`; the library default is `Off`).
 - Filesystem path validation, output-directory writes, filename collision

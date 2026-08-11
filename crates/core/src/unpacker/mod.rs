@@ -39,6 +39,10 @@ pub struct UnpackedModule {
     /// from (provenance). Empty when the extraction site has no real spans
     /// (fully synthesized modules).
     pub source_ranges: Vec<(u32, u32)>,
+    /// Inspect-only provenance for the full pre-cap scope-hoist write
+    /// component that this finer module came from. Modules split from the
+    /// same coarse component carry the same ranges; empty in normal output.
+    pub inspection_context_ranges: Vec<(u32, u32)>,
     /// Input filename the ranges refer to. Unpackers leave this empty; the
     /// driver fills it in for multi-source unpacks.
     pub source_input: String,
