@@ -1,6 +1,9 @@
 # Webpack Namespace Re-Export Recovery
 
-Status: **Deferred** — revisit after the remaining helper cleanup work is more complete.
+Status: **Deferred, revisit trigger has fired** — the helper cleanup this
+deferral waited on has landed (`UnWebpackObjectGetters` folds `require.d` maps
+into getter literals; `un_export_rename.rs` Pattern C handles exported getter
+namespaces). This is now ready to schedule, not blocked.
 
 ## Context
 

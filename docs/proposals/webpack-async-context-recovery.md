@@ -1,6 +1,10 @@
 # Webpack Async Context Recovery
 
-Status: deferred
+Status: deferred — with two staged items since shipped: the `require.o(map,
+request)` → `Object.prototype.hasOwnProperty.call` normalization (item 2,
+`a13651d9`, `rules/un_webpack_interop.rs`) and `require.e`/`require.t`
+chunk-id resolution in multi-file unpack. Items 1 and 3 (recognizing the
+context-module shape and recovering source-like `import()`) remain open.
 
 ## Summary
 

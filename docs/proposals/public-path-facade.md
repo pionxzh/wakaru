@@ -1,7 +1,10 @@
 # Stable Public Paths for Processed Inputs
 
-Status: **ADOPTED — Option A.** Implementation promotes the existing synthetic
-entry to the processed input's stable public path. Option B is rejected as a
+Status: **ADOPTED — Option A. Implemented** (`e655e31d`, `780ea8c5`,
+`47a0795c`; covered by `crates/core/tests/multi_file_unpack.rs`). The
+implementation promotes the existing synthetic entry to the processed input's
+stable public path; the validation checklist below is written as requirements
+but every item has a landed test. Option B is rejected as a
 correctness mechanism: direct consumer rewrites are out of scope, and an
 export-owner map may exist only as internal facade validation if needed. This
 addresses normal unpack output only. `--raw` is splitter passthrough and is not

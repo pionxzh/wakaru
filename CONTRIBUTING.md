@@ -49,12 +49,14 @@ changes with `cargo insta accept`.
 
 ## Project Structure
 
-wakaru is a Cargo workspace with three crates:
+wakaru is a Cargo workspace with five crates:
 
 | Crate | Path | Purpose |
 |---|---|---|
-| `wakaru-core` | `crates/core/` | Decompile pipeline, transformation rules, unpackers, and public API |
+| `wakaru-core` | `crates/core/` | Internal engine: decompile pipeline, transformation rules, and unpackers |
+| `wakaru` | `crates/wakaru/` | Published Rust façade — the public API (see [docs/public-api.md](docs/public-api.md)) |
 | `wakaru-cli` | `crates/cli/` | CLI binary (`wakaru`) built on `clap` |
+| `wakaru-formatter` | `crates/formatter/` | Optional output formatter built on pinned OXC crates |
 | `wakaru-wasm` | `crates/wasm/` | WASM bindings for browser-based decompilation |
 
 Almost all development happens in `wakaru-core`. Key directories within it:
