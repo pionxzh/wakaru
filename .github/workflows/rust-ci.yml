@@ -81,6 +81,23 @@ jobs:
           cargo +nightly-2026-03-20 check-external-types
           --manifest-path crates/wakaru/Cargo.toml
 
+  wasm:
+    # The playground deploy (playground.yml) is the only place the wasm crate
+    # is built for its real target, and it runs post-merge; this catches a
+    # core change that breaks the wasm32 build before it lands.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustc --version
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Check wasm crate for wasm32
+        run: cargo check -p wakaru-wasm --target wasm32-unknown-unknown
+
   check:
     runs-on: ${{ matrix.os }}
     strategy:
