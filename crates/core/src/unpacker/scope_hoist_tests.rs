@@ -261,8 +261,12 @@ fn inspection_bounds_cross_item_write_components() {
     // evidence even though inspection output is not required to execute.
     let at_limit =
         cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS.saturating_sub(1));
-    let at_limit = split_scope_hoisted_with_mode(&at_limit, ScopeHoistRenderMode::Inspect)
-        .expect("the at-limit fixture should split");
+    let at_limit = split_scope_hoisted_with_mode(
+        &at_limit,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::NestedModule,
+    )
+    .expect("the at-limit fixture should split");
     let at_limit_writer = at_limit
         .modules
         .iter()
@@ -278,8 +282,12 @@ fn inspection_bounds_cross_item_write_components() {
     // Inspect mode every write edge in that component is skipped, avoiding a
     // transitive merge of otherwise independent owner clusters.
     let above_limit = cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS);
-    let inspection = split_scope_hoisted_with_mode(&above_limit, ScopeHoistRenderMode::Inspect)
-        .expect("the above-limit fixture should split");
+    let inspection = split_scope_hoisted_with_mode(
+        &above_limit,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::NestedModule,
+    )
+    .expect("the above-limit fixture should split");
     let inspection_writer = inspection
         .modules
         .iter()
@@ -355,8 +363,12 @@ fn inspection_retains_bounded_leaf_writes_inside_a_hub_component() {
         trace.component_cap_output_cluster_count
     );
     assert!(trace.bounded_leaf_restoration_accepted);
-    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
-        .expect("the hub fixture should split");
+    let inspection = split_scope_hoisted_with_mode(
+        &input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::NestedModule,
+    )
+    .expect("the hub fixture should split");
 
     let local_writer = inspection
         .modules
@@ -479,8 +491,12 @@ fn inspection_backs_off_when_leaf_writes_promote_singletons_to_modules() {
         .expect("the trace should contain the local writer/owner edge");
     assert!(!local_write_edge.kept_by_inspect_policy);
 
-    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
-        .expect("the independent pair should preserve a split after backoff");
+    let inspection = split_scope_hoisted_with_mode(
+        &input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::NestedModule,
+    )
+    .expect("the independent pair should preserve a split after backoff");
     assert_eq!(
         inspection.modules.len(),
         trace.component_cap_output_cluster_count,
@@ -770,8 +786,12 @@ fn executable_partition_does_not_create_a_global_singleton_cycle() {
     const REGION_COUNT: usize = 64;
     let input = pathological_entry_fixture(REGION_COUNT);
 
-    let inspection = split_scope_hoisted_with_mode(&input, ScopeHoistRenderMode::Inspect)
-        .expect("inspection mode should split independent regions");
+    let inspection = split_scope_hoisted_with_mode(
+        &input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::DirectAsset,
+    )
+    .expect("inspection mode should split independent regions");
     let executable = split_scope_hoisted(&input).expect("executable mode should split");
 
     assert_eq!(
@@ -882,8 +902,12 @@ fn inspection_rendering_keeps_synthetic_clusters_separate() {
             export { result };
         "#;
 
-    let result = split_scope_hoisted_with_mode(input, ScopeHoistRenderMode::Inspect)
-        .expect("inspection mode should split");
+    let result = split_scope_hoisted_with_mode(
+        input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::DirectAsset,
+    )
+    .expect("inspection mode should split");
     assert_eq!(result.modules.len(), 6, "cycle should remain split");
     assert!(
         result
@@ -1236,5 +1260,119 @@ fn unreachable_effectful_singleton_folds_into_entry() {
         probe_host.filename,
         reachable.len(),
         executable.modules.len()
+    );
+}
+
+fn distant_write_hub_fixture() -> &'static str {
+    r#"
+        var alpha = 0;
+        function bumpAlpha() { alpha += 1; return alpha; }
+        function alphaView() { return bumpAlpha(); }
+
+        function a1() { return 1; }
+        function a2() { return a1() + 1; }
+        function a3() { return a2() * 2; }
+        function a4() { return a3() + 3; }
+        function a5() { return a4() - 1; }
+
+        function b1() { return 7; }
+        function b2() { return b1() + 10; }
+        function b3() { return b2() * 20; }
+        function b4() { return b3() + 30; }
+        function b5() { return b4() - 10; }
+
+        function runtimeHub() { alpha += 1; omega += 1; return alpha + omega; }
+        var omega = 0;
+        function omegaView() { return omega; }
+
+        const total = alphaView() + omegaView() + runtimeHub() + a5() + b5();
+        console.log(total);
+    "#
+}
+
+#[test]
+fn direct_inspect_skips_distant_cross_write_merges() {
+    let result = split_scope_hoisted_with_mode(
+        distant_write_hub_fixture(),
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::DirectAsset,
+    )
+    .expect("inspect mode should split the hub fixture");
+    let owner = result
+        .modules
+        .iter()
+        .find(|module| module.code.contains("var alpha"))
+        .expect("one module should own the distant mutable binding");
+    assert!(
+        !owner.code.contains("runtimeHub"),
+        "a distant runtime hub must not glue onto the mutable owner in a direct asset:\n{}",
+        owner.code
+    );
+    assert!(
+        owner.code.contains("bumpAlpha"),
+        "the adjacent writer must stay with its mutable owner:\n{}",
+        owner.code
+    );
+}
+
+#[test]
+fn direct_inspect_keeps_adjacent_cross_write_merges() {
+    let result = split_scope_hoisted_with_mode(
+        distant_write_hub_fixture(),
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::DirectAsset,
+    )
+    .expect("inspect mode should split the hub fixture");
+    let hub = result
+        .modules
+        .iter()
+        .find(|module| module.code.contains("runtimeHub"))
+        .expect("one module should hold the runtime hub");
+    assert!(
+        hub.code.contains("var omega"),
+        "a touching writer/owner pair remains same-module evidence:\n{}",
+        hub.code
+    );
+}
+
+#[test]
+fn nested_inspect_keeps_component_cap_merges() {
+    // The same small write component that the adjacency policy splits stays
+    // merged on the nested path, where measured contiguity is too weak to
+    // trust item order.
+    let input =
+        cross_write_component_fixture(INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS.saturating_sub(1));
+    let nested = split_scope_hoisted_with_mode(
+        &input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::NestedModule,
+    )
+    .expect("the fixture should split on the nested path");
+    let nested_writer = nested
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("nested output should contain the writer");
+    assert!(
+        nested_writer.code.contains("var state0"),
+        "an at-limit write component stays merged on the nested path:\n{}",
+        nested_writer.code
+    );
+
+    let direct = split_scope_hoisted_with_mode(
+        &input,
+        ScopeHoistRenderMode::Inspect,
+        ScopeHoistSource::DirectAsset,
+    )
+    .expect("the fixture should split on the direct path");
+    let direct_writer = direct
+        .modules
+        .iter()
+        .find(|module| module.code.contains("function mutateAll"))
+        .expect("direct output should contain the writer");
+    assert!(
+        !direct_writer.code.contains("var state0"),
+        "the same non-adjacent component splits on the direct path:\n{}",
+        direct_writer.code
     );
 }

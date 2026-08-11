@@ -51,6 +51,19 @@ pub(crate) enum ScopeHoistRenderMode {
     Inspect,
 }
 
+/// Where the scope-hoisted source being split came from. Direct assets are
+/// whole Rollup/Vite-style chunks, where true modules are almost always one
+/// contiguous run of top-level items (measured 99.88% over source-map-
+/// verified corpora), so Inspect can rely on the adjacency invariant.
+/// Nested modules are bodies extracted from a structural bundle (webpack
+/// module concatenation, esbuild closures), which measured only ~91%
+/// contiguous — there Inspect keeps the component-cap policy instead.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScopeHoistSource {
+    DirectAsset,
+    NestedModule,
+}
+
 /// Stable, source-oriented description of one top-level item used by the
 /// scope-hoist research trace. This is an internal-core debugging surface, not
 /// part of the supported `wakaru` facade API.
@@ -104,17 +117,22 @@ pub struct ScopeHoistTrace {
 }
 
 pub fn split_scope_hoisted(source: &str) -> Option<UnpackResult> {
-    split_scope_hoisted_with_mode(source, ScopeHoistRenderMode::Executable)
+    split_scope_hoisted_with_mode(
+        source,
+        ScopeHoistRenderMode::Executable,
+        ScopeHoistSource::DirectAsset,
+    )
 }
 
 pub(crate) fn split_scope_hoisted_with_mode(
     source: &str,
     render_mode: ScopeHoistRenderMode,
+    origin: ScopeHoistSource,
 ) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "bundle.js", cm.clone()).ok()?;
-        split_from_module(&module, cm, render_mode)
+        split_from_module(&module, cm, render_mode, origin)
     })
 }
 
@@ -122,8 +140,9 @@ pub(crate) fn split_scope_hoisted_module_with_mode(
     module: &Module,
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
+    origin: ScopeHoistSource,
 ) -> Option<UnpackResult> {
-    split_from_module(module, cm, render_mode)
+    split_from_module(module, cm, render_mode, origin)
 }
 
 /// Analyze the same direct top-level source consumed by the heuristic
@@ -271,12 +290,13 @@ fn split_from_module(
     module: &Module,
     cm: Lrc<SourceMap>,
     render_mode: ScopeHoistRenderMode,
+    origin: ScopeHoistSource,
 ) -> Option<UnpackResult> {
     // Unwrap IIFE wrapper if present: `(()=>{ ... })()` or `(function(){ ... })()`
     let iife_body = unwrap_iife(module);
     let body = iife_body.as_deref().unwrap_or(&module.body);
 
-    let plan = analyze_scope_hoist(body, render_mode)?;
+    let plan = analyze_scope_hoist(body, render_mode, origin)?;
     render_scope_hoist_plan(body, plan, cm, render_mode)
 }
 
@@ -291,6 +311,7 @@ struct ScopeHoistPlan {
 fn analyze_scope_hoist(
     body: &[ModuleItem],
     render_mode: ScopeHoistRenderMode,
+    origin: ScopeHoistSource,
 ) -> Option<ScopeHoistPlan> {
     // Phase 1: collect top-level items with metadata.
     let items = collect_top_level_items(body);
@@ -320,12 +341,19 @@ fn analyze_scope_hoist(
                 .iter()
                 .map(|&root| topology.write_component_by_root[root])
                 .collect();
-            merge_bounded_cross_item_writes(
-                &items,
-                &graph,
-                &mut uf,
-                INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
-            );
+            match origin {
+                ScopeHoistSource::DirectAsset => {
+                    merge_adjacent_cross_item_writes(&graph, &mut uf);
+                }
+                ScopeHoistSource::NestedModule => {
+                    merge_bounded_cross_item_writes(
+                        &items,
+                        &graph,
+                        &mut uf,
+                        INSPECT_MAX_CROSS_WRITE_COMPONENT_CLUSTERS,
+                    );
+                }
+            }
             Some(context_by_item)
         }
     };
@@ -1330,6 +1358,52 @@ fn merge_cross_item_writes(graph: &ReferenceGraph, uf: &mut UnionFind) {
         for &target in targets {
             uf.union(writer, target);
         }
+    }
+}
+
+/// Direct-asset Inspect policy: the contiguity invariant. Scope-hoisting
+/// bundlers emit each original module as one contiguous run of top-level
+/// items, so a writer/owner merge is same-module evidence only when the two
+/// clusters are neighbors in item order. A merge is accepted when the
+/// clusters' item-index hulls overlap or touch; runtime hubs that mutate
+/// state across distant modules fail the test and are skipped instead of
+/// gluing unrelated modules together. Executable rendering keeps the
+/// unconditional merge: splitting a writer from its owner would turn the
+/// write into an assignment to an imported binding. Edges are processed in
+/// sorted order so the result cannot depend on hash iteration order.
+fn merge_adjacent_cross_item_writes(graph: &ReferenceGraph, uf: &mut UnionFind) {
+    let item_count = graph.writes.len();
+    let mut hulls: Vec<(usize, usize)> = (0..item_count).map(|item| (item, item)).collect();
+    for item in 0..item_count {
+        let root = uf.find(item);
+        let (lo, hi) = hulls[root];
+        hulls[root] = (lo.min(item), hi.max(item));
+    }
+
+    let mut edges: Vec<(usize, usize)> = graph
+        .writes
+        .iter()
+        .enumerate()
+        .flat_map(|(writer, targets)| targets.iter().map(move |&target| (writer, target)))
+        .collect();
+    edges.sort_unstable();
+    edges.dedup();
+
+    for (writer, target) in edges {
+        let writer_root = uf.find(writer);
+        let target_root = uf.find(target);
+        if writer_root == target_root {
+            continue;
+        }
+        let (a_lo, a_hi) = hulls[writer_root];
+        let (b_lo, b_hi) = hulls[target_root];
+        let adjacent = a_lo.max(b_lo) <= a_hi.min(b_hi) + 1;
+        if !adjacent {
+            continue;
+        }
+        uf.union(writer, target);
+        let merged_root = uf.find(writer);
+        hulls[merged_root] = (a_lo.min(b_lo), a_hi.max(b_hi));
     }
 }
 

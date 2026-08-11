@@ -66,7 +66,11 @@ fn split_nested_scope_hoisted_module(
     module: &UnpackedModule,
     render_mode: scope_hoist::ScopeHoistRenderMode,
 ) -> Option<UnpackResult> {
-    let raw_split = scope_hoist::split_scope_hoisted_with_mode(&module.code, render_mode);
+    let raw_split = scope_hoist::split_scope_hoisted_with_mode(
+        &module.code,
+        render_mode,
+        scope_hoist::ScopeHoistSource::NestedModule,
+    );
     if raw_split.as_ref().is_some_and(is_usable_nested_split) {
         return raw_split;
     }
@@ -115,7 +119,12 @@ fn split_esm_recovered_scope_hoisted_module(
                 export_rename: false,
             },
         );
-        scope_hoist::split_scope_hoisted_module_with_mode(&module, cm, render_mode)
+        scope_hoist::split_scope_hoisted_module_with_mode(
+            &module,
+            cm,
+            render_mode,
+            scope_hoist::ScopeHoistSource::NestedModule,
+        )
     })
 }
 

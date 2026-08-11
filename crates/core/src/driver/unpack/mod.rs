@@ -218,9 +218,12 @@ pub fn prepare_unpack_input_with_policy(
     }
 
     if scope_hoist_policy.heuristic_enabled() {
-        if let Some(result) =
-            scope_hoist::split_scope_hoisted_with_mode(&source, scope_hoist_policy.render_mode())
-                .filter(|result| result.modules.len() > 1)
+        if let Some(result) = scope_hoist::split_scope_hoisted_with_mode(
+            &source,
+            scope_hoist_policy.render_mode(),
+            scope_hoist::ScopeHoistSource::DirectAsset,
+        )
+        .filter(|result| result.modules.len() > 1)
         {
             let needs_boundary_fallback = result
                 .modules

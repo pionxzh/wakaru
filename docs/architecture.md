@@ -184,16 +184,20 @@ regions of a stable topological order; the final SCC merge still protects
 initialization order. Small plans retain the established clustering behavior.
 `--unpack=inspect` renders the original fine-grained plan recursively without
 merging cyclic components; its finer module graph is for static inspection and
-may not execute. It retains cross-item write merges when they connect at most
-eight pre-existing clusters. Inside a larger write-connected component it also
-retains degree-one writer edges when their leaf-only residual component stays
-within that same cap, preserving local mutable-owner evidence while skipping
-write hubs and long leaf chains that act as transitive glue across unrelated
-scope-hoisted modules. Because changing the emitted module count produced mixed
-corpus tradeoffs, Inspect applies this leaf restoration only when it leaves the
-final post-folding cluster count unchanged for each write component; both
-increases and decreases fall back to the conservative component cap instead of
-being allowed to cancel across independent components.
+may not execute. Its cross-item write policy depends on where the source came
+from. A direct scope-hoisted asset (a whole Rollup/Vite-style chunk) accepts a
+write merge only when the writer's and owner's clusters are neighbors in
+top-level item order (their item-index hulls overlap or touch): true modules
+in such chunks are almost always one contiguous run of items, so a distant
+runtime write hub is transitive glue, not same-module evidence. A nested
+module body extracted from a structural bundle measured markedly weaker
+contiguity, so there Inspect instead retains write merges when they connect at
+most eight pre-existing clusters, and inside a larger write-connected
+component also retains degree-one writer edges when their leaf-only residual
+component stays within that cap — but only when doing so leaves the final
+post-folding cluster count unchanged for each write component; both increases
+and decreases fall back to the conservative component cap instead of being
+allowed to cancel across independent components.
 
 For corpus analysis, `cargo run -p wakaru-core --example scope_hoist_trace --
 path/to/bundle.js` emits item ranges, Signal 1–5 clusters, cross-write topology,
