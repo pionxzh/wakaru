@@ -33,7 +33,7 @@ try {
   console.error(
     `Could not find the wakaru binary for ${platform}-${arch}.\n` +
       `The platform package may not have been installed correctly.\n` +
-      `Try reinstalling: npm install @wakaru/cli@next`
+      `Try reinstalling: npm install @wakaru/cli@latest`
   );
   process.exit(1);
 }
