@@ -129,7 +129,7 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
    - `cargo nextest run -p wakaru-core`
 3. If you changed a rule that a reproduction matrix covers (see `scripts/repro/`), verify the recovery-rate baseline:
    - `node scripts/repro/collect-stats.mjs --check`
-   - If rates deliberately moved, regenerate without `--check` and commit the `stats.json` diff with the change
+   - If rates deliberately moved, regenerate without `--check` and commit the `stats.json` diff with the change, plus the aggregate cited in `README.md` and `website/index.html` (the script fails until they match)
    - The `commit`/`date` fields in `stats.json` are provenance from regeneration time (typically the parent of the commit carrying the diff); `--check` compares only the measured numbers
 4. If you changed rename, export/import handling, or any pipeline-visible rule behavior, run the private fixture suite (sibling checkout `../wakaru-fixtures`; skip only if it is absent and say so):
    - `../wakaru-fixtures/run.sh --check`

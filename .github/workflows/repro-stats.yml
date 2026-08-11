@@ -1,19 +1,25 @@
 name: Repro Stats
 
 # Verifies that scripts/repro/stats.json matches a fresh run of every
-# reproduction matrix. Gated on scripts/repro/** so routine rule changes do
-# not pay the matrix cost in CI; after a rule change that moves recovery
-# rates, regenerate stats.json locally per the Definition of Done.
+# reproduction matrix, and that the README/website copy citing the aggregate
+# matches stats.json. Gated on scripts/repro/** (plus the two copy surfaces)
+# so routine rule changes do not pay the matrix cost in CI; after a rule
+# change that moves recovery rates, regenerate stats.json locally per the
+# Definition of Done.
 
 on:
   push:
     branches: [main]
     paths:
       - "scripts/repro/**"
+      - "README.md"
+      - "website/index.html"
   pull_request:
     branches: [main]
     paths:
       - "scripts/repro/**"
+      - "README.md"
+      - "website/index.html"
 
 permissions:
   contents: read

@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseReproJobs } from "./lib/runner.mjs";
+import { findReproStatDrift } from "./lib/doc-stats.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(scriptDir, "../..");
@@ -214,4 +215,18 @@ if (checkMode) {
 } else {
   writeFileSync(statsPath, json);
   console.log(`\nWrote ${statsPath}: ${yes}/${total} (${pct}%)`);
+}
+
+// The aggregate is also cited in human-facing copy; regenerating stats.json
+// without moving those citations is silent drift, so both modes verify them.
+const drift = findReproStatDrift(stats.aggregate, {
+  readme: readFileSync(join(repoRoot, "README.md"), "utf8"),
+  website: readFileSync(join(repoRoot, "website/index.html"), "utf8"),
+});
+if (drift.length > 0) {
+  console.error("\nStat citations are out of sync with the measured aggregate:");
+  for (const message of drift) {
+    console.error(`  ${message}`);
+  }
+  process.exit(1);
 }

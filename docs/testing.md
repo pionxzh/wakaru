@@ -58,8 +58,10 @@ focused rule regression test as well.
    ```
 
    If rates deliberately moved, regenerate without `--check` and commit the
-   `stats.json` diff with the change. CI re-verifies this only when
-   `scripts/repro/**` itself changes (`.github/workflows/repro-stats.yml`),
+   `stats.json` diff with the change; the script also verifies the aggregate
+   cited in `README.md` and `website/index.html` and fails until those move
+   with it. CI re-verifies all of this only when `scripts/repro/**`, the
+   README, or the website page changes (`.github/workflows/repro-stats.yml`),
    so rule changes rely on this local step.
 
 4. Formatting and linting:
@@ -347,6 +349,9 @@ node scripts/repro/collect-stats.mjs
 
 # Check whether stats.json matches a fresh run
 node scripts/repro/collect-stats.mjs --check
+
+# Both modes also fail if the aggregate cited in README.md or
+# website/index.html no longer matches (scripts/repro/lib/doc-stats.mjs)
 
 # Run a single matrix with details
 node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
