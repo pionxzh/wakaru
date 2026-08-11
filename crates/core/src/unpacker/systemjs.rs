@@ -3,16 +3,16 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowFunctionBody, BindingIdent, CallExpr, Callee, Decl, EsVersion, ExportDecl,
-    ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr,
-    Function, FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
-    ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr,
-    MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
-    ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl,
-    VarDeclarator,
+    ArrayLit, ArrowFunctionBody, AssignTarget, BindingIdent, CallExpr, Callee, Decl, EsVersion,
+    ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
+    ExprStmt, FnExpr, Function, FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier,
+    ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp,
+    MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
+    ObjectLit, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    Str, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 
@@ -310,7 +310,12 @@ fn emit_system_module(
     }
     items.extend(register.prelude.iter().cloned().map(ModuleItem::Stmt));
 
-    let mut transformer = SystemExecuteTransformer::new(export_sym, context_sym);
+    let mut used_names = UsedIdentCollector::default();
+    register.declare.visit_with(&mut used_names);
+    for stmt in &register.prelude {
+        stmt.visit_with(&mut used_names);
+    }
+    let mut transformer = SystemExecuteTransformer::new(export_sym, context_sym, used_names.names);
     for stmt in outer_hoisted_stmts(body, &imported_locals) {
         transformer.push_stmt(stmt, &mut items);
     }
@@ -569,14 +574,18 @@ struct SystemExecuteTransformer {
     export_sym: Atom,
     context_sym: Option<Atom>,
     exports: Vec<ExportBinding>,
+    declared_exports: HashSet<(Atom, Atom)>,
+    used_names: HashSet<Atom>,
 }
 
 impl SystemExecuteTransformer {
-    fn new(export_sym: Atom, context_sym: Option<Atom>) -> Self {
+    fn new(export_sym: Atom, context_sym: Option<Atom>, used_names: HashSet<Atom>) -> Self {
         Self {
             export_sym,
             context_sym,
             exports: Vec::new(),
+            declared_exports: HashSet::new(),
+            used_names,
         }
     }
 
@@ -598,9 +607,14 @@ impl SystemExecuteTransformer {
         if self.exports.is_empty() {
             return Vec::new();
         }
-        let specifiers = self
+        let specifiers: Vec<_> = self
             .exports
             .into_iter()
+            .filter(|binding| {
+                !self
+                    .declared_exports
+                    .contains(&(binding.local.clone(), binding.exported.clone()))
+            })
             .map(|binding| {
                 let local = binding.local;
                 let exported = binding.exported;
@@ -616,6 +630,9 @@ impl SystemExecuteTransformer {
                 })
             })
             .collect();
+        if specifiers.is_empty() {
+            return Vec::new();
+        }
         vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
             NamedExport {
                 span: DUMMY_SP,
@@ -636,16 +653,19 @@ impl SystemExecuteTransformer {
                 let export_call = parse_export_call(call, &self.export_sym)?;
                 self.export_call_items(export_call)
             }
+            Expr::Assign(assign) => self.export_member_assignment_items(assign),
             Expr::Seq(seq) => {
                 let mut items = Vec::new();
                 let mut saw_export = false;
                 for expr in &seq.exprs {
-                    let export_call = match expr.as_ref() {
-                        Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                    let export_items = match expr.as_ref() {
+                        Expr::Call(call) => parse_export_call(call, &self.export_sym)
+                            .and_then(|export_call| self.export_call_items(export_call)),
+                        Expr::Assign(assign) => self.export_member_assignment_items(assign),
                         _ => None,
                     };
-                    if let Some(export_call) = export_call {
-                        items.extend(self.export_call_items(export_call)?);
+                    if let Some(export_items) = export_items {
+                        items.extend(export_items);
                         saw_export = true;
                     } else {
                         let mut stmt = Stmt::Expr(ExprStmt {
@@ -659,6 +679,90 @@ impl SystemExecuteTransformer {
                 saw_export.then_some(items)
             }
             _ => None,
+        }
+    }
+
+    fn export_member_assignment_items(
+        &mut self,
+        assign: &swc_core::ecma::ast::AssignExpr,
+    ) -> Option<Vec<ModuleItem>> {
+        let member = assign.left.as_simple()?.as_member()?;
+        let Expr::Call(call) = member.obj.as_ref() else {
+            return None;
+        };
+        let ExportCall::Single { exported, value } = parse_export_call(call, &self.export_sym)?
+        else {
+            return None;
+        };
+
+        let is_default = exported.as_ref() == "default";
+        if !is_default && !is_valid_ident_name(exported.as_ref()) {
+            return None;
+        }
+        let local = self.fresh_export_name();
+
+        let mut assignment = assign.clone();
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &mut assignment.left else {
+            return None;
+        };
+        *member.obj = Expr::Ident(ident(local.clone()));
+
+        let mut assignment_stmt = Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Assign(assignment)),
+        });
+        assignment_stmt.visit_mut_with(self);
+        let mut value = value;
+        value.visit_mut_with(self);
+        let mut items = vec![self.binding_item(local.clone(), value)];
+        if is_default {
+            // Initialize the export before computed keys or the assignment RHS can re-enter.
+            items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+                ExportDefaultExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Ident(ident(local.clone()))),
+                },
+            )));
+        } else {
+            self.declared_exports
+                .insert((local.clone(), exported.clone()));
+            items.push(named_export_item(local.clone(), exported));
+        }
+        items.push(ModuleItem::Stmt(assignment_stmt));
+        Some(items)
+    }
+
+    fn binding_item(&self, local: Atom, value: Box<Expr>) -> ModuleItem {
+        let decl = Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: swc_core::ecma::ast::VarDeclKind::Const,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: ident(local),
+                    type_ann: None,
+                }),
+                init: Some(value),
+                definite: false,
+            }],
+        }));
+        ModuleItem::Stmt(Stmt::Decl(decl))
+    }
+
+    fn fresh_export_name(&mut self) -> Atom {
+        let base = Atom::from("__systemjs_export");
+        if self.used_names.insert(base.clone()) {
+            return base;
+        }
+        let mut suffix = 2u32;
+        loop {
+            let candidate = Atom::from(format!("__systemjs_export_{suffix}"));
+            if self.used_names.insert(candidate.clone()) {
+                return candidate;
+            }
+            suffix += 1;
         }
     }
 
@@ -686,6 +790,8 @@ impl SystemExecuteTransformer {
                     ))]);
                 }
                 if is_valid_ident_name(exported.as_ref()) {
+                    self.declared_exports
+                        .insert((exported.clone(), exported.clone()));
                     return Some(vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
                         ExportDecl {
                             span: DUMMY_SP,
@@ -748,6 +854,12 @@ impl SystemExecuteTransformer {
     }
 
     fn add_export(&mut self, local: Atom, exported: Atom) {
+        if self
+            .declared_exports
+            .contains(&(local.clone(), exported.clone()))
+        {
+            return;
+        }
         if self
             .exports
             .iter()
@@ -828,6 +940,21 @@ struct ExportBinding {
     exported: Atom,
 }
 
+fn named_export_item(local: Atom, exported: Atom) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: DUMMY_SP,
+        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+            span: DUMMY_SP,
+            orig: ModuleExportName::Ident(ident(local)),
+            exported: Some(ModuleExportName::Ident(ident(exported))),
+            is_type_only: false,
+        })],
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
 enum ExportCall {
     Single { exported: Atom, value: Box<Expr> },
     Bulk(Vec<(Atom, Box<Expr>)>),
@@ -881,13 +1008,35 @@ fn exported_value_local(expr: &Expr) -> Option<Atom> {
 }
 
 fn export_replacement_expr(value: Box<Expr>) -> Expr {
-    if matches!(value.as_ref(), Expr::Assign(_)) {
+    if matches!(value.as_ref(), Expr::Assign(_)) || is_function_callee_iife(value.as_ref()) {
         Expr::Paren(ParenExpr {
             span: DUMMY_SP,
             expr: value,
         })
     } else {
         *value
+    }
+}
+
+fn is_function_callee_iife(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    matches!(
+        &call.callee,
+        Callee::Expr(callee)
+            if matches!(callee.as_ref(), Expr::Fn(_) | Expr::Arrow(_))
+    )
+}
+
+#[derive(Default)]
+struct UsedIdentCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for UsedIdentCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.insert(ident.sym.clone());
     }
 }
 

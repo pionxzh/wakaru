@@ -37,6 +37,17 @@ fn unpack_source(source: &str) -> Vec<(String, String)> {
     output.modules
 }
 
+fn unpack_source_raw(source: &str) -> Vec<(String, String)> {
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected raw warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
 fn module_code<'a>(pairs: &'a [(String, String)], name: &str) -> &'a str {
     pairs
         .iter()
@@ -347,5 +358,362 @@ fn invalid_iife_system_register_preserves_whole_input() {
     assert!(
         output.detected_formats.is_empty(),
         "invalid IIFE System.register input should not be reported as a successful split"
+    );
+}
+
+#[test]
+fn named_iife_export_keeps_member_assignment_and_sequence_side_effect() {
+    let source = r#"
+System.register("entry", ["utils"], function (_export) {
+  var BaseClass;
+  return {
+    setters: [function (Utils) {
+      BaseClass = Utils.BaseClass;
+    }],
+    execute: function () {
+      _export("DerivedClass", function (BaseClass) {
+        function DerivedClass() {}
+        return DerivedClass;
+      }(BaseClass)).marker = "derived", after();
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let binding = entry
+        .find("const __systemjs_export =")
+        .unwrap_or_else(|| panic!("named export binding should be recovered:\n{entry}"));
+    let named_export = entry
+        .find("export { __systemjs_export as DerivedClass };")
+        .unwrap_or_else(|| panic!("named export alias should be recovered:\n{entry}"));
+    let member_assignment = entry
+        .find("__systemjs_export.marker = \"derived\";")
+        .unwrap_or_else(|| panic!("member assignment should be preserved:\n{entry}"));
+    let after = entry
+        .find("after();")
+        .unwrap_or_else(|| panic!("sequence side effect should be preserved:\n{entry}"));
+
+    assert!(
+        binding < named_export && named_export < member_assignment && member_assignment < after,
+        "binding, named export, member assignment, and sequence side effect should preserve order:\n{entry}"
+    );
+    assert!(
+        !entry.lines().any(|line| line.starts_with("function (")),
+        "top-level anonymous function should not be emitted:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_avoids_outer_export_name_collision() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var DerivedClass;
+  return {
+    execute: function () {
+      _export("DerivedClass", makeValue()).ready = true;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export { __systemjs_export as DerivedClass };")
+            && entry.contains("__systemjs_export.ready = true;"),
+        "member export should use a collision-free local alias:\n{entry}"
+    );
+    assert!(
+        !entry.contains("const DerivedClass ="),
+        "member export must not redeclare the outer binding:\n{entry}"
+    );
+}
+
+#[test]
+fn reserved_identifier_name_member_export_remains_parseable() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("class", makeValue()).ready = true;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export { __systemjs_export as class };")
+            && entry.contains("__systemjs_export.ready = true;"),
+        "reserved IdentifierName export should use a parseable alias:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_value_rewrites_context_import_and_meta() {
+    let source = r#"
+System.register("entry", [], function (_export, _context) {
+  return {
+    execute: function () {
+      _export("DerivedClass", makeValue(
+        _context.import("./dep.js"),
+        _context.meta.url
+      )).ready = true;
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains(r#"import("./dep.js")"#) && entry.contains("import.meta.url"),
+        "member export value should rewrite SystemJS context expressions:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_context"),
+        "SystemJS context binding should not leak from the member export value:\n{entry}"
+    );
+}
+
+#[test]
+fn direct_static_class_iife_named_export_stays_supported() {
+    let source = r#"
+System.register("entry", ["utils"], function (_export) {
+  var BaseClass;
+  return {
+    setters: [function (Utils) {
+      BaseClass = Utils.BaseClass;
+    }],
+    execute: function () {
+      _export("DerivedClass", function (BaseClass) {
+        function DerivedClass() {}
+        DerivedClass.marker = "derived";
+        return DerivedClass;
+      }(BaseClass));
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export const DerivedClass ="),
+        "direct named IIFE export should remain a declaration:\n{entry}"
+    );
+    assert!(
+        entry.contains("DerivedClass.marker = \"derived\";"),
+        "static class initialization should remain inside the IIFE:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_export_uses_one_collision_free_binding() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var __systemjs_export;
+  var BaseClass;
+  return {
+    execute: function () {
+      _export("default", function (BaseClass) {
+        function DefaultValue() {}
+        return DefaultValue;
+      }(BaseClass)).marker = "default";
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+    let binding = entry
+        .find("const __systemjs_export_2 =")
+        .unwrap_or_else(|| panic!("default export should use a collision-free binding:\n{entry}"));
+    let member_assignment = entry
+        .find("__systemjs_export_2.marker = \"default\";")
+        .unwrap_or_else(|| panic!("member assignment should use the binding:\n{entry}"));
+    let default_export = entry
+        .find("export default __systemjs_export_2;")
+        .unwrap_or_else(|| panic!("default export should use the binding:\n{entry}"));
+
+    assert!(
+        binding < default_export && default_export < member_assignment,
+        "binding, default export, and member assignment should preserve order:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("function DefaultValue()").count(),
+        1,
+        "default export value should be evaluated once:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export default function") && !entry.contains("export default ("),
+        "default export must not apply the member assignment to the IIFE result:\n{entry}"
+    );
+}
+
+#[test]
+fn default_iife_member_export_avoids_module_prelude_names() {
+    let source = r#"
+!function () {
+  var __systemjs_export;
+  System.register("entry", [], function (_export) {
+    var BaseClass;
+    return {
+      execute: function () {
+        _export("default", function (BaseClass) {
+          function DefaultValue() {}
+          return DefaultValue;
+        }(BaseClass)).ready = true;
+      }
+    };
+  });
+}();
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("const __systemjs_export_2 =")
+            && entry.contains("export default __systemjs_export_2;"),
+        "default export binding should avoid names in the module prelude:\n{entry}"
+    );
+}
+
+#[test]
+fn direct_declaration_export_is_not_repeated_in_trailing_export_list() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("Utils", makeUtils());
+      _export("Utils", Utils);
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        entry.matches("export const Utils =").count(),
+        1,
+        "Utils should have exactly one export declaration:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export { Utils"),
+        "trailing named export list must not repeat Utils:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("export {").count(),
+        0,
+        "fully filtered trailing exports must not emit an empty export declaration:\n{entry}"
+    );
+}
+
+#[test]
+fn typescript_namespace_emit_is_not_double_exported() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var Namespace;
+  return {
+    execute: function () {
+      (function (Namespace) {
+        Namespace.ready = true;
+      })(Namespace || _export("Namespace", Namespace = {}));
+      _export("Namespace", Namespace);
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        entry.matches("export const Namespace =").count(),
+        1,
+        "TypeScript namespace should have one export declaration:\n{entry}"
+    );
+    assert!(
+        entry.contains("ready: true") && !entry.contains("export { Namespace"),
+        "TypeScript namespace semantics should remain intact without a trailing duplicate:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_preserves_computed_assignment_and_sequence_order() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("DerivedClass", makeValue())[getKey()] += rhs(), after();
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let binding = entry
+        .find("const __systemjs_export = makeValue();")
+        .unwrap_or_else(|| panic!("VALUE binding should be recovered:\n{entry}"));
+    let named_export = entry
+        .find("export { __systemjs_export as DerivedClass };")
+        .unwrap_or_else(|| panic!("named export alias should be recovered:\n{entry}"));
+    let assignment = entry
+        .find("__systemjs_export[getKey()] += rhs();")
+        .unwrap_or_else(|| panic!("computed assignment should be preserved:\n{entry}"));
+    let rest = entry
+        .find("after();")
+        .unwrap_or_else(|| panic!("sequence rest should be preserved:\n{entry}"));
+
+    assert!(
+        binding < named_export && named_export < assignment && assignment < rest,
+        "VALUE binding, named export, computed assignment, and sequence rest should preserve order:\n{entry}"
+    );
+    for call in ["makeValue()", "getKey()", "rhs()", "after()"] {
+        assert_eq!(
+            entry.matches(call).count(),
+            1,
+            "{call} should appear exactly once:\n{entry}"
+        );
+    }
+    assert!(
+        entry.contains("__systemjs_export[getKey()] += rhs();"),
+        "assignment operator and computed member should be preserved:\n{entry}"
+    );
+}
+
+#[test]
+fn nested_iife_export_replacement_remains_parseable() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("DefaultValue", function () {
+        function DefaultValue() {}
+        return DefaultValue;
+      }()).marker();
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains(".marker();") && !entry.contains("_export"),
+        "nested IIFE replacement should remain parseable without leaking the helper:\n{entry}"
     );
 }
