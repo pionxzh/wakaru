@@ -193,6 +193,34 @@ export class FixtureStructuralI18nComponent {
 }
 
 @Component({
+  selector: 'fixture-postprocessed-structural-i18n',
+  template: `
+    <p i18n>
+      Read <a href="/first">First</a> and <a href="/second">Second</a>.
+    </p>
+  `,
+})
+export class FixturePostprocessedStructuralI18nComponent {}
+
+@Component({
+  selector: 'fixture-sub-template-i18n',
+  imports: [NgIf],
+  template: `
+    <section i18n>
+      Visible before.
+      <ng-template [ngIf]="visible">
+        <strong>Hello, {{ name }}!</strong>
+      </ng-template>
+      Visible after.
+    </section>
+  `,
+})
+export class FixtureSubTemplateI18nComponent {
+  visible = true;
+  name = 'reader';
+}
+
+@Component({
   selector: 'fixture-projection-fallback',
   template: `
     <section>
