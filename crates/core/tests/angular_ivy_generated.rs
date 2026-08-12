@@ -17,6 +17,8 @@ const TEMPLATE_CONSTRUCTS: &str =
 const TEMPLATE_CONSTRUCTS_ASSIGNMENT: &str =
     include_str!("bundles/angular-ivy-gen/dist/template-constructs-assignment.js");
 const ANGULAR_19_COMPAT: &str = include_str!("bundles/angular-ivy-compat-gen/dist/angular-19.js");
+const ANGULAR_19_BUNDLED: &str =
+    include_str!("bundles/angular-ivy-compat-gen/dist/angular-19-bundled.js");
 
 fn assert_production_artifact(source: &str) {
     assert!(!source.contains("ɵsetClassMetadata"));
@@ -139,6 +141,50 @@ fn recovers_angular_19_full_aot_compatibility_fixture() {
         switch.source
     );
     assert!(!switch.source.contains(" = state()"));
+}
+
+#[test]
+fn recovers_angular_19_minified_runtime_bundle_listener_plumbing() {
+    assert_production_artifact(ANGULAR_19_BUNDLED);
+    assert!(!ANGULAR_19_BUNDLED.contains("<button"));
+
+    let recovered =
+        recover_angular_components_from_js(ANGULAR_19_BUNDLED, AngularRecoveryOptions::default())
+            .expect("pinned Angular 19 runtime bundle should parse");
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+    assert_eq!(by_selector.len(), 2);
+
+    let component = by_selector["compat-card"];
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"<button type="button" #primary (click)="select()""#));
+    assert!(component
+        .source
+        .contains(r#"<button type="button" (click)="select()">Nested action</button>"#));
+    assert!(!component.source.contains("ɵɵ"));
+    assert!(!component
+        .source
+        .contains("Unresolved artifact-local symbols"));
+
+    let switch = by_selector["compat-switch"];
+    assert_eq!(
+        switch.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        switch.issues,
+        switch.source,
+    );
+    assert!(switch.source.contains("@if (state() === \"ready\") {"));
 }
 
 #[test]
