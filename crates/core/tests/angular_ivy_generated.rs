@@ -104,7 +104,7 @@ fn recovers_angular_19_full_aot_compatibility_fixture() {
         .iter()
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
-    assert_eq!(by_selector.len(), 2);
+    assert_eq!(by_selector.len(), 3);
     let component = by_selector["compat-card"];
 
     assert_eq!(component.selector, "compat-card");
@@ -141,6 +141,22 @@ fn recovers_angular_19_full_aot_compatibility_fixture() {
         switch.source
     );
     assert!(!switch.source.contains(" = state()"));
+
+    let icu = by_selector["compat-icu"];
+    assert_eq!(
+        icu.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        icu.issues,
+        icu.source,
+    );
+    assert!(icu.source.contains("{count, plural,"), "{}", icu.source);
+    assert!(icu.source.contains("=0 {No items}"), "{}", icu.source);
+    assert!(
+        icu.source.contains("other {{{ count }} items}"),
+        "{}",
+        icu.source,
+    );
 }
 
 #[test]
@@ -155,7 +171,7 @@ fn recovers_angular_19_minified_runtime_bundle_listener_plumbing() {
         .iter()
         .map(|component| (component.selector.as_str(), component))
         .collect::<HashMap<_, _>>();
-    assert_eq!(by_selector.len(), 2);
+    assert_eq!(by_selector.len(), 3);
 
     let component = by_selector["compat-card"];
     assert_eq!(
@@ -185,6 +201,22 @@ fn recovers_angular_19_minified_runtime_bundle_listener_plumbing() {
         switch.source,
     );
     assert!(switch.source.contains("@if (state() === \"ready\") {"));
+
+    let icu = by_selector["compat-icu"];
+    assert_eq!(
+        icu.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        icu.issues,
+        icu.source,
+    );
+    assert!(icu.source.contains("{count, plural,"), "{}", icu.source);
+    assert!(
+        icu.source.contains("other {{{ count }} items}"),
+        "{}",
+        icu.source,
+    );
+    assert!(!icu.source.contains("ɵɵ"));
 }
 
 #[test]
