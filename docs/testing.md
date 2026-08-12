@@ -219,6 +219,11 @@ Generated artifacts should not be edited by hand. Regenerate them from the
 checked-in inputs, and verify deterministic output before committing when the
 producer permits it.
 
+A few fixtures under `webpack-gen/dist/` are hand-authored shapes no real
+bundler emits (e.g. `wp-path-traversal`, `wp5-require-s`); `generate.sh`
+deliberately leaves them alone — it removes and rebuilds only the outputs its
+own configs produce.
+
 ## Writing Tests
 
 There are two test patterns: **full-pipeline tests** (run all rules) and **isolated rule tests** (run one rule only).

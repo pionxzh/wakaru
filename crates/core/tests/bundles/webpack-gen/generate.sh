@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Generates webpack test fixtures from the source files in src/.
-# Requires: Node.js + npm (uses npx to fetch webpack on-the-fly).
+# Requires: Node.js + npm (installs webpack 4 locally for deterministic
+# module ids; fetches webpack 5 and ncc via npx on-the-fly).
 #
 # Usage:
 #   cd tests/bundles/webpack-gen
@@ -12,48 +13,73 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-rm -rf dist
+# dist/ also carries hand-authored fixtures no generator here produces
+# (wp-path-traversal's traversal ids, wp5-require-s's minified require.s
+# shape). Remove only the outputs this script regenerates: every
+# webpackN-<x>.config.cjs writes to dist/wpN-<x>, plus the two ncc builds.
+for config in webpack4-*.config.cjs webpack5-*.config.cjs; do
+  name="${config%.config.cjs}"
+  rm -rf "dist/wp${name#webpack}"
+done
+rm -rf dist/wp5-ncc dist/wp5-ncc-min node_modules
 
 echo "=== Webpack 4 (4.47.0) ==="
 
+# Webpack 4's NodeSourcePlugin embeds `buildin/global.js` as a module whose id
+# is the physical webpack package location relative to the compilation
+# context. Running webpack 4 straight from the npx cache leaks the generator
+# machine's cache path into the checked-in bundle (and varies per machine).
+# Install it locally first so the id is always
+# "./node_modules/webpack/buildin/global.js".
+npm install --no-save --no-package-lock --no-audit --no-fund \
+  webpack@4.47.0 webpack-cli@3.3.12 >/dev/null
+
+webpack4() {
+  ./node_modules/.bin/webpack "$@"
+}
+
 echo "  wp4-cjs:           CJS-only modules (dev, string IDs, object map)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-cjs.config.cjs 2>/dev/null
+webpack4 --config webpack4-cjs.config.cjs 2>/dev/null
 
 echo "  wp4-umd:           CJS-only modules wrapped as a UMD library"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-umd.config.cjs 2>/dev/null
+webpack4 --config webpack4-umd.config.cjs 2>/dev/null
 
 echo "  wp4-amd:           CJS-only modules wrapped as an AMD library"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-amd.config.cjs 2>/dev/null
+webpack4 --config webpack4-amd.config.cjs 2>/dev/null
 
 echo "  wp4-esm:           ESM modules (require.r + require.d 3-arg form)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-esm.config.cjs 2>/dev/null
+webpack4 --config webpack4-esm.config.cjs 2>/dev/null
 
 echo "  wp4-mixed:         ESM entry importing CJS module via require()"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-mixed.config.cjs 2>/dev/null
+webpack4 --config webpack4-mixed.config.cjs 2>/dev/null
 
 echo "  wp4-require-n:     ESM entry importing CJS via import (triggers require.n + .a)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-require-n.config.cjs 2>/dev/null
+webpack4 --config webpack4-require-n.config.cjs 2>/dev/null
 
 echo "  wp4-prod:          Production (numeric IDs, array, module concatenation, no minify)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-prod.config.cjs 2>/dev/null
+webpack4 --config webpack4-prod.config.cjs 2>/dev/null
 
 echo "  wp4-cjs-min:       CJS-only modules (production, minified)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-cjs-min.config.cjs 2>/dev/null
+webpack4 --config webpack4-cjs-min.config.cjs 2>/dev/null
 
 echo "  wp4-esm-min:       ESM modules (production, minified, concatenated)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-esm-min.config.cjs 2>/dev/null
+webpack4 --config webpack4-esm-min.config.cjs 2>/dev/null
 
 echo "  wp4-dynamic:       Dynamic import (JSONP chunk: window.webpackJsonp)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-dynamic.config.cjs 2>/dev/null
+webpack4 --config webpack4-dynamic.config.cjs 2>/dev/null
 
 echo "  wp4-dynamic-min:   Dynamic import (production, minified JSONP chunk)"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-dynamic-min.config.cjs 2>/dev/null
+webpack4 --config webpack4-dynamic-min.config.cjs 2>/dev/null
 
 echo "  wp4-var-inject:    Var injection (.call(this, require(global.js)))"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-var-inject.config.cjs 2>/dev/null
+webpack4 --config webpack4-var-inject.config.cjs 2>/dev/null
 
 echo "  wp4-inner-umd-min: Inner CommonJS modules with UMD export branches"
-npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-inner-umd-min.config.cjs 2>/dev/null
+webpack4 --config webpack4-inner-umd-min.config.cjs 2>/dev/null
+
+# Drop the local webpack 4 install so the npx-invoked webpack 5 builds below
+# cannot resolve it (webpack-cli prefers a local install via import-local).
+rm -rf node_modules
 
 echo ""
 echo "=== Webpack 5 ==="
