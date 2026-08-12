@@ -5812,6 +5812,207 @@ fn recovers_structural_i18n_regions_with_nested_elements() {
 }
 
 #[test]
+fn recovers_postprocessed_bounded_icu_messages() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        class IcuComponent {
+            count = 2;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: IcuComponent,
+                selectors: [["bounded-icu"]],
+                consts: () => {
+                    let message;
+                    message = localize(
+                        "{VAR_PLURAL, plural, =0 {No items} =1 {One item} other {{INTERPOLATION} items}}"
+                    );
+                    message = core.ɵɵi18nPostprocess(message, {
+                        INTERPOLATION: "\uFFFD1\uFFFD",
+                        VAR_PLURAL: "\uFFFD0\uFFFD",
+                    });
+                    let wrapper;
+                    wrapper = $localize` ${message}:ICU: `;
+                    return [wrapper];
+                },
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance();
+                        core.ɵɵi18nExp(component.count)(component.count);
+                        core.ɵɵi18nApply(1);
+                    }
+                },
+            });
+        }
+
+        class SelectIcuComponent {
+            audience = "other";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: SelectIcuComponent,
+                selectors: [["bounded-select-icu"]],
+                consts: () => [core.ɵɵi18nPostprocess(
+                    localize("{VAR_SELECT, select, reader {Reader} author {Author} other {Guest}}"),
+                    { VAR_SELECT: "\uFFFD0\uFFFD" },
+                )],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance();
+                        core.ɵɵi18nExp(component.audience);
+                        core.ɵɵi18nApply(1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("bounded ICU should parse");
+    let component = recovered
+        .iter()
+        .find(|component| component.selector == "bounded-icu")
+        .expect("plural ICU component should recover");
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<p i18n>"));
+    assert!(component.source.contains("{count, plural,"));
+    assert!(component.source.contains("=0 {No items}"));
+    assert!(component.source.contains("other {{{ count }} items}"));
+    assert!(!component.source.contains("ɵɵi18n"));
+
+    let select = recovered
+        .iter()
+        .find(|component| component.selector == "bounded-select-icu")
+        .expect("select ICU component should recover");
+    assert_eq!(
+        select.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        select.issues,
+        select.source,
+    );
+    assert!(select.source.contains("{audience, select,"));
+    assert!(select.source.contains("reader {Reader}"));
+    assert!(select.source.contains("other {Guest}"));
+}
+
+#[test]
+fn leaves_element_bearing_icu_messages_partial() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        class ElementIcuComponent {
+            count = 2;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ElementIcuComponent,
+                selectors: [["element-icu"]],
+                consts: () => [core.ɵɵi18nPostprocess(
+                    localize("{VAR_PLURAL, plural, other {{START_TAG_STRONG}{INTERPOLATION}{CLOSE_TAG_STRONG}}}"),
+                    {
+                        CLOSE_TAG_STRONG: "</strong>",
+                        INTERPOLATION: "\uFFFD1\uFFFD",
+                        START_TAG_STRONG: "<strong>",
+                        VAR_PLURAL: "\uFFFD0\uFFFD",
+                    },
+                )],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance();
+                        core.ɵɵi18nExp(component.count)(component.count);
+                        core.ɵɵi18nApply(1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("element-bearing ICU should remain analyzable");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+    assert!(!component.source.contains("<strong>"));
+}
+
+#[test]
+fn does_not_trust_i18n_postprocess_spelling_outside_angular_core() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        const helpers = {
+            ɵɵi18nPostprocess(message, replacements) {
+                return message;
+            },
+        };
+
+        class LookalikeIcuComponent {
+            count = 2;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: LookalikeIcuComponent,
+                selectors: [["lookalike-icu"]],
+                consts: () => [helpers.ɵɵi18nPostprocess(
+                    "{VAR_PLURAL, plural, other {Items}}",
+                    { VAR_PLURAL: "\uFFFD0\uFFFD" },
+                )],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18n(1, 0);
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("an unproven postprocess lookalike should remain analyzable");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18n")));
+    assert!(!component.source.contains("{count, plural,"));
+}
+
+#[test]
 fn recovers_projection_fallback_template_functions() {
     let source = r#"
         import * as core from "@angular/core";
