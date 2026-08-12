@@ -1547,7 +1547,16 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
     // Build the shadow index once for all candidates instead of per-candidate.
     let all_candidate_bids: HashSet<BindingId> =
         candidates.iter().map(|(_, bid)| bid.clone()).collect();
+    let capture_sensitive_names: HashSet<Atom> = candidates
+        .iter()
+        .flat_map(|(target, _)| {
+            std::iter::once(Atom::from(target.as_str()))
+                .chain((1..=10).map(move |i| Atom::from(format!("{target}_{i}"))))
+        })
+        .collect();
     let shadow_index = RenameShadowIndex::for_bindings(module, &all_candidate_bids);
+    let scope_name_index =
+        BindingScopeNameIndex::for_bindings(module, &all_candidate_bids, &capture_sensitive_names);
 
     // Two-pass assignment: first reserve direct (unsuffixed) target names so
     // a later suffix fallback never steals another binding's natural target.
@@ -1560,7 +1569,10 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
             continue;
         }
         let atom: Atom = target.as_str().into();
-        if !top_level_names.contains(&atom) && !shadow_index.rename_causes_shadowing(&bid, &atom) {
+        if !top_level_names.contains(&atom)
+            && !shadow_index.rename_causes_shadowing(&bid, &atom)
+            && !scope_name_index.rename_would_capture(&bid, &atom)
+        {
             committed_names.insert(atom.clone());
             renames.push(BindingRename {
                 old: bid,
@@ -1577,6 +1589,7 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
             !committed_names.contains(&atom)
                 && !top_level_names.contains(&atom)
                 && !shadow_index.rename_causes_shadowing(&bid, &atom)
+                && !scope_name_index.rename_would_capture(&bid, &atom)
         });
 
         if let Some(name) = final_name {
@@ -1592,6 +1605,326 @@ fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> 
         return Vec::new();
     }
     renames
+}
+
+/// Free emitted identifier names inside each candidate binding's lexical
+/// scope. Names satisfied by a nested declaration stop at that scope; names
+/// that propagate outward currently resolve to an outer binding or the global
+/// scope and would be captured by a same-name candidate declaration. This is
+/// the opposite direction from `RenameShadowIndex`, which protects the
+/// candidate's own references from existing inner declarations.
+#[derive(Default)]
+struct BindingScopeNameIndex {
+    names_by_binding: HashMap<BindingId, HashSet<Atom>>,
+}
+
+impl BindingScopeNameIndex {
+    fn for_bindings(
+        module: &Module,
+        candidates: &HashSet<BindingId>,
+        capture_sensitive_names: &HashSet<Atom>,
+    ) -> Self {
+        struct ScopeFrame {
+            function_scope: bool,
+            candidate_bindings: HashSet<BindingId>,
+            declared_bindings: HashSet<BindingId>,
+            references: HashSet<BindingId>,
+        }
+
+        impl ScopeFrame {
+            fn new(function_scope: bool) -> Self {
+                Self {
+                    function_scope,
+                    candidate_bindings: HashSet::new(),
+                    declared_bindings: HashSet::new(),
+                    references: HashSet::new(),
+                }
+            }
+        }
+
+        struct Builder<'a> {
+            candidates: &'a HashSet<BindingId>,
+            capture_sensitive_names: &'a HashSet<Atom>,
+            scopes: Vec<ScopeFrame>,
+            index: BindingScopeNameIndex,
+        }
+
+        impl Builder<'_> {
+            fn push_scope(&mut self, function_scope: bool) {
+                self.scopes.push(ScopeFrame::new(function_scope));
+            }
+
+            fn pop_scope(&mut self) {
+                let Some(scope) = self.scopes.pop() else {
+                    return;
+                };
+                let mut free_references = scope.references;
+                free_references.retain(|reference| !scope.declared_bindings.contains(reference));
+                for binding in scope.candidate_bindings {
+                    self.index
+                        .names_by_binding
+                        .entry(binding)
+                        .or_default()
+                        .extend(free_references.iter().map(|reference| reference.0.clone()));
+                }
+                if let Some(parent) = self.scopes.last_mut() {
+                    parent.references.extend(free_references);
+                }
+            }
+
+            fn record_reference(&mut self, ident: &Ident) {
+                if !self.capture_sensitive_names.contains(&ident.sym) {
+                    return;
+                }
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.references.insert((ident.sym.clone(), ident.ctxt));
+                }
+            }
+
+            fn record_binding_at(&mut self, binding: &Ident, scope_idx: usize) {
+                let id = (binding.sym.clone(), binding.ctxt);
+                if self.capture_sensitive_names.contains(&binding.sym) {
+                    self.scopes[scope_idx].declared_bindings.insert(id.clone());
+                }
+                if self.candidates.contains(&id) {
+                    self.scopes[scope_idx].candidate_bindings.insert(id);
+                }
+            }
+
+            fn record_binding_current(&mut self, binding: &Ident) {
+                let Some(scope_idx) = self.scopes.len().checked_sub(1) else {
+                    return;
+                };
+                self.record_binding_at(binding, scope_idx);
+            }
+
+            fn record_binding_function_scoped(&mut self, binding: &Ident) {
+                let Some(scope_idx) = self.scopes.iter().rposition(|scope| scope.function_scope)
+                else {
+                    return;
+                };
+                self.record_binding_at(binding, scope_idx);
+            }
+
+            fn record_pat_current(&mut self, pat: &Pat) {
+                self.record_pat_bindings(pat, false);
+            }
+
+            fn record_pat_function_scoped(&mut self, pat: &Pat) {
+                self.record_pat_bindings(pat, true);
+            }
+
+            fn record_pat_bindings(&mut self, pat: &Pat, function_scoped: bool) {
+                match pat {
+                    Pat::Ident(binding) => {
+                        if function_scoped {
+                            self.record_binding_function_scoped(&binding.id);
+                        } else {
+                            self.record_binding_current(&binding.id);
+                        }
+                    }
+                    Pat::Array(array) => {
+                        for element in array.elems.iter().flatten() {
+                            self.record_pat_bindings(element, function_scoped);
+                        }
+                    }
+                    Pat::Object(object) => {
+                        for property in &object.props {
+                            match property {
+                                ObjectPatProp::KeyValue(key_value) => {
+                                    self.record_pat_bindings(&key_value.value, function_scoped)
+                                }
+                                ObjectPatProp::Assign(assign) => {
+                                    if function_scoped {
+                                        self.record_binding_function_scoped(&assign.key.id);
+                                    } else {
+                                        self.record_binding_current(&assign.key.id);
+                                    }
+                                }
+                                ObjectPatProp::Rest(rest) => {
+                                    self.record_pat_bindings(&rest.arg, function_scoped)
+                                }
+                            }
+                        }
+                    }
+                    Pat::Assign(assign) => self.record_pat_bindings(&assign.left, function_scoped),
+                    Pat::Rest(rest) => self.record_pat_bindings(&rest.arg, function_scoped),
+                    Pat::Expr(_) | Pat::Invalid(_) => {}
+                }
+            }
+        }
+
+        impl Visit for Builder<'_> {
+            fn visit_ident(&mut self, ident: &Ident) {
+                self.record_reference(ident);
+            }
+
+            fn visit_function(&mut self, function: &Function) {
+                self.push_scope(true);
+                for param in &function.params {
+                    self.record_pat_current(&param.pat);
+                }
+                function.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+                self.push_scope(true);
+                for param in &arrow.params {
+                    self.record_pat_current(param);
+                }
+                arrow.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_getter_prop(&mut self, getter: &GetterProp) {
+                // A computed key is evaluated in the enclosing scope; only
+                // the getter body gets its own function/var scope.
+                getter.key.visit_with(self);
+                self.push_scope(true);
+                if let Some(body) = &getter.body {
+                    body.visit_with(self);
+                }
+                self.pop_scope();
+            }
+
+            fn visit_setter_prop(&mut self, setter: &swc_core::ecma::ast::SetterProp) {
+                setter.key.visit_with(self);
+                self.push_scope(true);
+                if let Some(this_param) = &setter.this_param {
+                    self.record_pat_current(this_param);
+                    this_param.visit_with(self);
+                }
+                self.record_pat_current(&setter.param);
+                setter.param.visit_with(self);
+                if let Some(body) = &setter.body {
+                    body.visit_with(self);
+                }
+                self.pop_scope();
+            }
+
+            fn visit_constructor(&mut self, constructor: &swc_core::ecma::ast::Constructor) {
+                constructor.key.visit_with(self);
+                self.push_scope(true);
+                for param in &constructor.params {
+                    match param {
+                        swc_core::ecma::ast::ParamOrTsParamProp::Param(param) => {
+                            self.record_pat_current(&param.pat)
+                        }
+                        swc_core::ecma::ast::ParamOrTsParamProp::TsParamProp(param) => {
+                            match &param.param {
+                                swc_core::ecma::ast::TsParamPropParam::Ident(binding) => {
+                                    self.record_binding_current(&binding.id)
+                                }
+                                swc_core::ecma::ast::TsParamPropParam::Assign(assign) => {
+                                    self.record_pat_current(&assign.left)
+                                }
+                            }
+                        }
+                    }
+                }
+                constructor.params.visit_with(self);
+                if let Some(body) = &constructor.body {
+                    body.visit_with(self);
+                }
+                self.pop_scope();
+            }
+
+            fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
+                self.push_scope(false);
+                block.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_catch_clause(&mut self, catch: &swc_core::ecma::ast::CatchClause) {
+                self.push_scope(false);
+                if let Some(param) = &catch.param {
+                    self.record_pat_current(param);
+                }
+                catch.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_var_decl(&mut self, declaration: &VarDecl) {
+                for declarator in &declaration.decls {
+                    if declaration.kind == VarDeclKind::Var {
+                        self.record_pat_function_scoped(&declarator.name);
+                    } else {
+                        self.record_pat_current(&declarator.name);
+                    }
+                }
+                declaration.visit_children_with(self);
+            }
+
+            fn visit_fn_decl(&mut self, declaration: &FnDecl) {
+                self.record_binding_current(&declaration.ident);
+                declaration.visit_children_with(self);
+            }
+
+            fn visit_class_decl(&mut self, declaration: &ClassDecl) {
+                self.record_binding_current(&declaration.ident);
+                declaration.visit_children_with(self);
+            }
+
+            fn visit_fn_expr(&mut self, expression: &FnExpr) {
+                if let Some(ident) = &expression.ident {
+                    self.push_scope(false);
+                    self.record_binding_current(ident);
+                    ident.visit_with(self);
+                    expression.function.visit_with(self);
+                    self.pop_scope();
+                } else {
+                    expression.function.visit_with(self);
+                }
+            }
+
+            fn visit_class_expr(&mut self, expression: &ClassExpr) {
+                if let Some(ident) = &expression.ident {
+                    self.push_scope(false);
+                    self.record_binding_current(ident);
+                    ident.visit_with(self);
+                    expression.class.visit_with(self);
+                    self.pop_scope();
+                } else {
+                    expression.class.visit_with(self);
+                }
+            }
+
+            fn visit_import_decl(&mut self, declaration: &ImportDecl) {
+                // Imported names are module API labels, not local references;
+                // only local specifier bindings participate in capture.
+                for specifier in &declaration.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    };
+                    self.record_binding_current(local);
+                    local.visit_with(self);
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            return Self::default();
+        }
+
+        let mut builder = Builder {
+            candidates,
+            capture_sensitive_names,
+            scopes: vec![ScopeFrame::new(true)],
+            index: Self::default(),
+        };
+        module.visit_children_with(&mut builder);
+        builder.pop_scope();
+        builder.index
+    }
+
+    fn rename_would_capture(&self, binding: &BindingId, new_name: &Atom) -> bool {
+        self.names_by_binding
+            .get(binding)
+            .is_some_and(|names| names.contains(new_name))
+    }
 }
 
 #[derive(Default)]

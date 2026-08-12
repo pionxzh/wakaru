@@ -998,6 +998,200 @@ const f = (data, error) => ({
 }
 
 #[test]
+fn value_position_rename_does_not_capture_unresolved_reference_in_binding_scope() {
+    let input = r#"
+function initialize(source) {
+    Object.keys(source);
+    const v = makeSchema();
+    return { Object: v };
+}
+"#;
+    let expected = r#"
+function initialize(source) {
+    Object.keys(source);
+    const Object_1 = makeSchema();
+    return { Object: Object_1 };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_rename_allows_same_name_reference_outside_binding_scope() {
+    let input = r#"
+function inspect(source) {
+    return Object.keys(source);
+}
+function initialize() {
+    const v = makeSchema();
+    return { Object: v };
+}
+"#;
+    let expected = r#"
+function inspect(source) {
+    return Object.keys(source);
+}
+function initialize() {
+    const Object = makeSchema();
+    return { Object };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_var_rename_uses_function_scope_for_capture_check() {
+    let input = r#"
+function initialize(source, enabled) {
+    Object.keys(source);
+    if (enabled) {
+        var v = makeSchema();
+    }
+    return { Object: v };
+}
+"#;
+    let expected = r#"
+function initialize(source, enabled) {
+    Object.keys(source);
+    if (enabled) {
+        var Object_1 = makeSchema();
+    }
+    return { Object: Object_1 };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_lexical_rename_ignores_reference_outside_its_block() {
+    let input = r#"
+function initialize(source, enabled) {
+    Object.keys(source);
+    if (enabled) {
+        const v = makeSchema();
+        consume({ Object: v });
+    }
+}
+"#;
+    let expected = r#"
+function initialize(source, enabled) {
+    Object.keys(source);
+    if (enabled) {
+        const Object = makeSchema();
+        consume({ Object });
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_rename_ignores_same_name_setter_param() {
+    let input = r#"
+function build(v) {
+    const facade = {
+        set current(value) {
+            consume(value);
+        }
+    };
+    return { value: v, facade };
+}
+"#;
+    let expected = r#"
+function build(value) {
+    const facade = {
+        set current(value) {
+            consume(value);
+        }
+    };
+    return { value, facade };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_var_rename_stays_inside_getter_scope() {
+    let input = r#"
+function build(source) {
+    value(source);
+    return {
+        get current() {
+            var v = makeValue();
+            return { value: v };
+        }
+    };
+}
+"#;
+    let expected = r#"
+function build(source) {
+    value(source);
+    return {
+        get current() {
+            var value = makeValue();
+            return { value };
+        }
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_var_rename_stays_inside_constructor_scope() {
+    let input = r#"
+function build(source) {
+    value(source);
+    return class Box {
+        constructor() {
+            var v = makeValue();
+            consume({ value: v });
+        }
+    };
+}
+"#;
+    let expected = r#"
+function build(source) {
+    value(source);
+    return class Box {
+        constructor() {
+            var value = makeValue();
+            consume({ value });
+        }
+    };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn value_position_rename_preserves_outer_reference_in_parameter_default() {
+    let input = r#"
+function build() {
+    const v = makeValue();
+    function read(current = value) {
+        var value = fallback;
+        return current ?? value;
+    }
+    consume(read);
+    return { value: v };
+}
+"#;
+    let expected = r#"
+function build() {
+    const value_1 = makeValue();
+    function read(current = value) {
+        var value = fallback;
+        return current ?? value;
+    }
+    consume(read);
+    return { value: value_1 };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn value_position_renames_arguments_default_param_after_un_parameters() {
     let input = r#"
 const f = "proc first argument must be an iterator";
