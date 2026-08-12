@@ -67,8 +67,9 @@ Initial recovery covers:
   compiler-emitted fallback views;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
-- bounded static, interpolated, element-marker, and text-only plural/select
-  ICU i18n messages;
+- bounded static, interpolated, element-marker, direct view-local sub-template,
+  repeated structural-marker postprocessing, and text-only plural/select ICU
+  i18n messages;
 - exact ESM imports referenced by the recovered class or rendered template,
   plus dependency-closed portable local helpers;
 - compiled component dependencies when their bindings can be materialized as
@@ -394,6 +395,13 @@ similarly bounded to a uniquely resolved static/interpolated message and a
 valid containing element. A semantically identified `ɵɵi18nPostprocess` call
 may decode a static compiler replacement table, including the prior value in
 Angular's `message = postprocess(message, replacements)` assignment form.
+Its one-argument Closure-specialized form is inferred only when the complete
+runtime body retains the multi-value placeholder contract: a replacement
+callback, pipe-delimited alternatives, marker matching, one-entry removal,
+the root template stack, an exhaustion throw, and a returned result. Recovery
+then consumes repeated alternatives in occurrence order while tracking direct
+template entry/exit markers. Exhausted alternatives or an unbalanced template
+stack reject the message instead of selecting a convenient marker.
 Text/interpolation-only `plural` and `select` ICU messages are rendered only
 when the outer case grammar, selector marker, case keys, and required `other`
 case are all proven. Closure-specialized creation helpers additionally
@@ -403,9 +411,16 @@ parameter to that start helper before clearing the same state member. When
 Closure inlines the end operation into a template, only a later clear of that
 exact member closes the region; an immediately adjacent start is restored as
 the original whole-message instruction. A structural region may contain
-balanced element start/end markers and interpolation placeholders.
-Element-bearing or nested ICU messages, `selectordinal`, sub-template opcodes,
-unbalanced markers, and ambiguous message factories remain partial.
+balanced element start/end markers and interpolation placeholders. One level
+of direct view-local sub-template markers is also recovered when the parent
+message has balanced template start/end markers, the marker references the
+embedded view declared at that node index, and every child element and
+interpolation marker carries the same single numeric sub-template suffix as
+the child's three-argument `ɵɵi18nStart`. Parent and child streams remain in
+their own template trees; recovery does not flatten view scopes. Nested
+sub-template suffix paths, template markers nested inside structural element
+markers, element-bearing or nested ICU messages, `selectordinal`, unbalanced
+markers, and ambiguous message factories remain partial.
 
 The base `ɵɵpropertyInterpolate` instruction is also distinct from an ordinary
 property binding because interpolation stringifies its value. A Closure-
@@ -720,9 +735,11 @@ template.
 
 The isolated and assignment-lowered Angular 22 fixtures also cover a
 multi-level `@let` / `@for` / `@if` listener with a local reference, structural
-i18n element markers, selected and default projection fallbacks, signal-backed
-two-way binding, and static/dynamic animation bindings plus a listener. The
-minimally rooted `ADVANCED` profile recovers corresponding Closure-renamed
+i18n element markers, one-argument multi-value postprocessing for repeated
+elements, a direct explicit structural i18n sub-template, selected and default
+projection fallbacks, signal-backed two-way binding, and static/dynamic
+animation bindings plus a listener. The minimally rooted `ADVANCED` profile
+recovers corresponding Closure-renamed
 families without exporting their canonical helper names. Its nested listener
 also contains Closure-inlined application locals and a reused view-alias
 binding, proving collision-safe synthesized method emission. Authored
@@ -753,8 +770,8 @@ not treated as a strict coverage comparison across those milestones because
 newly reachable child views and corrected failed-view accounting changed what
 the analyzer observes.
 
-Remaining partial regions in that smaller corpus are concentrated in nested,
-element-bearing, or sub-template i18n and unresolved i18n targets;
+Remaining partial regions in that smaller corpus are concentrated in nested
+or element-bearing ICU, nested sub-template i18n, and unresolved i18n targets;
 update-block scratch-variable dataflow beyond the bounded expression subset;
 projection selector/attribute metadata that cannot be tied to a declared
 slot; and newer signal-form runtime hooks without an authored-template
@@ -836,6 +853,8 @@ Pause and re-check this boundary after each milestone:
     fallbacks, and Closure-renamed two-way/animation binding families.
 18. write-only update scratch removal, sequence-folded listener plumbing, and
     semantically identified bounded ICU postprocessing.
+19. direct view-local structural i18n sub-templates with balanced one-level
+    marker suffixes, plus structurally proven repeated-marker postprocessing.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on
