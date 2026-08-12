@@ -3,11 +3,11 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
-    Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl, ForHead,
-    ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp, ObjectLit,
-    ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
-    UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl,
+    ForHead, ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp,
+    ObjectLit, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
+    Stmt, ThrowStmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -16,7 +16,7 @@ use super::{
     REFERENCE_CANDIDATE_NAME,
 };
 use crate::angular_recovery::syntax::{
-    binding_key, member_prop_name, prop_name, render_flag_mask, BindingKey,
+    binding_key, member_prop_name, prop_name, render_flag_mask, wtf8_to_string, BindingKey,
 };
 use crate::angular_recovery::PreparedAngularModule;
 
@@ -90,6 +90,12 @@ impl StructuralRoleEvidence {
             .collect::<Vec<_>>();
         inferred.extend(infer_element_family(&self.functions));
         inferred.extend(infer_element_container_family(&self.functions));
+        inferred.extend(
+            self.functions
+                .iter()
+                .filter(|function| is_specialized_i18n_postprocess_shape(function))
+                .map(|function| (function.identity.clone(), "ɵɵi18nPostprocess")),
+        );
         inferred
     }
 
@@ -6792,6 +6798,103 @@ fn is_define_component_shape(function: &RuntimeFunction) -> bool {
         expression.visit_with(&mut evidence);
         evidence.matched
     })
+}
+
+fn is_specialized_i18n_postprocess_shape(function: &RuntimeFunction) -> bool {
+    if !matches!(function.params.as_slice(), [Pat::Ident(_)]) {
+        return false;
+    }
+    let mut shape = I18nPostprocessShape::default();
+    function.body.visit_with(&mut shape);
+    let mut returns = ReturnExpressionCollector::default();
+    function.body.visit_with(&mut returns);
+    shape.replace_with_callback
+        && shape.split_pipe
+        && shape.splice_one
+        && shape.marker_match
+        && shape.zero_template_stack
+        && shape.throws_on_exhaustion
+        && !returns.expressions.is_empty()
+}
+
+#[derive(Default)]
+struct I18nPostprocessShape {
+    replace_with_callback: bool,
+    split_pipe: bool,
+    splice_one: bool,
+    marker_match: bool,
+    zero_template_stack: bool,
+    throws_on_exhaustion: bool,
+}
+
+impl Visit for I18nPostprocessShape {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = strip_parentheses(callee.as_ref()) {
+                match member_prop_name(&member.prop).as_deref() {
+                    Some("replace") => {
+                        self.replace_with_callback |= matches!(
+                            call.args.as_slice(),
+                            [pattern, callback]
+                                if pattern.spread.is_none()
+                                    && callback.spread.is_none()
+                                    && matches!(
+                                        strip_parentheses(callback.expr.as_ref()),
+                                        Expr::Arrow(_) | Expr::Fn(_)
+                                    )
+                        );
+                    }
+                    Some("split") => {
+                        self.split_pipe |= matches!(
+                            call.args.as_slice(),
+                            [delimiter]
+                                if delimiter.spread.is_none()
+                                    && matches!(
+                                        strip_parentheses(delimiter.expr.as_ref()),
+                                        Expr::Lit(Lit::Str(value)) if wtf8_to_string(&value.value) == "|"
+                                    )
+                        );
+                    }
+                    Some("splice") => {
+                        self.splice_one |= matches!(
+                            call.args.as_slice(),
+                            [index, count]
+                                if index.spread.is_none()
+                                    && count.spread.is_none()
+                                    && matches!(
+                                        strip_parentheses(count.expr.as_ref()),
+                                        Expr::Lit(Lit::Num(value)) if value.value == 1.0
+                                    )
+                        );
+                    }
+                    Some("match") => {
+                        self.marker_match |=
+                            matches!(call.args.as_slice(), [pattern] if pattern.spread.is_none());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_array_lit(&mut self, array: &ArrayLit) {
+        self.zero_template_stack |= matches!(
+            array.elems.as_slice(),
+            [Some(element)]
+                if element.spread.is_none()
+                    && matches!(
+                        strip_parentheses(element.expr.as_ref()),
+                        Expr::Lit(Lit::Num(value)) if value.value == 0.0
+                    )
+        );
+        array.visit_children_with(self);
+    }
+
+    fn visit_throw_stmt(&mut self, statement: &ThrowStmt) {
+        self.throws_on_exhaustion = true;
+        statement.visit_children_with(self);
+    }
 }
 
 #[derive(Default)]

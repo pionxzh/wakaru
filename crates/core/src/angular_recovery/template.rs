@@ -426,6 +426,7 @@ enum I18nToken {
     Interpolation(usize),
     ElementStart(usize),
     ElementEnd(usize),
+    EmbeddedView(usize),
 }
 
 enum TemplateNodeKind {
@@ -4957,14 +4958,10 @@ fn apply_create_instruction(
             tree.push_node(index, TemplateNodeKind::Text { value: message });
         }
         IvyInstruction::I18nStart => {
-            if call.args.len() != 2 {
-                record_unsupported_instruction(
+            if !matches!(call.args.len(), 2 | 3) {
+                record_malformed_instruction(
                     call,
-                    if call.args.len() == 3 {
-                        "structural i18n sub-template regions are not yet reconstructed"
-                    } else {
-                        "expected an i18n region index and message index"
-                    },
+                    "expected an i18n region index, message index, and optional sub-template index",
                     &mut program.issues,
                     &mut program.stats,
                 );
@@ -4988,37 +4985,54 @@ fn apply_create_instruction(
                 );
                 return Ok(());
             };
+            let sub_template = match call.args.get(2) {
+                Some(argument) => {
+                    let Some(index) = numeric_expr(argument.as_ref()) else {
+                        record_malformed_instruction(
+                            call,
+                            "i18n sub-template index is not numeric",
+                            &mut program.issues,
+                            &mut program.stats,
+                        );
+                        return Ok(());
+                    };
+                    Some(index)
+                }
+                None => None,
+            };
             let Some(tokens) = environment
                 .constants
                 .i18n_messages
                 .get(message_index)
                 .and_then(|message| message.as_deref())
-                .and_then(parse_structural_i18n_message)
+                .and_then(|message| parse_structural_i18n_message(message, sub_template))
             else {
                 record_unsupported_instruction(
                     call,
-                    "i18n message constant is missing or contains unsupported structural opcodes",
+                    "i18n message constant is missing or contains unsupported structural/sub-template opcodes",
                     &mut program.issues,
                     &mut program.stats,
                 );
                 return Ok(());
             };
-            let Some(parent) = tree.stack.last().copied() else {
-                record_missing_target(
-                    call,
-                    "i18n region has no containing element",
-                    &mut program.issues,
-                    &mut program.stats,
+            if sub_template.is_none() {
+                let Some(parent) = tree.stack.last().copied() else {
+                    record_missing_target(
+                        call,
+                        "i18n region has no containing element",
+                        &mut program.issues,
+                        &mut program.stats,
+                    );
+                    return Ok(());
+                };
+                tree.add_attribute(
+                    parent,
+                    TemplateAttribute {
+                        name: "i18n".to_string(),
+                        value: None,
+                    },
                 );
-                return Ok(());
-            };
-            tree.add_attribute(
-                parent,
-                TemplateAttribute {
-                    name: "i18n".to_string(),
-                    value: None,
-                },
-            );
+            }
             let node = tree.push_node(
                 index,
                 TemplateNodeKind::I18nRegion {
@@ -8243,10 +8257,14 @@ fn decode_i18n_postprocess_call(
     environment: &I18nMessageDecodeEnvironment<'_>,
     resolving: &mut HashSet<BindingKey>,
 ) -> Option<String> {
-    let [message, replacements] = call.args.as_slice() else {
-        return None;
+    let (message, replacements) = match call.args.as_slice() {
+        [message] => (message, None),
+        [message, replacements] => (message, Some(replacements)),
+        _ => return None,
     };
-    if message.spread.is_some() || replacements.spread.is_some() {
+    if message.spread.is_some()
+        || replacements.is_some_and(|replacements| replacements.spread.is_some())
+    {
         return None;
     }
 
@@ -8266,6 +8284,10 @@ fn decode_i18n_postprocess_call(
         decode_i18n_message_expression(message_expression, environment, resolving)?
     };
 
+    let message = replace_i18n_multi_value_placeholders(&message)?;
+    let Some(replacements) = replacements else {
+        return Some(message);
+    };
     let Expr::Object(replacements) = strip_parentheses(replacements.expr.as_ref()) else {
         return None;
     };
@@ -8292,6 +8314,139 @@ fn decode_i18n_postprocess_call(
         }
     }
     replace_i18n_postprocess_tokens(&message, &decoded_replacements)
+}
+
+#[derive(Clone)]
+struct I18nMultiValuePlaceholder {
+    template_id: usize,
+    closes_template: bool,
+    value: String,
+}
+
+fn replace_i18n_multi_value_placeholders(message: &str) -> Option<String> {
+    const MARKER: char = '\u{fffd}';
+
+    if !message.split('[').skip(1).any(|suffix| {
+        suffix
+            .split_once(']')
+            .is_some_and(|(content, _)| parse_i18n_multi_value_group(content).is_some())
+    }) {
+        return Some(message.to_string());
+    }
+
+    let mut rendered = String::new();
+    let mut alternatives = HashMap::<String, Vec<I18nMultiValuePlaceholder>>::new();
+    let mut template_stack = vec![0usize];
+    let mut cursor = 0;
+    while cursor < message.len() {
+        if message[cursor..].starts_with('[') {
+            let content_start = cursor + '['.len_utf8();
+            if let Some(relative_end) = message[content_start..].find(']') {
+                let content_end = content_start + relative_end;
+                let content = &message[content_start..content_end];
+                if let Some(group) = parse_i18n_multi_value_group(content) {
+                    let placeholder = select_i18n_multi_value_placeholder(
+                        content,
+                        group,
+                        &mut alternatives,
+                        &mut template_stack,
+                    )?;
+                    rendered.push_str(&placeholder);
+                    cursor = content_end + ']'.len_utf8();
+                    continue;
+                }
+            }
+        }
+
+        if message[cursor..].starts_with(MARKER) {
+            let content_start = cursor + MARKER.len_utf8();
+            if let Some(relative_end) = message[content_start..].find(MARKER) {
+                let marker_end = content_start + relative_end + MARKER.len_utf8();
+                let marker = &message[cursor..marker_end];
+                if marker
+                    .strip_prefix(&format!("{MARKER}*"))
+                    .or_else(|| marker.strip_prefix(&format!("{MARKER}/*")))
+                    .is_some()
+                {
+                    let placeholder = parse_i18n_multi_value_placeholder(marker)?;
+                    let value = select_i18n_multi_value_placeholder(
+                        marker,
+                        vec![placeholder],
+                        &mut alternatives,
+                        &mut template_stack,
+                    )?;
+                    rendered.push_str(&value);
+                    cursor = marker_end;
+                    continue;
+                }
+                rendered.push_str(marker);
+                cursor = marker_end;
+                continue;
+            }
+        }
+
+        let character = message[cursor..].chars().next()?;
+        rendered.push(character);
+        cursor += character.len_utf8();
+    }
+    (template_stack == [0]).then_some(rendered)
+}
+
+fn parse_i18n_multi_value_group(content: &str) -> Option<Vec<I18nMultiValuePlaceholder>> {
+    let placeholders = content
+        .split('|')
+        .map(parse_i18n_multi_value_placeholder)
+        .collect::<Option<Vec<_>>>()?;
+    (placeholders.len() > 1).then_some(placeholders)
+}
+
+fn parse_i18n_multi_value_placeholder(value: &str) -> Option<I18nMultiValuePlaceholder> {
+    const MARKER: char = '\u{fffd}';
+
+    let content = value.strip_prefix(MARKER)?.strip_suffix(MARKER)?;
+    let (marker, closes_template, is_template) = if let Some(marker) = content.strip_prefix("/*") {
+        (marker, true, true)
+    } else if let Some(marker) = content.strip_prefix('*') {
+        (marker, false, true)
+    } else if let Some(marker) = content.strip_prefix("/#") {
+        (marker, false, false)
+    } else if let Some(marker) = content.strip_prefix('#') {
+        (marker, false, false)
+    } else {
+        (content, false, false)
+    };
+    let (_, sub_template) = parse_structural_i18n_marker(marker)?;
+    if is_template && sub_template.is_none() {
+        return None;
+    }
+    Some(I18nMultiValuePlaceholder {
+        template_id: sub_template.unwrap_or(0),
+        closes_template,
+        value: value.to_string(),
+    })
+}
+
+fn select_i18n_multi_value_placeholder(
+    key: &str,
+    initial: Vec<I18nMultiValuePlaceholder>,
+    alternatives: &mut HashMap<String, Vec<I18nMultiValuePlaceholder>>,
+    template_stack: &mut Vec<usize>,
+) -> Option<String> {
+    let alternatives = alternatives.entry(key.to_string()).or_insert(initial);
+    let current_template = *template_stack.last()?;
+    let selected = alternatives
+        .iter()
+        .position(|placeholder| placeholder.template_id == current_template)
+        .unwrap_or(0);
+    let placeholder = alternatives.get(selected)?.clone();
+    alternatives.remove(selected);
+    if placeholder.closes_template {
+        (placeholder.template_id == current_template && template_stack.len() > 1).then_some(())?;
+        template_stack.pop();
+    } else if placeholder.template_id != current_template {
+        template_stack.push(placeholder.template_id);
+    }
+    Some(placeholder.value)
 }
 
 fn replace_i18n_postprocess_tokens(
@@ -8506,50 +8661,105 @@ fn is_supported_icu_case_key(kind: &str, key: &str) -> bool {
         })
 }
 
-fn parse_structural_i18n_message(message: &str) -> Option<Vec<I18nToken>> {
+fn parse_structural_i18n_message(
+    message: &str,
+    requested_sub_template: Option<usize>,
+) -> Option<Vec<I18nToken>> {
     const MARKER: char = '\u{fffd}';
 
     let mut tokens = Vec::new();
-    let mut element_stack = Vec::new();
+    let mut element_stacks = HashMap::<Option<usize>, Vec<usize>>::new();
+    let mut active_sub_template = None;
+    let mut active_template_index = None;
+    let mut selected_sub_template_regions = 0usize;
     let mut saw_element = false;
+    let mut saw_embedded_view = false;
     let mut cursor = 0;
     while let Some(relative_start) = message[cursor..].find(MARKER) {
         let start = cursor + relative_start;
-        if start > cursor {
+        if start > cursor && active_sub_template == requested_sub_template {
             tokens.push(I18nToken::Text(message[cursor..start].to_string()));
         }
         let content_start = start + MARKER.len_utf8();
         let relative_end = message[content_start..].find(MARKER)?;
         let marker_end = content_start + relative_end;
         let content = &message[content_start..marker_end];
-        let numeric_marker = |value: &str| {
-            let mut parts = value.split(':');
-            let index = parts.next()?.parse::<usize>().ok()?;
-            parts
-                .all(|part| {
-                    !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
-                })
-                .then_some(index)
-        };
-        if let Some(value) = content.strip_prefix("/#") {
-            let index = numeric_marker(value)?;
-            (element_stack.pop() == Some(index)).then_some(())?;
-            tokens.push(I18nToken::ElementEnd(index));
+        if let Some(value) = content.strip_prefix("/*") {
+            let (index, Some(sub_template)) = parse_structural_i18n_marker(value)? else {
+                return None;
+            };
+            (active_sub_template == Some(sub_template)).then_some(())?;
+            (active_template_index == Some(index)).then_some(())?;
+            element_stacks
+                .get(&Some(sub_template))
+                .is_none_or(Vec::is_empty)
+                .then_some(())?;
+            active_sub_template = None;
+            active_template_index = None;
+        } else if let Some(value) = content.strip_prefix("/#") {
+            let (index, sub_template) = parse_structural_i18n_marker(value)?;
+            (sub_template == active_sub_template).then_some(())?;
+            let stack = element_stacks.entry(sub_template).or_default();
+            (stack.pop() == Some(index)).then_some(())?;
+            if sub_template == requested_sub_template {
+                tokens.push(I18nToken::ElementEnd(index));
+            }
             saw_element = true;
+        } else if let Some(value) = content.strip_prefix('*') {
+            let (index, Some(sub_template)) = parse_structural_i18n_marker(value)? else {
+                return None;
+            };
+            active_sub_template.is_none().then_some(())?;
+            element_stacks
+                .get(&None)
+                .is_none_or(Vec::is_empty)
+                .then_some(())?;
+            active_sub_template = Some(sub_template);
+            active_template_index = Some(index);
+            if requested_sub_template == Some(sub_template) {
+                selected_sub_template_regions += 1;
+            }
+            if requested_sub_template.is_none() {
+                tokens.push(I18nToken::EmbeddedView(index));
+                saw_embedded_view = true;
+            }
         } else if let Some(value) = content.strip_prefix('#') {
-            let index = numeric_marker(value)?;
-            element_stack.push(index);
-            tokens.push(I18nToken::ElementStart(index));
+            let (index, sub_template) = parse_structural_i18n_marker(value)?;
+            (sub_template == active_sub_template).then_some(())?;
+            element_stacks.entry(sub_template).or_default().push(index);
+            if sub_template == requested_sub_template {
+                tokens.push(I18nToken::ElementStart(index));
+            }
             saw_element = true;
         } else {
-            tokens.push(I18nToken::Interpolation(numeric_marker(content)?));
+            let (index, sub_template) = parse_structural_i18n_marker(content)?;
+            (sub_template == active_sub_template).then_some(())?;
+            if sub_template == requested_sub_template {
+                tokens.push(I18nToken::Interpolation(index));
+            }
         }
         cursor = marker_end + MARKER.len_utf8();
     }
-    if cursor < message.len() {
+    if cursor < message.len() && active_sub_template == requested_sub_template {
         tokens.push(I18nToken::Text(message[cursor..].to_string()));
     }
-    (saw_element && element_stack.is_empty()).then_some(tokens)
+    active_sub_template.is_none().then_some(())?;
+    active_template_index.is_none().then_some(())?;
+    element_stacks.values().all(Vec::is_empty).then_some(())?;
+    match requested_sub_template {
+        Some(_) => (selected_sub_template_regions == 1 && !tokens.is_empty()).then_some(tokens),
+        None => (saw_element || saw_embedded_view).then_some(tokens),
+    }
+}
+
+fn parse_structural_i18n_marker(value: &str) -> Option<(usize, Option<usize>)> {
+    let mut parts = value.split(':');
+    let index = parts.next()?.parse::<usize>().ok()?;
+    let sub_template = match parts.next() {
+        Some(part) => Some(part.parse::<usize>().ok()?),
+        None => None,
+    };
+    parts.next().is_none().then_some((index, sub_template))
 }
 
 fn parse_i18n_markers(message: &str) -> Option<Vec<(usize, usize, usize)>> {
@@ -8915,8 +9125,7 @@ fn render_node(
         TemplateNodeKind::I18nRegion {
             tokens,
             expressions,
-        } => render_i18n_region(tree, tokens, expressions)
-            .map(|rendered| format!("{indent}{rendered}"))
+        } => render_i18n_region(tree, tokens, expressions, depth, rendered_issue_comments)
             .unwrap_or_else(|| format!("{indent}<!-- Malformed structural i18n region -->")),
         TemplateNodeKind::Let { name, value, .. } => match value {
             Some(value) => format!("{indent}@let {name} = {value};"),
@@ -9070,8 +9279,12 @@ fn render_i18n_region(
     tree: &TemplateTree,
     tokens: &[I18nToken],
     expressions: &[String],
+    depth: usize,
+    rendered_issue_comments: &mut HashSet<String>,
 ) -> Option<String> {
+    let indent = "  ".repeat(depth);
     let mut rendered = String::new();
+    let mut lines = Vec::new();
     for token in tokens {
         match token {
             I18nToken::Text(value) => rendered.push_str(&escape_text(value)),
@@ -9101,9 +9314,27 @@ fn render_i18n_region(
                 rendered.push_str(tag);
                 rendered.push('>');
             }
+            I18nToken::EmbeddedView(index) => {
+                let node = *tree.index_to_node.get(index)?;
+                matches!(tree.nodes[node].kind, TemplateNodeKind::EmbeddedView { .. })
+                    .then_some(())?;
+                let text = rendered.trim();
+                if !text.is_empty() {
+                    lines.push(format!("{indent}{text}"));
+                }
+                rendered.clear();
+                lines.push(render_node(tree, node, depth, rendered_issue_comments));
+            }
         }
     }
-    Some(rendered)
+    if lines.is_empty() {
+        return Some(format!("{indent}{rendered}"));
+    }
+    let text = rendered.trim();
+    if !text.is_empty() {
+        lines.push(format!("{indent}{text}"));
+    }
+    Some(lines.join("\n"))
 }
 
 fn render_attribute(attribute: &TemplateAttribute) -> String {

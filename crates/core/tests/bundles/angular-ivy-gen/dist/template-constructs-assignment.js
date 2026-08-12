@@ -1,7 +1,7 @@
 import { NgFor, NgIf, UpperCasePipe } from "@angular/common";
 import { model } from "@angular/core";
 import * as i0 from "@angular/core";
-var FixtureLetBindingsComponent_Conditional_3_Template, FixtureStructuralConstructsComponent_Conditional_1_Template, FixtureStructuralConstructsComponent_Conditional_2_Template, FixtureStructuralConstructsComponent_For_4_Template, FixtureStructuralConstructsComponent_ForEmpty_5_Template, FixtureComplexListenerComponent_For_2_Conditional_0_Template, FixtureComplexListenerComponent_For_2_Template, FixtureProjectionFallbackComponent_ProjectionFallback_1_Template, FixtureProjectionFallbackComponent_ProjectionFallback_3_Template, FixtureDeferredConstructsComponent_Defer_1_Template, FixtureDeferredConstructsComponent_DeferLoading_2_Template, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, FixtureDeferredConstructsComponent_DeferError_4_Template, FixturePrefetchIdleConstructsComponent_Defer_1_Template, FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureHydrateIdleConstructsComponent_Defer_1_Template, FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureLegacyStructuralConstructsComponent_p_1_Template, FixtureLegacyStructuralConstructsComponent_span_2_Template;
+var FixtureLetBindingsComponent_Conditional_3_Template, FixtureStructuralConstructsComponent_Conditional_1_Template, FixtureStructuralConstructsComponent_Conditional_2_Template, FixtureStructuralConstructsComponent_For_4_Template, FixtureStructuralConstructsComponent_ForEmpty_5_Template, FixtureComplexListenerComponent_For_2_Conditional_0_Template, FixtureComplexListenerComponent_For_2_Template, FixtureSubTemplateI18nComponent_ng_template_2_Template, FixtureProjectionFallbackComponent_ProjectionFallback_1_Template, FixtureProjectionFallbackComponent_ProjectionFallback_3_Template, FixtureDeferredConstructsComponent_Defer_1_Template, FixtureDeferredConstructsComponent_DeferLoading_2_Template, FixtureDeferredConstructsComponent_DeferPlaceholder_3_Template, FixtureDeferredConstructsComponent_DeferError_4_Template, FixturePrefetchIdleConstructsComponent_Defer_1_Template, FixturePrefetchIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureHydrateIdleConstructsComponent_Defer_1_Template, FixtureHydrateIdleConstructsComponent_DeferPlaceholder_2_Template, FixtureLegacyStructuralConstructsComponent_p_1_Template, FixtureLegacyStructuralConstructsComponent_span_2_Template;
 const _c0 = () => ({ fixed: !0 }), _c1 = (a0) => ({ label: a0 }), _c2 = (a0) => [a0];
 FixtureLetBindingsComponent_Conditional_3_Template = function (rf, ctx) {
     if (rf & 1) {
@@ -62,6 +62,12 @@ FixtureComplexListenerComponent_For_2_Template = function (rf, ctx) {
     if (rf & 1 && i0.\u0275\u0275conditionalCreate(0, FixtureComplexListenerComponent_For_2_Conditional_0_Template, 3, 1, "button", 1), rf & 2) {
         const ctx_r3 = i0.\u0275\u0275nextContext();
         i0.\u0275\u0275conditional(ctx_r3.active ? 0 : -1);
+    }
+};
+FixtureSubTemplateI18nComponent_ng_template_2_Template = function (rf, ctx) {
+    if (rf & 1 && (i0.\u0275\u0275i18nStart(0, 0, 1), i0.\u0275\u0275element(1, "strong"), i0.\u0275\u0275i18nEnd()), rf & 2) {
+        const ctx_r0 = i0.\u0275\u0275nextContext();
+        i0.\u0275\u0275advance(), i0.\u0275\u0275i18nExp(ctx_r0.name), i0.\u0275\u0275i18nApply(0);
     }
 };
 const _c5 = [[["", "card-title", ""]], "*"], _c6 = ["[card-title]", "*"];
@@ -240,6 +246,32 @@ class FixtureStructuralI18nComponent {
             rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275i18nStart(1, 0), i0.\u0275\u0275domElement(2, "strong"), i0.\u0275\u0275i18nEnd(), i0.\u0275\u0275domElementEnd()), rf & 2 && (i0.\u0275\u0275advance(2), i0.\u0275\u0275i18nExp(ctx.name), i0.\u0275\u0275i18nApply(1));
         }, encapsulation: 2 });
 }
+class FixturePostprocessedStructuralI18nComponent {
+    static \u0275fac = function (__ngFactoryType__) {
+        return new (__ngFactoryType__ || FixturePostprocessedStructuralI18nComponent)();
+    };
+    static \u0275cmp = i0.\u0275\u0275defineComponent({ type: FixturePostprocessedStructuralI18nComponent, selectors: [["fixture-postprocessed-structural-i18n"]], decls: 4, vars: 0, consts: () => {
+            let i18n_3;
+            return typeof ngI18nClosureMode < "u" && ngI18nClosureMode ? i18n_3 =
+                goog.getMsg(" Read {$startLink}First{$closeLink} and {$startLink_1}Second{$closeLink}. ", { closeLink: "[\uFFFD/#2\uFFFD|\uFFFD/#3\uFFFD]", startLink: "\uFFFD#2\uFFFD", startLink_1: "\uFFFD#3\uFFFD" }, { original_code: { closeLink: "</a>", startLink: '<a href="/first">', startLink_1: '<a href="/second">' } }) : i18n_3 = $localize ` Read ${"\uFFFD#2\uFFFD"}:START_LINK:First${"[\uFFFD/#2\uFFFD|\uFFFD/#3\uFFFD]"}:CLOSE_LINK: and ${"\uFFFD#3\uFFFD"}:START_LINK_1:Second${"[\uFFFD/#2\uFFFD|\uFFFD/#3\uFFFD]"}:CLOSE_LINK:. `, i18n_3 = i0.\u0275\u0275i18nPostprocess(i18n_3), [i18n_3, ["href", "/first"], ["href", "/second"]];
+        }, template: function (rf, ctx) {
+            rf & 1 && (i0.\u0275\u0275domElementStart(0, "p"), i0.\u0275\u0275i18nStart(1, 0), i0.\u0275\u0275domElement(2, "a", 1)(3, "a", 2), i0.\u0275\u0275i18nEnd(), i0.\u0275\u0275domElementEnd());
+        }, encapsulation: 2 });
+}
+class FixtureSubTemplateI18nComponent {
+    visible = !0;
+    name = "reader";
+    static \u0275fac = function (__ngFactoryType__) {
+        return new (__ngFactoryType__ || FixtureSubTemplateI18nComponent)();
+    };
+    static \u0275cmp = i0.\u0275\u0275defineComponent({ type: FixtureSubTemplateI18nComponent, selectors: [["fixture-sub-template-i18n"]], decls: 3, vars: 1, consts: () => {
+            let i18n_4;
+            return typeof ngI18nClosureMode < "u" && ngI18nClosureMode ? i18n_4 =
+                goog.getMsg(" Visible before. {$startTagNgTemplate}{$startTagStrong}Hello, {$interpolation}!{$closeTagStrong}{$closeTagNgTemplate} Visible after. ", { closeTagNgTemplate: "\uFFFD/*2:1\uFFFD", closeTagStrong: "\uFFFD/#1:1\uFFFD", interpolation: "\uFFFD0:1\uFFFD", startTagNgTemplate: "\uFFFD*2:1\uFFFD", startTagStrong: "\uFFFD#1:1\uFFFD" }, { original_code: { closeTagNgTemplate: "</ng-template>", closeTagStrong: "</strong>", interpolation: "{{ name }}", startTagNgTemplate: '<ng-template [ngIf]="visible">', startTagStrong: "<strong>" } }) : i18n_4 = $localize ` Visible before. ${"\uFFFD*2:1\uFFFD"}:START_TAG_NG_TEMPLATE:${"\uFFFD#1:1\uFFFD"}:START_TAG_STRONG:Hello, ${"\uFFFD0:1\uFFFD"}:INTERPOLATION:!${"\uFFFD/#1:1\uFFFD"}:CLOSE_TAG_STRONG:${"\uFFFD/*2:1\uFFFD"}:CLOSE_TAG_NG_TEMPLATE: Visible after. `, [i18n_4, [3, "ngIf"]];
+        }, template: function (rf, ctx) {
+            rf & 1 && (i0.\u0275\u0275elementStart(0, "section"), i0.\u0275\u0275i18nStart(1, 0), i0.\u0275\u0275template(2, FixtureSubTemplateI18nComponent_ng_template_2_Template, 2, 1, "ng-template", 1), i0.\u0275\u0275i18nEnd(), i0.\u0275\u0275elementEnd()), rf & 2 && (i0.\u0275\u0275advance(2), i0.\u0275\u0275property("ngIf", ctx.visible));
+        }, dependencies: [NgIf], encapsulation: 2 });
+}
 class FixtureProjectionFallbackComponent {
     static \u0275fac = function (__ngFactoryType__) {
         return new (__ngFactoryType__ || FixtureProjectionFallbackComponent)();
@@ -317,4 +349,4 @@ class FixtureLegacyStructuralConstructsComponent {
             rf & 1 && (i0.\u0275\u0275elementStart(0, "section"), i0.\u0275\u0275template(1, FixtureLegacyStructuralConstructsComponent_p_1_Template, 2, 0, "p", 0)(2, FixtureLegacyStructuralConstructsComponent_span_2_Template, 2, 1, "span", 1), i0.\u0275\u0275elementEnd()), rf & 2 && (i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngIf", ctx.visible), i0.\u0275\u0275advance(), i0.\u0275\u0275property("ngForOf", ctx.items));
         }, dependencies: [NgIf, NgFor], encapsulation: 2 });
 }
-export { FixtureAnimationBindingsComponent, FixtureComplexListenerComponent, FixtureContainerI18nComponent, FixtureDeferredConstructsComponent, FixtureElementSelectorComponent, FixtureFlatBindingsComponent, FixtureHydrateIdleConstructsComponent, FixtureLegacyStructuralConstructsComponent, FixtureLetBindingsComponent, FixtureModelTargetDirective, FixtureNamespacesComponent, FixturePrefetchIdleConstructsComponent, FixtureProjectionFallbackComponent, FixturePureBindingsComponent, FixturePureTargetDirective, FixtureSelectorMatrixComponent, FixtureStructuralConstructsComponent, FixtureStructuralI18nComponent, FixtureTwoWayBindingComponent };
+export { FixtureAnimationBindingsComponent, FixtureComplexListenerComponent, FixtureContainerI18nComponent, FixtureDeferredConstructsComponent, FixtureElementSelectorComponent, FixtureFlatBindingsComponent, FixtureHydrateIdleConstructsComponent, FixtureLegacyStructuralConstructsComponent, FixtureLetBindingsComponent, FixtureModelTargetDirective, FixtureNamespacesComponent, FixturePostprocessedStructuralI18nComponent, FixturePrefetchIdleConstructsComponent, FixtureProjectionFallbackComponent, FixturePureBindingsComponent, FixturePureTargetDirective, FixtureSelectorMatrixComponent, FixtureStructuralConstructsComponent, FixtureStructuralI18nComponent, FixtureSubTemplateI18nComponent, FixtureTwoWayBindingComponent };

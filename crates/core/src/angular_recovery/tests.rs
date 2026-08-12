@@ -5812,6 +5812,247 @@ fn recovers_structural_i18n_regions_with_nested_elements() {
 }
 
 #[test]
+fn recovers_direct_view_local_structural_i18n_sub_templates() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        function ConditionalTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵi18nStart(0, 0, 1);
+                core.ɵɵelement(1, "strong");
+                core.ɵɵi18nEnd();
+            }
+            if (rf & 2) {
+                const component = core.ɵɵnextContext();
+                core.ɵɵadvance();
+                core.ɵɵi18nExp(component.name);
+                core.ɵɵi18nApply(0);
+            }
+        }
+
+        class SubTemplateI18nComponent {
+            visible = true;
+            name = "reader";
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: SubTemplateI18nComponent,
+                selectors: [["sub-template-i18n"]],
+                consts: () => [localize(
+                    "Before. �*2:1��#1:1�Hello, �0:1�!�/#1:1��/*2:1� After."
+                )],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "section");
+                        core.ɵɵi18nStart(1, 0);
+                        core.ɵɵconditionalCreate(2, ConditionalTemplate, 2, 1, "strong");
+                        core.ɵɵi18nEnd();
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance(2);
+                        core.ɵɵconditional(component.visible ? 2 : -1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("direct sub-template i18n should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("<section i18n>"));
+    assert!(component.source.contains("Before."));
+    assert!(component.source.contains("@if (visible) {"));
+    assert!(component
+        .source
+        .contains("<strong>Hello, {{ name }}!</strong>"));
+    assert!(component.source.contains("After."));
+    assert!(!component.source.contains("ɵɵi18n"));
+}
+
+#[test]
+fn recovers_one_argument_i18n_postprocess_multi_value_markers() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function postprocess(message) {
+            let result = message;
+            if (/\[/.test(message)) {
+                const matches = {};
+                const templateIds = [0];
+                result = result.replace(/\[(.*?)\]/g, function(_full, content) {
+                    const placeholders = matches[content] || [];
+                    if (!placeholders.length) {
+                        content.split("|").forEach(function(placeholder) {
+                            placeholder.match(/\d+:(\d+)/);
+                            placeholders.push(placeholder);
+                        });
+                        matches[content] = placeholders;
+                    }
+                    if (!placeholders.length) {
+                        throw Error("unmatched placeholder");
+                    }
+                    const selected = 0;
+                    const placeholder = placeholders[selected];
+                    placeholders.splice(selected, 1);
+                    return placeholder;
+                });
+            }
+            return result;
+        }
+
+        class PostprocessedStructuralI18nComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: PostprocessedStructuralI18nComponent,
+                selectors: [["postprocessed-structural-i18n"]],
+                consts: () => [postprocess(
+                    "Read �#2�One[�/#2�|�/#3�] and �#3�Two[�/#2�|�/#3�]."
+                )],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18nStart(1, 0);
+                        core.ɵɵelement(2, "a");
+                        core.ɵɵelement(3, "a");
+                        core.ɵɵi18nEnd();
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("one-argument i18n postprocess should parse");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("Read <a>One</a> and <a>Two</a>."));
+    assert!(!component.source.contains("ɵɵi18n"));
+}
+
+#[test]
+fn leaves_exhausted_i18n_postprocess_multi_value_markers_partial() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class ExhaustedPostprocessComponent {
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: ExhaustedPostprocessComponent,
+                selectors: [["exhausted-postprocess"]],
+                consts: () => [core.ɵɵi18nPostprocess(
+                    "�#2�A[�/#2�|�/#3�]�#3�B[�/#2�|�/#3�]C[�/#2�|�/#3�]"
+                )],
+                template: function(rf) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "p");
+                        core.ɵɵi18nStart(1, 0);
+                        core.ɵɵelement(2, "a");
+                        core.ɵɵelement(3, "a");
+                        core.ɵɵi18nEnd();
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("exhausted i18n alternatives should remain analyzable");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component
+        .issues
+        .iter()
+        .any(|issue| issue.instruction.as_deref() == Some("ɵɵi18nStart")));
+    assert!(!component.source.contains("<a>One</a>"));
+}
+
+#[test]
+fn leaves_nested_structural_i18n_sub_templates_partial() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        function localize(message) {
+            return message;
+        }
+
+        function NestedTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵi18nStart(0, 0, 2);
+                core.ɵɵelement(1, "em");
+                core.ɵɵi18nEnd();
+            }
+        }
+
+        function ConditionalTemplate(rf) {
+            if (rf & 1) {
+                core.ɵɵi18nStart(0, 0, 1);
+                core.ɵɵtemplate(1, NestedTemplate, 2, 0, "em");
+                core.ɵɵi18nEnd();
+            }
+        }
+
+        class NestedSubTemplateI18nComponent {
+            visible = true;
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: NestedSubTemplateI18nComponent,
+                selectors: [["nested-sub-template-i18n"]],
+                consts: () => [localize(
+                    "Before. �*2:1��*1:1:2�Nested�/*1:1:2��/*2:1� After."
+                )],
+                template: function(rf, component) {
+                    if (rf & 1) {
+                        core.ɵɵelementStart(0, "section");
+                        core.ɵɵi18nStart(1, 0);
+                        core.ɵɵconditionalCreate(2, ConditionalTemplate, 2, 0, "em");
+                        core.ɵɵi18nEnd();
+                        core.ɵɵelementEnd();
+                    }
+                    if (rf & 2) {
+                        core.ɵɵadvance(2);
+                        core.ɵɵconditional(component.visible ? 2 : -1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("nested sub-template i18n should remain analyzable");
+    let component = &recovered[0];
+
+    assert_eq!(component.completeness, AngularRecoveryCompleteness::Partial);
+    assert!(component.issues.iter().any(|issue| {
+        issue.instruction.as_deref() == Some("ɵɵi18nStart")
+            && issue.detail.as_deref().is_some_and(|detail| {
+                detail.contains("unsupported structural/sub-template opcodes")
+            })
+    }));
+    assert!(!component.source.contains("Nested</em>"));
+}
+
+#[test]
 fn recovers_postprocessed_bounded_icu_messages() {
     let source = r#"
         import * as core from "@angular/core";

@@ -52,8 +52,10 @@ minification with `ngDevMode=false`. It isolates:
   listener;
 - a multi-level `@let` / `@for` / `@if` listener that combines a local
   reference, loop context, parent let value, and multiple ordered effects;
-- structural i18n element markers and interpolation, plus selected and default
-  `<ng-content>` fallback views;
+- structural i18n element markers, one-argument multi-value postprocessing,
+  interpolation, and one-level view-local i18n across a generated explicit
+  structural `<ng-template>`, plus selected and default `<ng-content>`
+  fallback views;
 - signal-backed two-way binding and Angular's static/dynamic
   `animate.enter` / `animate.leave` bindings and animation listener;
 - `@defer` with primary, loading, placeholder, and error views;
