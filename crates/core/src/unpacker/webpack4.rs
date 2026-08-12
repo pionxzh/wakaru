@@ -4,11 +4,13 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr,
-    Function, Id, Ident, IdentName, Lit, MemberExpr, MemberProp, MetaPropExpr, MetaPropKind,
-    Module, ModuleItem, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget,
-    Stmt, Str, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinExpr, BinaryOp, BindingIdent,
+    BlockStmt, BlockStmtOrExpr, CallExpr, Callee, ClassProp, CondExpr, Constructor, Decl, Expr,
+    ExprOrSpread, ExprStmt, FnExpr, Function, GetterProp, Id, Ident, IdentName, Lit, MemberExpr,
+    MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleItem, Number, ObjectLit,
+    ParamOrTsParamProp, Pat, PrivateProp, Prop, PropName, PropOrSpread, SetterProp,
+    SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
@@ -1483,6 +1485,48 @@ impl Visit for LiftedWrapperScopeHazards {
     // capture `this`, `arguments`, and `new.target` from that wrapper.
     fn visit_function(&mut self, _: &Function) {}
 
+    // SWC models constructors and object accessors directly rather than
+    // wrapping their bodies in `Function`. Their bodies still have their own
+    // `this`, `arguments`, `new.target`, and `return` semantics, so only visit
+    // parts evaluated while the surrounding class/object is created.
+    fn visit_constructor(&mut self, constructor: &Constructor) {
+        constructor.key.visit_with(self);
+        for param in &constructor.params {
+            match param {
+                ParamOrTsParamProp::Param(param) => param.decorators.visit_with(self),
+                ParamOrTsParamProp::TsParamProp(param) => param.decorators.visit_with(self),
+            }
+        }
+    }
+
+    fn visit_getter_prop(&mut self, getter: &GetterProp) {
+        getter.key.visit_with(self);
+    }
+
+    fn visit_setter_prop(&mut self, setter: &SetterProp) {
+        setter.key.visit_with(self);
+    }
+
+    // A computed field/accessor key and its decorators run in the enclosing
+    // context. Initializers instead receive the class instance (or class for
+    // static elements) as `this`; static blocks use the same class context.
+    // Direct eval remains independently scanned by `DirectEvalAnalyzer`.
+    fn visit_class_prop(&mut self, prop: &ClassProp) {
+        prop.key.visit_with(self);
+        prop.decorators.visit_with(self);
+    }
+
+    fn visit_private_prop(&mut self, prop: &PrivateProp) {
+        prop.decorators.visit_with(self);
+    }
+
+    fn visit_auto_accessor(&mut self, accessor: &AutoAccessor) {
+        accessor.key.visit_with(self);
+        accessor.decorators.visit_with(self);
+    }
+
+    fn visit_static_block(&mut self, _: &StaticBlock) {}
+
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
         self.arrow_depth += 1;
         arrow.visit_children_with(self);
@@ -2220,6 +2264,70 @@ mod polyfill_tests {
 "#;
         let out = run_unwrap(input);
         assert!(out.contains(".call(this"), "{out}");
+    }
+
+    #[test]
+    fn lifts_generated_global_wrapper_across_own_this_execution_contexts() {
+        let cases = [
+            (
+                "constructor",
+                "exports.Value = class Value { constructor(value) { this.value = value; this.target = new.target; } };",
+            ),
+            (
+                "object getter",
+                "exports.value = { get current() { return [this.current, arguments.length, new.target]; } };",
+            ),
+            (
+                "object setter",
+                "exports.value = { set current(next) { this.current = next; this.count = arguments.length; } };",
+            ),
+            (
+                "instance field",
+                "exports.Value = class Value { current = this; target = new.target; };",
+            ),
+            (
+                "static field and block",
+                "exports.Value = class Value { static current = this; static { this.ready = true; this.target = new.target; } };",
+            ),
+        ];
+
+        for (label, body) in cases {
+            let input = format!(
+                "(function(injectedGlobal) {{\n{body}\n}}).call(this, require(\"../node_modules/webpack/buildin/global.js\"));\n"
+            );
+            let out = run_unwrap(&input);
+            assert!(!out.contains(".call(this"), "{label}: {out}");
+        }
+    }
+
+    #[test]
+    fn keeps_generated_global_wrapper_for_immediate_keys_and_nested_eval() {
+        let cases = [
+            (
+                "computed accessor key",
+                "exports.value = { get [this.key]() { return 1; } };",
+            ),
+            (
+                "computed class-field key",
+                "exports.Value = class Value { [this.key] = 1; };",
+            ),
+            (
+                "accessor direct eval",
+                "exports.value = { get current() { return eval(\"injectedGlobal\"); } };",
+            ),
+            (
+                "static-block direct eval",
+                "exports.Value = class Value { static { eval(\"injectedGlobal\"); } };",
+            ),
+        ];
+
+        for (label, body) in cases {
+            let input = format!(
+                "(function(injectedGlobal) {{\n{body}\n}}).call(this, require(\"../node_modules/webpack/buildin/global.js\"));\n"
+            );
+            let out = run_unwrap(&input);
+            assert!(out.contains(".call(this"), "{label}: {out}");
+        }
     }
 
     #[test]

@@ -11,6 +11,21 @@ exports.getGlobal = function() {
   return __webpack_require__.g;
 };
 
+exports.GlobalBox = class GlobalBox {
+  constructor(value) {
+    this.value = value;
+  }
+};
+
+exports.globalState = {
+  get current() {
+    return this._current;
+  },
+  set current(value) {
+    this._current = value;
+  },
+};
+
 
 /***/ }
 
@@ -66,9 +81,10 @@ var __webpack_exports__ = {};
 /*!*********************************!*\
   !*** ./src/var-inject-entry.js ***!
   \*********************************/
-const { getGlobal } = __webpack_require__(/*! ./global-user */ "./src/global-user.js");
+const { getGlobal, GlobalBox, globalState } = __webpack_require__(/*! ./global-user */ "./src/global-user.js");
 
-console.log(getGlobal());
+globalState.current = new GlobalBox(getGlobal());
+console.log(globalState.current.value);
 
 })();
 

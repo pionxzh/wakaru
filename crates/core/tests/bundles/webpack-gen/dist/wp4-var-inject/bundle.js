@@ -86,7 +86,7 @@
 /************************************************************************/
 /******/ ({
 
-/***/ "../../../../../../../AppData/Local/npm-cache/_npx/b5b10140d28f1dd4/node_modules/webpack/buildin/global.js":
+/***/ "./node_modules/webpack/buildin/global.js":
 /*!***********************************!*\
   !*** (webpack)/buildin/global.js ***!
   \***********************************/
@@ -128,7 +128,22 @@ module.exports = g;
   return global;
 };
 
-/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../../../../../../../../AppData/Local/npm-cache/_npx/b5b10140d28f1dd4/node_modules/webpack/buildin/global.js */ "../../../../../../../AppData/Local/npm-cache/_npx/b5b10140d28f1dd4/node_modules/webpack/buildin/global.js")))
+exports.GlobalBox = class GlobalBox {
+  constructor(value) {
+    this.value = value;
+  }
+};
+
+exports.globalState = {
+  get current() {
+    return this._current;
+  },
+  set current(value) {
+    this._current = value;
+  },
+};
+
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! ./../node_modules/webpack/buildin/global.js */ "./node_modules/webpack/buildin/global.js")))
 
 /***/ }),
 
@@ -139,9 +154,10 @@ module.exports = g;
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
-const { getGlobal } = __webpack_require__(/*! ./global-user */ "./src/global-user.js");
+const { getGlobal, GlobalBox, globalState } = __webpack_require__(/*! ./global-user */ "./src/global-user.js");
 
-console.log(getGlobal());
+globalState.current = new GlobalBox(getGlobal());
+console.log(globalState.current.value);
 
 
 /***/ })

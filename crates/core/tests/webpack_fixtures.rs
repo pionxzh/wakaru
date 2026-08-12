@@ -246,6 +246,14 @@ fn wp4_var_inject() {
         global_user.contains("export") && global_user.contains("getGlobal"),
         "webpack's generated variable injection must expose its exports:\n{global_user}"
     );
+    assert!(
+        global_user.contains("class GlobalBox") && global_user.contains("get current"),
+        "the generated fixture must retain its class and accessor bodies:\n{global_user}"
+    );
+    assert!(
+        !global_user.contains(".call(this"),
+        "class and accessor scopes must not block generated-wrapper recovery:\n{global_user}"
+    );
     assert_eq!(validate_output_modules(&pairs), vec![]);
 }
 

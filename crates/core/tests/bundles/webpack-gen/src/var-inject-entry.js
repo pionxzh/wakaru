@@ -1,3 +1,4 @@
-const { getGlobal } = require('./global-user');
+const { getGlobal, GlobalBox, globalState } = require('./global-user');
 
-console.log(getGlobal());
+globalState.current = new GlobalBox(getGlobal());
+console.log(globalState.current.value);
