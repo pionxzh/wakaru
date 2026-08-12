@@ -65,7 +65,26 @@ class CompatibilitySwitchComponent {
     }
   }, encapsulation: 2 });
 }
+class CompatibilityIcuComponent {
+  count = 2;
+  static ɵfac = function(__ngFactoryType__) {
+    return new (__ngFactoryType__ || CompatibilityIcuComponent)();
+  };
+  static ɵcmp = /* @__PURE__ */ i0.ɵɵdefineComponent({ type: CompatibilityIcuComponent, selectors: [["compat-icu"]], decls: 2, vars: 2, consts: () => {
+    let i18n_0;
+    typeof ngI18nClosureMode < "u" && ngI18nClosureMode ? i18n_0 = goog.getMsg("{VAR_PLURAL, plural, =0 {No items} =1 {One item} other {{INTERPOLATION} items}}") : i18n_0 = $localize`{VAR_PLURAL, plural, =0 {No items} =1 {One item} other {{INTERPOLATION} items}}`, i18n_0 = i0.ɵɵi18nPostprocess(i18n_0, { INTERPOLATION: "�1�", VAR_PLURAL: "�0�" });
+    let i18n_1;
+    return typeof ngI18nClosureMode < "u" && ngI18nClosureMode ? i18n_1 = goog.getMsg(" {$icu} ", { icu: i18n_0 }, { original_code: { icu: `{count, plural,
+        =0 {No items}
+        =1 {One item}
+        other {{{ count }} items}
+      }` } }) : i18n_1 = $localize` ${i18n_0}:ICU@@1118798863327598053: `, [i18n_1];
+  }, template: function(rf, ctx) {
+    rf & 1 && (i0.ɵɵelementStart(0, "p"), i0.ɵɵi18n(1, 0), i0.ɵɵelementEnd()), rf & 2 && (i0.ɵɵadvance(), i0.ɵɵi18nExp(ctx.count)(ctx.count), i0.ɵɵi18nApply(1));
+  }, encapsulation: 2 });
+}
 export {
   CompatibilityCardComponent,
+  CompatibilityIcuComponent,
   CompatibilitySwitchComponent
 };
