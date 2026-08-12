@@ -422,6 +422,13 @@ effects, substitute proven context-member aliases, and treat a zero-argument
 `ɵɵresetView()` return as plumbing. Calls on an unresolved runtime namespace
 are never substituted into the event expression.
 
+Update-phase compiler scratch bindings are discarded only when binding-level
+evidence proves an uninitialized local has exactly one direct assignment and no
+reads, and the render function contains no direct `eval`. Wakaru replaces that
+assignment with its right-hand side, preserving one evaluation of the authored
+expression while removing the compiler-only temporary. Observed, multiply
+written, or `eval`-visible bindings remain explicit partial recovery.
+
 Before interpreting a proven restored-view listener, Wakaru applies the
 standard optional-chaining rewrite to a clone of that handler. This removes
 Closure scratch declarations such as
@@ -651,8 +658,9 @@ An independently pinned Angular 19.2.25 full-AOT fixture under
 `crates/core/tests/bundles/angular-ivy-compat-gen/` verifies ordinary Angular
 compatibility without sharing the Angular 22 or Closure toolchain. It covers a
 listener, property/attribute/class/style bindings, interpolation, `@if` /
-`@else`, and `@for` / `@empty` as a complete artifact. This keeps framework
-version compatibility separate from Closure-specific structural inference.
+`@else`, `@for` / `@empty`, and the write-only update scratch emitted for an
+`@switch` as complete artifacts. This keeps framework version compatibility
+separate from Closure-specific structural inference.
 
 The original Angular, `SIMPLE`, and fully rooted `ADVANCED` producer forms
 recover all three component definitions with non-empty inline templates.

@@ -6,10 +6,10 @@ Angular 22 and Closure Compiler behavior. Keeping the producers separate avoids
 mixing regular Angular version compatibility with Closure-specific structural
 inference.
 
-The component covers a listener, property/attribute/class/style bindings,
-interpolation, `@if` / `@else`, and `@for` / `@empty`. Its committed output is
-full-AOT JavaScript with development metadata and the authored template
-removed.
+The components cover a listener, property/attribute/class/style bindings,
+interpolation, `@if` / `@else`, `@for` / `@empty`, and the scratch binding
+generated for `@switch`. Their committed output is full-AOT JavaScript with
+development metadata and the authored templates removed.
 
 Regenerate and verify it with:
 

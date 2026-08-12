@@ -3263,6 +3263,128 @@ fn unsupported_template_statements_make_recovery_partial() {
 }
 
 #[test]
+fn discards_write_only_update_scratch_assignments() {
+    let source = r#"
+        import {
+            ɵɵconditional as conditional,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+            ɵɵtemplate as template,
+        } from "@angular/core";
+
+        function ReadyView(rf) {
+            if (rf & 1) element(0, "strong");
+        }
+        function IdleView(rf) {
+            if (rf & 1) element(0, "em");
+        }
+        class SwitchComponent {
+            static ɵcmp = define({
+                type: SwitchComponent,
+                selectors: [["switch-card"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        template(0, ReadyView, 1, 0, "strong")
+                            (1, IdleView, 1, 0, "em");
+                    }
+                    if (rf & 2) {
+                        let scratch;
+                        conditional((scratch = context.state()) === "ready" ? 0 : 1);
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("a write-only compiler scratch should be recoverable");
+    let component = &recovered[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component.source.contains("@if (state() === \"ready\") {"));
+    assert!(!component.source.contains("scratch"));
+}
+
+#[test]
+fn preserves_observed_or_eval_visible_update_bindings() {
+    let source = r#"
+        import {
+            ɵɵconditional as conditional,
+            ɵɵdefineComponent as define,
+            ɵɵelement as element,
+            ɵɵtemplate as template,
+        } from "@angular/core";
+
+        function ReadyView(rf) {
+            if (rf & 1) element(0, "strong");
+        }
+        function IdleView(rf) {
+            if (rf & 1) element(0, "em");
+        }
+        class ObservedSwitchComponent {
+            static ɵcmp = define({
+                type: ObservedSwitchComponent,
+                selectors: [["observed-switch"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        template(0, ReadyView, 1, 0, "strong")
+                            (1, IdleView, 1, 0, "em");
+                    }
+                    if (rf & 2) {
+                        let scratch;
+                        conditional(
+                            (scratch = context.state()) === "ready"
+                                ? 0
+                                : scratch === "idle" ? 1 : -1
+                        );
+                    }
+                },
+            });
+        }
+        class EvalVisibleSwitchComponent {
+            static ɵcmp = define({
+                type: EvalVisibleSwitchComponent,
+                selectors: [["eval-visible-switch"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        template(0, ReadyView, 1, 0, "strong")
+                            (1, IdleView, 1, 0, "em");
+                    }
+                    if (rf & 2) {
+                        let scratch;
+                        conditional((scratch = context.state()) === "ready" ? 0 : 1);
+                        eval("scratch");
+                    }
+                },
+            });
+        }
+    "#;
+
+    let recovered = recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("observable scratch bindings should remain analyzable");
+    assert_eq!(recovered.len(), 2);
+    for component in &recovered {
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Partial,
+            "{}",
+            component.source,
+        );
+        assert!(component.source.contains("scratch = state()"));
+        assert!(component.issues.iter().any(|issue| {
+            issue.kind == AngularRecoveryIssueKind::UnsupportedStatement
+                && issue.detail.as_deref() == Some("declaration")
+        }));
+    }
+}
+
+#[test]
 fn malformed_instruction_arguments_make_recovery_partial() {
     let source = r#"
         import {
