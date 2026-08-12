@@ -42,3 +42,21 @@ export class CompatibilityCardComponent {
     this.active = !this.active;
   }
 }
+
+@Component({
+  selector: 'compat-switch',
+  standalone: true,
+  template: `
+    @switch (state()) {
+      @case ('ready') {
+        <strong>Ready</strong>
+      }
+      @default {
+        <em>Idle</em>
+      }
+    }
+  `,
+})
+export class CompatibilitySwitchComponent {
+  state = () => 'ready';
+}

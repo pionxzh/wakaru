@@ -13,6 +13,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
 use crate::js_names::{is_likely_generated_alias, to_valid_identifier_name};
+use crate::rules::eval_utils::is_direct_eval_call;
 use crate::rules::{RewriteLevel, UnOptionalChaining};
 
 use super::artifact::{expression_references, function_references};
@@ -306,6 +307,8 @@ struct TemplateProgram {
     artifact_references: HashSet<BindingKey>,
     pending_alias_declarations: Vec<PendingAliasDeclaration>,
     resolved_alias_declarations: HashSet<BindingKey>,
+    unobserved_assignment_candidates: HashSet<BindingKey>,
+    discardable_update_scratch_bindings: HashSet<BindingKey>,
     member_object_bindings: HashSet<BindingKey>,
     implicit_view_context_properties: HashSet<String>,
     ancestor_contexts: Vec<ViewContextScope>,
@@ -818,6 +821,7 @@ fn recover_template_tree(
     }
     if let Some(body) = &template.body {
         program.member_object_bindings = member_object_bindings(body);
+        program.unobserved_assignment_candidates = unobserved_assignment_candidates(body);
         program.saved_views.extend(inlined_current_view_captures(
             body,
             environment.roles,
@@ -1283,10 +1287,21 @@ fn collect_variable_declaration(
 ) {
     for declarator in &declaration.decls {
         if let (Pat::Ident(binding), None) = (&declarator.name, declarator.init.as_deref()) {
+            let binding_key = binding_key(&binding.id);
+            if phase == Some(2)
+                && program
+                    .unobserved_assignment_candidates
+                    .contains(&binding_key)
+            {
+                program
+                    .discardable_update_scratch_bindings
+                    .insert(binding_key);
+                continue;
+            }
             program
                 .pending_alias_declarations
                 .push(PendingAliasDeclaration {
-                    binding: binding_key(&binding.id),
+                    binding: binding_key,
                     span: declarator.span,
                     phase,
                 });
@@ -1367,6 +1382,38 @@ fn collect_variable_declaration(
             );
         }
     }
+}
+
+fn unobserved_assignment_candidates(body: &BlockStmt) -> HashSet<BindingKey> {
+    #[derive(Default)]
+    struct DirectEvalFinder {
+        found: bool,
+    }
+
+    impl Visit for DirectEvalFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if is_direct_eval_call(call) {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut direct_eval = DirectEvalFinder::default();
+    body.visit_with(&mut direct_eval);
+    if direct_eval.found {
+        return HashSet::new();
+    }
+
+    let binding_uses = BindingUseIndex::collect_stmts(&body.stmts);
+    binding_uses
+        .uninitialized_bindings()
+        .into_iter()
+        .filter(|binding| {
+            binding_uses.use_count(binding) == 1 && binding_uses.direct_write_count(binding) == 1
+        })
+        .collect()
 }
 
 fn record_unresolved_alias_declarations(
@@ -2305,6 +2352,25 @@ fn collect_expression(
                     counts_as_runtime_call: false,
                     provenance,
                 });
+                return;
+            }
+            if phase == Some(2)
+                && assignment.op == AssignOp::Assign
+                && matches!(
+                    &assignment.left,
+                    AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                        if program
+                            .discardable_update_scratch_bindings
+                            .contains(&binding_key(&binding.id))
+                )
+            {
+                collect_expression(
+                    assignment.right.as_ref(),
+                    phase,
+                    render_flags,
+                    environment,
+                    program,
+                );
                 return;
             }
             let pending_alias_binding = match &assignment.left {
@@ -6805,6 +6871,10 @@ fn apply_conditional_instruction(
         );
         return false;
     };
+    let selection = discard_update_scratch_assignments(
+        selection.as_ref(),
+        &program.discardable_update_scratch_bindings,
+    );
     let Some(branches) = decode_conditional_branches(
         selection.as_ref(),
         &program.component_contexts,
@@ -7164,6 +7234,10 @@ fn recover_template_expression(
     program: &mut TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) -> Result<String> {
+    let rewritten = (!program.discardable_update_scratch_bindings.is_empty()).then(|| {
+        discard_update_scratch_assignments(expression, &program.discardable_update_scratch_bindings)
+    });
+    let expression = rewritten.as_deref().unwrap_or(expression);
     if let Expr::Call(call) = strip_parentheses(expression) {
         if let Some((root, argument_lists)) = call_chain(call) {
             if let Some(instruction) = environment
@@ -7445,6 +7519,43 @@ fn recover_template_expression(
         .artifact_references
         .extend(expression_references(expression));
     Ok(printed)
+}
+
+fn discard_update_scratch_assignments(
+    expression: &Expr,
+    bindings: &HashSet<BindingKey>,
+) -> Box<Expr> {
+    struct Rewriter<'a> {
+        bindings: &'a HashSet<BindingKey>,
+    }
+
+    impl VisitMut for Rewriter<'_> {
+        fn visit_mut_expr(&mut self, expression: &mut Expr) {
+            let replacement = match strip_parentheses(expression) {
+                Expr::Assign(assignment) if assignment.op == AssignOp::Assign => {
+                    match &assignment.left {
+                        AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                            if self.bindings.contains(&binding_key(&binding.id)) =>
+                        {
+                            Some(assignment.right.clone())
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
+                *expression = *replacement;
+                expression.visit_mut_children_with(self);
+                return;
+            }
+            expression.visit_mut_children_with(self);
+        }
+    }
+
+    let mut expression = Box::new(expression.clone());
+    expression.visit_mut_with(&mut Rewriter { bindings });
+    expression
 }
 
 fn is_pipe_binding(instruction: IvyInstruction) -> bool {
