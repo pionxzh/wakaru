@@ -806,8 +806,11 @@ fn fold_destructured_param_aliases(
         let Some(param_idx) = find_param_alias_idx(params, &alias) else {
             break;
         };
-        if destructured_pat_references_current_or_later_param(params, param_idx, &destructured_pat)
-            || destructured_pat_references_alias(&destructured_pat, &alias)
+        if destructured_pat_references_uninitialized_param_binding(
+            params,
+            param_idx,
+            &destructured_pat,
+        ) || destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
             || destructured_pat_references_later_decl_name(
                 &destructured_pat,
@@ -1075,7 +1078,12 @@ fn fold_object_property_param_aliases(
         else {
             break;
         };
-        if !computed_object_param_keys_are_safe(params, param_idx, &destructured_pat) {
+        if destructured_pat_references_uninitialized_param_binding(
+            params,
+            param_idx,
+            &destructured_pat,
+        ) || !computed_object_param_keys_are_safe(params, param_idx, &destructured_pat)
+        {
             break;
         }
         let short_alias_renames = rename_short_object_property_aliases(
@@ -1084,6 +1092,10 @@ fn fold_object_property_param_aliases(
             &mut destructured_pat,
             &body.stmts[remove_count..],
         );
+        // The binding itself was renamed in-place above. Keep any later
+        // computed key or default expression inside the proposed pattern on
+        // the same binding identity before the body declarations are removed.
+        rename_bindings(&mut destructured_pat, &short_alias_renames);
         if destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_references_later_decl_name(
                 &destructured_pat,
@@ -1116,7 +1128,11 @@ fn fold_array_index_param_aliases(
         else {
             break;
         };
-        if destructured_pat_references_alias(&destructured_pat, &alias)
+        if destructured_pat_references_uninitialized_param_binding(
+            params,
+            param_idx,
+            &destructured_pat,
+        ) || destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_references_later_decl_name(
                 &destructured_pat,
                 &body.stmts[remove_count..],
@@ -1150,7 +1166,7 @@ fn fold_destructured_arrow_param_aliases(
         let Some(param_idx) = find_arrow_param_alias_idx(params, &alias) else {
             break;
         };
-        if destructured_pat_references_current_or_later_arrow_param(
+        if destructured_pat_references_uninitialized_arrow_param_binding(
             params,
             param_idx,
             &destructured_pat,
@@ -1816,6 +1832,9 @@ fn rename_short_object_property_aliases(
     pat: &mut Pat,
     later_stmts: &[Stmt],
 ) -> Vec<BindingRename> {
+    let mut pattern_expression_names = Vec::new();
+    collect_all_pat_expr_emitted_names(pat, &mut pattern_expression_names);
+
     let Pat::Object(object) = pat else {
         return Vec::new();
     };
@@ -1829,9 +1848,12 @@ fn rename_short_object_property_aliases(
     }
 
     for prop in &mut object.props {
-        let Some((old, new, replacement)) =
-            rename_short_object_property_alias_prop(prop, later_stmts, &reserved_names)
-        else {
+        let Some((old, new, replacement)) = rename_short_object_property_alias_prop(
+            prop,
+            later_stmts,
+            &reserved_names,
+            &pattern_expression_names,
+        ) else {
             continue;
         };
         *prop = replacement;
@@ -1846,6 +1868,7 @@ fn rename_short_object_property_alias_prop(
     prop: &mut ObjectPatProp,
     later_stmts: &[Stmt],
     reserved_names: &[Atom],
+    pattern_expression_names: &[Atom],
 ) -> Option<(BindingId, Atom, ObjectPatProp)> {
     let ObjectPatProp::KeyValue(kv) = prop else {
         return None;
@@ -1859,6 +1882,9 @@ fn rename_short_object_property_alias_prop(
         || !is_preferred_short_alias_target(&key_sym)
         || is_reserved_binding_name(key_sym.as_ref())
         || reserved_names.iter().any(|name| name == &key_sym)
+        // Renaming this binding would capture a same-name reference in a
+        // computed key or default expression anywhere in the pattern.
+        || pattern_expression_names.iter().any(|name| name == &key_sym)
         || stmts_contain_emitted_ident_name(later_stmts, &key_sym)
         || binding_used_as_named_object_value(later_stmts, &binding.id)
     {
@@ -2029,54 +2055,100 @@ fn destructured_pat_references_alias(pat: &Pat, alias: &Ident) -> bool {
     }
 }
 
-fn destructured_pat_references_current_or_later_param(
+fn destructured_pat_references_uninitialized_param_binding(
     params: &[Param],
     param_idx: usize,
     pat: &Pat,
 ) -> bool {
-    let blocked = current_or_later_param_bindings(params, param_idx);
-    destructured_pat_expr_references_any_binding(pat, &blocked)
+    let mut uninitialized = current_or_later_param_bindings(params, param_idx);
+    collect_pat_binding_ids(pat, &mut uninitialized);
+    destructured_pat_expr_references_uninitialized_binding(pat, &mut uninitialized)
 }
 
-fn destructured_pat_references_current_or_later_arrow_param(
+fn destructured_pat_references_uninitialized_arrow_param_binding(
     params: &[Pat],
     param_idx: usize,
     pat: &Pat,
 ) -> bool {
-    let blocked = current_or_later_arrow_param_bindings(params, param_idx);
-    destructured_pat_expr_references_any_binding(pat, &blocked)
+    let mut uninitialized = current_or_later_arrow_param_bindings(params, param_idx);
+    collect_pat_binding_ids(pat, &mut uninitialized);
+    destructured_pat_expr_references_uninitialized_binding(pat, &mut uninitialized)
 }
 
-fn destructured_pat_expr_references_any_binding(pat: &Pat, bindings: &[BindingId]) -> bool {
+/// Check pattern expressions in their runtime evaluation order. A binding is
+/// unavailable until its own binding element has finished evaluating, while
+/// bindings initialized by earlier elements may be used by later defaults.
+fn destructured_pat_expr_references_uninitialized_binding(
+    pat: &Pat,
+    uninitialized: &mut Vec<BindingId>,
+) -> bool {
     match pat {
         Pat::Assign(assign) => {
-            expr_references_any_binding(&assign.right, bindings)
-                || destructured_pat_expr_references_any_binding(&assign.left, bindings)
+            expr_references_any_binding(&assign.right, uninitialized)
+                || destructured_pat_expr_references_uninitialized_binding(
+                    &assign.left,
+                    uninitialized,
+                )
         }
-        Pat::Array(array) => array
-            .elems
-            .iter()
-            .flatten()
-            .any(|elem| destructured_pat_expr_references_any_binding(elem, bindings)),
-        Pat::Object(object) => object.props.iter().any(|prop| match prop {
-            ObjectPatProp::KeyValue(kv) => {
-                matches!(
-                    &kv.key,
-                    PropName::Computed(computed)
-                        if expr_references_any_binding(&computed.expr, bindings)
-                ) || destructured_pat_expr_references_any_binding(&kv.value, bindings)
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                if destructured_pat_expr_references_uninitialized_binding(elem, uninitialized) {
+                    return true;
+                }
             }
-            ObjectPatProp::Assign(assign) => assign
-                .value
-                .as_ref()
-                .is_some_and(|value| expr_references_any_binding(value, bindings)),
-            ObjectPatProp::Rest(rest) => {
-                destructured_pat_expr_references_any_binding(&rest.arg, bindings)
+            false
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => {
+                        if matches!(
+                            &kv.key,
+                            PropName::Computed(computed)
+                                if expr_references_any_binding(&computed.expr, uninitialized)
+                        ) || destructured_pat_expr_references_uninitialized_binding(
+                            &kv.value,
+                            uninitialized,
+                        ) {
+                            return true;
+                        }
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        if assign
+                            .value
+                            .as_ref()
+                            .is_some_and(|value| expr_references_any_binding(value, uninitialized))
+                        {
+                            return true;
+                        }
+                        mark_pattern_binding_initialized(&assign.key.id, uninitialized);
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        if destructured_pat_expr_references_uninitialized_binding(
+                            &rest.arg,
+                            uninitialized,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
             }
-        }),
-        Pat::Rest(rest) => destructured_pat_expr_references_any_binding(&rest.arg, bindings),
+            false
+        }
+        Pat::Rest(rest) => {
+            destructured_pat_expr_references_uninitialized_binding(&rest.arg, uninitialized)
+        }
+        Pat::Ident(binding) => {
+            mark_pattern_binding_initialized(&binding.id, uninitialized);
+            false
+        }
+        Pat::Expr(expr) => expr_references_any_binding(expr, uninitialized),
         _ => false,
     }
+}
+
+fn mark_pattern_binding_initialized(binding: &Ident, uninitialized: &mut Vec<BindingId>) {
+    uninitialized.retain(|(sym, ctxt)| *sym != binding.sym || *ctxt != binding.ctxt);
 }
 
 fn destructured_pat_has_minified_alias(pat: &Pat) -> bool {
@@ -2246,6 +2318,51 @@ fn collect_expr_reference_emitted_names(expr: &Expr, out: &mut Vec<Atom>) {
     expr.visit_with(&mut visitor);
 }
 
+// This deliberately includes nested function and arrow bodies. A short alias
+// rename creates a new parameter binding whose scope also contains closures
+// created by a parameter default, so a same-name free reference there could be
+// captured. Counting locally bound names is conservative but safe for this
+// readability-only rename.
+fn collect_all_pat_expr_emitted_names(pat: &Pat, out: &mut Vec<Atom>) {
+    match pat {
+        Pat::Assign(assign) => {
+            collect_all_expr_emitted_names(&assign.right, out);
+            collect_all_pat_expr_emitted_names(&assign.left, out);
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_all_pat_expr_emitted_names(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => {
+                        if let PropName::Computed(computed) = &kv.key {
+                            collect_all_expr_emitted_names(&computed.expr, out);
+                        }
+                        collect_all_pat_expr_emitted_names(&kv.value, out);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        if let Some(value) = &assign.value {
+                            collect_all_expr_emitted_names(value, out);
+                        }
+                    }
+                    ObjectPatProp::Rest(rest) => collect_all_pat_expr_emitted_names(&rest.arg, out),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_all_pat_expr_emitted_names(&rest.arg, out),
+        Pat::Expr(expr) => collect_all_expr_emitted_names(expr, out),
+        Pat::Ident(_) | Pat::Invalid(_) => {}
+    }
+}
+
+fn collect_all_expr_emitted_names(expr: &Expr, out: &mut Vec<Atom>) {
+    let mut visitor = AllEmittedIdentNameCollector { names: out };
+    expr.visit_with(&mut visitor);
+}
+
 fn collect_direct_decl_emitted_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
     for stmt in stmts {
         let Stmt::Decl(decl) = stmt else {
@@ -2276,6 +2393,16 @@ impl Visit for EmittedIdentNameCollector<'_> {
     fn visit_function(&mut self, _: &Function) {}
 
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+struct AllEmittedIdentNameCollector<'a> {
+    names: &'a mut Vec<Atom>,
+}
+
+impl Visit for AllEmittedIdentNameCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.push(ident.sym.clone());
+    }
 }
 
 fn prop_name_references_ident(prop: &PropName, alias: &Ident) -> bool {

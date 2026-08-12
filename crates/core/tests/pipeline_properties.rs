@@ -186,6 +186,41 @@ function select(source, key) {
 }
 
 #[test]
+fn object_property_parameter_recovery_does_not_introduce_tdz() {
+    let source = r#"
+function read(options, state) {
+    var current = options.value;
+    var result = current === undefined ? state.fallback : current;
+    return result;
+}
+function choose(options) {
+    var temporary = options.value;
+    var value = temporary === undefined ? value ?? null : temporary;
+    return value;
+}
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "object-property parameter recovery introduced TDZ warnings: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}
+
+#[test]
 fn prototype_recovery_does_not_move_computed_keys_before_initialization() {
     let source = r#"
 var Cursor = function(next) {

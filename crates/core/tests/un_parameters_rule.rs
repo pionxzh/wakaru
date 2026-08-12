@@ -630,6 +630,115 @@ function pick({ name, age = 0 } = {}) {
 }
 
 #[test]
+fn object_property_default_referencing_later_param_stays_in_body() {
+    let input = r#"
+function read(options, state) {
+  var current = options.value;
+  var result = current === undefined ? state.fallback : current;
+  return result;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn object_property_default_referencing_its_binding_stays_in_body() {
+    let input = r#"
+function choose(options) {
+  var temporary = options.value;
+  var value = temporary === undefined ? value ?? null : temporary;
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn object_property_default_referencing_earlier_binding_still_folds() {
+    let input = r#"
+function choose(options) {
+  var first = options.first;
+  var temporary = options.second;
+  var second = temporary === undefined ? first : temporary;
+  return [first, second];
+}
+"#;
+    let expected = r#"
+function choose({ first, second = first }) {
+  return [first, second];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_default_tracks_earlier_binding_rename() {
+    let input = r#"
+function choose(options) {
+  var n = options.type;
+  var temporary = options.value;
+  var value = temporary === undefined ? n : temporary;
+  return [n, value];
+}
+"#;
+    let expected = r#"
+function choose({ type, value = type }) {
+  return [type, value];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_binding_rename_avoids_default_capture() {
+    let input = r#"
+function choose(options) {
+  var n = options.type;
+  var temporary = options.value;
+  var value = temporary === undefined ? type : temporary;
+  return [n, value];
+}
+"#;
+    let expected = r#"
+function choose({ type: n, value = type }) {
+  return [n, value];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_binding_rename_avoids_nested_default_capture() {
+    let input = r#"
+function choose(options) {
+  var n = options.type;
+  var temporary = options.value;
+  var value = temporary === undefined ? () => type : temporary;
+  return [n, value];
+}
+"#;
+    let expected = r#"
+function choose({ type: n, value = () => type }) {
+  return [n, value];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_default_referencing_later_binding_stays_in_body() {
+    let input = r#"
+function choose(options) {
+  var temporary = options.first;
+  var first = temporary === undefined ? second : temporary;
+  var second = options.second;
+  return [first, second];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn computed_object_property_alias_becomes_param_pattern() {
     let input = r#"
 function pick(property_key, _ref = {}) {
@@ -1150,6 +1259,18 @@ function first(items) {
 }
 
 #[test]
+fn array_index_default_referencing_later_param_stays_in_body() {
+    let input = r#"
+function first(items, fallback) {
+  var temporary = items[0];
+  var value = temporary === undefined ? fallback : temporary;
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn conditional_array_index_aliases_become_param_pattern() {
     let input = r#"
 function first(_ref) {
@@ -1239,10 +1360,32 @@ function select(source, fallback) {
 }
 
 #[test]
+fn destructuring_default_referencing_its_binding_stays_in_body() {
+    let input = r#"
+function select(source) {
+  var { value = value ?? null } = source;
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn arrow_destructuring_default_referencing_later_param_stays_in_body() {
     let input = r#"
 const select = (source, fallback) => {
   const { value = fallback } = source;
+  return value;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_destructuring_default_referencing_its_binding_stays_in_body() {
+    let input = r#"
+const select = (source) => {
+  var { value = value ?? null } = source;
   return value;
 };
 "#;
