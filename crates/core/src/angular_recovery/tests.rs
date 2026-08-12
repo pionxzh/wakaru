@@ -5190,6 +5190,108 @@ fn recovers_repeater_views_with_assignment_backed_track_and_restored_listeners()
 }
 
 #[test]
+fn recovers_return_sequence_restore_reset_listener_plumbing() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class SequenceListenerComponent {
+            select() {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: SequenceListenerComponent,
+                selectors: [["sequence-listener"]],
+                consts: [["primary", ""]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button", null, 0);
+                        core.ɵɵlistener("click", function() {
+                            return (
+                                core.ɵɵrestoreView(savedView),
+                                core.ɵɵresetView(context.select())
+                            );
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("sequence-folded listener plumbing should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(
+        component
+            .source
+            .contains(r#"<button #primary (click)="select()"></button>"#),
+        "{}",
+        component.source,
+    );
+    assert!(!component.source.contains("ɵɵ"));
+}
+
+#[test]
+fn recovers_return_sequence_plumbing_in_a_structured_listener() {
+    let source = r#"
+        import * as core from "@angular/core";
+
+        class StructuredSequenceListenerComponent {
+            enabled = true;
+            select() {}
+
+            static ɵcmp = core.ɵɵdefineComponent({
+                type: StructuredSequenceListenerComponent,
+                selectors: [["structured-sequence-listener"]],
+                template: function(rf, context) {
+                    if (rf & 1) {
+                        const savedView = core.ɵɵgetCurrentView();
+                        core.ɵɵelementStart(0, "button");
+                        core.ɵɵlistener("click", function() {
+                            const enabled = context.enabled;
+                            return (
+                                core.ɵɵrestoreView(savedView),
+                                core.ɵɵresetView(enabled && context.select())
+                            );
+                        });
+                        core.ɵɵelementEnd();
+                    }
+                },
+            });
+        }
+    "#;
+
+    let report = analyze_angular_components_from_js(source, AngularRecoveryOptions::default())
+        .expect("structured sequence-folded listener plumbing should remain analyzable");
+    let component = &report.components[0];
+
+    assert_eq!(
+        component.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        component.issues,
+        component.source,
+    );
+    assert!(component
+        .source
+        .contains(r#"<button (click)="recoveredClick()"></button>"#));
+    assert!(component.source.contains("recoveredClick()"));
+    assert!(component.source.contains("const enabled = this.enabled;"));
+    assert!(component
+        .source
+        .contains("return enabled && this.select();"));
+    assert!(!component.source.contains("ɵɵ"));
+}
+
+#[test]
 fn recovers_nested_view_aliases_and_sequence_wrapped_listener_actions() {
     let source = r#"
         import * as core from "@angular/core";
