@@ -5,6 +5,7 @@ import { Component } from '@angular/core';
   standalone: true,
   template: `
     <button
+      #primary
       type="button"
       [disabled]="disabled"
       [attr.aria-label]="label"
@@ -17,6 +18,7 @@ import { Component } from '@angular/core';
 
     @if (visible) {
       <p>Visible</p>
+      <button type="button" (click)="select()">Nested action</button>
     } @else {
       <p>Hidden</p>
     }

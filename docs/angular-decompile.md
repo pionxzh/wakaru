@@ -662,6 +662,11 @@ listener, property/attribute/class/style bindings, interpolation, `@if` /
 `@switch` as complete artifacts. This keeps framework version compatibility
 separate from Closure-specific structural inference.
 
+The Angular 19 generator also commits a fully bundled and minified runtime
+profile. It verifies that public runtime export-map evidence still identifies
+compiler plumbing after local names are mangled, including esbuild's
+`return (ɵɵrestoreView(saved), ɵɵresetView(action))` listener form.
+
 The original Angular, `SIMPLE`, and fully rooted `ADVANCED` producer forms
 recover all three component definitions with non-empty inline templates.
 Covered regions include element structure, static text, interpolation, event
