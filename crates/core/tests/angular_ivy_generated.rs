@@ -1132,6 +1132,65 @@ fn recovers_compiler_generated_structural_i18n() {
 }
 
 #[test]
+fn recovers_compiler_generated_postprocessed_structural_i18n() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular postprocessed structural i18n output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-postprocessed-structural-i18n")
+            .expect("postprocessed structural i18n component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains("<p i18n>"));
+        assert!(component
+            .source
+            .contains("Read <a href=\"/first\">First</a> and <a href=\"/second\">Second</a>."));
+        assert!(!component.source.contains("ɵɵi18n"));
+    }
+}
+
+#[test]
+fn recovers_compiler_generated_view_local_sub_template_i18n() {
+    for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
+        assert_production_artifact(source);
+        let recovered =
+            recover_angular_components_from_js(source, AngularRecoveryOptions::default())
+                .expect("pinned Angular sub-template i18n output should parse");
+        let component = recovered
+            .iter()
+            .find(|component| component.selector == "fixture-sub-template-i18n")
+            .expect("sub-template i18n component should recover");
+
+        assert_eq!(
+            component.completeness,
+            AngularRecoveryCompleteness::Complete,
+            "issues: {:#?}\n{}",
+            component.issues,
+            component.source,
+        );
+        assert!(component.source.contains("<section i18n>"));
+        assert!(component.source.contains("Visible before."));
+        assert!(component
+            .source
+            .contains("<ng-template [ngIf]=\"visible\">"));
+        assert!(component
+            .source
+            .contains("<strong>Hello, {{ name }}!</strong>"));
+        assert!(component.source.contains("Visible after."));
+        assert!(!component.source.contains("ɵɵi18n"));
+    }
+}
+
+#[test]
 fn recovers_compiler_generated_projection_fallbacks() {
     for source in [TEMPLATE_CONSTRUCTS, TEMPLATE_CONSTRUCTS_ASSIGNMENT] {
         assert_production_artifact(source);
