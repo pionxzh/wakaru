@@ -67,7 +67,8 @@ Initial recovery covers:
   compiler-emitted fallback views;
 - local template references and their use in binding expressions;
 - declared pipes and fixed- or variadic-argument pipe bindings;
-- bounded static, interpolated, and element-marker i18n messages;
+- bounded static, interpolated, element-marker, and text-only plural/select
+  ICU i18n messages;
 - exact ESM imports referenced by the recovered class or rendered template,
   plus dependency-closed portable local helpers;
 - compiled component dependencies when their bindings can be materialized as
@@ -390,16 +391,21 @@ function bindings are expanded only when the callback and value arity are
 proven and the callback body can be substituted safely. Otherwise the runtime
 operation remains explicit unsupported output. Basic i18n recovery is
 similarly bounded to a uniquely resolved static/interpolated message and a
-valid containing element. Closure-specialized creation helpers additionally
+valid containing element. A semantically identified `ɵɵi18nPostprocess` call
+may decode a static compiler replacement table, including the prior value in
+Angular's `message = postprocess(message, replacements)` assignment form.
+Text/interpolation-only `plural` and `select` ICU messages are rendered only
+when the outer case grammar, selector marker, case keys, and required `other`
+case are all proven. Closure-specialized creation helpers additionally
 require Angular's header-offset, message-parser loop, and shared active-state
 contract. A two- or three-parameter whole-message wrapper must forward every
 parameter to that start helper before clearing the same state member. When
 Closure inlines the end operation into a template, only a later clear of that
 exact member closes the region; an immediately adjacent start is restored as
 the original whole-message instruction. A structural region may contain
-balanced element start/end markers and interpolation placeholders; ICU
-expressions, sub-template opcodes, unbalanced markers, and ambiguous message
-factories remain partial.
+balanced element start/end markers and interpolation placeholders.
+Element-bearing or nested ICU messages, `selectordinal`, sub-template opcodes,
+unbalanced markers, and ambiguous message factories remain partial.
 
 The base `ɵɵpropertyInterpolate` instruction is also distinct from an ordinary
 property binding because interpolation stringifies its value. A Closure-
@@ -658,14 +664,16 @@ An independently pinned Angular 19.2.25 full-AOT fixture under
 `crates/core/tests/bundles/angular-ivy-compat-gen/` verifies ordinary Angular
 compatibility without sharing the Angular 22 or Closure toolchain. It covers a
 listener, property/attribute/class/style bindings, interpolation, `@if` /
-`@else`, `@for` / `@empty`, and the write-only update scratch emitted for an
-`@switch` as complete artifacts. This keeps framework version compatibility
-separate from Closure-specific structural inference.
+`@else`, `@for` / `@empty`, the write-only update scratch emitted for an
+`@switch`, and a postprocessed plural ICU message as complete artifacts. This
+keeps framework version compatibility separate from Closure-specific
+structural inference.
 
 The Angular 19 generator also commits a fully bundled and minified runtime
 profile. It verifies that public runtime export-map evidence still identifies
 compiler plumbing after local names are mangled, including esbuild's
-`return (ɵɵrestoreView(saved), ɵɵresetView(action))` listener form.
+`return (ɵɵrestoreView(saved), ɵɵresetView(action))` listener form and the
+`ɵɵi18nPostprocess` identity used by the ICU constant factory.
 
 The original Angular, `SIMPLE`, and fully rooted `ADVANCED` producer forms
 recover all three component definitions with non-empty inline templates.
@@ -745,14 +753,14 @@ not treated as a strict coverage comparison across those milestones because
 newly reachable child views and corrected failed-view accounting changed what
 the analyzer observes.
 
-Remaining partial regions in that smaller corpus are concentrated in
-ICU/sub-template i18n and unresolved i18n targets, update-block scratch-variable
-dataflow beyond the bounded expression subset, projection selector/attribute
-metadata that cannot be tied to a declared slot, and newer signal-form runtime
-hooks without an authored-template equivalent. None of those operations is
-consumed based on a corpus-specific minified callee name. They remain typed
-diagnostics until a generic runtime contract and generated producer fixture
-justify recovery.
+Remaining partial regions in that smaller corpus are concentrated in nested,
+element-bearing, or sub-template i18n and unresolved i18n targets;
+update-block scratch-variable dataflow beyond the bounded expression subset;
+projection selector/attribute metadata that cannot be tied to a declared
+slot; and newer signal-form runtime hooks without an authored-template
+equivalent. None of those operations is consumed based on a corpus-specific
+minified callee name. They remain typed diagnostics until a generic runtime
+contract and generated producer fixture justify recovery.
 
 Closure output is requested with UTF-8 encoding because Angular's generated
 field names contain Unicode identifiers. A non-UTF-8 compiler output profile
@@ -826,6 +834,8 @@ Pause and re-check this boundary after each milestone:
     bounded i18n, `@let`, and HTML/SVG/MathML namespace transitions.
 17. view-local alias propagation, structural i18n element markers, projection
     fallbacks, and Closure-renamed two-way/animation binding families.
+18. write-only update scratch removal, sequence-folded listener plumbing, and
+    semantically identified bounded ICU postprocessing.
 
 At each checkpoint verify that no unpacker contains Ivy roles, no Ivy module
 branches on a bundle format, and no normal JavaScript rewrite depends on

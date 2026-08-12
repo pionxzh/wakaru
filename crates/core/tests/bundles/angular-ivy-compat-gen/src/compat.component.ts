@@ -62,3 +62,20 @@ export class CompatibilityCardComponent {
 export class CompatibilitySwitchComponent {
   state = () => 'ready';
 }
+
+@Component({
+  selector: 'compat-icu',
+  standalone: true,
+  template: `
+    <p i18n>
+      {count, plural,
+        =0 {No items}
+        =1 {One item}
+        other {{{ count }} items}
+      }
+    </p>
+  `,
+})
+export class CompatibilityIcuComponent {
+  count = 2;
+}
