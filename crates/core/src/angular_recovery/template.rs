@@ -2998,6 +2998,7 @@ fn recover_structured_view_listener_handler(
                 }
                 lower_structured_listener_return(
                     returned.as_ref(),
+                    program,
                     environment,
                     &mut state,
                     &mut statements,
@@ -3425,6 +3426,7 @@ fn lower_structured_listener_expression(
 
 fn lower_structured_listener_return(
     returned: &Expr,
+    program: &TemplateProgram,
     environment: &TemplateRecoveryEnvironment<'_>,
     state: &mut StructuredListenerState,
     statements: &mut Vec<Stmt>,
@@ -3451,7 +3453,17 @@ fn lower_structured_listener_return(
         [returned] => Some(returned.expr.as_ref()),
         _ => return Err("ɵɵresetView expected at most one return value".to_string()),
     };
-    for effect in effects {
+    for (index, effect) in effects.iter().enumerate() {
+        if index == 0 {
+            if let Some(call) =
+                direct_instruction_call(effect.as_ref(), IvyInstruction::RestoreView, environment)
+            {
+                validate_restore_view_call(call, program)?;
+                state.runtime_calls += 1;
+                state.context_depth = 0;
+                continue;
+            }
+        }
         if contains_runtime_call(effect.as_ref(), environment) {
             return Err("unsupported Ivy runtime call in restored handler expression".to_string());
         }
@@ -3983,7 +3995,19 @@ fn recover_inline_view_listener_handler(
                     [returned] => Some(returned.expr.clone()),
                     _ => return Err("ɵɵresetView expected at most one return value".to_string()),
                 };
-                for effect in return_effects {
+                for (index, effect) in return_effects.into_iter().enumerate() {
+                    if index == 0 {
+                        if let Some(call) = direct_instruction_call(
+                            effect,
+                            IvyInstruction::RestoreView,
+                            environment,
+                        ) {
+                            validate_restore_view_call(call, program)?;
+                            runtime_calls += 1;
+                            context_depth = 0;
+                            continue;
+                        }
+                    }
                     if contains_runtime_call(effect, environment) {
                         let (rewritten, rewritten_calls, context_hops) =
                             rewrite_next_context_members(effect, environment)?;
@@ -4583,8 +4607,28 @@ fn statement_restore_view_call<'a>(
             };
             is_instruction_call(call, IvyInstruction::RestoreView, environment).then_some(call)
         }
+        Stmt::Return(ReturnStmt {
+            arg: Some(returned),
+            ..
+        }) => match strip_parentheses(returned.as_ref()) {
+            Expr::Seq(sequence) => sequence.exprs.first().and_then(|effect| {
+                direct_instruction_call(effect.as_ref(), IvyInstruction::RestoreView, environment)
+            }),
+            returned => direct_instruction_call(returned, IvyInstruction::RestoreView, environment),
+        },
         _ => None,
     }
+}
+
+fn direct_instruction_call<'a>(
+    expression: &'a Expr,
+    instruction: IvyInstruction,
+    environment: &TemplateRecoveryEnvironment<'_>,
+) -> Option<&'a CallExpr> {
+    let Expr::Call(call) = strip_parentheses(expression) else {
+        return None;
+    };
+    is_instruction_call(call, instruction, environment).then_some(call)
 }
 
 fn restored_view_call<'a>(
