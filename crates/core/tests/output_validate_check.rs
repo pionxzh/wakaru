@@ -489,6 +489,18 @@ export { other as twice };
 }
 
 #[test]
+fn duplicate_export_location_points_to_the_repeated_declarator() {
+    let findings = locations(&[(
+        "entry.js",
+        "export { second };\nexport const first = 1, second = 2;\n",
+    )]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::DuplicateExport, "entry.js".into(), 2, 25,)]
+    );
+}
+
+#[test]
 fn assign_to_import_is_reported() {
     let findings = kinds(&[
         (

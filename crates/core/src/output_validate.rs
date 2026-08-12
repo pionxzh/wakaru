@@ -17,10 +17,10 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, AssignTargetPat, CallExpr, Callee, Decl, Expr, ForHead, ForInStmt,
-    ForOfStmt, Id, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    ObjectPatProp, Pat, Program, PropName, SimpleAssignTarget, Str, UpdateExpr, VarDecl,
-    VarDeclKind,
+    AssignExpr, AssignTarget, AssignTargetPat, BindingIdent, CallExpr, Callee, Decl, Expr, ForHead,
+    ForInStmt, ForOfStmt, Id, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, ObjectPatProp, Pat, Program, PropName, SimpleAssignTarget, Str, UpdateExpr,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::atoms::Atom;
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -400,12 +400,12 @@ fn analyze_module(
                 }
             }
             ModuleDecl::ExportDecl(export) => {
-                for name in export_decl_names(&export.decl) {
+                for (name, span) in export_decl_bindings(&export.decl) {
                     record_explicit_export(
                         &mut info,
                         name.clone(),
                         ExplicitExportResolution::Local(name),
-                        export.span,
+                        span,
                         &source_map,
                     );
                 }
@@ -719,20 +719,35 @@ fn has_module_syntax(module: &Module) -> bool {
         .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
 }
 
-fn export_decl_names(decl: &Decl) -> Vec<Atom> {
+fn export_decl_bindings(decl: &Decl) -> Vec<(Atom, Span)> {
     match decl {
         Decl::Var(var) => {
-            let mut names = Vec::new();
+            let mut collector = ExportBindingCollector::default();
             for declarator in &var.decls {
-                let ids: Vec<Id> = find_pat_ids(&declarator.name);
-                names.extend(ids.into_iter().map(|(sym, _)| sym));
+                declarator.name.visit_with(&mut collector);
             }
-            names
+            collector.bindings
         }
-        Decl::Fn(f) => vec![f.ident.sym.clone()],
-        Decl::Class(c) => vec![c.ident.sym.clone()],
+        Decl::Fn(f) => vec![(f.ident.sym.clone(), f.ident.span)],
+        Decl::Class(c) => vec![(c.ident.sym.clone(), c.ident.span)],
         _ => Vec::new(),
     }
+}
+
+#[derive(Default)]
+struct ExportBindingCollector {
+    bindings: Vec<(Atom, Span)>,
+}
+
+impl Visit for ExportBindingCollector {
+    fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+        self.bindings
+            .push((binding.id.sym.clone(), binding.id.span));
+    }
+
+    // Default values and computed property keys are expressions, not bindings
+    // declared by the exported pattern. Do not collect nested function params.
+    fn visit_expr(&mut self, _: &Expr) {}
 }
 
 fn module_export_name_atom(name: &ModuleExportName) -> Atom {
