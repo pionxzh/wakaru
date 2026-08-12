@@ -360,11 +360,12 @@ rationale, or level gating appear.
   `stable_builtins`); index-based destructuring grouping (`obj[0]`, `obj[1]`
   → array destructuring) is `aggressive`.
 - **MergeDeclarationInit** — runs after SmartInline and UnDestructuring so their
-  assignment-form temporaries remain available. Its general statement-list
-  merge keeps the existing declaration kind. The narrower top-level form only
-  joins an exactly-adjacent, recursively literal initializer; it promotes `let`
-  (including `export let`) to `const` only when the remaining module has no
-  direct write or relevant direct-eval source.
+  assignment-form temporaries remain available. After all statement-list and
+  narrow top-level merges, it performs one module-wide resolved-write pass and
+  promotes only the merged `let` bindings with no remaining direct write or
+  relevant direct-eval source. The batched pass closes the ordering gap after
+  `VarDeclToLetConst` without rerunning that broader rule or scanning once per
+  binding; modules with no merged `let` skip the recheck.
 - **SmartRename** — after SmartInline (aliases removed, names stabilized).
   Candidate consumer of source-map-recovered names.
 - **UnReturn** — removes tail `return undefined`; runs before the final

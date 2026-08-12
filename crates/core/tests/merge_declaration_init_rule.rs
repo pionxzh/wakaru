@@ -54,7 +54,7 @@ fn print(module: &Module, cm: Lrc<SourceMap>) -> String {
 #[test]
 fn merges_adjacent_let_and_assignment() {
     let out = apply("function f(){ let x; x = g(); return x; }");
-    assert!(out.contains("let x = g();"), "got: {out}");
+    assert!(out.contains("const x = g();"), "got: {out}");
     assert!(!out.contains("let x;"), "bare decl should be gone: {out}");
 }
 
@@ -64,7 +64,55 @@ fn standard_merges_inert_adjacent_object_literal() {
         "function f(){ let x; x = {}; x.ready = true; return x; }",
         RewriteLevel::Standard,
     );
-    assert!(out.contains("let x = {};"), "got: {out}");
+    assert!(out.contains("const x = {};"), "got: {out}");
+}
+
+#[test]
+fn standard_promotes_merged_function_local_let_to_const() {
+    let out = apply_with_level(
+        "function f(){ let value; value = {}; return value; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("const value = {};"), "got: {out}");
+}
+
+#[test]
+fn merged_function_local_stays_let_when_later_reassigned() {
+    let out = apply_with_level(
+        "function f(){ let value; value = {}; value = other; return value; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let value = {};"), "got: {out}");
+    assert!(
+        !out.contains("const value"),
+        "later write forbids const: {out}"
+    );
+}
+
+#[test]
+fn merged_function_local_stays_let_when_direct_eval_can_reassign() {
+    let out = apply_with_level(
+        "function f(){ let value; value = {}; eval('value = other'); return value; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let value = {};"), "got: {out}");
+    assert!(
+        !out.contains("const value"),
+        "direct eval forbids const: {out}"
+    );
+}
+
+#[test]
+fn shadowed_write_does_not_block_merged_const() {
+    let out = apply_with_level(
+        "function f(){ let value; value = {}; function replace(){ let value; value = other; } return value; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("const value = {};"), "got: {out}");
+    assert!(
+        out.contains("let value;") && out.contains("value = other;"),
+        "the non-inert inner assignment should remain split: {out}"
+    );
 }
 
 #[test]
@@ -153,6 +201,45 @@ fn top_level_merge_stays_let_when_nested_function_reassigns() {
 }
 
 #[test]
+fn top_level_merge_stays_let_when_preceding_function_reassigns() {
+    let out = apply_with_level(
+        "function replace(){ Mode = { Dev: 1 }; } let Mode; Mode = { Dev: 0 }; replace(); use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "preceding closure write forbids const: {out}"
+    );
+}
+
+#[test]
+fn top_level_merge_stays_let_when_preceding_function_uses_direct_eval() {
+    let out = apply_with_level(
+        "function replace(){ eval('Mode = other'); } let Mode; Mode = { Dev: 0 }; replace(); use(Mode);",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let Mode = {"), "got: {out}");
+    assert!(
+        !out.contains("const Mode"),
+        "preceding direct eval forbids const: {out}"
+    );
+}
+
+#[test]
+fn merged_switch_binding_stays_let_for_write_in_another_case() {
+    let out = apply_with_level(
+        "switch (kind) { case 0: let value; value = {}; consume(value); case 1: value = other; consume(value); }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let value = {};"), "got: {out}");
+    assert!(
+        !out.contains("const value"),
+        "cross-case write forbids const: {out}"
+    );
+}
+
+#[test]
 fn standard_preserves_top_level_non_literal_object_assignment() {
     let input = "let Mode; Mode = { Dev: makeMode() }; use(Mode);";
     let out = apply_with_level(input, RewriteLevel::Standard);
@@ -181,7 +268,7 @@ fn standard_does_not_merge_observable_call_rhs() {
 #[test]
 fn merges_hoisted_declarations() {
     let out = apply("function f(){ let a; let b; a = p(); b = q(a); return b; }");
-    assert!(out.contains("let a = p();"), "got: {out}");
+    assert!(out.contains("const a = p();"), "got: {out}");
     assert!(!out.contains("let a;"), "got: {out}");
     assert!(
         out.contains("let b;"),

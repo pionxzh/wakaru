@@ -60,6 +60,15 @@ impl BindingUseIndex {
         Self::collect_node(stmts)
     }
 
+    /// Collect only bindings with direct writes, without the compatibility
+    /// identifier-count pass used by a full [`BindingUseIndex`]. This keeps
+    /// late declaration-kind rechecks to one read-only AST traversal.
+    pub(crate) fn collect_direct_write_bindings(module: &Module) -> HashSet<BindingId> {
+        let mut collector = BindingUseCollector::direct_writes_only();
+        module.visit_with(&mut collector);
+        collector.direct_write_bindings
+    }
+
     fn collect_node<T>(node: &T) -> Self
     where
         T: VisitWith<BindingUseCollector> + VisitWith<LegacyIdentCounter> + ?Sized,
@@ -159,9 +168,18 @@ impl BindingUseIndex {
 struct BindingUseCollector {
     bindings: HashMap<BindingId, BindingInfo>,
     uninitialized: HashSet<BindingId>,
+    direct_write_bindings: HashSet<BindingId>,
+    direct_writes_only: bool,
 }
 
 impl BindingUseCollector {
+    fn direct_writes_only() -> Self {
+        Self {
+            direct_writes_only: true,
+            ..Self::default()
+        }
+    }
+
     fn binding_id(ident: &Ident) -> BindingId {
         (ident.sym.clone(), ident.ctxt)
     }
@@ -171,6 +189,9 @@ impl BindingUseCollector {
     }
 
     fn record_decl(&mut self, binding: &BindingIdent) {
+        if self.direct_writes_only {
+            return;
+        }
         let id = Self::binding_ident_id(binding);
         self.bindings
             .entry(id)
@@ -180,6 +201,9 @@ impl BindingUseCollector {
     }
 
     fn record_ident_decl(&mut self, ident: &Ident) {
+        if self.direct_writes_only {
+            return;
+        }
         let id = Self::binding_id(ident);
         self.bindings
             .entry(id)
@@ -189,6 +213,12 @@ impl BindingUseCollector {
     }
 
     fn record_use(&mut self, ident: &Ident, kind: UseKind) {
+        if self.direct_writes_only {
+            if matches!(&kind, UseKind::Write | UseKind::ReadWrite) {
+                self.direct_write_bindings.insert(Self::binding_id(ident));
+            }
+            return;
+        }
         let id = Self::binding_id(ident);
         self.bindings.entry(id).or_default().uses.push(UseSite {
             kind,
@@ -436,7 +466,7 @@ impl Visit for BindingUseCollector {
     }
 
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if declarator.init.is_none() {
+        if !self.direct_writes_only && declarator.init.is_none() {
             if let Pat::Ident(binding) = &declarator.name {
                 self.uninitialized.insert(Self::binding_ident_id(binding));
             }
@@ -761,6 +791,10 @@ mod tests {
                 index.has_direct_write(&x),
                 "`{stmt}` must classify `x` as a direct write"
             );
+            assert!(
+                BindingUseIndex::collect_direct_write_bindings(&module).contains(&x),
+                "write-only collection must classify `{stmt}`"
+            );
         }
 
         // Boundary: uses that must NOT count as direct binding writes.
@@ -779,6 +813,10 @@ mod tests {
             assert!(
                 !index.has_direct_write(&x),
                 "`{stmt}` must not classify `x` as a direct write"
+            );
+            assert!(
+                !BindingUseIndex::collect_direct_write_bindings(&module).contains(&x),
+                "write-only collection must reject `{stmt}`"
             );
         }
     }

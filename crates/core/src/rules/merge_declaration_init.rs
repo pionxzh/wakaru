@@ -16,10 +16,12 @@
 //! such as `let response; response = await fetch_user(id);`.
 //!
 //! It runs late (after `UnDestructuring`/`SmartInline`) so it does not disturb
-//! the assignment-form temporaries those rules rely on. A consequence is that
-//! statement-list merges keep their `let` kind: `VarDeclToLetConst` has already
-//! run. The narrower top-level adjacent form can safely promote `let` to `const`
-//! after checking the remaining module for writes and direct-eval hazards.
+//! the assignment-form temporaries those rules rely on. `VarDeclToLetConst` has
+//! already run, so this rule batches the `let` bindings it merges and performs
+//! one module-wide post-merge write analysis before promoting eligible bindings
+//! to `const`. Modules with no merged `let` skip that analysis entirely, and no
+//! binding triggers its own AST scan. This avoids rerunning the broader early
+//! declaration-kind rule.
 //!
 //! ## Safety
 //!
@@ -36,17 +38,20 @@
 //! Standard mode additionally requires an inert right-hand side so the merge
 //! cannot change whether the binding is initialized while evaluating that RHS
 //! (for example through a call, `await`, or direct `eval`). Aggressive mode
-//! relaxes that RHS guard for statement-list merges. A top-level `let` is
-//! promoted to `const` only when the remaining module has neither a direct
-//! write nor direct `eval` that can name the binding.
+//! relaxes that RHS guard for statement-list merges. A merged `let` is promoted
+//! to `const` only when the completed module has neither another resolved direct
+//! write nor direct `eval` that can name the binding. The module-wide eval check
+//! is intentionally conservative for bindings inside nested functions.
 //!
 //! Matching is by [`BindingId`] (name + `SyntaxContext`), so same-named bindings
 //! in different scopes are never conflated.
 
+use std::collections::HashSet;
+
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, Decl, EmptyStmt, Expr, Ident, Lit, ModuleDecl, ModuleItem, Pat, Prop,
-    PropName, PropOrSpread, SimpleAssignTarget, Stmt, UnaryOp, VarDecl, VarDeclKind,
+    AssignOp, AssignTarget, Decl, EmptyStmt, Expr, Ident, Lit, Module, ModuleDecl, ModuleItem, Pat,
+    Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, UnaryOp, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -57,11 +62,15 @@ use super::{eval_utils::js_source_mentions_binding, eval_utils::DirectEvalAnalyz
 
 pub struct MergeDeclarationInit {
     level: RewriteLevel,
+    merged_let_bindings: HashSet<BindingId>,
 }
 
 impl MergeDeclarationInit {
     pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+        Self {
+            level,
+            merged_let_bindings: HashSet::new(),
+        }
     }
 }
 
@@ -72,18 +81,28 @@ impl Default for MergeDeclarationInit {
 }
 
 impl VisitMut for MergeDeclarationInit {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        debug_assert!(self.merged_let_bindings.is_empty());
+        module.visit_mut_children_with(self);
+        promote_merged_lets(module, &self.merged_let_bindings);
+        self.merged_let_bindings.clear();
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
-        merge_module_item_list(items);
+        self.merged_let_bindings
+            .extend(merge_module_item_list(items));
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        merge_stmt_list(stmts, self.level);
+        self.merged_let_bindings
+            .extend(merge_stmt_list(stmts, self.level));
     }
 }
 
-fn merge_module_item_list(items: &mut Vec<ModuleItem>) {
+fn merge_module_item_list(items: &mut Vec<ModuleItem>) -> Vec<BindingId> {
+    let mut merged_lets = Vec::new();
     let mut i = 0;
     while i + 1 < items.len() {
         let Some(id) = module_bare_decl_binding(&items[i]) else {
@@ -98,8 +117,7 @@ fn merge_module_item_list(items: &mut Vec<ModuleItem>) {
             continue;
         }
 
-        let promote_to_const = module_decl_kind(&items[i]) == Some(VarDeclKind::Let)
-            && module_tail_allows_const(&items[i + 2..], &id);
+        let merged_let = module_decl_kind(&items[i]) == Some(VarDeclKind::Let);
         let rhs = take_module_assignment_rhs(&mut items[i + 1]);
         let mut declaration = std::mem::replace(
             &mut items[i],
@@ -108,15 +126,17 @@ fn merge_module_item_list(items: &mut Vec<ModuleItem>) {
         let var = module_var_decl_mut(&mut declaration)
             .expect("module_bare_decl_binding guarantees a variable declaration");
         var.decls[0].init = Some(rhs);
-        if promote_to_const {
-            var.kind = VarDeclKind::Const;
-        }
         items[i + 1] = declaration;
         items.remove(i);
+        if merged_let {
+            merged_lets.push(id);
+        }
     }
+    merged_lets
 }
 
-fn merge_stmt_list(stmts: &mut Vec<Stmt>, level: RewriteLevel) {
+fn merge_stmt_list(stmts: &mut Vec<Stmt>, level: RewriteLevel) -> Vec<BindingId> {
+    let mut merged_lets = Vec::new();
     let mut i = 0;
     while i < stmts.len() {
         let Some(id) = bare_decl_binding(&stmts[i]) else {
@@ -140,14 +160,19 @@ fn merge_stmt_list(stmts: &mut Vec<Stmt>, level: RewriteLevel) {
             continue;
         }
 
+        let merged_let = stmt_decl_kind(&stmts[i]) == Some(VarDeclKind::Let);
         let rhs = take_assignment_rhs(&mut stmts[j]);
         let mut var = take_var_decl(&mut stmts[i]);
         var.decls[0].init = Some(rhs);
         stmts[j] = Stmt::Decl(Decl::Var(var));
         stmts.remove(i);
+        if merged_let {
+            merged_lets.push(id);
+        }
         // Elements shifted left by one; re-examine the same index. The merged
         // declaration now has an initializer, so it won't be matched again.
     }
+    merged_lets
 }
 
 fn only_bare_declarations(stmts: &[Stmt]) -> bool {
@@ -208,6 +233,13 @@ fn module_var_decl_mut(item: &mut ModuleItem) -> Option<&mut VarDecl> {
 
 fn module_decl_kind(item: &ModuleItem) -> Option<VarDeclKind> {
     module_var_decl(item).map(|var| var.kind)
+}
+
+fn stmt_decl_kind(stmt: &Stmt) -> Option<VarDeclKind> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    Some(var.kind)
 }
 
 /// The binding targeted by a statement-level simple assignment `X = expr;`.
@@ -349,18 +381,51 @@ fn take_module_assignment_rhs(item: &mut ModuleItem) -> Box<Expr> {
     take_assignment_rhs(stmt)
 }
 
-fn module_tail_allows_const(items: &[ModuleItem], id: &BindingId) -> bool {
-    if BindingUseIndex::collect_module_items(items).has_direct_write(id) {
-        return false;
+fn promote_merged_lets(module: &mut Module, candidates: &HashSet<BindingId>) {
+    if candidates.is_empty() {
+        return;
     }
 
+    let writes = BindingUseIndex::collect_direct_write_bindings(module);
     let mut eval = DirectEvalAnalyzer::default();
-    items.visit_with(&mut eval);
-    !eval.unknown_direct_eval
-        && !eval
-            .known_direct_eval_sources
-            .iter()
-            .any(|source| js_source_mentions_binding(source, &id.0))
+    module.visit_with(&mut eval);
+
+    let eligible = candidates
+        .iter()
+        .filter(|id| {
+            !writes.contains(*id)
+                && !eval.unknown_direct_eval
+                && !eval
+                    .known_direct_eval_sources
+                    .iter()
+                    .any(|source| js_source_mentions_binding(source, &id.0))
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    if !eligible.is_empty() {
+        module.visit_mut_with(&mut MergedLetPromoter {
+            eligible: &eligible,
+        });
+    }
+}
+
+struct MergedLetPromoter<'a> {
+    eligible: &'a HashSet<BindingId>,
+}
+
+impl VisitMut for MergedLetPromoter<'_> {
+    fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
+        if var.kind == VarDeclKind::Let && var.decls.len() == 1 {
+            if let Pat::Ident(binding) = &var.decls[0].name {
+                let id = (binding.id.sym.clone(), binding.id.ctxt);
+                if self.eligible.contains(&id) {
+                    var.kind = VarDeclKind::Const;
+                }
+            }
+        }
+        var.visit_mut_children_with(self);
+    }
 }
 
 /// Take the boxed `VarDecl` out of a statement known to be a bare declaration.

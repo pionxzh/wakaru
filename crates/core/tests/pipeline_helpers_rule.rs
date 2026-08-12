@@ -113,6 +113,17 @@ fn pipeline_between_single_rule() {
 }
 
 #[test]
+fn late_decl_init_merge_recovers_const_after_early_kind_pass() {
+    let input = "function build(){ var value; value = {}; return value; }";
+    let result = render_pipeline_between(input, "VarDeclToLetConst", "MergeDeclarationInit");
+
+    assert!(
+        result.contains("const value = {};"),
+        "the late merge should recover the declaration kind: {result}"
+    );
+}
+
+#[test]
 fn diagnostics_resolve_smart_rename_output_before_tdz_check() {
     let input = r#"
 const api = {
