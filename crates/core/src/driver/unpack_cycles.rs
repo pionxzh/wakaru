@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use swc_core::common::{sync::Lrc, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{ModuleDecl, ModuleItem};
@@ -31,24 +31,86 @@ pub(crate) fn collect_import_cycle_warnings(modules: &[(String, String)]) -> Vec
         })
         .map(|mut component| {
             component.sort();
+            let witness = deterministic_cycle_witness(&graph, &component).join(" -> ");
             let filename = component[0].clone();
-            let preview = component
-                .iter()
-                .take(8)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" -> ");
-            let suffix = if component.len() > 8 { " -> ..." } else { "" };
             UnpackWarning::new(
                 filename,
                 UnpackWarningKind::ImportCycle,
                 format!(
-                    "local import cycle across {} modules: {preview}{suffix}",
+                    "local import cycle across {} modules; cycle witness: {witness}",
                     component.len()
                 ),
             )
         })
         .collect()
+}
+
+/// Return a deterministic closed path whose adjacent filenames are all real
+/// graph edges. SCC membership alone does not provide such an order: sorting
+/// member names and joining them with arrows can invent nonexistent edges.
+fn deterministic_cycle_witness(
+    graph: &HashMap<String, Vec<String>>,
+    component: &[String],
+) -> Vec<String> {
+    let start = component
+        .first()
+        .expect("cycle components are non-empty")
+        .clone();
+    let members: HashSet<&str> = component.iter().map(String::as_str).collect();
+
+    if component.len() == 1 {
+        debug_assert!(graph[&start].contains(&start));
+        return vec![start.clone(), start];
+    }
+
+    // Find the shortest path from the lexicographically first member back to
+    // itself. Sorted neighbors make ties deterministic regardless of HashMap
+    // insertion order. Skip a self-edge here so a multi-member SCC reports a
+    // witness that demonstrates at least one of its cross-module edges.
+    let mut queue = VecDeque::new();
+    let mut predecessor: HashMap<String, String> = HashMap::new();
+    let mut start_deps = graph[&start]
+        .iter()
+        .filter(|dep| dep.as_str() != start && members.contains(dep.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    start_deps.sort();
+    start_deps.dedup();
+    for dep in start_deps {
+        predecessor.insert(dep.clone(), start.clone());
+        queue.push_back(dep);
+    }
+
+    while let Some(node) = queue.pop_front() {
+        let mut deps = graph[&node]
+            .iter()
+            .filter(|dep| members.contains(dep.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        deps.sort();
+        deps.dedup();
+
+        if deps.contains(&start) {
+            let mut reversed = vec![node.clone()];
+            let mut cursor = node;
+            while cursor != start {
+                cursor = predecessor[&cursor].clone();
+                reversed.push(cursor.clone());
+            }
+            reversed.reverse();
+            reversed.push(start);
+            return reversed;
+        }
+
+        for dep in deps {
+            if dep != start && !predecessor.contains_key(&dep) {
+                predecessor.insert(dep.clone(), node.clone());
+                queue.push_back(dep);
+            }
+        }
+    }
+
+    unreachable!("every nontrivial SCC contains a cycle through each member")
 }
 
 fn local_import_dependencies(

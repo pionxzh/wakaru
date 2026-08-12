@@ -653,3 +653,52 @@ fn import_cycle_warnings_report_local_sccs() {
     assert!(warnings[0].message.contains("a.js"));
     assert!(warnings[0].message.contains("b.js"));
 }
+
+#[test]
+fn import_cycle_warning_reports_a_real_deterministic_edge_witness() {
+    // Alphabetical SCC member order is not an import path: the only cycle is
+    // a -> c -> b -> a. The diagnostic must not present sorted membership as
+    // if each adjacent pair were an edge.
+    let modules = vec![
+        (
+            "c.js".to_string(),
+            r#"import { b } from "./b.js"; export const c = b;"#.to_string(),
+        ),
+        (
+            "a.js".to_string(),
+            r#"import { c } from "./c.js"; export const a = c;"#.to_string(),
+        ),
+        (
+            "b.js".to_string(),
+            r#"import { a } from "./a.js"; export const b = a;"#.to_string(),
+        ),
+    ];
+
+    let warnings = collect_import_cycle_warnings(&modules);
+
+    assert_eq!(warnings.len(), 1, "should report one SCC: {warnings:?}");
+    assert_eq!(
+        warnings[0].message,
+        "local import cycle across 3 modules; cycle witness: a.js -> c.js -> b.js -> a.js"
+    );
+}
+
+#[test]
+fn import_cycle_warning_closes_a_self_cycle_witness() {
+    let modules = vec![(
+        "self.js".to_string(),
+        r#"import { value } from "./self.js"; export { value };"#.to_string(),
+    )];
+
+    let warnings = collect_import_cycle_warnings(&modules);
+
+    assert_eq!(
+        warnings.len(),
+        1,
+        "should report the self-cycle: {warnings:?}"
+    );
+    assert_eq!(
+        warnings[0].message,
+        "local import cycle across 1 modules; cycle witness: self.js -> self.js"
+    );
+}
