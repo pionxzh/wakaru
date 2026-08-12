@@ -712,7 +712,7 @@ pub(super) fn recover_template(
     context: TemplateRecoveryContext,
 ) -> Result<RecoveredTemplate> {
     let constants = constant_table
-        .map(decode_component_constant_table)
+        .map(|constants| decode_component_constant_table(constants, roles, context.unresolved_ctxt))
         .unwrap_or_default();
     let implicit_view_context_properties = discover_implicit_view_context_properties(
         template_functions,
@@ -4928,11 +4928,11 @@ fn apply_create_instruction(
                 .i18n_messages
                 .get(message_index)
                 .and_then(|message| message.clone())
-                .filter(|message| is_basic_i18n_message(message))
+                .filter(|message| is_supported_i18n_message(message))
             else {
                 record_unsupported_instruction(
                     call,
-                    "i18n message constant is missing or contains structural opcodes",
+                    "i18n message constant is missing or contains unsupported structural/ICU opcodes",
                     &mut program.issues,
                     &mut program.stats,
                 );
@@ -6748,7 +6748,7 @@ fn apply_update_instruction(
             match &mut tree.nodes[node].kind {
                 TemplateNodeKind::Text { value } => {
                     let Some(rendered) =
-                        render_basic_i18n_message(value, &program.pending_i18n_expressions)
+                        render_i18n_message(value, &program.pending_i18n_expressions)
                     else {
                         record_malformed_instruction(
                             call,
@@ -7881,9 +7881,20 @@ fn numeric_expr(expression: &Expr) -> Option<usize> {
     (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as usize)
 }
 
-fn decode_component_constant_table(constants: &Expr) -> TemplateConstants {
+fn decode_component_constant_table(
+    constants: &Expr,
+    roles: &IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+) -> TemplateConstants {
     let Some(decoded) = decode_component_constant_entries(constants) else {
         return TemplateConstants::default();
+    };
+    let i18n_environment = I18nMessageDecodeEnvironment {
+        values: &decoded.values,
+        previous_values: &decoded.previous_values,
+        roles,
+        unresolved_ctxt,
+        allow_unnamed_localizer: decoded.allow_unnamed_localizer,
     };
     TemplateConstants {
         attributes: decoded
@@ -7917,12 +7928,7 @@ fn decode_component_constant_table(constants: &Expr) -> TemplateConstants {
             .iter()
             .map(|entry| {
                 entry.as_deref().and_then(|entry| {
-                    decode_i18n_message_expression(
-                        entry,
-                        &decoded.values,
-                        &mut HashSet::new(),
-                        decoded.allow_unnamed_localizer,
-                    )
+                    decode_i18n_message_expression(entry, &i18n_environment, &mut HashSet::new())
                 })
             })
             .collect(),
@@ -7932,6 +7938,7 @@ fn decode_component_constant_table(constants: &Expr) -> TemplateConstants {
 struct DecodedComponentConstantEntries {
     entries: Vec<Option<Box<Expr>>>,
     values: HashMap<BindingKey, Box<Expr>>,
+    previous_values: HashMap<BindingKey, Box<Expr>>,
     allow_unnamed_localizer: bool,
 }
 
@@ -7944,6 +7951,7 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
                 .map(|element| element.as_ref().map(|element| element.expr.clone()))
                 .collect(),
             values: HashMap::new(),
+            previous_values: HashMap::new(),
             allow_unnamed_localizer: false,
         });
     }
@@ -7965,6 +7973,7 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
                         .map(|element| element.as_ref().map(|element| element.expr.clone()))
                         .collect(),
                     values: HashMap::new(),
+                    previous_values: HashMap::new(),
                     allow_unnamed_localizer: true,
                 });
             }
@@ -7991,6 +8000,7 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
             .map(|element| element.as_ref().map(|element| element.expr.clone()))
             .collect(),
         values: collector.values,
+        previous_values: collector.previous_values,
         allow_unnamed_localizer: true,
     })
 }
@@ -7998,6 +8008,10 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
 #[derive(Default)]
 struct ComponentConstantFactoryCollector {
     values: HashMap<BindingKey, Box<Expr>>,
+    // Angular rewrites a localized value in place with i18nPostprocess. Retain
+    // only the immediately preceding assignment so that semantically proven
+    // postprocess calls can read that prior version without general dataflow.
+    previous_values: HashMap<BindingKey, Box<Expr>>,
     returns: Vec<Box<Expr>>,
 }
 
@@ -8013,8 +8027,10 @@ impl Visit for ComponentConstantFactoryCollector {
     fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
         if assignment.op == AssignOp::Assign {
             if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assignment.left {
-                self.values
-                    .insert(binding_key(&binding.id), assignment.right.clone());
+                let key = binding_key(&binding.id);
+                if let Some(previous) = self.values.insert(key.clone(), assignment.right.clone()) {
+                    self.previous_values.insert(key, previous);
+                }
             }
         }
         assignment.visit_children_with(self);
@@ -8050,11 +8066,18 @@ fn resolve_constant_expression<'a>(
     resolved
 }
 
+struct I18nMessageDecodeEnvironment<'a> {
+    values: &'a HashMap<BindingKey, Box<Expr>>,
+    previous_values: &'a HashMap<BindingKey, Box<Expr>>,
+    roles: &'a IvyRoleTable,
+    unresolved_ctxt: SyntaxContext,
+    allow_unnamed_localizer: bool,
+}
+
 fn decode_i18n_message_expression(
     expression: &Expr,
-    values: &HashMap<BindingKey, Box<Expr>>,
+    environment: &I18nMessageDecodeEnvironment<'_>,
     resolving: &mut HashSet<BindingKey>,
-    allow_unnamed_localizer: bool,
 ) -> Option<String> {
     let expression = strip_parentheses(expression);
     if let Expr::Ident(identifier) = expression {
@@ -8063,10 +8086,9 @@ fn decode_i18n_message_expression(
             return None;
         }
         let decoded = decode_i18n_message_expression(
-            values.get(&key)?.as_ref(),
-            values,
+            environment.values.get(&key)?.as_ref(),
+            environment,
             resolving,
-            allow_unnamed_localizer,
         );
         resolving.remove(&key);
         return decoded;
@@ -8075,24 +8097,16 @@ fn decode_i18n_message_expression(
         return Some(value);
     }
     match expression {
-        Expr::Seq(sequence) => decode_i18n_message_expression(
-            sequence.exprs.last()?.as_ref(),
-            values,
-            resolving,
-            allow_unnamed_localizer,
-        ),
+        Expr::Seq(sequence) => {
+            decode_i18n_message_expression(sequence.exprs.last()?.as_ref(), environment, resolving)
+        }
         Expr::Bin(binary) if binary.op == BinaryOp::Add => {
-            let mut message = decode_i18n_message_expression(
-                binary.left.as_ref(),
-                values,
-                resolving,
-                allow_unnamed_localizer,
-            )?;
+            let mut message =
+                decode_i18n_message_expression(binary.left.as_ref(), environment, resolving)?;
             message.push_str(&decode_i18n_message_expression(
                 binary.right.as_ref(),
-                values,
+                environment,
                 resolving,
-                allow_unnamed_localizer,
             )?);
             Some(message)
         }
@@ -8102,18 +8116,16 @@ fn decode_i18n_message_expression(
                 Expr::Ident(identifier) if identifier.sym == "$localize"
             ) =>
         {
-            decode_localized_template(
-                tagged.tpl.as_ref(),
-                values,
-                resolving,
-                allow_unnamed_localizer,
-            )
+            decode_localized_template(tagged.tpl.as_ref(), environment, resolving)
         }
         Expr::Call(call) if is_goog_get_msg(call) => {
-            decode_localization_call(call, values, resolving, allow_unnamed_localizer)
+            decode_localization_call(call, environment, resolving)
         }
-        Expr::Call(call) if allow_unnamed_localizer => {
-            decode_localization_call(call, values, resolving, allow_unnamed_localizer)
+        Expr::Call(call) if is_i18n_postprocess_call(call, environment) => {
+            decode_i18n_postprocess_call(call, environment, resolving)
+        }
+        Expr::Call(call) if environment.allow_unnamed_localizer => {
+            decode_localization_call(call, environment, resolving)
         }
         _ => None,
     }
@@ -8121,9 +8133,8 @@ fn decode_i18n_message_expression(
 
 fn decode_localized_template(
     template: &swc_core::ecma::ast::Tpl,
-    values: &HashMap<BindingKey, Box<Expr>>,
+    environment: &I18nMessageDecodeEnvironment<'_>,
     resolving: &mut HashSet<BindingKey>,
-    allow_unnamed_localizer: bool,
 ) -> Option<String> {
     if template.quasis.len() != template.exprs.len() + 1 {
         return None;
@@ -8139,9 +8150,8 @@ fn decode_localized_template(
         if let Some(expression) = template.exprs.get(index) {
             message.push_str(&decode_i18n_message_expression(
                 expression.as_ref(),
-                values,
+                environment,
                 resolving,
-                allow_unnamed_localizer,
             )?);
         }
     }
@@ -8180,9 +8190,8 @@ fn is_goog_get_msg(call: &CallExpr) -> bool {
 
 fn decode_localization_call(
     call: &CallExpr,
-    values: &HashMap<BindingKey, Box<Expr>>,
+    environment: &I18nMessageDecodeEnvironment<'_>,
     resolving: &mut HashSet<BindingKey>,
-    allow_unnamed_localizer: bool,
 ) -> Option<String> {
     let mut message = call
         .args
@@ -8208,35 +8217,293 @@ fn decode_localization_call(
             return None;
         };
         let name = prop_name(&property.key)?;
-        let value = decode_i18n_message_expression(
-            property.value.as_ref(),
-            values,
-            resolving,
-            allow_unnamed_localizer,
-        )?;
+        let value =
+            decode_i18n_message_expression(property.value.as_ref(), environment, resolving)?;
         message = message.replace(&format!("{{${name}}}"), &value);
     }
     Some(message)
 }
 
-fn is_basic_i18n_message(message: &str) -> bool {
-    parse_i18n_markers(message).is_some()
+fn is_i18n_postprocess_call(
+    call: &CallExpr,
+    environment: &I18nMessageDecodeEnvironment<'_>,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    environment
+        .roles
+        .ivy_name_for_expr(callee.as_ref(), environment.unresolved_ctxt)
+        .as_deref()
+        == Some("ɵɵi18nPostprocess")
 }
 
-fn render_basic_i18n_message(message: &str, expressions: &[String]) -> Option<String> {
+fn decode_i18n_postprocess_call(
+    call: &CallExpr,
+    environment: &I18nMessageDecodeEnvironment<'_>,
+    resolving: &mut HashSet<BindingKey>,
+) -> Option<String> {
+    let [message, replacements] = call.args.as_slice() else {
+        return None;
+    };
+    if message.spread.is_some() || replacements.spread.is_some() {
+        return None;
+    }
+
+    let message_expression = strip_parentheses(message.expr.as_ref());
+    let message = if let Expr::Ident(identifier) = message_expression {
+        let key = binding_key(identifier);
+        if resolving.contains(&key) {
+            decode_i18n_message_expression(
+                environment.previous_values.get(&key)?.as_ref(),
+                environment,
+                resolving,
+            )?
+        } else {
+            decode_i18n_message_expression(message_expression, environment, resolving)?
+        }
+    } else {
+        decode_i18n_message_expression(message_expression, environment, resolving)?
+    };
+
+    let Expr::Object(replacements) = strip_parentheses(replacements.expr.as_ref()) else {
+        return None;
+    };
+    let mut decoded_replacements = HashMap::new();
+    for property in &replacements.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(property) = property else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(property) = property.as_ref() else {
+            return None;
+        };
+        let name = prop_name(&property.key)?;
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return None;
+        }
+        let value =
+            decode_i18n_message_expression(property.value.as_ref(), environment, resolving)?;
+        if decoded_replacements.insert(name, value).is_some() {
+            return None;
+        }
+    }
+    replace_i18n_postprocess_tokens(&message, &decoded_replacements)
+}
+
+fn replace_i18n_postprocess_tokens(
+    message: &str,
+    replacements: &HashMap<String, String>,
+) -> Option<String> {
+    let mut rendered = String::new();
+    let mut replaced = HashSet::new();
+    let mut cursor = 0;
+    while cursor < message.len() {
+        let character = message[cursor..].chars().next()?;
+        if character == '{' {
+            let content_start = cursor + character.len_utf8();
+            if let Some(relative_end) = message[content_start..].find('}') {
+                let content_end = content_start + relative_end;
+                let token = &message[content_start..content_end];
+                if let Some(value) = replacements.get(token) {
+                    rendered.push_str(value);
+                    replaced.insert(token);
+                    cursor = content_end + '}'.len_utf8();
+                    continue;
+                }
+            }
+        }
+        if character.is_ascii_alphanumeric() || character == '_' {
+            let start = cursor;
+            while cursor < message.len() {
+                let character = message[cursor..].chars().next()?;
+                if !character.is_ascii_alphanumeric() && character != '_' {
+                    break;
+                }
+                cursor += character.len_utf8();
+            }
+            let token = &message[start..cursor];
+            if let Some(value) = replacements.get(token) {
+                rendered.push_str(value);
+                replaced.insert(token);
+            } else {
+                rendered.push_str(token);
+            }
+        } else {
+            rendered.push(character);
+            cursor += character.len_utf8();
+        }
+    }
+    (replaced.len() == replacements.len()).then_some(rendered)
+}
+
+#[derive(Clone, Copy)]
+struct BoundedIcuMessage {
+    selector_start: usize,
+    selector_end: usize,
+}
+
+fn is_supported_i18n_message(message: &str) -> bool {
+    parse_bounded_icu_message(message).is_some()
+        || (!contains_icu_control_syntax(message) && parse_i18n_markers(message).is_some())
+}
+
+fn render_i18n_message(message: &str, expressions: &[String]) -> Option<String> {
+    let icu = parse_bounded_icu_message(message);
+    if icu.is_none() && contains_icu_control_syntax(message) {
+        return None;
+    }
     let markers = parse_i18n_markers(message)?;
     let mut rendered = String::new();
     let mut cursor = 0;
     for (start, end, expression_index) in markers {
         rendered.push_str(&message[cursor..start]);
         let expression = expressions.get(expression_index)?;
-        rendered.push_str("{{ ");
-        rendered.push_str(expression);
-        rendered.push_str(" }}");
+        if icu.is_some_and(|icu| icu.selector_start == start && icu.selector_end == end) {
+            rendered.push_str(expression);
+        } else {
+            rendered.push_str("{{ ");
+            rendered.push_str(expression);
+            rendered.push_str(" }}");
+        }
         cursor = end;
     }
     rendered.push_str(&message[cursor..]);
     Some(rendered)
+}
+
+fn contains_icu_control_syntax(message: &str) -> bool {
+    message
+        .split(',')
+        .any(|part| matches!(part.trim(), "plural" | "select" | "selectordinal"))
+}
+
+fn parse_bounded_icu_message(message: &str) -> Option<BoundedIcuMessage> {
+    let markers = parse_i18n_markers(message)?;
+    let mut cursor = message.len() - message.trim_start().len();
+    let content_end = message.trim_end().len();
+    consume_icu_character(message, &mut cursor, content_end, '{')?;
+    skip_icu_whitespace(message, &mut cursor, content_end);
+
+    let (selector_start, selector_end, _) = markers
+        .iter()
+        .copied()
+        .find(|(start, _, _)| *start == cursor)?;
+    cursor = selector_end;
+    skip_icu_whitespace(message, &mut cursor, content_end);
+    consume_icu_character(message, &mut cursor, content_end, ',')?;
+    skip_icu_whitespace(message, &mut cursor, content_end);
+
+    let kind_start = cursor;
+    while cursor < content_end {
+        let character = message[cursor..].chars().next()?;
+        if !character.is_ascii_alphabetic() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+    let kind = &message[kind_start..cursor];
+    if !matches!(kind, "plural" | "select") {
+        return None;
+    }
+    skip_icu_whitespace(message, &mut cursor, content_end);
+    consume_icu_character(message, &mut cursor, content_end, ',')?;
+
+    let mut case_count = 0usize;
+    let mut saw_other = false;
+    let mut case_keys = HashSet::new();
+    loop {
+        skip_icu_whitespace(message, &mut cursor, content_end);
+        if message[cursor..content_end].starts_with('}') {
+            cursor += '}'.len_utf8();
+            break;
+        }
+
+        let key_start = cursor;
+        while cursor < content_end {
+            let character = message[cursor..].chars().next()?;
+            if character.is_whitespace() || matches!(character, '{' | '}') {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+        let key = &message[key_start..cursor];
+        if !is_supported_icu_case_key(kind, key) {
+            return None;
+        }
+        if !case_keys.insert(key) {
+            return None;
+        }
+        saw_other |= key == "other";
+        skip_icu_whitespace(message, &mut cursor, content_end);
+        consume_icu_character(message, &mut cursor, content_end, '{')?;
+
+        while cursor < content_end {
+            let character = message[cursor..].chars().next()?;
+            if character == '}' {
+                break;
+            }
+            if matches!(character, '{' | '<' | '>') {
+                return None;
+            }
+            cursor += character.len_utf8();
+        }
+        consume_icu_character(message, &mut cursor, content_end, '}')?;
+        case_count += 1;
+    }
+
+    skip_icu_whitespace(message, &mut cursor, message.len());
+    (cursor == message.len() && case_count > 0 && saw_other).then_some(BoundedIcuMessage {
+        selector_start,
+        selector_end,
+    })
+}
+
+fn skip_icu_whitespace(message: &str, cursor: &mut usize, end: usize) {
+    while *cursor < end {
+        let Some(character) = message[*cursor..].chars().next() else {
+            return;
+        };
+        if !character.is_whitespace() {
+            return;
+        }
+        *cursor += character.len_utf8();
+    }
+}
+
+fn consume_icu_character(
+    message: &str,
+    cursor: &mut usize,
+    end: usize,
+    expected: char,
+) -> Option<()> {
+    if *cursor >= end || message[*cursor..].chars().next()? != expected {
+        return None;
+    }
+    *cursor += expected.len_utf8();
+    Some(())
+}
+
+fn is_supported_icu_case_key(kind: &str, key: &str) -> bool {
+    if key == "other" {
+        return true;
+    }
+    if kind == "plural" {
+        if matches!(key, "zero" | "one" | "two" | "few" | "many") {
+            return true;
+        }
+        return key
+            .strip_prefix('=')
+            .and_then(|number| number.parse::<f64>().ok())
+            .is_some_and(f64::is_finite);
+    }
+    !key.is_empty()
+        && key.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+        })
 }
 
 fn parse_structural_i18n_message(message: &str) -> Option<Vec<I18nToken>> {
