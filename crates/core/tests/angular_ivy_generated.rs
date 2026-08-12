@@ -98,9 +98,12 @@ fn recovers_angular_19_full_aot_compatibility_fixture() {
     let recovered =
         recover_angular_components_from_js(ANGULAR_19_COMPAT, AngularRecoveryOptions::default())
             .expect("pinned Angular 19 full-AOT output should parse");
-    let [component] = recovered.as_slice() else {
-        panic!("expected one Angular 19 component, got {}", recovered.len());
-    };
+    let by_selector = recovered
+        .iter()
+        .map(|component| (component.selector.as_str(), component))
+        .collect::<HashMap<_, _>>();
+    assert_eq!(by_selector.len(), 2);
+    let component = by_selector["compat-card"];
 
     assert_eq!(component.selector, "compat-card");
     assert_eq!(
@@ -121,6 +124,21 @@ fn recovers_angular_19_full_aot_compatibility_fixture() {
         .source
         .contains("@for (item of items; track item.id) {"));
     assert!(component.source.contains("@empty {"));
+
+    let switch = by_selector["compat-switch"];
+    assert_eq!(
+        switch.completeness,
+        AngularRecoveryCompleteness::Complete,
+        "issues: {:#?}\n{}",
+        switch.issues,
+        switch.source,
+    );
+    assert!(
+        switch.source.contains("@if (state() === \"ready\") {"),
+        "{}",
+        switch.source
+    );
+    assert!(!switch.source.contains(" = state()"));
 }
 
 #[test]
