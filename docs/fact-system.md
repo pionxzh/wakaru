@@ -135,6 +135,11 @@ Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
 export shape after Stage 2. They do not speculate from consumer-side usage.
 
+Stable same-module `module.exports` / `exports.name` read recovery is not a
+cross-module fact. `UnEsm` proves and consumes that identity within one resolved
+AST before this barrier; ambiguous writes and receiver-sensitive calls stay as
+visible CommonJS residuals.
+
 ## Rules that read facts
 
 - **`provider_import_repair`** — repairs only dummy-span imports synthesized by

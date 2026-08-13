@@ -375,6 +375,14 @@ Stage 2: Transpiler helper unwrapping + module-system reconstruction
   Babel/TypeScript helper recovery and require() → ESM, ending with UnEsm
   e.g. UnInteropRequireDefault, UnObjectSpread, UnWebpackInterop, UnEsm
 
+  UnEsm also recovers narrowly proven same-module CommonJS reads: a later
+  `module.exports` read may use the sole stable default binding, and a later
+  `exports.name` read may use a uniquely assigned stable export binding. Direct
+  method calls additionally require a receiver-insensitive function. Earlier
+  `undefined` export declarations are permitted; multiple value writes, later
+  resets, computed writes, value escapes, receiver-sensitive calls, early
+  reads, and hoisted function declarations remain fail closed.
+
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
 Stage 3: Structural restoration

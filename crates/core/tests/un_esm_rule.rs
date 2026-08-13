@@ -542,11 +542,227 @@ export default o;
 }
 
 #[test]
+fn stable_default_binding_replaces_later_commonjs_mirror_reads() {
+    let input = r#"
+const api = () => "ready";
+module.exports = api;
+if (typeof window !== "undefined") {
+  window.syntheticApi = module.exports;
+}
+"#;
+    let expected = r#"
+const api = () => "ready";
+export default api;
+if (typeof window !== "undefined") {
+  window.syntheticApi = api;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(validate_output_modules(&[("entry.js".into(), output)])
+        .iter()
+        .all(|finding| finding.kind != OutputFindingKind::EsmCommonJsResidual));
+}
+
+#[test]
+fn stable_default_read_recovery_rejects_a_second_assignment() {
+    let input = r#"
+const api = () => "ready";
+module.exports = api;
+if (legacy) module.exports = replacement;
+window.syntheticApi = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("window.syntheticApi = module.exports"),
+        "a conditional second value must keep default reads fail closed:\n{output}"
+    );
+}
+
+#[test]
+fn stable_default_read_recovery_rejects_a_reassigned_capture() {
+    let input = r#"
+let api = () => "ready";
+module.exports = api;
+api = replacement;
+window.syntheticApi = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("window.syntheticApi = module.exports"),
+        "a mutable capture does not prove the later CommonJS value:\n{output}"
+    );
+}
+
+#[test]
+fn stable_default_read_recovery_preserves_direct_calls() {
+    let input = r#"
+const api = function() { return this.value; };
+module.exports = api;
+consume(module.exports());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(module.exports())"),
+        "a direct CommonJS call supplies module as its receiver:\n{output}"
+    );
+}
+
+#[test]
 fn exports_named_const() {
     let input = "exports.foo = 1;";
     let expected = "export const foo = 1;";
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn stable_named_function_exports_replace_later_self_reads() {
+    let input = r#"
+Object.defineProperty(exports, "__esModule", { value: true }),
+  exports.second = exports.first = void 0;
+var helper = (
+  exports.first = function(value) { return value + 1; },
+  exports.second = function(value) { return exports.first(value); },
+  consume(exports.second(1)),
+  function(value) { return value; }
+);
+"#;
+    let expected = r#"
+export const first = value => value + 1;
+export const second = value => first(value);
+consume(second(1));
+const helper = value => value;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    assert!(validate_output_modules(&[("entry.js".into(), output)])
+        .iter()
+        .all(|finding| finding.kind != OutputFindingKind::EsmCommonJsResidual));
+}
+
+#[test]
+fn named_export_read_recovery_preserves_direct_eval_receiver_reads() {
+    let input = r#"
+exports.method = function() { return eval("this.value"); };
+consume(exports.method());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.method())"),
+        "direct eval can observe the CommonJS receiver:\n{output}"
+    );
+}
+
+#[test]
+fn stable_named_object_exports_replace_later_member_reads() {
+    let input = r#"
+exports.events = createEvents();
+exports.notify = () => exports.events.dispatch("ready");
+"#;
+    let expected = r#"
+export const events = createEvents();
+export const notify = () => events.dispatch("ready");
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn named_export_read_recovery_rejects_undefined_after_the_value() {
+    let input = r#"
+exports.method = () => 1;
+exports.method = void 0;
+consume(exports.method());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.method())"),
+        "a later reset invalidates the recovered property value:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_preserves_receiver_dependent_functions() {
+    let input = r#"
+exports.method = function() { return this.value; };
+consume(exports.method());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.method())"),
+        "ordinary functions still observe the CommonJS receiver:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_preserves_receiver_dependent_optional_calls_and_tags() {
+    let input = r#"
+exports.method = function() { return this.value; };
+consume(exports.method?.());
+consume(exports.method`value`);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.method?.())")
+            && output.contains("consume(exports.method`value`)"),
+        "optional calls and tags also supply the CommonJS receiver:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_rejects_duplicate_property_writes() {
+    let input = r#"
+exports.first = () => 1;
+exports.first = () => 2;
+exports.second = () => exports.first();
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("exports.first()"),
+        "a multiply-written property needs value-flow analysis:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_rejects_computed_exports_mutation() {
+    let input = r#"
+exports.first = () => 1;
+exports[key] = replacement;
+consume(exports.first());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.first())"),
+        "a computed mutation can alias any recovered property:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_does_not_rewrite_reads_before_the_export() {
+    let input = r#"
+consume(exports.first);
+exports.first = () => 1;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.first)"),
+        "the CommonJS property is not initialized at the earlier read:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_skips_hoisted_function_declarations() {
+    let input = r#"
+invoke();
+exports.first = () => 1;
+function invoke() { return exports.first(); }
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return exports.first()"),
+        "the hoisted function may run before the textually earlier-looking export:\n{output}"
+    );
 }
 
 #[test]

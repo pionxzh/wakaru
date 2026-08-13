@@ -5,21 +5,23 @@ use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName,
-    ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp,
-    OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
-    Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function, Id, Ident,
+    IdentName, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
+    ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr,
+    SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_id;
-use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
+use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
 use super::helper_matcher::count_binding_refs;
 use super::rename_utils::{collect_unresolved_reference_names, rename_bindings, BindingRename};
 use super::RewriteLevel;
@@ -158,6 +160,8 @@ impl VisitMut for UnEsm {
             collect_unresolved_reference_names(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
         let binding_uses = BindingUseIndex::collect(module);
+        let commonjs_read_recovery =
+            collect_commonjs_read_recovery_evidence(module, self.unresolved_mark, &binding_uses);
         let require_bindings =
             collect_stable_require_bindings(module, &binding_uses, self.unresolved_mark);
 
@@ -552,10 +556,529 @@ impl VisitMut for UnEsm {
             }
         }
 
+        recover_stable_commonjs_reads(&mut new_body, self.unresolved_mark, &commonjs_read_recovery);
         merge_decl_and_named_export(&mut new_body);
         inline_adjacent_default_export_aliases(&mut new_body);
         module.body = new_body;
     }
+}
+
+/// Evidence retained across CommonJS export classification. The classifier
+/// removes the runtime assignment nodes that establish these identities, so
+/// read recovery must prove them before building the ESM body and consume the
+/// proof afterwards.
+#[derive(Default)]
+struct CommonJsReadRecoveryEvidence {
+    /// Span of the sole direct `module.exports = stableBinding` assignment.
+    /// The rebuilt `export default stableBinding` keeps this span, allowing us
+    /// to recover the possibly-renamed binding without carrying stale ids.
+    stable_default_assignment_span: Option<Span>,
+    /// Static `exports.name` properties with one stable value assignment. The
+    /// rebuilt body proves the replacement binding and, for direct calls, that
+    /// the function cannot observe a changed receiver.
+    stable_named_properties: HashSet<Atom>,
+}
+
+fn collect_commonjs_read_recovery_evidence(
+    module: &Module,
+    unresolved_mark: Mark,
+    uses: &BindingUseIndex,
+) -> CommonJsReadRecoveryEvidence {
+    CommonJsReadRecoveryEvidence {
+        stable_default_assignment_span: collect_stable_default_assignment_span(
+            module,
+            unresolved_mark,
+            uses,
+        ),
+        stable_named_properties: collect_stable_named_properties(module, unresolved_mark, uses),
+    }
+}
+
+fn collect_stable_default_assignment_span(
+    module: &Module,
+    unresolved_mark: Mark,
+    uses: &BindingUseIndex,
+) -> Option<Span> {
+    let mut direct = Vec::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
+            continue;
+        };
+        if assignment.op != AssignOp::Assign {
+            continue;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+            continue;
+        };
+        if !is_module_exports_member(target, unresolved_mark) {
+            continue;
+        }
+        let Expr::Ident(module_ident) = target.obj.as_ref() else {
+            continue;
+        };
+        let Expr::Ident(value) = strip_parens(&assignment.right) else {
+            continue;
+        };
+        direct.push((
+            statement.span,
+            (module_ident.sym.clone(), module_ident.ctxt),
+            (value.sym.clone(), value.ctxt),
+        ));
+    }
+    let [(span, module_binding, value_binding)] = direct.as_slice() else {
+        return None;
+    };
+
+    // Every access to `module` must be either the `exports` property itself or
+    // a harmless existence probe, and exactly one access may replace that
+    // property. This catches conditional/deferred second assignments, direct
+    // rebinding, delete/update, and reflective uses without flow analysis.
+    let mut whole_value_writes = 0usize;
+    for site in uses.use_sites(module_binding) {
+        match &site.kind {
+            UseKind::StaticMemberRead(property) if property.as_ref() == "exports" => {}
+            UseKind::StaticMemberWrite(property) if property.as_ref() == "exports" => {
+                whole_value_writes += 1;
+            }
+            UseKind::TypeofOperand => {}
+            _ => return None,
+        }
+    }
+    if whole_value_writes != 1
+        || !uses.has_declaration(value_binding)
+        || uses.has_direct_write(value_binding)
+    {
+        return None;
+    }
+
+    Some(*span)
+}
+
+fn collect_stable_named_properties(
+    module: &Module,
+    unresolved_mark: Mark,
+    uses: &BindingUseIndex,
+) -> HashSet<Atom> {
+    #[derive(Default)]
+    struct DirectWrites {
+        count: usize,
+        value_writes: usize,
+        saw_value: bool,
+        undefined_after_value: bool,
+    }
+
+    let mut direct_writes: HashMap<Atom, DirectWrites> = HashMap::new();
+    let mut exports_bindings = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
+            continue;
+        };
+        if assignment.op != AssignOp::Assign {
+            continue;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+            continue;
+        };
+        let Expr::Ident(exports) = target.obj.as_ref() else {
+            continue;
+        };
+        if !is_unresolved_ident(exports, "exports", unresolved_mark) {
+            continue;
+        }
+        let Some(property) = is_ident_prop(&target.prop) else {
+            continue;
+        };
+        if property.as_ref() == "default" {
+            continue;
+        }
+        exports_bindings.insert((exports.sym.clone(), exports.ctxt));
+        let writes = direct_writes.entry(property).or_default();
+        writes.count += 1;
+        if is_void_or_undefined(&assignment.right, unresolved_mark) {
+            writes.undefined_after_value |= writes.saw_value;
+        } else {
+            writes.value_writes += 1;
+            writes.saw_value = true;
+        }
+    }
+    if exports_bindings.len() != 1 {
+        return HashSet::new();
+    }
+    let exports_binding = exports_bindings
+        .iter()
+        .next()
+        .expect("the length check proves one exports binding");
+
+    // A bare escape/rebinding of `exports`, a computed access, or a delete
+    // could change any named property. Keep the proof deliberately local to
+    // modules whose complete runtime surface is static member access.
+    let mut write_counts: HashMap<Atom, usize> = HashMap::new();
+    for site in uses.use_sites(exports_binding) {
+        match &site.kind {
+            UseKind::StaticMemberRead(_) | UseKind::TypeofOperand => {}
+            UseKind::StaticMemberWrite(property) => {
+                *write_counts.entry(property.clone()).or_default() += 1;
+            }
+            _ => return HashSet::new(),
+        }
+    }
+
+    // `module.exports.name` aliases the initial `exports` object only until a
+    // whole-value replacement. Rather than reason about that lifetime here,
+    // accept named recovery only when `module` is absent (apart from `typeof`).
+    let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
+    module.visit_with(&mut module_ids);
+    if module_ids.ids.iter().any(|binding| {
+        uses.use_sites(binding)
+            .iter()
+            .any(|site| !matches!(site.kind, UseKind::TypeofOperand))
+    }) {
+        return HashSet::new();
+    }
+
+    direct_writes
+        .into_iter()
+        .filter_map(|(property, direct)| {
+            // TypeScript commonly emits `exports.name = void 0` before the
+            // real assignment. Those sentinels may precede one stable value,
+            // but every write must still be a direct top-level statement and
+            // no undefined reset may follow the value.
+            (direct.value_writes == 1
+                && !direct.undefined_after_value
+                && write_counts.get(&property) == Some(&direct.count))
+            .then_some(property)
+        })
+        .collect()
+}
+
+struct UnresolvedBindingIdCollector<'a> {
+    name: &'a str,
+    unresolved_mark: Mark,
+    ids: HashSet<Id>,
+}
+
+impl<'a> UnresolvedBindingIdCollector<'a> {
+    fn new(name: &'a str, unresolved_mark: Mark) -> Self {
+        Self {
+            name,
+            unresolved_mark,
+            ids: HashSet::new(),
+        }
+    }
+}
+
+impl Visit for UnresolvedBindingIdCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if is_unresolved_ident(ident, self.name, self.unresolved_mark) {
+            self.ids.insert((ident.sym.clone(), ident.ctxt));
+        }
+    }
+}
+
+/// Replace only reads whose CommonJS object identity has already been proven.
+/// A direct `exports.method()` call additionally requires a
+/// receiver-insensitive function because the original supplies the CommonJS
+/// object as `this`. Function declarations are skipped because hoisting allows
+/// a later declaration body to run before an earlier-looking export
+/// assignment.
+fn recover_stable_commonjs_reads(
+    body: &mut [ModuleItem],
+    unresolved_mark: Mark,
+    evidence: &CommonJsReadRecoveryEvidence,
+) {
+    if evidence.stable_default_assignment_span.is_none()
+        && evidence.stable_named_properties.is_empty()
+    {
+        return;
+    }
+
+    let uses = BindingUseIndex::collect_module_items(body);
+    let mut default_binding = None;
+    let mut stable_named_bindings = HashMap::new();
+    let mut named_bindings = HashMap::new();
+
+    for item in body {
+        item.visit_mut_with(&mut CommonJsReadRewriter {
+            unresolved_mark,
+            default_binding: default_binding.as_ref(),
+            named_bindings: &named_bindings,
+        });
+
+        collect_stable_named_bindings(item, &uses, &mut stable_named_bindings);
+
+        if evidence
+            .stable_default_assignment_span
+            .is_some_and(|span| default_export_ident_at_span(item, span).is_some())
+        {
+            default_binding = evidence
+                .stable_default_assignment_span
+                .and_then(|span| default_export_ident_at_span(item, span))
+                .cloned();
+        }
+
+        collect_available_named_export_bindings(
+            item,
+            &evidence.stable_named_properties,
+            &stable_named_bindings,
+            &mut named_bindings,
+        );
+    }
+}
+
+fn collect_stable_named_bindings(
+    item: &ModuleItem,
+    uses: &BindingUseIndex,
+    bindings: &mut HashMap<Id, bool>,
+) {
+    let declaration = match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(declaration)))
+        | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            decl: Decl::Var(declaration),
+            ..
+        })) => Some(declaration.as_ref()),
+        _ => None,
+    };
+    let Some(declaration) = declaration else {
+        return;
+    };
+    for declarator in &declaration.decls {
+        let Pat::Ident(binding) = &declarator.name else {
+            continue;
+        };
+        let Some(init) = declarator.init.as_deref().map(strip_parens) else {
+            continue;
+        };
+        let id = (binding.id.sym.clone(), binding.id.ctxt);
+        if !uses.has_direct_write(&id) {
+            bindings.insert(id, is_receiver_insensitive_function_value(init));
+        }
+    }
+}
+
+fn is_receiver_insensitive_function_value(expression: &Expr) -> bool {
+    match expression {
+        Expr::Arrow(_) => true,
+        Expr::Fn(function) => !function_observes_receiver(&function.function),
+        _ => false,
+    }
+}
+
+fn function_observes_receiver(function: &Function) -> bool {
+    let mut analyzer = ReceiverSensitivityAnalyzer::default();
+    function.params.visit_with(&mut analyzer);
+    function.body.visit_with(&mut analyzer);
+    analyzer.sensitive
+}
+
+#[derive(Default)]
+struct ReceiverSensitivityAnalyzer {
+    sensitive: bool,
+}
+
+impl Visit for ReceiverSensitivityAnalyzer {
+    fn visit_this_expr(&mut self, _: &ThisExpr) {
+        self.sensitive = true;
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(source) = direct_eval_call_source(call) {
+            let this_name: Atom = "this".into();
+            self.sensitive |= match source {
+                EvalCallSource::NoSource => false,
+                EvalCallSource::Known(source) => js_source_mentions_binding(&source, &this_name),
+                EvalCallSource::Unknown => true,
+            };
+            for argument in &call.args {
+                argument.expr.visit_with(self);
+            }
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    // Nested ordinary functions establish their own receiver. Arrows retain
+    // the default traversal because they capture this function's receiver.
+    fn visit_function(&mut self, _: &Function) {}
+}
+
+fn collect_available_named_export_bindings(
+    item: &ModuleItem,
+    candidates: &HashSet<Atom>,
+    stable_bindings: &HashMap<Id, bool>,
+    available: &mut HashMap<Atom, StableNamedBinding>,
+) {
+    match item {
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            decl: Decl::Var(declaration),
+            ..
+        })) => {
+            for declarator in &declaration.decls {
+                let Pat::Ident(binding) = &declarator.name else {
+                    continue;
+                };
+                let property = binding.id.sym.clone();
+                let id = (binding.id.sym.clone(), binding.id.ctxt);
+                if let Some(receiver_insensitive) = stable_bindings.get(&id) {
+                    if candidates.contains(&property) {
+                        available.insert(
+                            property,
+                            StableNamedBinding {
+                                ident: binding.id.clone(),
+                                receiver_insensitive: *receiver_insensitive,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) if export.src.is_none() => {
+            for specifier in &export.specifiers {
+                let ExportSpecifier::Named(specifier) = specifier else {
+                    continue;
+                };
+                let ModuleExportName::Ident(local) = &specifier.orig else {
+                    continue;
+                };
+                let property = match &specifier.exported {
+                    Some(ModuleExportName::Ident(exported)) => exported.sym.clone(),
+                    Some(ModuleExportName::Str(_)) => continue,
+                    None => local.sym.clone(),
+                };
+                let id = (local.sym.clone(), local.ctxt);
+                if let Some(receiver_insensitive) = stable_bindings.get(&id) {
+                    if candidates.contains(&property) {
+                        available.insert(
+                            property,
+                            StableNamedBinding {
+                                ident: local.clone(),
+                                receiver_insensitive: *receiver_insensitive,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Clone)]
+struct StableNamedBinding {
+    ident: Ident,
+    receiver_insensitive: bool,
+}
+
+fn default_export_ident_at_span(item: &ModuleItem, span: Span) -> Option<&Ident> {
+    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = item else {
+        return None;
+    };
+    if export.span != span {
+        return None;
+    }
+    let Expr::Ident(binding) = strip_parens(&export.expr) else {
+        return None;
+    };
+    Some(binding)
+}
+
+struct CommonJsReadRewriter<'a> {
+    unresolved_mark: Mark,
+    default_binding: Option<&'a Ident>,
+    named_bindings: &'a HashMap<Atom, StableNamedBinding>,
+}
+
+impl VisitMut for CommonJsReadRewriter<'_> {
+    fn visit_mut_fn_decl(&mut self, _: &mut swc_core::ecma::ast::FnDecl) {}
+
+    fn visit_mut_callee(&mut self, callee: &mut Callee) {
+        match callee {
+            Callee::Expr(expression) => self.visit_mut_call_target(expression),
+            _ => callee.visit_mut_children_with(self),
+        }
+    }
+
+    fn visit_mut_opt_call(&mut self, call: &mut OptCall) {
+        self.visit_mut_call_target(&mut call.callee);
+        call.args.visit_mut_with(self);
+        call.type_args.visit_mut_with(self);
+    }
+
+    fn visit_mut_tagged_tpl(&mut self, tagged: &mut TaggedTpl) {
+        self.visit_mut_call_target(&mut tagged.tag);
+        tagged.tpl.visit_mut_with(self);
+        tagged.type_params.visit_mut_with(self);
+    }
+
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if is_module_exports_expr(expression, self.unresolved_mark) {
+            if let Some(binding) = self.default_binding {
+                let mut binding = binding.clone();
+                if let Expr::Member(member) = expression {
+                    binding.span = member.span;
+                }
+                *expression = Expr::Ident(binding);
+                return;
+            }
+        }
+
+        if let Expr::Member(member) = expression {
+            if let Expr::Ident(exports) = member.obj.as_ref() {
+                if is_unresolved_ident(exports, "exports", self.unresolved_mark) {
+                    if let Some(property) = is_ident_prop(&member.prop) {
+                        if let Some(binding) = self.named_bindings.get(&property) {
+                            let mut ident = binding.ident.clone();
+                            ident.span = member.span;
+                            *expression = Expr::Ident(ident);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        expression.visit_mut_children_with(self);
+    }
+}
+
+impl CommonJsReadRewriter<'_> {
+    fn visit_mut_call_target(&mut self, target: &mut Expr) {
+        if is_module_exports_expr(strip_parens(target), self.unresolved_mark) {
+            // `module.exports()` supplies `module` as the receiver. The
+            // default-binding proof establishes value identity, not receiver
+            // insensitivity, so direct calls stay visible and fail closed.
+            return;
+        }
+        if let Some(property) = commonjs_named_read_property(target, self.unresolved_mark) {
+            if self
+                .named_bindings
+                .get(&property)
+                .is_some_and(|binding| binding.receiver_insensitive)
+            {
+                target.visit_mut_with(self);
+            }
+            return;
+        }
+        target.visit_mut_with(self);
+    }
+}
+
+fn commonjs_named_read_property(expression: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+    let Expr::Member(member) = strip_parens(expression) else {
+        return None;
+    };
+    let Expr::Ident(exports) = member.obj.as_ref() else {
+        return None;
+    };
+    if !is_unresolved_ident(exports, "exports", unresolved_mark) {
+        return None;
+    }
+    is_ident_prop(&member.prop)
 }
 
 /// Merge adjacent `var/let/const X = expr;` + `export { X };` into `export var/let/const X = expr;`.

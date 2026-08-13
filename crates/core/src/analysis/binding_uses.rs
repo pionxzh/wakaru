@@ -159,6 +159,16 @@ impl BindingUseIndex {
             .is_some_and(|info| !info.declarations.is_empty())
     }
 
+    /// Return the classified uses of one resolved binding. Consumers that
+    /// need a proof over every access (rather than a count) can inspect this
+    /// read-only slice without rebuilding a second AST visitor.
+    pub(crate) fn use_sites(&self, binding: &BindingId) -> &[UseSite] {
+        self.bindings
+            .get(binding)
+            .map(|info| info.uses.as_slice())
+            .unwrap_or_default()
+    }
+
     #[cfg(test)]
     fn use_kinds(&self, binding: &BindingId) -> Vec<UseKind> {
         self.bindings

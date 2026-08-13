@@ -1531,6 +1531,92 @@ fn webpack5_reused_named_loader_normalizes_only_prewrite_ids() {
 }
 
 #[test]
+fn webpack5_recovers_proven_commonjs_reads_without_runtime_residuals() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      load(1);
+      load(2);
+      module.exports = "entry";
+    }),
+    1: ((module) => {
+      const api = () => "ready";
+      module.exports = api;
+      if (typeof window !== "undefined") {
+        window.syntheticApi = module.exports;
+      }
+    }),
+    2: ((module, exports) => {
+      exports.second = exports.first = void 0;
+      exports.first = function(value) { return value + 1; };
+      exports.second = function(value) { return exports.first(value); };
+      consume(exports.second(1));
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-commonjs-read-recovery.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("the synthetic webpack container should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    let default_module = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-1.js")
+        .map(|(_, code)| code)
+        .expect("expected the default-exporting module");
+    assert!(
+        default_module.contains("window.syntheticApi = api"),
+        "{default_module}"
+    );
+    let named_module = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-2.js")
+        .map(|(_, code)| code)
+        .expect("expected the named-exporting module");
+    assert!(named_module.contains("first(value)"), "{named_module}");
+    assert!(
+        named_module.contains("consume(second(1))"),
+        "{named_module}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    let mapped = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-commonjs-read-recovery.js".to_string(),
+            emit_source_map: true,
+            ..Default::default()
+        },
+    )
+    .expect("source-map materialization should run the same recovery");
+    assert_eq!(validate_output_modules(&mapped.modules), vec![]);
+    assert!(mapped
+        .source_maps
+        .iter()
+        .any(|(filename, _)| filename == "module-1.js"));
+    assert!(mapped
+        .source_maps
+        .iter()
+        .any(|(filename, _)| filename == "module-2.js"));
+}
+
+#[test]
 fn webpack5_reused_loader_splits_a_mid_initializer_sequence() {
     let source = r#"
 (() => {
