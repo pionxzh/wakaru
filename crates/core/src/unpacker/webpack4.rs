@@ -136,7 +136,6 @@ pub(crate) struct RequireIdRewriter<'a> {
     pub(crate) unresolved_mark: Mark,
     pub(crate) from_filename: &'a str,
     pub(crate) id_to_filename: &'a std::collections::HashMap<usize, String>,
-    pub(crate) canonicalize_loader: bool,
 }
 
 impl VisitMut for RequireIdRewriter<'_> {
@@ -165,9 +164,6 @@ impl VisitMut for RequireIdRewriter<'_> {
                 value: path.into(),
                 raw: None,
             }));
-            if self.canonicalize_loader {
-                canonicalize_loader_binding(call, &self.require_sym, self.unresolved_mark);
-            }
         }
     }
 }
@@ -180,7 +176,6 @@ pub(crate) struct RequireStringIdRewriter<'a> {
     pub(crate) unresolved_mark: Mark,
     pub(crate) from_filename: &'a str,
     pub(crate) id_to_filename: &'a HashMap<String, String>,
-    pub(crate) canonicalize_loader: bool,
 }
 
 impl VisitMut for RequireStringIdRewriter<'_> {
@@ -208,45 +203,7 @@ impl VisitMut for RequireStringIdRewriter<'_> {
                 value: path.into(),
                 raw: None,
             }));
-            if self.canonicalize_loader {
-                canonicalize_loader_binding(call, &self.require_sym, self.unresolved_mark);
-            }
         }
-    }
-}
-
-/// Give only a proven, mapped webpack loader call the canonical `require`
-/// spelling. A reused factory parameter keeps its original binding for all
-/// non-loader uses; those uses are localized separately after runtime helper
-/// normalization.
-fn canonicalize_loader_binding(call: &mut CallExpr, require_sym: &Atom, unresolved_mark: Mark) {
-    let is_loader =
-        |ident: &Ident| ident.sym == *require_sym && ident.ctxt.outer() == unresolved_mark;
-    let Callee::Expr(callee) = &mut call.callee else {
-        return;
-    };
-    match callee.as_mut() {
-        Expr::Ident(ident) if is_loader(ident) => ident.sym = Atom::from("require"),
-        Expr::Member(MemberExpr { obj, prop, .. }) => {
-            if !matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == "bind") {
-                return;
-            }
-            let Expr::Ident(loader) = obj.as_mut() else {
-                return;
-            };
-            if !is_loader(loader) {
-                return;
-            }
-            loader.sym = Atom::from("require");
-            if let Some(ExprOrSpread { expr, .. }) = call.args.first_mut() {
-                if let Expr::Ident(this_arg) = expr.as_mut() {
-                    if is_loader(this_arg) {
-                        this_arg.sym = Atom::from("require");
-                    }
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -542,14 +499,19 @@ fn prepare_webpack4_modules(
             }
             let normalized = normalize_extracted_webpack_module(
                 descriptor.factory,
-                |post_rename_require_sym, unresolv_mark, canonicalize_loader, module| {
+                super::webpack_common::ReusedLoaderModuleIds {
+                    from_filename: &descriptor.filename,
+                    numeric: &num_id_to_filename,
+                    string: &str_id_to_filename,
+                    normalizes_conditional_runtime_members: false,
+                },
+                |post_rename_require_sym, unresolv_mark, module| {
                     if all_numeric {
                         let mut id_rewriter = RequireIdRewriter {
                             require_sym: post_rename_require_sym.clone(),
                             unresolved_mark: unresolv_mark,
                             from_filename: &descriptor.filename,
                             id_to_filename: &num_id_to_filename,
-                            canonicalize_loader,
                         };
                         module.visit_mut_with(&mut id_rewriter);
                     } else {
@@ -558,7 +520,6 @@ fn prepare_webpack4_modules(
                             unresolved_mark: unresolv_mark,
                             from_filename: &descriptor.filename,
                             id_to_filename: &str_id_to_filename,
-                            canonicalize_loader,
                         };
                         module.visit_mut_with(&mut string_rewriter);
                     }
@@ -826,7 +787,8 @@ fn extract_string_module_id(key: &PropName) -> Option<String> {
 /// Returns `(module, unresolved_mark)`.
 fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
-    require_rewrite: impl FnOnce(&Atom, Mark, bool, &mut Module),
+    loader_module_ids: super::webpack_common::ReusedLoaderModuleIds<'_>,
+    require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
 ) -> Result<(Module, Mark), FactoryNormalizationError> {
     // Extract param names (up to 3: module, exports, require)
     let params = &fn_expr.function.params;
@@ -869,15 +831,18 @@ fn normalize_extracted_webpack_module(
     let top_level_mark = Mark::new();
     synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-    let reused_require_sym = param_syms.get(2).and_then(|parameter| {
-        super::webpack_common::runtime_parameter_is_written(
+    let reused_require = param_syms.get(2).and_then(|parameter| {
+        super::webpack_common::runtime_parameter_reuse_binding(
             &synthetic_module,
             parameter,
             unresolved_mark,
         )
-        .then(|| parameter.clone())
+        .map(|binding| (parameter.clone(), binding))
     });
-    if reused_require_sym.as_deref() == Some("require") {
+    if reused_require
+        .as_ref()
+        .is_some_and(|(parameter, _)| parameter.as_ref() == "require")
+    {
         return Err(FactoryNormalizationError::LoaderParameterReuse);
     }
 
@@ -887,9 +852,9 @@ fn normalize_extracted_webpack_module(
         .iter()
         .filter(|(old_sym, new_sym)| {
             !(new_sym.as_ref() == "require"
-                && reused_require_sym
+                && reused_require
                     .as_ref()
-                    .is_some_and(|sym| sym == old_sym))
+                    .is_some_and(|(sym, _)| sym == old_sym))
         })
         .map(|(old_sym, new_sym)| BindingRename {
             old: (old_sym.clone(), unresolved_ctxt),
@@ -904,21 +869,26 @@ fn normalize_extracted_webpack_module(
         replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
     }
 
-    // Step 1b: apply require rewriting (caller provides the specific rewriter)
-    let post_rename_require_sym = reused_require_sym.clone().unwrap_or_else(|| {
-        if param_syms.get(2).map(|s| s.as_ref()) != Some("require") {
-            Atom::from("require")
-        } else {
-            param_syms
-                .get(2)
-                .cloned()
-                .unwrap_or_else(|| Atom::from("require"))
+    // Step 1b: separate a reused parameter's loader lifetime before any
+    // position-insensitive webpack normalizer runs. Calls after the first
+    // write must retain their localized binding even when their numeric ID is
+    // also present in the module table.
+    if let Some((parameter, target)) = reused_require {
+        if !super::webpack_common::localize_reused_runtime_parameter(
+            &mut synthetic_module,
+            &parameter,
+            &target,
+            unresolved_mark,
+            &loader_module_ids,
+        ) {
+            return Err(FactoryNormalizationError::LoaderParameterReuse);
         }
-    });
+    }
+
+    let post_rename_require_sym = Atom::from("require");
     require_rewrite(
         &post_rename_require_sym,
         unresolved_mark,
-        reused_require_sym.is_some(),
         &mut synthetic_module,
     );
 
@@ -934,16 +904,6 @@ fn normalize_extracted_webpack_module(
 
     // Step 2b: strip webpack's global-polyfill envelope
     unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
-
-    if let Some(parameter) = reused_require_sym {
-        if !super::webpack_common::localize_reused_runtime_parameter(
-            &mut synthetic_module,
-            &parameter,
-            unresolved_mark,
-        ) {
-            return Err(FactoryNormalizationError::LoaderParameterReuse);
-        }
-    }
 
     Ok((synthetic_module, unresolved_mark))
 }

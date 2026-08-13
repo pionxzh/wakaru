@@ -179,6 +179,23 @@ fact collection, filename recovery, or recursive scope splitting. Other
 normalization failures still reject the whole container, and a container with
 no recoverable factory still uses the original whole-input fallback.
 
+For a provable reuse boundary, localization runs before webpack's ordinary,
+position-insensitive runtime normalization. Only immediately evaluated uses
+before the first unconditional write, plus that write's right-hand side, are
+given the canonical `require` identity. Runtime-helper members and mapped
+module calls in that prefix can then use the normal webpack recovery path;
+post-write calls and members stay attached to the new local value even when a
+numeric argument happens to match a module-table ID. A first write may be a
+top-level assignment, a `var` redeclaration of the factory parameter, or a
+direct element inside a top-level/initializer sequence when splitting the
+sequence preserves its evaluation result. Numeric calls absent from the
+current table remain explicit `require(<number>)` runtime calls and never
+synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO` runtime-member reads
+may occur in a conditional prefix because its normalizer consumes them;
+conditional first-write boundaries, deferred pre-write captures, unmapped
+string IDs, consumed mid-sequence assignment results, and right-hand sides
+that mix the loader and local lifetimes remain failed/opaque.
+
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no
 bundle format matches, the driver falls back to heuristic scope-hoisted

@@ -1800,7 +1800,6 @@ fn normalize_extracted_webpack_entry_module(
         unresolved_mark,
         from_filename: "entry.js",
         id_to_filename,
-        canonicalize_loader: false,
     };
     synthetic_module.visit_mut_with(&mut id_rewriter);
     let mut str_rewriter = RequireStringIdRewriter {
@@ -1808,7 +1807,6 @@ fn normalize_extracted_webpack_entry_module(
         unresolved_mark,
         from_filename: "entry.js",
         id_to_filename: str_id_to_filename,
-        canonicalize_loader: false,
     };
     synthetic_module.visit_mut_with(&mut str_rewriter);
 
@@ -3227,15 +3225,18 @@ fn normalize_extracted_webpack_module(
         unresolved_mark
     };
 
-    let reused_require_sym = param_syms.get(2).and_then(|parameter| {
-        super::webpack_common::runtime_parameter_is_written(
+    let reused_require = param_syms.get(2).and_then(|parameter| {
+        super::webpack_common::runtime_parameter_reuse_binding(
             &synthetic_module,
             parameter,
             unresolved_mark,
         )
-        .then(|| parameter.clone())
+        .map(|binding| (parameter.clone(), binding))
     });
-    if reused_require_sym.as_deref() == Some("require") {
+    if reused_require
+        .as_ref()
+        .is_some_and(|(parameter, _)| parameter.as_ref() == "require")
+    {
         return Err(FactoryNormalizationError::LoaderParameterReuse);
     }
 
@@ -3249,9 +3250,9 @@ fn normalize_extracted_webpack_module(
             .filter(|(source, target)| source.as_ref() != *target)
             .filter(|(source, target)| {
                 !(*target == "require"
-                    && reused_require_sym
+                    && reused_require
                         .as_ref()
-                        .is_some_and(|sym| sym == *source))
+                        .is_some_and(|(sym, _)| sym == *source))
             })
             .map(|(source, target)| BindingRename {
                 old: (source.clone(), unresolved_ctxt),
@@ -3266,16 +3267,30 @@ fn normalize_extracted_webpack_module(
             replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
         }
 
-        let require_sym = reused_require_sym
-            .clone()
-            .unwrap_or_else(|| Atom::from("require"));
+        if let Some((parameter, target)) = reused_require {
+            if !super::webpack_common::localize_reused_runtime_parameter(
+                &mut synthetic_module,
+                &parameter,
+                &target,
+                unresolved_mark,
+                &super::webpack_common::ReusedLoaderModuleIds {
+                    from_filename: &descriptor.filename,
+                    numeric: id_to_filename,
+                    string: str_id_to_filename,
+                    normalizes_conditional_runtime_members: true,
+                },
+            ) {
+                return Err(FactoryNormalizationError::LoaderParameterReuse);
+            }
+        }
+
+        let require_sym = Atom::from("require");
 
         let mut id_rewriter = RequireIdRewriter {
             require_sym: require_sym.clone(),
             unresolved_mark,
             from_filename: &descriptor.filename,
             id_to_filename,
-            canonicalize_loader: reused_require_sym.is_some(),
         };
         synthetic_module.visit_mut_with(&mut id_rewriter);
         let mut str_rewriter = RequireStringIdRewriter {
@@ -3283,7 +3298,6 @@ fn normalize_extracted_webpack_module(
             unresolved_mark,
             from_filename: &descriptor.filename,
             id_to_filename: str_id_to_filename,
-            canonicalize_loader: reused_require_sym.is_some(),
         };
         synthetic_module.visit_mut_with(&mut str_rewriter);
 
@@ -3299,16 +3313,6 @@ fn normalize_extracted_webpack_module(
         // the shared structural detector prepares through this path. Expose
         // the generated wrapper body before the driver reaches UnEsm.
         unwrap_webpack_global_envelopes(&mut synthetic_module, unresolved_mark);
-    }
-
-    if let Some(parameter) = reused_require_sym {
-        if !super::webpack_common::localize_reused_runtime_parameter(
-            &mut synthetic_module,
-            &parameter,
-            unresolved_mark,
-        ) {
-            return Err(FactoryNormalizationError::LoaderParameterReuse);
-        }
     }
 
     Ok((synthetic_module, unresolved_mark))

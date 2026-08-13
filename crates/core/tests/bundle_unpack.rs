@@ -784,6 +784,528 @@ fn webpack5_reused_loader_function_keeps_followup_property_initialization() {
 }
 
 #[test]
+fn webpack5_reused_loader_normalizes_only_the_loader_lifetime() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      "use strict";
+      load.r(exports);
+      const before = load(1);
+      const eager = load.bind(load, 1);
+      const getter = load.n(before);
+      const namespaceValue = load.t(before, 2).value;
+      load = load(2);
+      load.r(exports);
+      const direct = load(1);
+      const lateEager = load.bind(load, 1);
+      const lateGetter = load.n(before);
+      const lateNamespace = load.t(before, 2);
+      const runtimeGlobal = load.g;
+      module.exports = [
+        before,
+        eager,
+        getter,
+        namespaceValue,
+        direct,
+        lateEager,
+        lateGetter,
+        lateNamespace,
+        runtimeGlobal,
+        load
+      ];
+    }),
+    1: ((module) => {
+      module.exports = "dependency";
+    }),
+    2: ((module) => {
+      module.exports = function runtimeValue(value) { return value; };
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-loader-lifetimes.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a proven loader/local lifetime boundary should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered loader-reuse module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(entry.contains("./module-2.js"), "{entry}");
+    assert!(
+        entry.contains("_load.r(exports)")
+            && entry.contains("_load(1)")
+            && entry.contains("_load.bind(_load, 1)")
+            && entry.contains("_load.n")
+            && entry.contains("_load.t")
+            && entry.contains("_load.g"),
+        "post-write calls and helpers belong to the localized value:\n{entry}"
+    );
+    assert!(
+        !entry.contains("require.r")
+            && !entry.contains("require.t")
+            && entry.matches("_load.r(exports)").count() == 1,
+        "pre-write webpack helpers should be consumed:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack4_reused_loader_normalizes_prewrite_runtime_helpers() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(0);
+}([
+  function(module, exports, load) {
+    "use strict";
+    load.r(exports);
+    load.d(exports, "value", function() { return value; });
+    var value = load(1);
+    load = load(2);
+    load.r(exports);
+    var direct = load(1);
+    module.exports = [value, direct, load];
+  },
+  function(module) {
+    module.exports = "dependency";
+  },
+  function(module) {
+    module.exports = function runtimeValue(value) { return value; };
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-loader-helpers.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack 4 runtime helpers before a reuse boundary should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("runtimeValue") || code.contains("_load"))
+        .map(|(_, code)| code)
+        .expect("expected recovered webpack 4 loader-reuse module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(entry.contains("./module-2.js"), "{entry}");
+    assert!(entry.contains("_load.r(exports)"), "{entry}");
+    assert!(entry.contains("_load(1)"), "{entry}");
+    assert!(
+        !entry.contains("require.r")
+            && !entry.contains("require.d")
+            && entry.matches("_load.r(exports)").count() == 1,
+        "{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_var_redeclaration_starts_the_local_lifetime() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      var load = load(1);
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "localized";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-loader-redeclaration.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a var redeclaration should identify the loader lifetime boundary");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered redeclaration module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(!entry.contains("require(1)"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_named_loader_normalizes_only_prewrite_ids() {
+    let source = r#"
+(() => {
+  var modules = ({
+    "./entry.js": ((module, exports, load) => {
+      const before = load("./before.js");
+      load = load("./runtime.js");
+      const after = load("./before.js");
+      module.exports = [before, after, load];
+    }),
+    "./before.js": ((module) => {
+      module.exports = "before";
+    }),
+    "./runtime.js": ((module) => {
+      module.exports = function runtimeValue(value) { return value; };
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })("./entry.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-named-loader-lifetimes.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a proven named-ID loader boundary should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered named-ID entry");
+    assert!(entry.contains("./before.js"), "{entry}");
+    assert!(entry.contains("./runtime.js"), "{entry}");
+    assert!(
+        entry.contains("_load(\"./before.js\")"),
+        "the post-write string call must retain the localized runtime:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_splits_a_mid_initializer_sequence() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      var absent = load(137), marker,
+        build = (marker = load(1), load = load(2), function() { return load; });
+      module.exports = [absent, marker, build(), load];
+    }),
+    1: ((module) => {
+      module.exports = "dependency";
+    }),
+    2: ((module) => {
+      module.exports = "localized";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-loader-initializer-sequence.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a mid-initializer loader boundary should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(
+        output.warnings.iter().all(|warning| {
+            warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        }),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered initializer module");
+    assert!(
+        entry.contains("require(137)"),
+        "an absent numeric id must remain an honest runtime call:\n{entry}"
+    );
+    assert!(
+        !entry.contains("module-137") && !entry.contains("from \"137\""),
+        "an absent numeric id must not synthesize an ESM edge:\n{entry}"
+    );
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(entry.contains("./module-2.js"), "{entry}");
+    assert!(
+        entry.matches("_load").count() >= 3,
+        "the suffix closure and later reads must use the localized value:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_splits_a_top_level_sequence_in_order() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      observe("before"), load = alternateRuntime, observe("after", load);
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "stable";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-loader-top-level-sequence.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a top-level sequence boundary should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered sequence module");
+    let before = entry.find("observe(\"before\")").expect("prefix effect");
+    let local = entry.find("alternateRuntime").expect("localized write");
+    let after = entry.find("observe(\"after\"").expect("suffix effect");
+    assert!(
+        before < local && local < after,
+        "evaluation order changed:\n{entry}"
+    );
+    assert!(entry.contains("observe(\"after\", _load)"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_keeps_consumed_mid_sequence_opaque() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      const value = (observe("before"), load = load(1)).value;
+      module.exports = value;
+    }),
+    1: ((module) => {
+      module.exports = { value: "stable" };
+    }),
+    2: ((module) => {
+      module.exports = "independent";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(2);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-consumed-loader-sequence.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("an unsupported factory should stay isolated");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected opaque factory");
+    assert!(opaque.contains("observe(\"before\")"), "{opaque}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_recovers_conditional_runtime_global_reads() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      load = typeof load.g === "object" && load.g && load.g.Object === Object && load.g;
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "independent";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-conditional-runtime-global.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack runtime-global reads should identify the old loader lifetime");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered runtime-global module");
+    assert!(
+        !entry.contains("require.g") && !entry.contains("load.g"),
+        "{entry}"
+    );
+    assert!(entry.contains("global"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_loader_keeps_bare_old_lifetime_values_opaque() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      load = typeof factory === "function"
+        ? factory.call(exports, load, exports, module)
+        : factory;
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "independent";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(1);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-bare-loader-lifetime.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("an unsupported factory should stay isolated");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected opaque factory");
+    assert!(opaque.contains("factory.call(exports, load"), "{opaque}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack5_opaque_loader_reuse_preserves_other_structural_modules() {
     let source = r#"
 (() => {
@@ -1044,7 +1566,11 @@ fn webpack5_loader_reuse_demotion_reaches_an_order_independent_fixed_point() {
 
     let forward = run(&format!("{dependent}, {inherently_opaque}, {stable}"));
     let reverse = run(&format!("{stable}, {inherently_opaque}, {dependent}"));
-    assert_eq!(forward, vec!["module-0.js", "module-1.js"]);
+    assert_eq!(
+        forward,
+        vec!["module-1.js"],
+        "an absent numeric target stays an honest runtime call instead of demoting its caller"
+    );
     assert_eq!(reverse, forward);
 }
 
