@@ -69,9 +69,9 @@ emit → parse → resolver round trip. Source-map mode materializes that privat
 AST sidecar and follows the parser path because emitted mappings need
 parser-owned module coordinates.
 
-A structurally identified numeric-ID webpack factory whose reused loader
-parameter cannot be localized safely is deliberately absent from this fact
-system. Phase 1 inserts empty facts and a stable
+A structurally identified numeric-ID webpack factory whose reused `module`,
+`exports`, or loader parameter cannot be localized safely is deliberately
+absent from this fact system. Phase 1 inserts empty facts and a stable
 `webpack_factory_recovery_failed` diagnostic; Phase 2 returns the raw extracted
 body without parsing or transforming it. Its ID is also excluded from
 synthesized module-edge maps, so neither that opaque provider nor its consumers
@@ -105,11 +105,14 @@ declared-property list without weakening the proven object identity.
 
 `collect_commonjs_default_attached_properties` separately records static
 identifier properties assigned directly and unconditionally to a stable
-top-level function before the sole direct `module.exports = functionBinding`
-assignment. It is a positive-membership fact only: a recorded property can be
-repaired, but an absent property says nothing about the callable's runtime
-surface. Computed, conditional, nested, post-export, or reassigned shapes fail
-closed. Neither collector mutates the AST or shared state.
+top-level callable around the sole `module.exports` assignment. This includes
+the localized webpack form `var alias = module.exports = functionBinding`
+followed by direct alias-property writes, including writes in the
+guaranteed-once right-hand side of a top-level `for ... in`. It is a
+positive-membership fact only: a recorded property can be repaired, but an
+absent property says nothing about the callable's runtime surface. Computed,
+conditional, nested, or reassigned shapes fail closed. Neither collector
+mutates the AST or shared state.
 
 Normal processing also restores webpack's runtime-created `module.exports = {}`
 only when structural webpack detection proves that a normalized extracted

@@ -24,7 +24,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::analysis::binding_uses::BindingUseIndex;
+use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::module_path::resolve_relative_specifier;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
@@ -1097,12 +1097,16 @@ pub fn collect_commonjs_default_object(
 }
 
 /// Collect static properties attached unconditionally to a stable top-level
-/// function before that exact binding becomes the CommonJS default value.
+/// callable that becomes the CommonJS default value.
 ///
-/// Only direct assignment statements and direct elements of a top-level comma
-/// sequence are considered. Conditional/logical writes, nested scopes,
-/// computed keys, writes after `module.exports`, and reassigned callables fail
-/// closed rather than guessing a provider surface.
+/// The ordinary form attaches properties to a function before assigning that
+/// function to `module.exports`. Webpack runtime-parameter localization can
+/// instead produce `var alias = module.exports = functionBinding` followed by
+/// direct property writes to that stable alias. Both are the same CommonJS
+/// surface fact. Only direct assignment statements, direct elements of a
+/// top-level comma sequence, and the guaranteed-once right-hand side of a
+/// top-level `for ... in` are considered. Conditional/logical writes, nested
+/// scopes, computed keys, and reassigned callables or aliases fail closed.
 pub fn collect_commonjs_default_attached_properties(
     module: &Module,
     unresolved_mark: Mark,
@@ -1123,44 +1127,48 @@ pub fn collect_commonjs_default_attached_properties(
 
     let mut default_assignments = Vec::new();
     let mut property_assignments = Vec::new();
+    let mut evaluation_order = 0usize;
     for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
-            continue;
-        };
-        visit_direct_sequence_expressions(&expr_stmt.expr, &mut |expr| {
-            let Expr::Assign(assign) = strip_parens(expr) else {
-                return;
-            };
-            if assign.op != swc_core::ecma::ast::AssignOp::Assign {
-                return;
+        match item {
+            ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
+                visit_direct_sequence_expressions(&expr_stmt.expr, &mut |expr| {
+                    record_callable_surface_expression(
+                        expr,
+                        unresolved_mark,
+                        &mut evaluation_order,
+                        &mut default_assignments,
+                        &mut property_assignments,
+                    );
+                });
             }
-            if is_unresolved_module_exports_target(&assign.left, unresolved_mark) {
-                if let Expr::Ident(value) = strip_parens(&assign.right) {
-                    default_assignments
-                        .push((assign.span.lo, Some((value.sym.clone(), value.ctxt))));
-                } else {
-                    default_assignments.push((assign.span.lo, None));
-                }
-                return;
+            ModuleItem::Stmt(Stmt::ForIn(for_in)) => {
+                visit_direct_sequence_expressions(&for_in.right, &mut |expr| {
+                    record_callable_surface_expression(
+                        expr,
+                        unresolved_mark,
+                        &mut evaluation_order,
+                        &mut default_assignments,
+                        &mut property_assignments,
+                    );
+                });
             }
-            let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
-                return;
-            };
-            let Expr::Ident(object) = member.obj.as_ref() else {
-                return;
-            };
-            let MemberProp::Ident(property) = &member.prop else {
-                return;
-            };
-            property_assignments.push((
-                assign.span.lo,
-                (object.sym.clone(), object.ctxt),
-                property.sym.clone(),
-            ));
-        });
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                let Some(candidate) = localized_callable_default(var, unresolved_mark) else {
+                    continue;
+                };
+                evaluation_order += 1;
+                default_assignments.push(Some(CallableDefaultCandidate {
+                    export_order: evaluation_order,
+                    property_binding: candidate.0,
+                    function_binding: candidate.1,
+                    properties_follow_export: true,
+                }));
+            }
+            _ => {}
+        }
     }
 
-    let [(export_position, Some(binding))] = default_assignments.as_slice() else {
+    let [Some(candidate)] = default_assignments.as_slice() else {
         return Vec::new();
     };
     // The direct-statement scan above identifies the candidate export and its
@@ -1174,23 +1182,110 @@ pub fn collect_commonjs_default_attached_properties(
     if all_default_assignments.values.len() != 1 {
         return Vec::new();
     }
-    if !function_bindings.contains(binding) {
+    if !function_bindings.contains(&candidate.function_binding) {
         return Vec::new();
     }
     let uses = BindingUseIndex::collect(module);
-    if uses.has_direct_write(binding) {
+    if uses.has_direct_write(&candidate.function_binding)
+        || uses.has_direct_write(&candidate.property_binding)
+    {
         return Vec::new();
     }
 
     let mut properties = property_assignments
         .into_iter()
-        .filter_map(|(position, object, property)| {
-            (position < *export_position && object == *binding).then_some(property)
+        .filter_map(|(order, object, property)| {
+            let correct_side = if candidate.properties_follow_export {
+                order > candidate.export_order
+            } else {
+                order < candidate.export_order
+            };
+            (correct_side && object == candidate.property_binding).then_some(property)
         })
         .collect::<Vec<_>>();
     properties.sort();
     properties.dedup();
     properties
+}
+
+struct CallableDefaultCandidate {
+    export_order: usize,
+    property_binding: BindingId,
+    function_binding: BindingId,
+    properties_follow_export: bool,
+}
+
+fn record_callable_surface_expression(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    evaluation_order: &mut usize,
+    default_assignments: &mut Vec<Option<CallableDefaultCandidate>>,
+    property_assignments: &mut Vec<(usize, BindingId, Atom)>,
+) {
+    *evaluation_order += 1;
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return;
+    };
+    if assign.op != swc_core::ecma::ast::AssignOp::Assign {
+        return;
+    }
+    if is_unresolved_module_exports_target(&assign.left, unresolved_mark) {
+        let candidate = if let Expr::Ident(value) = strip_parens(&assign.right) {
+            let binding = (value.sym.clone(), value.ctxt);
+            Some(CallableDefaultCandidate {
+                export_order: *evaluation_order,
+                property_binding: binding.clone(),
+                function_binding: binding,
+                properties_follow_export: false,
+            })
+        } else {
+            None
+        };
+        default_assignments.push(candidate);
+        return;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return;
+    };
+    let Expr::Ident(object) = member.obj.as_ref() else {
+        return;
+    };
+    let MemberProp::Ident(property) = &member.prop else {
+        return;
+    };
+    property_assignments.push((
+        *evaluation_order,
+        (object.sym.clone(), object.ctxt),
+        property.sym.clone(),
+    ));
+}
+
+fn localized_callable_default(
+    var: &swc_core::ecma::ast::VarDecl,
+    unresolved_mark: Mark,
+) -> Option<(BindingId, BindingId)> {
+    if var.kind != swc_core::ecma::ast::VarDeclKind::Var || var.decls.len() != 1 {
+        return None;
+    }
+    let declaration = &var.decls[0];
+    let Pat::Ident(alias) = &declaration.name else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(declaration.init.as_deref()?) else {
+        return None;
+    };
+    if assign.op != swc_core::ecma::ast::AssignOp::Assign
+        || !is_unresolved_module_exports_target(&assign.left, unresolved_mark)
+    {
+        return None;
+    }
+    let Expr::Ident(function) = strip_parens(&assign.right) else {
+        return None;
+    };
+    Some((
+        (alias.id.sym.clone(), alias.id.ctxt),
+        (function.sym.clone(), function.ctxt),
+    ))
 }
 
 fn visit_direct_sequence_expressions(expr: &Expr, visitor: &mut impl FnMut(&Expr)) {

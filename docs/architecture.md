@@ -165,13 +165,13 @@ renamed without changing host-environment lookup, so that case still rejects
 the candidate and normal fallback preserves the original bundle.
 
 Webpack has one narrower partial-failure path. A minified factory may reuse its
-loader parameter as an ordinary local after its last module load. In a
-numeric-ID container, when that lifetime boundary cannot be proved, Wakaru
-preserves that factory's extracted body unchanged and marks only that module
-as failed; other factories in the same structurally proven container remain
-recoverable. Named-ID containers keep the whole-input fallback because an
-unresolved path-like runtime call could otherwise be mistaken for an ESM
-import. A fixed-point pass
+`module`, `exports`, or loader parameter as an ordinary local after its last
+runtime use. In a numeric-ID container, when that lifetime boundary cannot be
+proved, Wakaru preserves that factory's extracted body unchanged and marks only
+that module as failed; other factories in the same structurally proven
+container remain recoverable. Named-ID containers keep the whole-input fallback
+because an unresolved path-like runtime call could otherwise be mistaken for an
+ESM import. A fixed-point pass
 removes failed factory IDs from the rewrite map before retrying dependants, so
 calls to an opaque factory follow the existing absent-ID behavior instead of
 becoming invented ESM edges. The opaque body never enters rule processing,
@@ -181,20 +181,29 @@ no recoverable factory still uses the original whole-input fallback.
 
 For a provable reuse boundary, localization runs before webpack's ordinary,
 position-insensitive runtime normalization. Only immediately evaluated uses
-before the first unconditional write, plus that write's right-hand side, are
-given the canonical `require` identity. Runtime-helper members and mapped
-module calls in that prefix can then use the normal webpack recovery path;
-post-write calls and members stay attached to the new local value even when a
-numeric argument happens to match a module-table ID. A first write may be a
-top-level assignment, a `var` redeclaration of the factory parameter, or a
-direct element inside a top-level/initializer sequence when splitting the
-sequence preserves its evaluation result. Numeric calls absent from the
-current table remain explicit `require(<number>)` runtime calls and never
-synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO` runtime-member reads
-may occur in a conditional prefix because its normalizer consumes them;
-conditional first-write boundaries, deferred pre-write captures, unmapped
-string IDs, consumed mid-sequence assignment results, and right-hand sides
-that mix the loader and local lifetimes remain failed/opaque.
+before the first unconditional write, plus supported loader uses in that
+write's initializer, receive the canonical `module`, `exports`, or `require`
+identity. The write is lifted to a new `var` local and every later use follows
+that local. Runtime-helper members and mapped module calls in a
+loader prefix can then use the normal webpack recovery path; post-write calls
+and members stay attached to the new local value even when a numeric argument
+happens to match a module-table ID. Webpack 5's top-level
+`module = require.hmd(module)` / `nmd(module)` decorators are runtime-preserving
+operations consumed by its existing normalizer, not lifetime boundaries. A
+first real write may be a top-level assignment, a `var` redeclaration of the
+factory parameter, or a direct element inside a top-level/initializer sequence
+when splitting the sequence preserves its evaluation result. A consumed alias
+reset on the guaranteed-once right-hand side of a top-level `for ... in` is
+also supported by replacing the reset with the localized value before lifting
+its initializer. Numeric calls
+absent from the current table remain explicit `require(<number>)` runtime calls
+and never synthesize an ESM edge. Webpack 5's pure `.g` and `.amdO`
+runtime-member reads may occur in a conditional loader prefix because its
+normalizer consumes them. Conditional first-write boundaries, hoisted or other
+deferred pre-write captures, unmapped string IDs, consumed mid-sequence
+assignment results, and `module` / `exports` initializers that read the old
+runtime value remain failed/opaque rather than triggering control-flow or
+facade inference.
 
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no

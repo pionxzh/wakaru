@@ -357,7 +357,7 @@ pub(crate) struct RecoverableParseError {
 /// driver turns this into a stable operational diagnostic and failed status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DetectedModuleFailure {
-    WebpackLoaderParameterReuse,
+    WebpackRuntimeParameterReuse,
 }
 
 /// Internal detector result. `prepared` is always aligned one-for-one with

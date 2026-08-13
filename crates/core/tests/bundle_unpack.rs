@@ -626,6 +626,477 @@ fn webpack4_reused_loader_parameter_becomes_a_local_after_module_loads() {
 }
 
 #[test]
+fn webpack4_reused_exports_parameter_preserves_the_runtime_export_lifetime() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(0);
+}([
+  function(module, publicValue, load) {
+    publicValue.ready = true;
+    publicValue = load(1);
+    consume(publicValue.value);
+  },
+  function(module) {
+    module.exports = { value: "dependency" };
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-reused-exports.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 exports parameter reuse should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("consume"))
+        .map(|(_, code)| code)
+        .expect("expected recovered exports-reuse module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(
+        !entry.contains("exports ="),
+        "the parameter's second lifetime must be a declared local:\n{entry}"
+    );
+    assert!(entry.contains("import _publicValue from"), "{entry}");
+    assert!(entry.contains("consume(_publicValue.value)"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_exports_and_loader_parameters_split_in_evaluation_order() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, publicValue, load) => {
+      publicValue.ready = true;
+      const read = (
+        publicValue = load(1),
+        load = load(2),
+        () => [publicValue.value, load.value]
+      );
+      module.exports = read;
+    }),
+    1: ((module) => {
+      module.exports = { value: "dependency" };
+    }),
+    2: ((module) => {
+      module.exports = { value: "runtime" };
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-interleaved-runtime-parameters.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("interleaved exports and loader lifetimes should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered interleaved module");
+    let dependency = entry.find("./module-1.js").expect("first dependency");
+    let runtime = entry.find("./module-2.js").expect("second dependency");
+    assert!(dependency < runtime, "dependency order changed:\n{entry}");
+    assert!(!entry.contains("exports ="), "{entry}");
+    assert!(entry.contains("import _publicValue from"), "{entry}");
+    assert!(entry.contains("import _load from"), "{entry}");
+    assert!(entry.contains("_publicValue.value"), "{entry}");
+    assert!(entry.contains("_load.value"), "{entry}");
+    assert!(entry.contains("export default read"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    let mapped = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-interleaved-runtime-parameters.js".to_string(),
+            emit_source_map: true,
+            ..Default::default()
+        },
+    )
+    .expect("source-map materialization should preserve both localized lifetimes");
+    let mapped_entry = mapped
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected mapped interleaved module");
+    assert!(
+        mapped_entry.contains("_publicValue.value"),
+        "{mapped_entry}"
+    );
+    assert!(mapped_entry.contains("_load.value"), "{mapped_entry}");
+    assert!(mapped
+        .source_maps
+        .iter()
+        .any(|(filename, _)| filename == "module-0.js"));
+    assert_eq!(validate_output_modules(&mapped.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_module_parameter_preserves_the_runtime_module_lifetime() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((context, exports, load) => {
+      context.exports.ready = true;
+      context = load(1);
+      consume(context.value);
+    }),
+    1: ((module) => {
+      module.exports = { value: "dependency" };
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-reused-module.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 module parameter reuse should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered module-reuse module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(
+        !entry.contains("module ="),
+        "the parameter's second lifetime must be a declared local:\n{entry}"
+    );
+    assert!(entry.contains("import _context from"), "{entry}");
+    assert!(entry.contains("consume(_context.value)"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_reused_exports_in_for_in_rhs_preserves_the_consumed_value() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((context, publicValue, load) => {
+      var additions = load(1);
+      function api(value) { return value; }
+      for (var key in (((publicValue = context.exports = api).own = true), additions)) {
+        publicValue[key] = additions[key];
+      }
+      consume(publicValue);
+    }),
+    1: ((module) => {
+      module.exports = { extra: "value" };
+    }),
+    2: ((module, exports, load) => {
+      var own = load(0).own;
+      module.exports = own;
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(2);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-for-in-exports-alias.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a consumed exports alias reset in a for-in RHS should unpack");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().all(|warning| {
+        warning.kind != wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected recovered for-in alias module");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert!(entry.contains("export default _publicValue"), "{entry}");
+    assert!(entry.contains("_publicValue.own = true"), "{entry}");
+    assert!(entry.contains("_publicValue[key]"), "{entry}");
+    assert!(!entry.contains("exports ="), "{entry}");
+    assert!(entry.contains("consume(_publicValue)"), "{entry}");
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-2.js")
+        .map(|(_, code)| code)
+        .expect("expected consumer of the attached callable property");
+    assert!(!consumer.contains("import { own"), "{consumer}");
+    assert!(consumer.contains(".own"), "{consumer}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_hoisted_function_capture_keeps_runtime_parameter_reuse_opaque() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      observeLoader();
+      load = load(1);
+      function observeLoader() {
+        consume(load(2));
+      }
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "runtime";
+    }),
+    2: ((module) => {
+      module.exports = "dependency";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-hoisted-runtime-capture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a hoisted capture should isolate only its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected opaque hoisted-capture factory");
+    assert!(opaque.contains("function observeLoader"), "{opaque}");
+    assert!(opaque.contains("load(2)"), "{opaque}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack4_unprovable_exports_reuse_isolates_only_its_factory() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(2);
+}([
+  function(module, publicValue) {
+    if (globalThis.replaceExports) publicValue = globalThis.replacement;
+    module.exports = publicValue;
+  },
+  function(module) {
+    module.exports = "stable";
+  },
+  function(module, exports, load) {
+    module.exports = [load(0), load(1)];
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-conditional-exports-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("an unprovable exports lifetime should isolate only its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    let failures = output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        failures.len(),
+        1,
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    assert_eq!(failures[0].filename, "module-0.js");
+    assert!(
+        failures[0].message.contains("runtime-parameter reuse"),
+        "unexpected diagnostic: {}",
+        failures[0].message
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-2.js")
+        .map(|(_, code)| code)
+        .expect("expected recoverable sibling factory");
+    assert!(entry.contains("require(0)"), "{entry}");
+    assert!(!entry.contains("./module-0.js"), "{entry}");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_exports_reuse_that_reads_the_old_value_stays_opaque() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, publicValue) => {
+      publicValue = chooseValue(publicValue, globalThis.replacement);
+      module.exports = publicValue;
+    }),
+    1: ((module) => {
+      module.exports = "stable";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(1);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-read-before-exports-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("value-flow reuse should isolate only its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected opaque value-flow factory");
+    assert!(opaque.contains("chooseValue(publicValue"), "{opaque}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_post_loader_write_module_decorator_shape_stays_opaque() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((context, exports, load) => {
+      load = load(1);
+      context = load.hmd(context);
+      context.exports = "local";
+    }),
+    1: ((module) => {
+      module.exports = { hmd: value => value };
+    }),
+    2: ((module) => {
+      module.exports = "stable";
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(2);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-post-write-decorator-lookalike.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("a second-lifetime decorator lookalike should isolate its factory");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected opaque decorator-lookalike factory");
+    assert!(opaque.contains("load.hmd(context)"), "{opaque}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack4_opaque_loader_reuse_preserves_other_structural_modules() {
     let source = r#"
 !function(modules) {
@@ -1575,7 +2046,7 @@ fn webpack5_loader_reuse_demotion_reaches_an_order_independent_fixed_point() {
 }
 
 #[test]
-fn webpack5_non_loader_normalization_failure_still_rejects_the_container() {
+fn webpack5_non_runtime_parameter_normalization_failure_still_rejects_the_container() {
     let source = r#"
 (() => {
   var modules = ({

@@ -50,10 +50,10 @@ use crate::unpacker::DetectedModuleFailure;
 
 fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> UnpackWarning {
     match failure {
-        DetectedModuleFailure::WebpackLoaderParameterReuse => UnpackWarning::new(
+        DetectedModuleFailure::WebpackRuntimeParameterReuse => UnpackWarning::new(
             filename,
             UnpackWarningKind::WebpackFactoryRecoveryFailed,
-            "webpack factory loader-parameter reuse could not be normalized; preserving the opaque factory body",
+            "webpack factory runtime-parameter reuse could not be normalized; preserving the opaque factory body",
         ),
     }
 }
@@ -1925,6 +1925,55 @@ module.exports = function(value) { return parse(value); };
                 "an unproven property import must not be rewritten through the default export:\n{consumer}"
             );
         }
+    }
+
+    #[test]
+    fn provider_facts_reject_conditional_properties_on_a_localized_callable_alias() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: r#"
+function api(value) { return value; }
+var local = module.exports = api;
+if (globalThis.enableOptional) { local.optional = function() { return true; }; }
+"#
+                .to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var optional = require("./provider.js").optional;
+module.exports = optional;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("conditional alias-property fixture should decompile");
+        let findings = validate_prepared_output(&output);
+        assert!(
+            findings.iter().any(|finding| {
+                finding.kind == OutputFindingKind::MissingImportedName
+                    && finding.filename == "consumer.js"
+            }),
+            "a conditional alias property must remain visible to validation: {findings:#?}"
+        );
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import { optional } from \"./provider.js\""),
+            "an unproven alias property must not be repaired through the default export:\n{consumer}"
+        );
     }
 
     #[test]

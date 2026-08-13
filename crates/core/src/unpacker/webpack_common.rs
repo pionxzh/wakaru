@@ -28,10 +28,10 @@ const JAVASCRIPT_LIKE_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "jsx", "ts", "
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FactoryNormalizationError {
-    /// The factory loader parameter is written, but its loader/local lifetime
+    /// A factory runtime parameter is written, but its runtime/local lifetime
     /// boundary cannot be proved. This is the only normalization failure that
     /// webpack extraction may isolate to one opaque factory.
-    LoaderParameterReuse,
+    RuntimeParameterReuse,
     /// Any other normalization failure remains container-fatal.
     Fatal,
 }
@@ -100,12 +100,36 @@ pub(super) fn unique_webpack_module_filenames<'a>(
         .collect()
 }
 
-/// Resolve the binding used when a stripped webpack factory loader parameter is
-/// later reused as a writable local. Most parameter references resolve as the
-/// synthetic module's unresolved binding. A top-level `var load = load(id)` is
-/// special: in the original factory it redeclares the parameter, but resolving
-/// the wrapper-free body gives that declaration a local context. Return that
-/// context so localization still models JavaScript's parameter/`var` identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FactoryRuntimeParameter {
+    Module,
+    Exports,
+    Loader,
+}
+
+impl FactoryRuntimeParameter {
+    pub(super) fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::Exports => "exports",
+            Self::Loader => "require",
+        }
+    }
+}
+
+pub(super) struct ReusedRuntimeParameter {
+    pub(super) kind: FactoryRuntimeParameter,
+    pub(super) source: Atom,
+    pub(super) binding: BindingId,
+}
+
+/// Resolve the binding used when a stripped webpack factory runtime parameter
+/// is later reused as a writable local. Most parameter references resolve as
+/// the synthetic module's unresolved binding. A top-level
+/// `var load = load(id)` is special: in the original factory it redeclares the
+/// parameter, but resolving the wrapper-free body gives that declaration a
+/// local context. Return that context so localization still models JavaScript's
+/// parameter/`var` identity.
 pub(super) fn runtime_parameter_reuse_binding(
     module: &Module,
     parameter: &Atom,
@@ -138,6 +162,128 @@ pub(super) fn runtime_parameter_reuse_binding(
         }
     }
     None
+}
+
+pub(super) fn reused_runtime_parameters(
+    module: &Module,
+    parameters: &[Atom],
+    unresolved_mark: Mark,
+    normalizes_module_decorators: bool,
+) -> Vec<ReusedRuntimeParameter> {
+    let loader_is_reused = parameters.get(2).is_some_and(|loader| {
+        runtime_parameter_reuse_binding(module, loader, unresolved_mark).is_some()
+    });
+    parameters
+        .iter()
+        .zip([
+            FactoryRuntimeParameter::Module,
+            FactoryRuntimeParameter::Exports,
+            FactoryRuntimeParameter::Loader,
+        ])
+        .filter_map(|(parameter, kind)| {
+            let mut binding = runtime_parameter_reuse_binding(module, parameter, unresolved_mark)?;
+            if kind == FactoryRuntimeParameter::Module
+                && normalizes_module_decorators
+                && !loader_is_reused
+                && parameters.get(2).is_some()
+            {
+                let mut without_runtime_decorators = module.clone();
+                mask_top_level_module_decorator_writes(
+                    &mut without_runtime_decorators,
+                    parameter,
+                    &parameters[2],
+                    unresolved_mark,
+                );
+                binding = runtime_parameter_reuse_binding(
+                    &without_runtime_decorators,
+                    parameter,
+                    unresolved_mark,
+                )?;
+            }
+            Some(ReusedRuntimeParameter {
+                kind,
+                source: parameter.clone(),
+                binding,
+            })
+        })
+        .collect()
+}
+
+/// Webpack 5's `hmd` / `nmd` helpers preserve the runtime module identity and
+/// are removed later by `Webpack5RuntimeNormalizer`. Mask only the same
+/// top-level statement/sequence positions that normalizer consumes so those
+/// writes do not masquerade as a second parameter lifetime during detection.
+fn mask_top_level_module_decorator_writes(
+    module: &mut Module,
+    module_parameter: &Atom,
+    loader_parameter: &Atom,
+    unresolved_mark: Mark,
+) {
+    let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+    let module_id = (module_parameter.clone(), unresolved_ctxt);
+    let loader_id = (loader_parameter.clone(), unresolved_ctxt);
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            continue;
+        };
+        if is_module_decorator_assignment(&statement.expr, &module_id, &loader_id) {
+            *statement.expr = Expr::Ident(Ident::new(module_id.0.clone(), DUMMY_SP, module_id.1));
+            continue;
+        }
+        let Expr::Seq(sequence) = strip_parens_mut(&mut statement.expr) else {
+            continue;
+        };
+        for expression in &mut sequence.exprs {
+            if is_module_decorator_assignment(expression, &module_id, &loader_id) {
+                **expression = Expr::Ident(Ident::new(module_id.0.clone(), DUMMY_SP, module_id.1));
+            }
+        }
+    }
+}
+
+fn is_module_decorator_assignment(
+    expr: &Expr,
+    module_id: &BindingId,
+    loader_id: &BindingId,
+) -> bool {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return false;
+    };
+    let Some(module) = simple_assignment_ident(left) else {
+        return false;
+    };
+    if module.sym != module_id.0 || module.ctxt != module_id.1 {
+        return false;
+    }
+    let Expr::Call(call) = strip_parens(right) else {
+        return false;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee) else {
+        return false;
+    };
+    let Expr::Ident(loader) = strip_parens(obj) else {
+        return false;
+    };
+    if loader.sym != loader_id.0 || loader.ctxt != loader_id.1 {
+        return false;
+    }
+    if !matches!(prop, MemberProp::Ident(name) if matches!(name.sym.as_ref(), "hmd" | "nmd")) {
+        return false;
+    }
+    matches!(strip_parens(&call.args[0].expr), Expr::Ident(argument)
+        if argument.sym == module_id.0 && argument.ctxt == module_id.1)
 }
 
 /// Module-table identities available while separating a reused webpack loader
@@ -186,29 +332,37 @@ impl ReusedLoaderModuleIds<'_> {
     }
 }
 
-/// Recover a webpack loader parameter's second lifetime as a real module-local
-/// binding before module calls and runtime helpers are normalized.
+/// Recover a webpack factory runtime parameter's second lifetime as a real
+/// module-local binding before module calls and runtime helpers are normalized.
 ///
-/// Minifiers commonly emit `value = load(id); load = /re/; ...`. The factory
+/// Minifiers commonly emit `value = load(id); load = /re/; ...`, or reuse the
+/// `module` / `exports` parameters after their CommonJS work is complete. The
 /// parameter is local in the original program, but the wrapper-free module
-/// previously printed the second lifetime as an assignment to free `require`.
-/// This routine first gives only the loader lifetime (top-level, immediate
-/// evaluation before the first write, plus that write's RHS) the canonical
-/// `require` spelling. It then lifts the write into a `var` initializer and
-/// scope-aware-renames every later use. Running the ordinary webpack
-/// normalizers afterwards therefore cannot mistake second-lifetime calls or
-/// member accesses for webpack operations. If the boundary is not a supported,
-/// unconditional write prefix, the caller must fail closed.
+/// would otherwise print the second lifetime as an assignment to a free
+/// runtime name. This routine first gives only the original lifetime
+/// (top-level, immediate evaluation before the first write, plus that write's
+/// RHS) its canonical `module`, `exports`, or `require` spelling. It then lifts
+/// the write into a `var` initializer and scope-aware-renames every later use.
+/// Running the ordinary webpack normalizers afterwards therefore cannot
+/// mistake second-lifetime calls or member accesses for webpack operations. If
+/// the boundary is not a supported, unconditional write prefix, the caller
+/// must fail closed.
 pub(super) fn localize_reused_runtime_parameter(
     module: &mut Module,
+    kind: FactoryRuntimeParameter,
     parameter: &Atom,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
 ) -> bool {
-    // A literal `require` parameter cannot share a printed spelling with the
-    // canonical loader calls while retaining a distinct local binding.
-    if parameter.as_ref() == "require" {
+    // A parameter already carrying its canonical spelling cannot share that
+    // emitted name with the original runtime references while retaining a
+    // distinct local binding. Supporting it needs positional renaming rather
+    // than this binding-wide lifetime split.
+    if parameter.as_ref() == kind.canonical_name() {
+        return false;
+    }
+    if has_hoisted_function_capture(module, target) {
         return false;
     }
 
@@ -223,6 +377,7 @@ pub(super) fn localize_reused_runtime_parameter(
     while let Some(mut item) = items.next() {
         if let Some(replacement) = lift_first_runtime_parameter_write(
             &mut item,
+            kind,
             target,
             &local,
             unresolved_mark,
@@ -234,7 +389,7 @@ pub(super) fn localize_reused_runtime_parameter(
             localized = true;
             break;
         }
-        if !canonicalize_prewrite_item(&mut item, target, unresolved_mark, module_ids) {
+        if !canonicalize_prewrite_item(&mut item, kind, target, unresolved_mark, module_ids) {
             return false;
         }
         rebuilt.push(item);
@@ -277,6 +432,7 @@ fn fresh_runtime_value_name(parameter: &Atom, used_names: &mut HashSet<Atom>) ->
 
 fn lift_first_runtime_parameter_write(
     item: &mut ModuleItem,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     local: &Ident,
     unresolved_mark: Mark,
@@ -301,6 +457,7 @@ fn lift_first_runtime_parameter_write(
                     }
                     let initializer = canonicalize_parameter_initializer(
                         init.clone(),
+                        kind,
                         target,
                         unresolved_mark,
                         module_ids,
@@ -308,6 +465,7 @@ fn lift_first_runtime_parameter_write(
                     (initializer, Vec::new(), true)
                 } else if let Some(split) = split_mid_sequence_parameter_assignment(
                     init,
+                    kind,
                     target,
                     unresolved_mark,
                     module_ids,
@@ -320,6 +478,7 @@ fn lift_first_runtime_parameter_write(
                 } else {
                     let Some(initializer) = take_leading_parameter_assignment(
                         init,
+                        kind,
                         target,
                         unresolved_mark,
                         module_ids,
@@ -331,6 +490,7 @@ fn lift_first_runtime_parameter_write(
 
                 if !canonicalize_prewrite_declarators(
                     &mut var.decls[..index],
+                    kind,
                     target,
                     unresolved_mark,
                     module_ids,
@@ -366,6 +526,7 @@ fn lift_first_runtime_parameter_write(
         ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
             if let Some(split) = split_mid_sequence_parameter_assignment(
                 &mut expr_stmt.expr,
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -386,6 +547,31 @@ fn lift_first_runtime_parameter_write(
             }
             let initializer = take_leading_parameter_assignment(
                 &mut expr_stmt.expr,
+                kind,
+                target,
+                unresolved_mark,
+                module_ids,
+            )?;
+            let mut replacement = runtime_value_initializer_items(
+                local.clone(),
+                initializer,
+                unresolved_mark,
+                used_names,
+            );
+            replacement.push(item.clone());
+            Some(replacement)
+        }
+        ModuleItem::Stmt(Stmt::ForIn(for_in)) => {
+            // A top-level `for (... in expr)` evaluates its right-hand side
+            // exactly once before entering the loop. Preserve a consumed
+            // first-write result by replacing it with the localized binding
+            // in `expr`, then materialize that binding immediately before the
+            // loop. This covers minified CommonJS alias resets such as
+            // `(exports = module.exports = api).member = value` without
+            // treating writes in the loop body as unconditional.
+            let initializer = take_leading_parameter_assignment(
+                &mut for_in.right,
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -402,6 +588,7 @@ fn lift_first_runtime_parameter_write(
         ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
             let initializer = take_leading_parameter_assignment(
                 &mut export.expr,
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -421,15 +608,17 @@ fn lift_first_runtime_parameter_write(
 
 fn take_leading_parameter_assignment(
     expr: &mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
 ) -> Option<Box<Expr>> {
-    take_leading_parameter_assignment_expr(expr.as_mut(), target, unresolved_mark, module_ids)
+    take_leading_parameter_assignment_expr(expr.as_mut(), kind, target, unresolved_mark, module_ids)
 }
 
 fn take_leading_parameter_assignment_expr(
     expr: &mut Expr,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
@@ -442,6 +631,7 @@ fn take_leading_parameter_assignment_expr(
         {
             let initializer = canonicalize_parameter_initializer(
                 assign.right.clone(),
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -453,6 +643,7 @@ fn take_leading_parameter_assignment_expr(
             AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
                 take_leading_parameter_assignment_expr(
                     member.obj.as_mut(),
+                    kind,
                     target,
                     unresolved_mark,
                     module_ids,
@@ -462,6 +653,7 @@ fn take_leading_parameter_assignment_expr(
         },
         Expr::Paren(paren) => take_leading_parameter_assignment_expr(
             paren.expr.as_mut(),
+            kind,
             target,
             unresolved_mark,
             module_ids,
@@ -469,6 +661,7 @@ fn take_leading_parameter_assignment_expr(
         Expr::Seq(sequence) => sequence.exprs.first_mut().and_then(|first| {
             take_leading_parameter_assignment_expr(
                 first.as_mut(),
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -476,6 +669,7 @@ fn take_leading_parameter_assignment_expr(
         }),
         Expr::Member(member) => take_leading_parameter_assignment_expr(
             member.obj.as_mut(),
+            kind,
             target,
             unresolved_mark,
             module_ids,
@@ -483,6 +677,7 @@ fn take_leading_parameter_assignment_expr(
         Expr::Call(call) => match &mut call.callee {
             Callee::Expr(callee) => take_leading_parameter_assignment_expr(
                 callee.as_mut(),
+                kind,
                 target,
                 unresolved_mark,
                 module_ids,
@@ -491,18 +686,21 @@ fn take_leading_parameter_assignment_expr(
         },
         Expr::Bin(binary) => take_leading_parameter_assignment_expr(
             binary.left.as_mut(),
+            kind,
             target,
             unresolved_mark,
             module_ids,
         ),
         Expr::Cond(cond) => take_leading_parameter_assignment_expr(
             cond.test.as_mut(),
+            kind,
             target,
             unresolved_mark,
             module_ids,
         ),
         Expr::Unary(unary) => take_leading_parameter_assignment_expr(
             unary.arg.as_mut(),
+            kind,
             target,
             unresolved_mark,
             module_ids,
@@ -518,6 +716,7 @@ fn take_leading_parameter_assignment_expr(
 /// through an outer consumer would require broader value-flow reasoning.
 fn split_mid_sequence_parameter_assignment(
     expr: &mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
@@ -535,15 +734,15 @@ fn split_mid_sequence_parameter_assignment(
     }
 
     let mut prefix = sequence.exprs[..index].to_vec();
-    if !prefix
-        .iter_mut()
-        .all(|expr| canonicalize_immediate_expression(expr, target, unresolved_mark, module_ids))
-    {
+    if !prefix.iter_mut().all(|expr| {
+        canonicalize_immediate_expression(expr, kind, target, unresolved_mark, module_ids)
+    }) {
         return None;
     }
     let assignment = direct_parameter_assignment(&sequence.exprs[index], target)?;
     let initializer = canonicalize_parameter_initializer(
         assignment.right.clone(),
+        kind,
         target,
         unresolved_mark,
         module_ids,
@@ -582,6 +781,7 @@ fn direct_parameter_assignment<'a>(expr: &'a Expr, target: &BindingId) -> Option
 
 fn canonicalize_parameter_initializer(
     mut initializer: Box<Expr>,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
@@ -589,38 +789,67 @@ fn canonicalize_parameter_initializer(
     // A function value is created now, but its body observes the localized
     // binding only after assignment. Other deferred bodies are rejected by the
     // immediate-expression visitor because their invocation timing is unknown.
-    if !matches!(strip_parens(&initializer), Expr::Fn(_) | Expr::Arrow(_))
-        && !canonicalize_immediate_expression(&mut initializer, target, unresolved_mark, module_ids)
-    {
+    let root_function = matches!(strip_parens(&initializer), Expr::Fn(_) | Expr::Arrow(_));
+    if root_function {
+        return Some(initializer);
+    }
+    if kind != FactoryRuntimeParameter::Loader {
+        let mut safety = ReadBeforeWrite::new(target);
+        initializer.visit_with(&mut safety);
+        if safety.read_before_write {
+            // Unlike loader calls and helpers, a raw `module` / `exports`
+            // value has no wrapper-free ESM representation. Reading it while
+            // establishing the second lifetime needs a runtime facade.
+            return None;
+        }
+    }
+    if !canonicalize_immediate_expression(
+        &mut initializer,
+        kind,
+        target,
+        unresolved_mark,
+        module_ids,
+    ) {
         return None;
     }
 
-    let mut safety = ReadBeforeWrite::new(target);
-    if !matches!(strip_parens(&initializer), Expr::Fn(_) | Expr::Arrow(_)) {
-        initializer.visit_with(&mut safety);
+    if kind != FactoryRuntimeParameter::Loader {
+        return Some(initializer);
     }
+    let mut safety = ReadBeforeWrite::new(target);
+    initializer.visit_with(&mut safety);
     (!safety.read_before_write).then_some(initializer)
 }
 
 fn canonicalize_prewrite_item(
     item: &mut ModuleItem,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
 ) -> bool {
     match item {
-        ModuleItem::Stmt(Stmt::Expr(stmt)) => {
-            canonicalize_immediate_expression(&mut stmt.expr, target, unresolved_mark, module_ids)
-        }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-            canonicalize_prewrite_declarators(&mut var.decls, target, unresolved_mark, module_ids)
-        }
+        ModuleItem::Stmt(Stmt::Expr(stmt)) => canonicalize_immediate_expression(
+            &mut stmt.expr,
+            kind,
+            target,
+            unresolved_mark,
+            module_ids,
+        ),
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => canonicalize_prewrite_declarators(
+            &mut var.decls,
+            kind,
+            target,
+            unresolved_mark,
+            module_ids,
+        ),
         _ => !item_contains_binding(item, target),
     }
 }
 
 fn canonicalize_prewrite_declarators(
     declarators: &mut [VarDeclarator],
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
@@ -638,7 +867,7 @@ fn canonicalize_prewrite_declarators(
             }
         }
         declarator.init.as_mut().is_none_or(|init| {
-            canonicalize_immediate_expression(init, target, unresolved_mark, module_ids)
+            canonicalize_immediate_expression(init, kind, target, unresolved_mark, module_ids)
         })
     })
 }
@@ -654,10 +883,34 @@ fn pattern_contains_binding(pattern: &Pat, target: &BindingId) -> bool {
 
 fn canonicalize_immediate_expression(
     expr: &mut Box<Expr>,
+    kind: FactoryRuntimeParameter,
     target: &BindingId,
     unresolved_mark: Mark,
     module_ids: &ReusedLoaderModuleIds<'_>,
 ) -> bool {
+    if kind != FactoryRuntimeParameter::Loader {
+        let uses = BindingUseIndex::collect_expr(expr);
+        if uses.has_direct_write(target) {
+            return false;
+        }
+        let mut safety = ImmediateRuntimeValueSafety {
+            target,
+            valid: true,
+        };
+        expr.visit_with(&mut safety);
+        if !safety.valid {
+            return false;
+        }
+        crate::rules::rename_utils::rename_bindings(
+            expr.as_mut(),
+            &[BindingRename {
+                old: target.clone(),
+                new: Atom::from(kind.canonical_name()),
+            }],
+        );
+        return true;
+    }
+
     let mut canonicalizer = ImmediateLoaderCanonicalizer {
         target,
         module_ids,
@@ -667,6 +920,47 @@ fn canonicalize_immediate_expression(
     };
     expr.visit_mut_with(&mut canonicalizer);
     canonicalizer.valid
+}
+
+struct ImmediateRuntimeValueSafety<'a> {
+    target: &'a BindingId,
+    valid: bool,
+}
+
+impl ImmediateRuntimeValueSafety<'_> {
+    fn reject_if_captured<T>(&mut self, node: &T)
+    where
+        for<'a> T: VisitWith<BindingFinder<'a>>,
+    {
+        let mut finder = BindingFinder {
+            target: self.target,
+            found: false,
+        };
+        node.visit_with(&mut finder);
+        self.valid &= !finder.found;
+    }
+}
+
+impl Visit for ImmediateRuntimeValueSafety<'_> {
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        self.reject_if_captured(function);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        self.reject_if_captured(arrow);
+    }
+
+    fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        self.reject_if_captured(class);
+    }
+
+    fn visit_getter_prop(&mut self, getter: &GetterProp) {
+        self.reject_if_captured(getter);
+    }
+
+    fn visit_setter_prop(&mut self, setter: &SetterProp) {
+        self.reject_if_captured(setter);
+    }
 }
 
 struct ImmediateLoaderCanonicalizer<'a, 'b> {
@@ -971,6 +1265,38 @@ impl Visit for BindingFinder<'_> {
             self.found = true;
         }
     }
+}
+
+fn has_hoisted_function_capture(module: &Module, target: &BindingId) -> bool {
+    struct HoistedFunctionCapture<'a> {
+        target: &'a BindingId,
+        found: bool,
+    }
+
+    impl Visit for HoistedFunctionCapture<'_> {
+        fn visit_fn_decl(&mut self, declaration: &swc_core::ecma::ast::FnDecl) {
+            let mut finder = BindingFinder {
+                target: self.target,
+                found: false,
+            };
+            declaration.function.visit_with(&mut finder);
+            self.found |= finder.found;
+        }
+
+        // Function expressions and arrows are not initialized before their
+        // textual evaluation point. A declaration reached through an outer
+        // deferred body therefore cannot run before the lifetime boundary.
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+    }
+
+    let mut finder = HoistedFunctionCapture {
+        target,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 fn item_contains_binding(item: &ModuleItem, target: &BindingId) -> bool {

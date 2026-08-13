@@ -1461,7 +1461,7 @@ fn prepare_webpack5_factories(
     // `require("./provider.js")` and be mistaken for an authored ESM edge by
     // UnEsm, so named-ID containers retain the historical whole-bundle
     // fallback when any factory is opaque.
-    let can_isolate_loader_reuse = module_entries
+    let can_isolate_runtime_parameter_reuse = module_entries
         .iter()
         .all(|entry| entry.id.parse::<usize>().is_ok());
     let mut opaque_filenames = HashSet::new();
@@ -1496,8 +1496,8 @@ fn prepare_webpack5_factories(
             }
             match prepare_webpack5_module(entry, &id_to_filename, &str_id_to_filename) {
                 Ok(ast) => prepared.push(Some(ast)),
-                Err(FactoryNormalizationError::LoaderParameterReuse) => {
-                    if !can_isolate_loader_reuse {
+                Err(FactoryNormalizationError::RuntimeParameterReuse) => {
+                    if !can_isolate_runtime_parameter_reuse {
                         return None;
                     }
                     newly_opaque.insert(entry.filename.clone());
@@ -1510,7 +1510,12 @@ fn prepare_webpack5_factories(
         if newly_opaque.is_empty() {
             let failures = opaque_filenames
                 .into_iter()
-                .map(|filename| (filename, DetectedModuleFailure::WebpackLoaderParameterReuse))
+                .map(|filename| {
+                    (
+                        filename,
+                        DetectedModuleFailure::WebpackRuntimeParameterReuse,
+                    )
+                })
                 .collect();
             return Some(PreparedWebpack5Factories {
                 prepared,
@@ -3225,20 +3230,12 @@ fn normalize_extracted_webpack_module(
         unresolved_mark
     };
 
-    let reused_require = param_syms.get(2).and_then(|parameter| {
-        super::webpack_common::runtime_parameter_reuse_binding(
-            &synthetic_module,
-            parameter,
-            unresolved_mark,
-        )
-        .map(|binding| (parameter.clone(), binding))
-    });
-    if reused_require
-        .as_ref()
-        .is_some_and(|(parameter, _)| parameter.as_ref() == "require")
-    {
-        return Err(FactoryNormalizationError::LoaderParameterReuse);
-    }
+    let reused_parameters = super::webpack_common::reused_runtime_parameters(
+        &synthetic_module,
+        &param_syms,
+        unresolved_mark,
+        true,
+    );
 
     {
         let span = tracing::info_span!("webpack5: normalize");
@@ -3248,11 +3245,10 @@ fn normalize_extracted_webpack_module(
             .iter()
             .zip(["module", "exports", "require"])
             .filter(|(source, target)| source.as_ref() != *target)
-            .filter(|(source, target)| {
-                !(*target == "require"
-                    && reused_require
-                        .as_ref()
-                        .is_some_and(|(sym, _)| sym == *source))
+            .filter(|(source, _)| {
+                !reused_parameters
+                    .iter()
+                    .any(|parameter| parameter.source == **source)
             })
             .map(|(source, target)| BindingRename {
                 old: (source.clone(), unresolved_ctxt),
@@ -3267,11 +3263,12 @@ fn normalize_extracted_webpack_module(
             replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
         }
 
-        if let Some((parameter, target)) = reused_require {
+        for parameter in reused_parameters {
             if !super::webpack_common::localize_reused_runtime_parameter(
                 &mut synthetic_module,
-                &parameter,
-                &target,
+                parameter.kind,
+                &parameter.source,
+                &parameter.binding,
                 unresolved_mark,
                 &super::webpack_common::ReusedLoaderModuleIds {
                     from_filename: &descriptor.filename,
@@ -3280,7 +3277,7 @@ fn normalize_extracted_webpack_module(
                     normalizes_conditional_runtime_members: true,
                 },
             ) {
-                return Err(FactoryNormalizationError::LoaderParameterReuse);
+                return Err(FactoryNormalizationError::RuntimeParameterReuse);
             }
         }
 

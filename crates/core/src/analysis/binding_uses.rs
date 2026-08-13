@@ -60,6 +60,10 @@ impl BindingUseIndex {
         Self::collect_node(stmts)
     }
 
+    pub(crate) fn collect_expr(expr: &Expr) -> Self {
+        Self::collect_node(expr)
+    }
+
     /// Collect only bindings with direct writes, without the compatibility
     /// identifier-count pass used by a full [`BindingUseIndex`]. This keeps
     /// late declaration-kind rechecks to one read-only AST traversal.

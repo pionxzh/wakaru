@@ -527,7 +527,7 @@ fn prepare_webpack4_modules(
             );
             let (mut module, _) = match normalized {
                 Ok(normalized) => normalized,
-                Err(FactoryNormalizationError::LoaderParameterReuse) => {
+                Err(FactoryNormalizationError::RuntimeParameterReuse) => {
                     // A retained numeric call cannot be mistaken for an ESM
                     // import. Named IDs can be path-like strings, so keep the
                     // historical whole-container fallback for that shape.
@@ -540,7 +540,7 @@ fn prepare_webpack4_modules(
                 }
                 Err(FactoryNormalizationError::Fatal) => return None,
             };
-            // Loader-parameter reuse is the only factory-local failure. A
+            // Runtime-parameter reuse is the only factory-local failure. A
             // fixer or emitter failure still invalidates the whole container;
             // skipping that module would leave rewritten callers pointing at
             // an output file that was never emitted.
@@ -559,7 +559,12 @@ fn prepare_webpack4_modules(
         let failures = opaque_filenames
             .iter()
             .cloned()
-            .map(|filename| (filename, DetectedModuleFailure::WebpackLoaderParameterReuse))
+            .map(|filename| {
+                (
+                    filename,
+                    DetectedModuleFailure::WebpackRuntimeParameterReuse,
+                )
+            })
             .collect();
         let mut modules = Vec::with_capacity(descriptors.len());
         for (descriptor, emitted) in descriptors.iter().zip(emitted) {
@@ -803,21 +808,6 @@ fn normalize_extracted_webpack_module(
         })
         .collect();
 
-    // Build renaming map: param[0] -> "module", param[1] -> "exports", param[2] -> "require"
-    let standard_names = ["module", "exports", "require"];
-    let rename_symbols: Vec<(Atom, Atom)> = param_syms
-        .iter()
-        .enumerate()
-        .filter_map(|(i, sym)| {
-            let target = *standard_names.get(i)?;
-            if sym.as_ref() == target {
-                None // already correct
-            } else {
-                Some((sym.clone(), Atom::from(target)))
-            }
-        })
-        .collect();
-
     // Get the module's body statements
     let body_stmts = match &fn_expr.function.body {
         Some(body) => body.stmts.clone(),
@@ -831,31 +821,38 @@ fn normalize_extracted_webpack_module(
     let top_level_mark = Mark::new();
     synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-    let reused_require = param_syms.get(2).and_then(|parameter| {
-        super::webpack_common::runtime_parameter_reuse_binding(
-            &synthetic_module,
-            parameter,
-            unresolved_mark,
-        )
-        .map(|binding| (parameter.clone(), binding))
-    });
-    if reused_require
-        .as_ref()
-        .is_some_and(|(parameter, _)| parameter.as_ref() == "require")
-    {
-        return Err(FactoryNormalizationError::LoaderParameterReuse);
-    }
+    let reused_parameters = super::webpack_common::reused_runtime_parameters(
+        &synthetic_module,
+        &param_syms,
+        unresolved_mark,
+        false,
+    );
+
+    // Build renaming map: param[0] -> "module", param[1] -> "exports",
+    // param[2] -> "require". Reused parameters keep their original binding
+    // identity until the lifetime split below.
+    let standard_names = ["module", "exports", "require"];
+    let rename_symbols: Vec<(Atom, Atom)> = param_syms
+        .iter()
+        .enumerate()
+        .filter_map(|(i, sym)| {
+            let target = *standard_names.get(i)?;
+            if reused_parameters
+                .iter()
+                .any(|parameter| parameter.source == *sym)
+                || sym.as_ref() == target
+            {
+                None
+            } else {
+                Some((sym.clone(), Atom::from(target)))
+            }
+        })
+        .collect();
 
     // Step 1: rename factory params to standard names
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
     let renames = rename_symbols
         .iter()
-        .filter(|(old_sym, new_sym)| {
-            !(new_sym.as_ref() == "require"
-                && reused_require
-                    .as_ref()
-                    .is_some_and(|(sym, _)| sym == old_sym))
-        })
         .map(|(old_sym, new_sym)| BindingRename {
             old: (old_sym.clone(), unresolved_ctxt),
             new: new_sym.clone(),
@@ -869,19 +866,20 @@ fn normalize_extracted_webpack_module(
         replace_ident(&mut synthetic_module, rename.old.clone(), &to_ident);
     }
 
-    // Step 1b: separate a reused parameter's loader lifetime before any
-    // position-insensitive webpack normalizer runs. Calls after the first
-    // write must retain their localized binding even when their numeric ID is
-    // also present in the module table.
-    if let Some((parameter, target)) = reused_require {
+    // Step 1b: separate reused factory runtime lifetimes before any
+    // position-insensitive webpack normalizer runs. Calls after the loader's
+    // first write must retain their localized binding even when their numeric
+    // ID is also present in the module table.
+    for parameter in reused_parameters {
         if !super::webpack_common::localize_reused_runtime_parameter(
             &mut synthetic_module,
-            &parameter,
-            &target,
+            parameter.kind,
+            &parameter.source,
+            &parameter.binding,
             unresolved_mark,
             &loader_module_ids,
         ) {
-            return Err(FactoryNormalizationError::LoaderParameterReuse);
+            return Err(FactoryNormalizationError::RuntimeParameterReuse);
         }
     }
 
