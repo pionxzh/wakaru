@@ -5,7 +5,7 @@ use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Str};
 use swc_core::ecma::visit::VisitMut;
 
-use super::rename_utils::{rename_bindings_in_module, BindingRename};
+use super::rename_utils::{rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex};
 
 fn src_to_key(src: &Str) -> String {
     src.value.as_str().unwrap_or("").to_string()
@@ -65,6 +65,21 @@ fn spec_key_and_local(spec: &ImportSpecifier) -> Option<(ImportKey, Atom, Syntax
 }
 
 fn dedup_imports(module: &mut Module) {
+    let candidate_bindings: HashSet<BindingId> = module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                return None;
+            };
+            Some(import.specifiers.iter().filter_map(|specifier| {
+                spec_key_and_local(specifier).map(|(_, sym, ctxt)| (sym, ctxt))
+            }))
+        })
+        .flatten()
+        .collect();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &candidate_bindings);
+
     // (source_module, ImportKey) → canonical local (sym, ctxt)
     let mut canonical: HashMap<(String, ImportKey), (Atom, SyntaxContext)> = HashMap::new();
     let mut renames: Vec<BindingRename> = Vec::new();
@@ -84,14 +99,22 @@ fn dedup_imports(module: &mut Module) {
 
             let map_key = (src.clone(), key);
             if let Some(entry) = canonical.get(&map_key) {
+                let local_id = (local_sym.clone(), local_ctxt);
+                if *entry != local_id && shadow_index.rename_causes_shadowing(&local_id, &entry.0) {
+                    // Both imports are semantically equivalent, but their
+                    // local names are not interchangeable at every use site.
+                    // Keep this alias when the canonical name would resolve
+                    // to a nested local after printing.
+                    continue;
+                }
                 // This specifier is a duplicate. Remove the occurrence even
                 // when it has the same binding id as the canonical specifier;
                 // resolver can assign identical top-level contexts to exact
                 // duplicate imports.
                 to_remove.insert((item_index, specifier_index));
-                if *entry != (local_sym.clone(), local_ctxt) {
+                if *entry != local_id {
                     renames.push(BindingRename {
-                        old: (local_sym, local_ctxt),
+                        old: local_id,
                         new: entry.0.clone(),
                     });
                 }

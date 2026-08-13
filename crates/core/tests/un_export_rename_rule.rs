@@ -175,6 +175,22 @@ function j() {
 }
 
 #[test]
+fn skips_alias_chain_rename_when_new_name_shadows_alias_use() {
+    let input = r#"
+const core = makeLogger();
+const relay = core;
+function report() {
+  relay.error("failed");
+  const logger = makeLocal();
+  return logger;
+}
+export { relay as logger };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn rename_proceeds_when_inner_scope_declares_new_name_but_not_uses_old() {
     // An inner function declares `e` but never uses `a`.
     // No shadowing conflict → rename should proceed.

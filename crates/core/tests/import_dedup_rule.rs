@@ -30,3 +30,18 @@ use(foo, foo);
 "#;
     assert_eq_normalized(&render_rule(input, |_| ImportDedup), expected);
 }
+
+#[test]
+fn keeps_duplicate_import_when_canonical_name_is_shadowed_at_use() {
+    let input = r#"
+import primary from "pkg";
+import alternate from "pkg";
+function read() {
+  use(alternate);
+  const primary = makeLocal();
+  return primary;
+}
+use(primary);
+"#;
+    assert_eq_normalized(&render_rule(input, |_| ImportDedup), input);
+}

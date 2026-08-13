@@ -132,9 +132,14 @@ fn collect_export_shadow_bindings(
                 if orig_info.exported {
                     continue;
                 }
-                let (info, _, _) =
+                let (info, _, alias_names) =
                     resolve_to_real_binding(orig_info, &orig.sym, module, binding_infos);
                 bindings.insert(info.id.clone());
+                for alias_name in alias_names {
+                    if let Some(alias_info) = binding_infos.get(&alias_name) {
+                        bindings.insert(alias_info.id.clone());
+                    }
+                }
             }
         }
 
@@ -278,7 +283,13 @@ fn collect_export_rename_plans(
                         || plans
                             .iter()
                             .any(|plan: &ExportRenamePlan| plan.old == info.id)
-                        || shadow_index.rename_causes_shadowing(&info.id, &new_name)
+                        || rename_chain_causes_shadowing(
+                            &info.id,
+                            &alias_names,
+                            &new_name,
+                            binding_infos,
+                            shadow_index,
+                        )
                     {
                         continue;
                     }
@@ -415,7 +426,13 @@ fn compute_freed_names(
                     ) {
                         continue;
                     }
-                    if shadow_index.rename_causes_shadowing(&info.id, &exported.sym) {
+                    if rename_chain_causes_shadowing(
+                        &info.id,
+                        &alias_names,
+                        &exported.sym,
+                        binding_infos,
+                        shadow_index,
+                    ) {
                         continue;
                     }
                     // A pattern plan claiming the same real binding or target
@@ -492,6 +509,21 @@ fn compute_freed_names(
     }
 
     freed
+}
+
+fn rename_chain_causes_shadowing(
+    real_binding: &BindingId,
+    alias_names: &[Atom],
+    new_name: &Atom,
+    binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+    shadow_index: &RenameShadowIndex,
+) -> bool {
+    shadow_index.rename_causes_shadowing(real_binding, new_name)
+        || alias_names.iter().any(|alias_name| {
+            binding_infos.get(alias_name).is_some_and(|alias_info| {
+                shadow_index.rename_causes_shadowing(&alias_info.id, new_name)
+            })
+        })
 }
 
 /// Real bindings and target names that Pattern A (`export const X = z`) and

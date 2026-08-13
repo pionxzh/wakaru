@@ -286,3 +286,44 @@ function initialize(source) {
         output.code
     );
 }
+
+#[test]
+fn import_and_export_alias_recovery_does_not_introduce_tdz() {
+    let source = r#"
+import primary from "pkg";
+import alternate from "pkg";
+function read() {
+    use(alternate);
+    const primary = makeLocal();
+    return primary;
+}
+use(primary);
+const core = makeLogger();
+const relay = core;
+function report() {
+    relay.error("failed");
+    const logger = makeLocal();
+    return logger;
+}
+export { relay as logger };
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "import/export alias recovery introduced TDZ warnings: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}
