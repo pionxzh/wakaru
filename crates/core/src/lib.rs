@@ -7,6 +7,7 @@
 )]
 
 pub(crate) mod analysis;
+pub mod angular_recovery;
 pub mod driver;
 pub mod facts;
 pub(crate) mod js_names;
@@ -25,6 +26,19 @@ pub mod utils;
 pub mod vue_recovery;
 pub mod vue_template;
 
+pub use angular_recovery::{
+    analyze_angular_components_from_js, analyze_angular_components_from_module_views,
+    analyze_angular_components_from_module_views_with_facts,
+    analyze_angular_components_from_modules, recover_angular_components_from_js,
+    recover_angular_components_from_module_views, recover_angular_components_from_modules,
+    recover_angular_modules_from_js, recover_angular_modules_from_module_views,
+    recover_angular_modules_from_modules, AngularModuleSource, AngularModuleView,
+    AngularRecoveryCompleteness, AngularRecoveryIssue, AngularRecoveryIssueKind,
+    AngularRecoveryOptions, AngularRecoveryReport, AngularRecoverySourceRange,
+    AngularRecoveryStats, AngularTemplatePhase, AngularTemplateRecoveryStats,
+    AngularUnknownRuntimeCallShape, RecoveredAngularComponent, RecoveredAngularModule,
+    RecoveredAngularModuleDependency,
+};
 pub use driver::{
     decompile, deduplicate_path, format_trace_events, is_detected_unpack_input, normalize,
     safe_relative_module_path, trace_rules, BundleFormat, DceMode, DecompileOptions,

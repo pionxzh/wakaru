@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 pub struct DirectoryScanStats {
     pub scanned: usize,
     pub detected: usize,
+    pub processed: usize,
     pub skipped: usize,
 }
 

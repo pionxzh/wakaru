@@ -83,15 +83,43 @@ pub struct ModuleOutput {
     pub status: ModuleStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ArtifactKind {
+    /// Legacy per-component artifact kind retained for API compatibility.
+    AngularComponent,
+    AngularModule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ArtifactStatus {
+    Complete,
+    Partial,
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ArtifactOutput {
+    /// Unique, normalized, slash-separated relative output filename.
+    pub filename: String,
+    pub code: String,
+    pub kind: ArtifactKind,
+    pub status: ArtifactStatus,
+    /// Indices into the root operation's module output.
+    pub module_indices: Vec<usize>,
+}
+
 /// Result of [`decompile`](crate::decompile).
 ///
-/// One artifact type is shared with unpack rather than defining a
+/// One module artifact type is shared with unpack rather than defining a
 /// single-file-only module type: for single-file decompile, `entry` is always
 /// [`EntryStatus::Unknown`] and `provenance` is empty.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DecompileOutput {
     pub module: ModuleOutput,
+    pub artifacts: Vec<ArtifactOutput>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -196,6 +224,7 @@ pub enum OutputSafety {
 #[non_exhaustive]
 pub struct UnpackOutput {
     pub modules: Vec<ModuleOutput>,
+    pub artifacts: Vec<ArtifactOutput>,
     /// One report per input, in input order.
     pub inputs: Vec<InputReport>,
     pub diagnostics: Vec<Diagnostic>,
@@ -222,6 +251,8 @@ pub enum DiagnosticCode {
     ImportCycle,
     OutputParseRecovered,
     OutputParseFailed,
+    ArtifactRecoveryReport,
+    ArtifactRecoveryFailed,
 }
 
 impl DiagnosticCode {
@@ -236,6 +267,8 @@ impl DiagnosticCode {
             Self::ImportCycle => "import_cycle",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
+            Self::ArtifactRecoveryReport => "artifact_recovery_report",
+            Self::ArtifactRecoveryFailed => "artifact_recovery_failed",
         }
     }
 }

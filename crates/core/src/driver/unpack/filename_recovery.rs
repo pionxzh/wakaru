@@ -29,6 +29,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::super::output::safe_relative_module_path;
+use crate::facts::ModuleFacts;
 use crate::module_path::{relative_import_specifier, resolve_relative_specifier};
 
 const SOURCE_FILE_KEYS: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
@@ -207,6 +208,37 @@ fn rewrite_import_sources_with_origin(
         unresolved_mark,
     };
     module.visit_mut_with(&mut rewriter);
+}
+
+/// Apply the final filename map to the transport sources retained for root
+/// artifact recovery. The fact system itself continues to operate in the
+/// provisional namespace during Phase 2; only this captured snapshot moves to
+/// the same final namespace as the emitted and pre-rewrite module views.
+pub(super) fn rewrite_module_fact_sources(
+    facts: &mut ModuleFacts,
+    from_filename: &str,
+    rename_map: &HashMap<String, String>,
+) {
+    let rewrite = |source: &mut swc_core::atoms::Atom| {
+        let Some(target) = resolve_relative_specifier(from_filename, source.as_ref()) else {
+            return;
+        };
+        let Some(recovered) = rename_map.get(&target) else {
+            return;
+        };
+        let from_final = rename_map
+            .get(from_filename)
+            .map(String::as_str)
+            .unwrap_or(from_filename);
+        *source = relative_import_specifier(from_final, recovered).into();
+    };
+
+    for import in &mut facts.imports {
+        rewrite(&mut import.source);
+    }
+    if let Some(target) = &mut facts.passthrough_target {
+        rewrite(target);
+    }
 }
 
 struct ImportSourceRewriter<'a> {
@@ -543,5 +575,27 @@ import { internal } from "./chunk_internal.js";
                 );
             }
         });
+    }
+
+    #[test]
+    fn rewrites_captured_module_fact_sources_to_final_filenames() {
+        let mut facts = ModuleFacts {
+            imports: vec![crate::facts::ImportFact {
+                local: "dependency".into(),
+                source: "./a.js".into(),
+                kind: crate::facts::ImportKind::Namespace,
+            }],
+            passthrough_target: Some("./a.js".into()),
+            ..Default::default()
+        };
+        let rename_map = HashMap::from([
+            ("consumer.js".to_string(), "src/Consumer.js".to_string()),
+            ("a.js".to_string(), "src/Widget.js".to_string()),
+        ]);
+
+        rewrite_module_fact_sources(&mut facts, "consumer.js", &rename_map);
+
+        assert_eq!(facts.imports[0].source.as_ref(), "./Widget.js");
+        assert_eq!(facts.passthrough_target.as_deref(), Some("./Widget.js"));
     }
 }

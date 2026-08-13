@@ -5,8 +5,8 @@ description: >-
   Use when you encounter unreadable production JS — a webpack/esbuild/Metro/Rollup
   bundle, a minified vendor script, Babel/TypeScript/SWC-transpiled output, or
   a single mangled .js file — and need to read, audit, debug it, or recover a
-  best-effort SFC artifact from compiled Vue 3 component code. Not a
-  deobfuscator.
+  best-effort framework artifact from compiled Vue 3 or Angular Ivy code. Not
+  a deobfuscator.
 license: Apache-2.0
 ---
 
@@ -32,6 +32,8 @@ mangled locals stay short unless a source map is provided.
   WebAssembly, native add-ons, or embedded databases.
 - You have compiled Vue 3 component JavaScript and want a best-effort `.vue`
   artifact for inspection.
+- You have production Angular Ivy JavaScript and want readable TypeScript
+  components with inline templates and styles.
 - A stack trace points into vendored/minified code you can't read.
 - You're auditing what a site or dependency actually ships.
 
@@ -178,6 +180,41 @@ recovered `.vue` files for template inspection, but keep the paired JavaScript
 artifact around when recovery falls back or looks too heuristic. Do not
 present recovered SFCs as original source.
 
+### 5. Recover Angular Ivy components
+
+Use `--angular` for production Angular AOT output. Recovery is additive in
+unpack mode: JavaScript remains available for every module, while proven
+components from the same source module stay together in one readable
+`*.angular.ts` artifact with inline templates and styles.
+
+```bash
+wakaru compiled.js --angular
+wakaru compiled.js --angular -o compiled.angular.ts
+wakaru compiled.js --angular -o readable.js
+wakaru bundle.js --unpack --angular --json -o out/
+wakaru dist/ --unpack --angular --json -o out/
+```
+
+Without `-o`, the recovered module is printed when the input contains at least
+one proven component. A `.ts` output is Angular-only. A JavaScript output path
+keeps the decompiled JavaScript and writes one module-derived Angular sidecar.
+`--unpack --angular` is preferred for bundles, chunks, or directories;
+directory mode processes ordinary JavaScript modules as well as detected
+bundles. In default directory mode it preserves ordinary production chunks
+intact so relative ESM symbol edges remain available to the Ivy analyzer;
+structural bundle detection still runs. Proven ESM component edges become
+relative imports between recovered `.angular.ts` artifacts; Closure loader
+dependencies are not guessed as source-level imports.
+
+In JSON, recovered artifacts use `kind: "angular_module"` and status
+`recovered_angular_module` or `partial_angular_module`. Paired JavaScript uses
+`angular_module_source_js`. Treat partial artifacts as
+inspection aids: unsupported Ivy regions remain explicit, and recovered code
+is not claimed to be original source. `--angular` is incompatible with
+`--raw` and `--vue-sfc`. Add `--diagnostics` to audit component candidates and
+the rendered, unsupported, and malformed Ivy runtime-call totals, including
+privacy-safe phase/arity summaries for unknown runtime calls.
+
 ## Heavily obfuscated input
 
 For string-array encoding, control-flow flattening, VM protectors, and similar
@@ -224,6 +261,9 @@ reachability sweep is desired.
 - With `--vue-sfc`, `recovered_vue_sfc` means a `.vue` artifact was written;
   `vue_sfc_source_js` is the paired JavaScript for that recovered module; and
   `vue_sfc_fallback_js` means the module looked Vue-like but stayed JavaScript.
+- With `--angular`, `recovered_angular_module` and
+  `partial_angular_module` mean a TypeScript module artifact was written;
+  `angular_module_source_js` is its paired JavaScript module.
 - Mangled short names (`e`, `t`, `n`) in the output are expected without a
   source map — Wakaru renames only where the code gives evidence. Pair with
   an LLM renamer or a source map if names matter.
