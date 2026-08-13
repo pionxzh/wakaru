@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, ClassDecl, ClassExpr, Decl, DefaultDecl,
     ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportNamedSpecifier,
@@ -47,6 +47,39 @@ pub(crate) fn collect_jsx_tag_bindings(module: &Module) -> HashSet<BindingId> {
     };
     module.visit_with(&mut collector);
     collector.bindings
+}
+
+/// Names used by unresolved expression references in this module.
+///
+/// A transform that introduces a module-scoped binding with one of these
+/// names would capture the reference even though their syntax contexts differ
+/// before the transform.
+pub(crate) fn collect_unresolved_reference_names(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> HashSet<Atom> {
+    struct Collector {
+        unresolved_mark: Mark,
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let Expr::Ident(ident) = expr {
+                if ident.ctxt.outer() == self.unresolved_mark {
+                    self.names.insert(ident.sym.clone());
+                }
+            }
+            expr.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        unresolved_mark,
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names
 }
 
 /// Collect local bindings whose public names are pinned to the binding name

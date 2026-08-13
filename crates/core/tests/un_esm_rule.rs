@@ -1314,6 +1314,27 @@ export { _in as in };
 }
 
 #[test]
+fn named_export_does_not_capture_existing_global_reference() {
+    let input = r#"
+var marker = typeof runtime !== "undefined" && runtime.pid ? runtime.pid : "";
+module.exports = module.exports.default = function() {
+    return marker;
+};
+module.exports.runtime = function() {
+    return marker;
+};
+"#;
+    let expected = r#"
+const marker = typeof runtime !== "undefined" && runtime.pid ? runtime.pid : "";
+export default module.exports.default = () => marker;
+const _runtime = () => marker;
+export { _runtime as runtime };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn compound_exports_assignment_in_var_decl() {
     // var s = exports.history = expr → split into var s = expr + export { s as history }
     let input = r#"

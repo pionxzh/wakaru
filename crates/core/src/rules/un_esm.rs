@@ -21,7 +21,7 @@ use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
 use super::helper_matcher::count_binding_refs;
-use super::rename_utils::{rename_bindings, BindingRename};
+use super::rename_utils::{collect_unresolved_reference_names, rename_bindings, BindingRename};
 use super::RewriteLevel;
 
 pub struct UnEsm {
@@ -154,6 +154,8 @@ impl VisitMut for UnEsm {
         rewrite_webpack_export_getters(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
+        let unresolved_reference_names =
+            collect_unresolved_reference_names(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
         let binding_uses = BindingUseIndex::collect(module);
         let require_bindings =
@@ -477,6 +479,7 @@ impl VisitMut for UnEsm {
         // expression can reference a conflicting module-level local, so apply
         // binding-id renames to both kept items and export expressions.
         let mut used_export_binding_names = all_declared_names.clone();
+        used_export_binding_names.extend(unresolved_reference_names.iter().cloned());
         if !export_names.is_empty() {
             let mut used_names = all_declared_names.clone();
             used_names.extend(export_names.iter().cloned());
@@ -539,6 +542,7 @@ impl VisitMut for UnEsm {
                             span,
                             kind,
                             &mut used_export_binding_names,
+                            &unresolved_reference_names,
                         ));
                     }
                 }
@@ -1811,6 +1815,7 @@ fn build_export_items(
     span: Span,
     kind: CjsExportKind,
     used_names: &mut HashSet<Atom>,
+    unresolved_reference_names: &HashSet<Atom>,
 ) -> Vec<ModuleItem> {
     match kind {
         CjsExportKind::EsModuleFlag => vec![],
@@ -1882,7 +1887,8 @@ fn build_export_items(
                         },
                     ))]
                 }
-            } else if is_reserved_binding_name(&name) {
+            } else if is_reserved_binding_name(&name) || unresolved_reference_names.contains(&name)
+            {
                 let local = make_ident(fresh_prefixed_name(&name, used_names));
                 vec![
                     ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {

@@ -2,16 +2,14 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
-use swc_core::ecma::ast::{
-    Expr, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
-};
-use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
+use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem};
+use swc_core::ecma::visit::VisitMut;
 
 use crate::js_names::is_reserved_binding_name;
 
 use super::rename_utils::{
-    collect_jsx_tag_bindings, collect_module_names, rename_bindings_in_module,
-    starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
+    collect_jsx_tag_bindings, collect_module_names, collect_unresolved_reference_names,
+    rename_bindings_in_module, starts_with_lowercase, BindingId, BindingRename, RenameShadowIndex,
 };
 
 pub struct UnImportRename {
@@ -118,31 +116,6 @@ impl VisitMut for UnImportRename {
                 }
             }
         }
-    }
-}
-
-fn collect_unresolved_reference_names(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {
-    let mut collector = UnresolvedReferenceNameCollector {
-        unresolved_mark,
-        names: HashSet::new(),
-    };
-    module.visit_with(&mut collector);
-    collector.names
-}
-
-struct UnresolvedReferenceNameCollector {
-    unresolved_mark: Mark,
-    names: HashSet<Atom>,
-}
-
-impl Visit for UnresolvedReferenceNameCollector {
-    fn visit_expr(&mut self, expr: &Expr) {
-        if let Expr::Ident(ident) = expr {
-            if ident.ctxt.outer() == self.unresolved_mark {
-                self.names.insert(ident.sym.clone());
-            }
-        }
-        expr.visit_children_with(self);
     }
 }
 

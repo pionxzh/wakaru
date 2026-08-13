@@ -327,3 +327,35 @@ export { relay as logger };
         output.code
     );
 }
+
+#[test]
+fn commonjs_named_export_recovery_does_not_capture_global() {
+    let source = r#"
+var marker = typeof runtime !== "undefined" && runtime.pid ? runtime.pid : "";
+module.exports = module.exports.default = function() {
+    return marker;
+};
+module.exports.runtime = function() {
+    return marker;
+};
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "named export recovery captured a global: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}
