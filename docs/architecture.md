@@ -164,6 +164,21 @@ name are hygienically renamed first. A pre-existing free reference cannot be
 renamed without changing host-environment lookup, so that case still rejects
 the candidate and normal fallback preserves the original bundle.
 
+Webpack has one narrower partial-failure path. A minified factory may reuse its
+loader parameter as an ordinary local after its last module load. In a
+numeric-ID container, when that lifetime boundary cannot be proved, Wakaru
+preserves that factory's extracted body unchanged and marks only that module
+as failed; other factories in the same structurally proven container remain
+recoverable. Named-ID containers keep the whole-input fallback because an
+unresolved path-like runtime call could otherwise be mistaken for an ESM
+import. A fixed-point pass
+removes failed factory IDs from the rewrite map before retrying dependants, so
+calls to an opaque factory follow the existing absent-ID behavior instead of
+becoming invented ESM edges. The opaque body never enters rule processing,
+fact collection, filename recovery, or recursive scope splitting. Other
+normalization failures still reject the whole container, and a container with
+no recoverable factory still uses the original whole-input fallback.
+
 Pure ESM scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
 `__export` / `__commonJS` markers has no runtime markers to detect. When no
 bundle format matches, the driver falls back to heuristic scope-hoisted
@@ -224,6 +239,11 @@ proven runtime invariant into the normal driver when applying it during
 extraction would violate raw passthrough. Webpack5 and Metro can hand their
 normalized ASTs directly to Phase 1, avoiding an emit/parse cycle; raw unpack
 and source-map mode materialize the sidecar to source text.
+Detector output may also carry a private per-module failure sidecar. The normal
+driver turns it into an operational diagnostic plus
+`ModuleStatus::DecompileFailed` while preserving the raw extracted body; raw
+detector APIs may discard this metadata because raw output has no graph-quality
+contract.
 
 Development builds are a non-goal. Wakaru targets shipped, production
 bundles; artifacts that only appear in dev-mode output — such as webpack's

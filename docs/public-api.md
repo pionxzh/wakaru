@@ -51,6 +51,9 @@ SFC recovery). See rustdoc for everything else.
   provenance.
 - Keep the failure-oriented name `ModuleStatus::DecompileFailed`; it always
   carries at least one diagnostic.
+- Use `DiagnosticCode::WebpackFactoryRecoveryFailed`
+  (`webpack_factory_recovery_failed`) when one structurally identified webpack
+  factory is preserved as opaque while its container's other modules continue.
 - `Error` is reserved for fatal operation failures; recoverable per-module
   problems are `Diagnostic` + `ModuleStatus`. SWC error types and
   `anyhow::Error` are never part of the public contract.

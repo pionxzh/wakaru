@@ -138,6 +138,50 @@ fn webpack5_chunk_rewrites_numeric_require() {
 }
 
 #[test]
+fn webpack5_chunk_localizes_unprovable_loader_reuse_to_one_factory() {
+    let source = r#"
+(self.webpackChunk_app = self.webpackChunk_app || []).push([
+  [7],
+  {
+    100: function(module, exports, load) {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    },
+    200: function(module) {
+      module.exports = "stable";
+    },
+    300: function(module, exports, load) {
+      module.exports = [load(100), load(200)];
+    }
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("one opaque chunk factory should not discard recoverable siblings");
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-100.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-300.js")
+        .map(|(_, code)| code)
+        .expect("recoverable consumer should be emitted");
+    assert!(consumer.contains("require(100)"), "{consumer}");
+    assert!(!consumer.contains("./module-100.js"), "{consumer}");
+    assert!(consumer.contains("./module-200.js"), "{consumer}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack5_chunk_heuristic_skips_scope_split_without_import_bearing_entry() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([

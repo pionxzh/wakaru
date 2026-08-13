@@ -92,6 +92,9 @@ pub(crate) fn diagnostic_from_core(
         wakaru_core::UnpackWarningKind::FactCollectionParseFailed => {
             DiagnosticCode::FactCollectionFailed
         }
+        wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed => {
+            DiagnosticCode::WebpackFactoryRecoveryFailed
+        }
         wakaru_core::UnpackWarningKind::DecompileFailed => DiagnosticCode::DecompileFailed,
         wakaru_core::UnpackWarningKind::InputParseRecovered => DiagnosticCode::InputParseRecovered,
         wakaru_core::UnpackWarningKind::TdzViolation => DiagnosticCode::TdzViolation,

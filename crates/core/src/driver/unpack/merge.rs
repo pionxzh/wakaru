@@ -25,13 +25,14 @@ use super::super::types::{
 };
 use super::filename_recovery::{rewrite_import_sources, rewrite_import_sources_after_move};
 use crate::module_path::relative_import_specifier;
-use crate::unpacker::PreparedModuleAst;
 use crate::unpacker::UnpackedModule;
+use crate::unpacker::{DetectedModuleFailure, PreparedModuleAst};
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub(super) struct MultiSourceModule {
     module: UnpackedModule,
     prepared: Option<PreparedModuleAst>,
+    detector_failure: Option<DetectedModuleFailure>,
     /// Webpack initializes every factory's `module.exports` to `{}`. An empty
     /// normalized factory has no statement that can carry that runtime value
     /// into ESM recovery, so normal processing restores it explicitly.
@@ -98,6 +99,7 @@ impl MultiSourceModule {
         Self {
             module,
             prepared,
+            detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             allow_cross_chunk_rewrite: true,
@@ -119,6 +121,21 @@ impl MultiSourceModule {
         self
     }
 
+    pub(super) fn with_cross_chunk_rewrite(mut self, enabled: bool) -> Self {
+        self.allow_cross_chunk_rewrite = enabled;
+        self
+    }
+
+    pub(super) fn with_detector_failure(mut self, failure: Option<DetectedModuleFailure>) -> Self {
+        self.detector_failure = failure;
+        if failure.is_some() {
+            // An opaque factory cannot safely participate as either caller or
+            // provider in synthesized cross-chunk edges.
+            self.allow_cross_chunk_rewrite = false;
+        }
+        self
+    }
+
     pub(super) fn fallback_with_ast_from_input(
         module: UnpackedModule,
         prepared: Option<PreparedModuleAst>,
@@ -127,6 +144,7 @@ impl MultiSourceModule {
         Self {
             module,
             prepared,
+            detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             allow_cross_chunk_rewrite: false,
@@ -142,6 +160,7 @@ impl MultiSourceModule {
 pub(super) struct PreparedUnpackModule {
     pub(super) module: UnpackedModule,
     pub(super) prepared: Option<PreparedModuleAst>,
+    pub(super) detector_failure: Option<DetectedModuleFailure>,
     pub(super) implicit_commonjs_default_object: bool,
     pub(super) webpack_commonjs_runtime: bool,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
@@ -157,6 +176,7 @@ impl PreparedUnpackModule {
         Self {
             module,
             prepared: None,
+            detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             numeric_rewrite: None,
@@ -175,6 +195,7 @@ impl PreparedUnpackModule {
         Self {
             module,
             prepared: None,
+            detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
             numeric_rewrite: None,
@@ -300,6 +321,7 @@ pub(super) fn prepare_multi_source_modules(
                 reserved_public_path,
                 module: module.module,
                 prepared: module.prepared,
+                detector_failure: module.detector_failure,
                 implicit_commonjs_default_object: module.implicit_commonjs_default_object,
                 webpack_commonjs_runtime: module.webpack_commonjs_runtime,
                 numeric_rewrite,

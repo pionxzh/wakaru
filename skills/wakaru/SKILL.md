@@ -145,6 +145,9 @@ findings include one-based `line` and `column`. The recursive scan accepts
 emitted modules, including modules emitted beneath `node_modules`; hidden paths
 and unrelated extensions stay excluded. Do not use it to grade raw output,
 which has no usable module-graph contract.
+Directory validation has no per-module status sidecar, so it also scans
+artifacts emitted after failed factory recovery. Unresolved numeric webpack
+runtime calls in those artifacts are not treated as relative module edges.
 
 ### 3. Recover names / original source when a map exists
 

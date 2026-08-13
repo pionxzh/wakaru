@@ -348,11 +348,24 @@ pub(crate) struct RecoverableParseError {
     pub(crate) message: String,
 }
 
+/// Detector-local reason why one structurally identified module could not be
+/// normalized safely.
+///
+/// These modules retain their raw extracted body and must bypass every driver
+/// transform and fact collector. The sidecar is intentionally internal: raw
+/// detector APIs have no module-graph quality contract, while the normal
+/// driver turns this into a stable operational diagnostic and failed status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DetectedModuleFailure {
+    WebpackLoaderParameterReuse,
+}
+
 /// Internal detector result. `prepared` is always aligned one-for-one with
 /// `result.modules`; a `None` entry means that module is source-only.
 pub(crate) struct DetectedBundle {
     pub(crate) result: UnpackResult,
     pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
+    pub(crate) module_failures: std::collections::HashMap<String, DetectedModuleFailure>,
     pub(crate) chunk_ids: std::collections::HashSet<usize>,
     pub(crate) input_has_esm_declarations: bool,
     materialize_cm: Option<Lrc<SourceMap>>,
@@ -366,6 +379,7 @@ impl DetectedBundle {
         Self {
             result,
             prepared,
+            module_failures: Default::default(),
             chunk_ids: Default::default(),
             input_has_esm_declarations: false,
             materialize_cm: None,
@@ -385,19 +399,40 @@ impl DetectedBundle {
         Self {
             result,
             prepared,
+            module_failures: Default::default(),
             chunk_ids: Default::default(),
             input_has_esm_declarations: false,
             materialize_cm: Some(materialize_cm),
         }
     }
 
-    pub(crate) fn into_parts(self) -> (UnpackResult, Vec<Option<PreparedModuleAst>>) {
-        (self.result, self.prepared)
+    pub(crate) fn with_module_failures(
+        mut self,
+        failures: std::collections::HashMap<String, DetectedModuleFailure>,
+    ) -> Self {
+        debug_assert!(failures.keys().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.module_failures = failures;
+        self
     }
 
-    pub(crate) fn materialize(mut self) -> anyhow::Result<UnpackResult> {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        UnpackResult,
+        Vec<Option<PreparedModuleAst>>,
+        std::collections::HashMap<String, DetectedModuleFailure>,
+    ) {
+        (self.result, self.prepared, self.module_failures)
+    }
+
+    pub(crate) fn materialize_prepared(mut self) -> anyhow::Result<Self> {
         let cm = self.materialize_cm.take();
-        for (module, prepared) in self.result.modules.iter_mut().zip(self.prepared) {
+        for (module, prepared) in self.result.modules.iter_mut().zip(&mut self.prepared) {
+            let prepared = prepared.take();
             let Some(prepared) = prepared else {
                 continue;
             };
@@ -408,7 +443,11 @@ impl DetectedBundle {
             module.code = code;
             module.generated_source_map = generated_source_map;
         }
-        Ok(self.result)
+        Ok(self)
+    }
+
+    pub(crate) fn materialize(self) -> anyhow::Result<UnpackResult> {
+        Ok(self.materialize_prepared()?.result)
     }
 }
 
@@ -728,7 +767,7 @@ fn detect_bundle_candidate_before_esbuild(
         webpack4::detect_from_module(module, cm.clone())
     };
     if result.is_some() {
-        return result.map(DetectedBundle::from_result);
+        return result;
     }
 
     let result = {

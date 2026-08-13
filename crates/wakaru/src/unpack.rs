@@ -325,7 +325,13 @@ fn convert_core_output(
     let failed: HashSet<&str> = output
         .warnings
         .iter()
-        .filter(|warning| warning.kind == wakaru_core::UnpackWarningKind::DecompileFailed)
+        .filter(|warning| {
+            matches!(
+                warning.kind,
+                wakaru_core::UnpackWarningKind::DecompileFailed
+                    | wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+            )
+        })
         .map(|warning| warning.filename.as_str())
         .collect();
 
@@ -932,5 +938,56 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == crate::DiagnosticCode::InputParseRecovered));
+    }
+
+    #[test]
+    fn opaque_webpack_factory_has_failed_status_and_stable_diagnostic() {
+        let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    }),
+    1: ((module) => { module.exports = "stable"; })
+  });
+  var cache = {};
+  function __nccwpck_require__(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, __nccwpck_require__);
+    return module.exports;
+  }
+  module.exports = __nccwpck_require__(0);
+})();
+"#;
+
+        let output = unpack(
+            vec![Source::new("webpack5-opaque-factory.js", source)],
+            UnpackOptions::default().with_mode(UnpackMode::Strict),
+        )
+        .expect("partial structural recovery should remain successful");
+
+        let failed = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "module-0.js")
+            .expect("opaque module should be present");
+        assert_eq!(failed.status, ModuleStatus::DecompileFailed);
+        assert_eq!(failed.entry, EntryStatus::Entry);
+        assert!(output.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .module
+                .is_some_and(|index| output.modules[index].filename == "module-0.js")
+                && diagnostic.code == crate::DiagnosticCode::WebpackFactoryRecoveryFailed
+                && diagnostic.code.as_str() == "webpack_factory_recovery_failed"
+        }));
+        assert_eq!(
+            output
+                .modules
+                .iter()
+                .find(|module| module.filename == "module-1.js")
+                .map(|module| module.status),
+            Some(ModuleStatus::Decompiled)
+        );
     }
 }

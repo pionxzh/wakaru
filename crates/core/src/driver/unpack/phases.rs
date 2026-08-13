@@ -46,6 +46,17 @@ use crate::rules::{
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::synthetic_import_cleanup::downgrade_unused_synthetic_imports;
+use crate::unpacker::DetectedModuleFailure;
+
+fn detector_failure_warning(filename: &str, failure: DetectedModuleFailure) -> UnpackWarning {
+    match failure {
+        DetectedModuleFailure::WebpackLoaderParameterReuse => UnpackWarning::new(
+            filename,
+            UnpackWarningKind::WebpackFactoryRecoveryFailed,
+            "webpack factory loader-parameter reuse could not be normalized; preserving the opaque factory body",
+        ),
+    }
+}
 
 struct Phase1PreparedModule {
     globals: Globals,
@@ -207,6 +218,20 @@ pub(super) fn unpack_multi_module_with_plan(
     // mode still reparses in Phase 2 because sourcemap renaming depends on the
     // original parser SourceMap.
     let collect_facts = |unpacked: &mut PreparedUnpackModule| -> Phase1Module {
+        if let Some(failure) = unpacked.detector_failure {
+            // The factory loader's later lifetime is unproven. Running any
+            // require-aware transform or fact collector over this body could
+            // turn an ordinary local call into a fabricated module edge.
+            unpacked.prepared = None;
+            return Phase1Module {
+                filename: unpacked.module.filename.clone(),
+                facts: crate::facts::ModuleFacts::default(),
+                prepared: None,
+                warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
+                input_parse_warnings: Vec::new(),
+                suggested_filename: None,
+            };
+        }
         let (globals, prepared_input, input_parse_warnings) = match unpacked.prepared.take() {
             Some(prepared) => {
                 let filename = unpacked.module.filename.clone();
@@ -431,6 +456,15 @@ pub(super) fn unpack_multi_module_with_plan(
         Option<ImportReport>,
         Option<String>,
     ) {
+        if unpacked.detector_failure.is_some() {
+            return (
+                unpacked.module.filename,
+                unpacked.module.code,
+                Vec::new(),
+                None,
+                None,
+            );
+        }
         let run_phase2_tail = |mut module: Module,
                                cm: Lrc<SourceMap>,
                                unresolved_mark: Mark,

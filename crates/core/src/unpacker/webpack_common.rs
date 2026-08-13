@@ -24,6 +24,16 @@ use crate::utils::paren::strip_parens;
 
 const JAVASCRIPT_LIKE_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FactoryNormalizationError {
+    /// The factory loader parameter is written, but its loader/local lifetime
+    /// boundary cannot be proved. This is the only normalization failure that
+    /// webpack extraction may isolate to one opaque factory.
+    LoaderParameterReuse,
+    /// Any other normalization failure remains container-fatal.
+    Fatal,
+}
+
 /// Derive a truthful JavaScript output filename from a webpack module id.
 ///
 /// String ids preserve their sanitized resource path. Loader queries and URL

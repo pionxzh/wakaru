@@ -69,6 +69,17 @@ emit → parse → resolver round trip. Source-map mode materializes that privat
 AST sidecar and follows the parser path because emitted mappings need
 parser-owned module coordinates.
 
+A structurally identified numeric-ID webpack factory whose reused loader
+parameter cannot be localized safely is deliberately absent from this fact
+system. Phase 1 inserts empty facts and a stable
+`webpack_factory_recovery_failed` diagnostic; Phase 2 returns the raw extracted
+body without parsing or transforming it. Its ID is also excluded from
+synthesized module-edge maps, so neither that opaque provider nor its consumers
+can create a false cross-module fact. The missing import report makes
+dead-module elimination conservatively retain the graph. Named-ID containers
+retain whole-input fallback because a path-like unresolved call is not safely
+distinguishable from an authored ESM dependency downstream.
+
 ## Facts
 
 `crates/core/src/facts.rs`:

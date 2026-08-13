@@ -193,6 +193,7 @@ impl fmt::Display for UnpackWarning {
 pub enum UnpackWarningKind {
     RawNormalizationFailed,
     FactCollectionParseFailed,
+    WebpackFactoryRecoveryFailed,
     DecompileFailed,
     InputParseRecovered,
     TdzViolation,
@@ -207,6 +208,7 @@ impl UnpackWarningKind {
         match self {
             Self::RawNormalizationFailed => "raw_normalization_failed",
             Self::FactCollectionParseFailed => "fact_collection_parse_failed",
+            Self::WebpackFactoryRecoveryFailed => "webpack_factory_recovery_failed",
             Self::DecompileFailed => "decompile_failed",
             Self::InputParseRecovered => "input_parse_recovered",
             Self::TdzViolation => "tdz_violation",

@@ -21,8 +21,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::BindingRename;
+use crate::unpacker::webpack_common::FactoryNormalizationError;
 use crate::unpacker::{
-    deconflict_runtime_binding_renames, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
+    deconflict_runtime_binding_renames, source_fallback_for_stmts, span_byte_range, BundleFormat,
+    DetectedBundle, DetectedModuleFailure, UnpackResult, UnpackedModule,
 };
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
@@ -421,11 +423,11 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "webpack4.js", cm.clone()).ok()?;
-        detect_from_module(&module, cm)
+        detect_from_module(&module, cm)?.materialize().ok()
     })
 }
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
     for item in &module.body {
         let ModuleItem::Stmt(stmt) = item else {
             continue;
@@ -438,7 +440,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 }
 
 /// Try to extract from a top-level statement that might be a webpack4 IIFE.
-fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
     let call = match stmt {
         // `!function(...){...}([...])` — UnaryExpr with !
         Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
@@ -459,7 +461,7 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
-fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<DetectedBundle> {
     // Callee must be a FnExpr (the bootstrap function), possibly wrapped in parens
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
@@ -491,12 +493,153 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
 
 /// Extract modules from the array-form: `bootstrapFn([fn0, fn1, fn2])`
 /// or `bootstrapFn(Array(n).concat([fnN, fnN1, ...]))`.
+struct Webpack4ModuleDescriptor<'a> {
+    id: String,
+    filename: String,
+    is_entry: bool,
+    factory: &'a FnExpr,
+}
+
+fn prepare_webpack4_modules(
+    descriptors: &[Webpack4ModuleDescriptor<'_>],
+    all_numeric: bool,
+    cm: Lrc<SourceMap>,
+) -> Option<DetectedBundle> {
+    let mut opaque_filenames = HashSet::new();
+
+    loop {
+        let num_id_to_filename: HashMap<usize, String> = if all_numeric {
+            descriptors
+                .iter()
+                .filter(|descriptor| !opaque_filenames.contains(&descriptor.filename))
+                .filter_map(|descriptor| {
+                    descriptor
+                        .id
+                        .parse::<usize>()
+                        .ok()
+                        .map(|id| (id, descriptor.filename.clone()))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let str_id_to_filename: HashMap<String, String> = if all_numeric {
+            HashMap::new()
+        } else {
+            descriptors
+                .iter()
+                .filter(|descriptor| !opaque_filenames.contains(&descriptor.filename))
+                .map(|descriptor| (descriptor.id.clone(), descriptor.filename.clone()))
+                .collect()
+        };
+
+        let mut emitted = Vec::with_capacity(descriptors.len());
+        let mut newly_opaque = HashSet::new();
+        for descriptor in descriptors {
+            if opaque_filenames.contains(&descriptor.filename) {
+                emitted.push(None);
+                continue;
+            }
+            let normalized = normalize_extracted_webpack_module(
+                descriptor.factory,
+                |post_rename_require_sym, unresolv_mark, canonicalize_loader, module| {
+                    if all_numeric {
+                        let mut id_rewriter = RequireIdRewriter {
+                            require_sym: post_rename_require_sym.clone(),
+                            unresolved_mark: unresolv_mark,
+                            from_filename: &descriptor.filename,
+                            id_to_filename: &num_id_to_filename,
+                            canonicalize_loader,
+                        };
+                        module.visit_mut_with(&mut id_rewriter);
+                    } else {
+                        let mut string_rewriter = RequireStringIdRewriter {
+                            require_sym: post_rename_require_sym.clone(),
+                            unresolved_mark: unresolv_mark,
+                            from_filename: &descriptor.filename,
+                            id_to_filename: &str_id_to_filename,
+                            canonicalize_loader,
+                        };
+                        module.visit_mut_with(&mut string_rewriter);
+                    }
+                },
+            );
+            let (mut module, _) = match normalized {
+                Ok(normalized) => normalized,
+                Err(FactoryNormalizationError::LoaderParameterReuse) => {
+                    // A retained numeric call cannot be mistaken for an ESM
+                    // import. Named IDs can be path-like strings, so keep the
+                    // historical whole-container fallback for that shape.
+                    if !all_numeric {
+                        return None;
+                    }
+                    newly_opaque.insert(descriptor.filename.clone());
+                    emitted.push(None);
+                    continue;
+                }
+                Err(FactoryNormalizationError::Fatal) => return None,
+            };
+            // Loader-parameter reuse is the only factory-local failure. A
+            // fixer or emitter failure still invalidates the whole container;
+            // skipping that module would leave rewritten callers pointing at
+            // an output file that was never emitted.
+            apply_fixer(&mut module).ok()?;
+            emitted.push(Some(emit_module(&module, cm.clone()).ok()?));
+        }
+
+        if !newly_opaque.is_empty() {
+            opaque_filenames.extend(newly_opaque);
+            continue;
+        }
+        if !emitted.iter().any(Option::is_some) {
+            return None;
+        }
+
+        let failures = opaque_filenames
+            .iter()
+            .cloned()
+            .map(|filename| (filename, DetectedModuleFailure::WebpackLoaderParameterReuse))
+            .collect();
+        let mut modules = Vec::with_capacity(descriptors.len());
+        for (descriptor, emitted) in descriptors.iter().zip(emitted) {
+            let code = if opaque_filenames.contains(&descriptor.filename) {
+                let body = descriptor.factory.function.body.as_ref()?;
+                source_fallback_for_stmts(&cm, &body.stmts)
+            } else {
+                let Some(code) = emitted else {
+                    continue;
+                };
+                code
+            };
+            modules.push(UnpackedModule {
+                id: descriptor.id.clone(),
+                is_entry: descriptor.is_entry,
+                code,
+                filename: descriptor.filename.clone(),
+                source_ranges: span_byte_range(&cm, descriptor.factory.function.span)
+                    .into_iter()
+                    .collect(),
+                inspection_context_ranges: Vec::new(),
+                source_input: String::new(),
+                generated_source_map: Vec::new(),
+            });
+        }
+        if modules.is_empty() {
+            return None;
+        }
+        return Some(
+            DetectedBundle::from_result(UnpackResult::new(modules, BundleFormat::Webpack4))
+                .with_module_failures(failures),
+        );
+    }
+}
+
 fn extract_webpack4_array_modules(
     array_lit: &swc_core::ecma::ast::ArrayLit,
     id_offset: usize,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
-) -> Option<UnpackResult> {
+) -> Option<DetectedBundle> {
     // Array must have at least one element
     if array_lit.elems.is_empty() {
         return None;
@@ -533,88 +676,31 @@ fn extract_webpack4_array_modules(
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
 
-    // Build a map from module id (index + offset) -> filename so require(N)
-    // can be rewritten
-    let id_to_filename: HashMap<usize, String> = {
-        let total = module_fns.len();
-        (0..total)
-            .filter_map(|i| {
-                module_fns.get(i)?.as_ref()?;
-                let id = id_offset + i;
-                let name = if entry_ids.contains(&ModuleId::Numeric(id)) {
-                    if entry_ids.len() == 1 {
-                        "entry.js".to_string()
-                    } else {
-                        format!("entry-{id}.js")
-                    }
+    let descriptors = module_fns
+        .iter()
+        .enumerate()
+        .filter_map(|(index, factory)| {
+            let factory = factory.as_ref()?;
+            let id = id_offset + index;
+            let is_entry = entry_ids.contains(&ModuleId::Numeric(id));
+            let filename = if is_entry {
+                if entry_ids.len() == 1 {
+                    "entry.js".to_string()
                 } else {
-                    format!("module-{id}.js")
-                };
-                Some((id, name))
-            })
-            .collect()
-    };
-
-    let mut modules = Vec::new();
-
-    for (idx, maybe_fn) in module_fns.iter().enumerate() {
-        let Some(fn_expr) = maybe_fn else {
-            continue;
-        };
-
-        let id = id_offset + idx;
-        let is_entry = entry_ids.contains(&ModuleId::Numeric(id));
-        let filename = if is_entry {
-            if entry_ids.len() == 1 {
-                "entry.js".to_string()
+                    format!("entry-{id}.js")
+                }
             } else {
-                format!("entry-{id}.js")
-            }
-        } else {
-            format!("module-{id}.js")
-        };
-
-        let (mut synthetic_module, _) = normalize_extracted_webpack_module(
-            fn_expr,
-            |post_rename_require_sym, unresolv_mark, canonicalize_loader, module| {
-                let mut id_rewriter = RequireIdRewriter {
-                    require_sym: post_rename_require_sym.clone(),
-                    unresolved_mark: unresolv_mark,
-                    from_filename: &filename,
-                    id_to_filename: &id_to_filename,
-                    canonicalize_loader,
-                };
-                module.visit_mut_with(&mut id_rewriter);
-            },
-        )?;
-        if apply_fixer(&mut synthetic_module).is_err() {
-            continue;
-        }
-
-        let code = match emit_module(&synthetic_module, cm.clone()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        modules.push(UnpackedModule {
-            id: id.to_string(),
-            is_entry,
-            code,
-            filename,
-            source_ranges: span_byte_range(&cm, fn_expr.function.span)
-                .into_iter()
-                .collect(),
-            inspection_context_ranges: Vec::new(),
-            source_input: String::new(),
-            generated_source_map: Vec::new(),
-        });
-    }
-
-    if modules.is_empty() {
-        return None;
-    }
-
-    Some(UnpackResult::new(modules, BundleFormat::Webpack4))
+                format!("module-{id}.js")
+            };
+            Some(Webpack4ModuleDescriptor {
+                id: id.to_string(),
+                filename,
+                is_entry,
+                factory,
+            })
+        })
+        .collect::<Vec<_>>();
+    prepare_webpack4_modules(&descriptors, true, cm)
 }
 
 /// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
@@ -622,7 +708,7 @@ fn extract_webpack4_object_modules(
     object_lit: &ObjectLit,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
-) -> Option<UnpackResult> {
+) -> Option<DetectedBundle> {
     if object_lit.props.is_empty() {
         return None;
     }
@@ -678,20 +764,19 @@ fn extract_webpack4_object_modules(
             module_entries.iter().map(|(key, _)| key.as_str()),
         )
     });
-    let str_id_to_filename: HashMap<String, String> = string_filenames
-        .as_ref()
-        .into_iter()
-        .flatten()
-        .zip(module_entries.iter())
-        .map(|(filename, (key, _))| (key.clone(), filename.clone()))
-        .collect();
-    let num_id_to_filename: std::collections::HashMap<usize, String> = if all_numeric {
-        module_entries
-            .iter()
-            .filter_map(|(key, _)| {
-                let idx = key.parse::<usize>().ok()?;
-                let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
-                let filename = if is_entry {
+    let descriptors = module_entries
+        .iter()
+        .enumerate()
+        .map(|(entry_index, (key, factory))| {
+            let is_entry = if all_numeric {
+                let idx = key.parse::<usize>().unwrap_or(usize::MAX);
+                entry_ids.contains(&ModuleId::Numeric(idx))
+            } else {
+                entry_ids.contains(&ModuleId::Named(key.clone()))
+            };
+            let filename = if all_numeric {
+                let idx = key.parse::<usize>().unwrap_or(usize::MAX);
+                if is_entry {
                     if entry_ids.len() == 1 {
                         "entry.js".to_string()
                     } else {
@@ -699,89 +784,23 @@ fn extract_webpack4_object_modules(
                     }
                 } else {
                     format!("module-{idx}.js")
-                };
-                Some((idx, filename))
-            })
-            .collect()
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    let mut modules = Vec::new();
-
-    for (entry_index, (key, fn_expr)) in module_entries.iter().enumerate() {
-        let is_entry = if all_numeric {
-            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
-            entry_ids.contains(&ModuleId::Numeric(idx))
-        } else {
-            entry_ids.contains(&ModuleId::Named(key.clone()))
-        };
-        let filename = if all_numeric {
-            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
-            num_id_to_filename
-                .get(&idx)
-                .cloned()
-                .unwrap_or_else(|| format!("module-{key}.js"))
-        } else {
-            string_filenames
-                .as_ref()
-                .and_then(|filenames| filenames.get(entry_index))
-                .cloned()
-                .unwrap_or_else(|| super::webpack_common::webpack_module_filename(key))
-        };
-
-        let (mut synthetic_module, _) = normalize_extracted_webpack_module(
-            fn_expr,
-            |post_rename_require_sym, unresolv_mark, canonicalize_loader, module| {
-                if all_numeric {
-                    let mut id_rewriter = RequireIdRewriter {
-                        require_sym: post_rename_require_sym.clone(),
-                        unresolved_mark: unresolv_mark,
-                        from_filename: &filename,
-                        id_to_filename: &num_id_to_filename,
-                        canonicalize_loader,
-                    };
-                    module.visit_mut_with(&mut id_rewriter);
-                } else {
-                    let mut str_rewriter = RequireStringIdRewriter {
-                        require_sym: post_rename_require_sym.clone(),
-                        unresolved_mark: unresolv_mark,
-                        from_filename: &filename,
-                        id_to_filename: &str_id_to_filename,
-                        canonicalize_loader,
-                    };
-                    module.visit_mut_with(&mut str_rewriter);
                 }
-            },
-        )?;
-        if apply_fixer(&mut synthetic_module).is_err() {
-            continue;
-        }
-
-        let code = match emit_module(&synthetic_module, cm.clone()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        modules.push(UnpackedModule {
-            id: key.clone(),
-            is_entry,
-            code,
-            filename,
-            source_ranges: span_byte_range(&cm, fn_expr.function.span)
-                .into_iter()
-                .collect(),
-            inspection_context_ranges: Vec::new(),
-            source_input: String::new(),
-            generated_source_map: Vec::new(),
-        });
-    }
-
-    if modules.is_empty() {
-        return None;
-    }
-
-    Some(UnpackResult::new(modules, BundleFormat::Webpack4))
+            } else {
+                string_filenames
+                    .as_ref()
+                    .and_then(|filenames| filenames.get(entry_index))
+                    .cloned()
+                    .unwrap_or_else(|| super::webpack_common::webpack_module_filename(key))
+            };
+            Webpack4ModuleDescriptor {
+                id: key.clone(),
+                is_entry,
+                filename,
+                factory,
+            }
+        })
+        .collect::<Vec<_>>();
+    prepare_webpack4_modules(&descriptors, all_numeric, cm)
 }
 
 /// Extract a string module ID from a property key.
@@ -808,7 +827,7 @@ fn extract_string_module_id(key: &PropName) -> Option<String> {
 fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
     require_rewrite: impl FnOnce(&Atom, Mark, bool, &mut Module),
-) -> Option<(Module, Mark)> {
+) -> Result<(Module, Mark), FactoryNormalizationError> {
     // Extract param names (up to 3: module, exports, require)
     let params = &fn_expr.function.params;
     let param_syms: Vec<Atom> = params
@@ -859,7 +878,7 @@ fn normalize_extracted_webpack_module(
         .then(|| parameter.clone())
     });
     if reused_require_sym.as_deref() == Some("require") {
-        return None;
+        return Err(FactoryNormalizationError::LoaderParameterReuse);
     }
 
     // Step 1: rename factory params to standard names
@@ -878,7 +897,7 @@ fn normalize_extracted_webpack_module(
         })
         .collect::<Vec<_>>();
     if !deconflict_runtime_binding_renames(&mut synthetic_module, &renames) {
-        return None;
+        return Err(FactoryNormalizationError::Fatal);
     }
     for rename in &renames {
         let to_ident = Ident::new(rename.new.clone(), Default::default(), unresolved_ctxt);
@@ -922,11 +941,11 @@ fn normalize_extracted_webpack_module(
             &parameter,
             unresolved_mark,
         ) {
-            return None;
+            return Err(FactoryNormalizationError::LoaderParameterReuse);
         }
     }
 
-    Some((synthetic_module, unresolved_mark))
+    Ok((synthetic_module, unresolved_mark))
 }
 
 /// Sanitize a webpack module path string into a safe filename.

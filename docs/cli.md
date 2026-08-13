@@ -274,6 +274,9 @@ modules, including modules emitted beneath `node_modules`; hidden paths and
 unrelated extensions remain excluded.
 The command exits nonzero when it finds anything. Validate normal output only:
 raw output has no usable module-graph contract.
+Directory validation has no per-module status sidecar, so it also scans
+artifacts emitted after failed factory recovery. Unresolved numeric webpack
+runtime calls in those artifacts are not treated as relative module edges.
 
 ## Overwrite protection
 

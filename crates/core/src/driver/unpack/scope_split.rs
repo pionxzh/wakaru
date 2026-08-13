@@ -21,6 +21,15 @@ pub(super) fn maybe_split_scope_hoisted_modules(
     enabled: bool,
     render_mode: scope_hoist::ScopeHoistRenderMode,
 ) -> UnpackResult {
+    maybe_split_scope_hoisted_modules_excluding(result, enabled, render_mode, &HashSet::new())
+}
+
+pub(super) fn maybe_split_scope_hoisted_modules_excluding(
+    result: UnpackResult,
+    enabled: bool,
+    render_mode: scope_hoist::ScopeHoistRenderMode,
+    excluded_filenames: &HashSet<String>,
+) -> UnpackResult {
     if !enabled {
         return result;
     }
@@ -34,6 +43,10 @@ pub(super) fn maybe_split_scope_hoisted_modules(
         .collect();
 
     for module in result.modules {
+        if excluded_filenames.contains(&module.filename) {
+            modules.push(module);
+            continue;
+        }
         match split_nested_scope_hoisted_module(&module, render_mode) {
             Some(split) => {
                 let parent_filename = module.filename.clone();

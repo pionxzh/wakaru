@@ -38,7 +38,7 @@ use merge::{
 #[cfg(test)]
 use phases::unpack_multi_module;
 use phases::unpack_multi_module_with_plan;
-use scope_split::maybe_split_scope_hoisted_modules;
+use scope_split::{maybe_split_scope_hoisted_modules, maybe_split_scope_hoisted_modules_excluding};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreparedInputDetection {
@@ -503,7 +503,8 @@ pub fn unpack_prepared_inputs_with_policy(
                         scope_hoist_policy.render_mode(),
                     )?
                 };
-                let (result, prepared) = detected.into_parts();
+                let (result, prepared, module_failures) = detected.into_parts();
+                let has_module_failures = !module_failures.is_empty();
                 let report_import_cycle_warnings = result.report_import_cycle_warnings;
                 let input_group = input_group_for_filename(&filename);
                 modules.extend(
@@ -512,6 +513,7 @@ pub fn unpack_prepared_inputs_with_policy(
                         .into_iter()
                         .zip(prepared)
                         .map(|(module, ast)| {
+                            let detector_failure = module_failures.get(&module.filename).copied();
                             let implicit_commonjs_default_object =
                                 implicit_commonjs_default_objects
                                     .contains(&(module.id.clone(), module.filename.clone()));
@@ -528,6 +530,12 @@ pub fn unpack_prepared_inputs_with_policy(
                             )
                             .with_implicit_commonjs_default_object(implicit_commonjs_default_object)
                             .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
+                            // Intra-container edges were already rewritten by
+                            // the detector. If any local ID is opaque, do not
+                            // let a same-numbered module from another input
+                            // capture the deliberately unresolved call.
+                            .with_cross_chunk_rewrite(!has_module_failures)
+                            .with_detector_failure(detector_failure)
                         }),
                 );
             }
@@ -841,9 +849,24 @@ fn maybe_split_detected_bundle(
     if !split_nested_scope && !materialize {
         return Ok(result);
     }
-    let result = result.materialize()?;
-    let result = maybe_split_scope_hoisted_modules(result, split_nested_scope, render_mode);
-    Ok(DetectedBundle::from_result(result))
+    let mut detected = result.materialize_prepared()?;
+    if split_nested_scope {
+        let excluded = detected
+            .module_failures
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        detected.result = maybe_split_scope_hoisted_modules_excluding(
+            detected.result,
+            true,
+            render_mode,
+            &excluded,
+        );
+        detected.prepared = std::iter::repeat_with(|| None)
+            .take(detected.result.modules.len())
+            .collect();
+    }
+    Ok(detected)
 }
 
 #[cfg(test)]

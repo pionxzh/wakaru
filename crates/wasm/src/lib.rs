@@ -258,6 +258,7 @@ export type WakaruWarningKind =
     | "input_parse_recovered"
     | "raw_normalization_failed"
     | "fact_collection_parse_failed"
+    | "webpack_factory_recovery_failed"
     | "decompile_failed"
     | "tdz_violation"
     | "duplicate_declaration"
@@ -337,6 +338,10 @@ mod tests {
             (
                 wakaru::DiagnosticCode::FactCollectionFailed,
                 "fact_collection_parse_failed",
+            ),
+            (
+                wakaru::DiagnosticCode::WebpackFactoryRecoveryFailed,
+                "webpack_factory_recovery_failed",
             ),
             (wakaru::DiagnosticCode::DecompileFailed, "decompile_failed"),
             (wakaru::DiagnosticCode::TdzViolation, "tdz_violation"),

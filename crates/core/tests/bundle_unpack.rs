@@ -626,6 +626,57 @@ fn webpack4_reused_loader_parameter_becomes_a_local_after_module_loads() {
 }
 
 #[test]
+fn webpack4_opaque_loader_reuse_preserves_other_structural_modules() {
+    let source = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load(2);
+}([
+  function(module, exports, load) {
+    if (globalThis.useAlternate) load = globalThis.alternateLoader;
+    module.exports = load;
+  },
+  function(module) {
+    module.exports = "stable";
+  },
+  function(module, exports, load) {
+    module.exports = [load(0), load(1)];
+  }
+]);
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack4-mixed-loader-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("one unsupported webpack 4 factory must not discard its container");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack4]);
+    assert_eq!(output.modules.len(), 3);
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    let entry = output
+        .modules
+        .iter()
+        .find(|(_, code)| code.contains("require(0)"))
+        .map(|(_, code)| code)
+        .expect("consumer should remain structurally recovered");
+    assert!(entry.contains("require(0)"), "{entry}");
+    assert!(!entry.contains("./module-0.js"), "{entry}");
+    assert!(entry.contains("./module-1.js"), "{entry}");
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack5_reused_loader_assignment_can_initialize_from_a_module() {
     let source = r#"
 (() => {
@@ -639,12 +690,11 @@ fn webpack5_reused_loader_assignment_can_initialize_from_a_module() {
     })
   });
   var cache = {};
-  function load(id) {
+  (function load(id) {
     var module = cache[id] = { exports: {} };
     modules[id](module, module.exports, load);
     return module.exports;
-  }
-  load(0);
+  })(0);
 })();
 "#;
 
@@ -694,12 +744,11 @@ fn webpack5_reused_loader_function_keeps_followup_property_initialization() {
     })
   });
   var cache = {};
-  function load(id) {
+  (function load(id) {
     var module = cache[id] = { exports: {} };
     modules[id](module, module.exports, load);
     return module.exports;
-  }
-  load(0);
+  })(0);
 })();
 "#;
 
@@ -732,6 +781,305 @@ fn webpack5_reused_loader_function_keeps_followup_property_initialization() {
         "the property writer must target a declared recovered local:\n{entry}"
     );
     assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_opaque_loader_reuse_preserves_other_structural_modules() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      const opaque = load(1);
+      const stable = load(2);
+      module.exports = [opaque, stable];
+    }),
+    1: ((module, exports, load) => {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    }),
+    2: ((module) => {
+      module.exports = "stable";
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-mixed-loader-reuse.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("one unsupported factory must not discard its container");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert_eq!(output.modules.len(), 4);
+    let failures = output
+        .warnings
+        .iter()
+        .filter(|warning| {
+            warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        failures.len(),
+        1,
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    assert_eq!(failures[0].filename, "module-1.js");
+
+    let opaque = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-1.js")
+        .map(|(_, code)| code)
+        .expect("opaque factory should be preserved");
+    assert!(opaque.contains("if (globalThis.useAlternate)"), "{opaque}");
+
+    let entry = output
+        .modules
+        .iter()
+        .find(|(filename, _)| filename == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("recoverable entry should be emitted");
+    assert!(
+        entry.contains("require(1)"),
+        "an opaque target must follow the absent-id convention:\n{entry}"
+    );
+    assert!(
+        !entry.contains("./module-1.js"),
+        "an opaque target must not gain a synthetic graph edge:\n{entry}"
+    );
+    assert!(
+        entry.contains("./module-2.js"),
+        "the independent structural edge should still recover:\n{entry}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+
+    let mapped = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-mixed-loader-reuse.js".to_string(),
+            emit_source_map: true,
+            ..Default::default()
+        },
+    )
+    .expect("source-map materialization must preserve the opaque sidecar");
+    assert!(mapped.warnings.iter().any(|warning| {
+        warning.filename == "module-1.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    assert!(mapped
+        .source_maps
+        .iter()
+        .all(|(filename, _)| filename != "module-1.js"));
+    assert!(mapped
+        .source_maps
+        .iter()
+        .any(|(filename, _)| filename == "module-2.js"));
+}
+
+#[test]
+fn webpack_named_id_loader_reuse_keeps_whole_container_fallback() {
+    let webpack4 = r#"
+!function(modules) {
+  function load(id) {
+    var module = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  return load("./entry.js");
+}({
+  "./opaque.js": function(module, exports, load) {
+    if (globalThis.useAlternate) load = globalThis.alternateLoader;
+    module.exports = load;
+  },
+  "./entry.js": function(module, exports, load) {
+    module.exports = load("./opaque.js");
+  }
+});
+"#;
+    let webpack5 = r#"
+(() => {
+  var modules = ({
+    "./opaque.js": ((module, exports, load) => {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    }),
+    "./entry.js": ((module, exports, load) => {
+      module.exports = load("./opaque.js");
+    })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load("./entry.js");
+})();
+"#;
+
+    for (filename, source) in [
+        ("webpack4-named-loader-reuse.js", webpack4),
+        ("webpack5-named-loader-reuse.js", webpack5),
+    ] {
+        let output = unpack_raw(
+            source,
+            &DecompileOptions {
+                filename: filename.to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("path-like absent IDs must keep the historical input fallback");
+        assert!(
+            output.detected_formats.is_empty(),
+            "{filename} must not synthesize a path-like edge"
+        );
+        assert_eq!(output.modules.len(), 1, "{filename}");
+        assert!(output.modules[0].1.contains("useAlternate"), "{filename}");
+    }
+}
+
+#[test]
+fn webpack5_opaque_loader_reuse_retains_entry_provenance() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    }),
+    1: ((module) => {
+      module.exports = "stable";
+    })
+  });
+  var cache = {};
+  function __nccwpck_require__(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, __nccwpck_require__);
+    return module.exports;
+  }
+  module.exports = __nccwpck_require__(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-opaque-entry.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("an opaque entry should coexist with recoverable siblings");
+
+    assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+    assert!(output
+        .provenance
+        .iter()
+        .any(|provenance| { provenance.filename == "module-0.js" && provenance.is_entry }));
+    assert!(output.warnings.iter().any(|warning| {
+        warning.filename == "module-0.js"
+            && warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+    }));
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
+fn webpack5_loader_reuse_demotion_reaches_an_order_independent_fixed_point() {
+    fn run(module_table: &str) -> Vec<String> {
+        let source = format!(
+            r#"
+(() => {{
+  var modules = ({{ {module_table} }});
+  var cache = {{}};
+  (function load(id) {{
+    var module = cache[id] = {{ exports: {{}} }};
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }})(2);
+}})();
+"#
+        );
+        let output = unpack(
+            &source,
+            DecompileOptions {
+                filename: "webpack5-loader-fixed-point.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("the stable factory should keep the container recoverable");
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+        let mut failed = output
+            .warnings
+            .iter()
+            .filter(|warning| {
+                warning.kind == wakaru_core::UnpackWarningKind::WebpackFactoryRecoveryFailed
+            })
+            .map(|warning| warning.filename.clone())
+            .collect::<Vec<_>>();
+        failed.sort();
+        failed
+    }
+
+    let dependent = r#"0: ((module, exports, load) => {
+      load = load(1);
+      module.exports = load;
+    })"#;
+    let inherently_opaque = r#"1: ((module, exports, load) => {
+      if (globalThis.useAlternate) load = globalThis.alternateLoader;
+      module.exports = load;
+    })"#;
+    let stable = r#"2: ((module) => { module.exports = "stable"; })"#;
+
+    let forward = run(&format!("{dependent}, {inherently_opaque}, {stable}"));
+    let reverse = run(&format!("{stable}, {inherently_opaque}, {dependent}"));
+    assert_eq!(forward, vec!["module-0.js", "module-1.js"]);
+    assert_eq!(reverse, forward);
+}
+
+#[test]
+fn webpack5_non_loader_normalization_failure_still_rejects_the_container() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((m, e, r) => {
+      globalThis.originalRequire = require;
+      m.exports = r(1);
+    }),
+    1: ((module) => { module.exports = "stable"; })
+  });
+  var cache = {};
+  function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  }
+  load(0);
+})();
+"#;
+
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "webpack5-fatal-normalization.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("fatal detector normalization should retain the input fallback");
+    assert!(output.detected_formats.is_empty());
+    assert_eq!(output.modules.len(), 1);
+    assert!(output.modules[0].1.contains("originalRequire"));
 }
 
 #[test]
