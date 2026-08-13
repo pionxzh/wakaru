@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, Ident, ImportSpecifier,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, FnDecl, Ident, ImportSpecifier,
     ImportStarAsSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
     SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
@@ -170,6 +170,7 @@ fn collect_transparent_aliases(module: &Module, root: &BindingId) -> HashSet<Bin
 
 struct NamespaceCompatibleUsage {
     targets: HashSet<BindingId>,
+    all_targets: HashSet<BindingId>,
     resettable_aliases: HashSet<BindingId>,
     unresolved_mark: Mark,
     compatible: bool,
@@ -178,6 +179,7 @@ struct NamespaceCompatibleUsage {
 
 impl NamespaceCompatibleUsage {
     fn new(targets: HashSet<BindingId>, root: BindingId, unresolved_mark: Mark) -> Self {
+        let all_targets = targets.clone();
         let resettable_aliases = targets
             .iter()
             .filter(|target| **target != root)
@@ -185,6 +187,7 @@ impl NamespaceCompatibleUsage {
             .collect();
         Self {
             targets,
+            all_targets,
             resettable_aliases,
             unresolved_mark,
             compatible: true,
@@ -263,6 +266,16 @@ impl Visit for NamespaceCompatibleUsage {
 
     fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {
         // The declaration is not a runtime use.
+    }
+
+    fn visit_fn_decl(&mut self, declaration: &FnDecl) {
+        // Function declarations are hoisted and may run before an alias reset
+        // even when their textual position is after it. Check every declared
+        // function against the original namespace lifetime; using more targets
+        // here can only make the repair fail closed.
+        let active_targets = std::mem::replace(&mut self.targets, self.all_targets.clone());
+        declaration.visit_children_with(self);
+        self.targets = active_targets;
     }
 
     fn visit_call_expr(&mut self, call: &CallExpr) {
@@ -355,5 +368,81 @@ impl Visit for NamespaceCompatibleUsage {
             // observe or mutate object identity/prototype/extensibility.
             self.compatible = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use swc_core::common::{sync::Lrc, FileName, Globals, SourceMap, GLOBALS};
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+    use swc_core::ecma::transforms::base::resolver;
+    use swc_core::ecma::visit::VisitMutWith;
+
+    use super::*;
+    use crate::facts::{ExportFact, ModuleFacts};
+
+    #[test]
+    fn hoisted_function_after_alias_reset_is_checked_against_the_original_lifetime() {
+        GLOBALS.set(&Globals::new(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let source = r#"
+import imported from "./provider.js";
+let provider = imported;
+const before = provider.alpha;
+mutateProvider();
+provider = { alpha: 2 };
+function mutateProvider() {
+    provider.alpha = 3;
+}
+consume(before, provider.alpha);
+"#;
+            let file = cm.new_source_file(
+                FileName::Custom("consumer.js".into()).into(),
+                source.to_string(),
+            );
+            let lexer = Lexer::new(
+                Syntax::Es(EsSyntax::default()),
+                Default::default(),
+                StringInput::from(&*file),
+                None,
+            );
+            let mut module = Parser::new_from(lexer)
+                .parse_module()
+                .expect("consumer should parse");
+            let unresolved_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, Mark::new(), false));
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &mut module.body[0] else {
+                panic!("expected leading import")
+            };
+            import.span = DUMMY_SP;
+
+            let mut facts = ModuleFactsMap::new();
+            facts.insert(
+                "provider.js",
+                ModuleFacts {
+                    exports: vec![ExportFact {
+                        exported: "alpha".into(),
+                        local: Some("alpha".into()),
+                        kind: ExportKind::Named,
+                    }],
+                    ..Default::default()
+                },
+            );
+
+            run_provider_namespace_repair(
+                &mut module,
+                &facts,
+                Some("consumer.js"),
+                unresolved_mark,
+            );
+
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[0] else {
+                panic!("expected leading import")
+            };
+            assert!(
+                matches!(import.specifiers.first(), Some(ImportSpecifier::Default(_))),
+                "the hoisted mutation can run before the alias reset, so repair must fail closed"
+            );
+        });
     }
 }

@@ -155,9 +155,11 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
   used as `Object.assign` sources. Simple local aliases preserve that proof; an
   exact, unconditional top-level replacement assignment ends an alias's
-  namespace lifetime after its right-hand side is evaluated. Authored imports,
-  namespace mutation, conditional/nested alias replacement, arbitrary value
-  escape, computed/meta reads, and `__esModule` observation remain unchanged.
+  namespace lifetime after its right-hand side is evaluated. Hoisted function
+  declarations are always checked against the original lifetime regardless of
+  textual position. Authored imports, namespace mutation, conditional/nested
+  alias replacement, arbitrary value escape, computed/meta reads, and
+  `__esModule` observation remain unchanged.
   The existing namespace decomposition pass can then recover narrower named
   imports where its own gates allow that rewrite.
 - **`namespace_decomposition`** — rewrites `import r from "./x"; r.foo()` into
