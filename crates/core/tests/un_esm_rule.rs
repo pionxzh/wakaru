@@ -595,6 +595,21 @@ window.syntheticApi = module.exports;
 }
 
 #[test]
+fn stable_default_read_recovery_rejects_hidden_direct_eval_writes() {
+    let input = r#"
+let api = () => "ready";
+module.exports = api;
+eval("api = replacement");
+window.syntheticApi = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("window.syntheticApi = module.exports"),
+        "direct eval can replace a capture without an AST write site:\n{output}"
+    );
+}
+
+#[test]
 fn stable_default_read_recovery_preserves_direct_calls() {
     let input = r#"
 const api = function() { return this.value; };
@@ -651,6 +666,20 @@ consume(exports.method());
     assert!(
         output.contains("consume(exports.method())"),
         "direct eval can observe the CommonJS receiver:\n{output}"
+    );
+}
+
+#[test]
+fn named_export_read_recovery_rejects_hidden_direct_eval_property_writes() {
+    let input = r#"
+exports.method = () => 1;
+eval("exports.method = replacement");
+consume(exports.method());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(exports.method())"),
+        "direct eval can replace the CommonJS property without an AST write site:\n{output}"
     );
 }
 

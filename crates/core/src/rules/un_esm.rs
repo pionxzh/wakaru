@@ -584,6 +584,14 @@ fn collect_commonjs_read_recovery_evidence(
     unresolved_mark: Mark,
     uses: &BindingUseIndex,
 ) -> CommonJsReadRecoveryEvidence {
+    let mut direct_eval = DirectEvalPresence::default();
+    module.visit_with(&mut direct_eval);
+    if direct_eval.found {
+        // Direct eval can read or replace CommonJS runtime properties and
+        // local captures without producing statically visible use sites.
+        return CommonJsReadRecoveryEvidence::default();
+    }
+
     CommonJsReadRecoveryEvidence {
         stable_default_assignment_span: collect_stable_default_assignment_span(
             module,
@@ -591,6 +599,21 @@ fn collect_commonjs_read_recovery_evidence(
             uses,
         ),
         stable_named_properties: collect_stable_named_properties(module, unresolved_mark, uses),
+    }
+}
+
+#[derive(Default)]
+struct DirectEvalPresence {
+    found: bool,
+}
+
+impl Visit for DirectEvalPresence {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if direct_eval_call_source(call).is_some() {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
     }
 }
 

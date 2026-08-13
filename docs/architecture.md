@@ -381,7 +381,7 @@ Stage 2: Transpiler helper unwrapping + module-system reconstruction
   method calls additionally require a receiver-insensitive function. Earlier
   `undefined` export declarations are permitted; multiple value writes, later
   resets, computed writes, value escapes, receiver-sensitive calls, early
-  reads, and hoisted function declarations remain fail closed.
+  reads, direct eval, and hoisted function declarations remain fail closed.
 
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
