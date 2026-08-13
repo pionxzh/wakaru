@@ -3,7 +3,8 @@
 //! A development/benchmark tool: parses a set of emitted modules and reports
 //! structural defects that would make the output fail to load as ESM —
 //! dangling relative references, imports of names the provider does not
-//! export, duplicate exports, and writes to imported or `const` bindings.
+//! export, duplicate exports, unresolved CommonJS runtime bindings in ESM,
+//! and writes to imported or `const` bindings.
 //!
 //! Raw output is deliberately out of scope: `--raw` promises only "no
 //! readability transforms" and carries no module-graph contract. Validate
@@ -19,14 +20,16 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, GLOB
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, AssignTargetPat, BindingIdent, CallExpr, Callee, Decl, Expr, ForHead,
     ForInStmt, ForOfStmt, Id, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, ObjectPatProp, Pat, Program, PropName, SimpleAssignTarget, Str, UpdateExpr,
-    VarDecl, VarDeclKind,
+    ModuleItem, ObjectPatProp, Pat, Program, PropName, SimpleAssignTarget, Str, UnaryExpr, UnaryOp,
+    UpdateExpr, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::atoms::Atom;
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
+
+use crate::utils::paren::strip_parens;
 
 /// A structural defect found in emitted output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +61,9 @@ pub enum OutputFindingKind {
     AssignToImport,
     /// Assignment or update targeting a `const` binding.
     AssignToConst,
+    /// An ESM output module still reads or writes the free CommonJS runtime
+    /// binding `module` or `exports`.
+    EsmCommonJsResidual,
 }
 
 impl OutputFindingKind {
@@ -69,6 +75,7 @@ impl OutputFindingKind {
             OutputFindingKind::DuplicateExport => "duplicate_export",
             OutputFindingKind::AssignToImport => "assign_to_import",
             OutputFindingKind::AssignToConst => "assign_to_const",
+            OutputFindingKind::EsmCommonJsResidual => "esm_commonjs_residual",
         }
     }
 }
@@ -531,6 +538,30 @@ fn analyze_module(
     };
     module.visit_with(&mut const_collector);
 
+    if has_module_syntax(&module) {
+        let mut residual_collector = EsmCommonJsResidualCollector {
+            unresolved_mark,
+            residuals: Vec::new(),
+        };
+        module.visit_with(&mut residual_collector);
+        findings.extend(
+            residual_collector
+                .residuals
+                .into_iter()
+                .map(|(name, span)| {
+                    finding_at_span(
+                        filename,
+                        &source_map,
+                        span,
+                        OutputFindingKind::EsmCommonJsResidual,
+                        format!(
+                            "unresolved CommonJS runtime binding \"{name}\" remains in ESM output"
+                        ),
+                    )
+                }),
+        );
+    }
+
     let mut ref_visitor = BodyVisitor {
         filename,
         filenames,
@@ -803,6 +834,43 @@ fn resolve_in_set(from_filename: &str, spec: &str, filenames: &HashSet<&str>) ->
 /// ids unique, so no scope tracking is needed).
 struct ConstBindingCollector {
     bindings: HashMap<Id, Atom>,
+}
+
+/// Collect runtime uses of free `module` / `exports` from files that the
+/// emitted syntax identifies as ESM. Resolver contexts distinguish those
+/// globals from same-spelled locals and parameters. A direct `typeof module`
+/// or `typeof exports` probe is safe even when the binding is absent, so it is
+/// not a defect by itself; dereferencing a member beneath `typeof` is not safe
+/// and remains visible.
+struct EsmCommonJsResidualCollector {
+    unresolved_mark: Mark,
+    residuals: Vec<(Atom, Span)>,
+}
+
+impl EsmCommonJsResidualCollector {
+    fn unresolved_commonjs_name(&self, ident: &Ident) -> Option<Atom> {
+        (ident.ctxt.outer() == self.unresolved_mark
+            && matches!(ident.sym.as_ref(), "module" | "exports"))
+        .then(|| ident.sym.clone())
+    }
+}
+
+impl Visit for EsmCommonJsResidualCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if let Some(name) = self.unresolved_commonjs_name(ident) {
+            self.residuals.push((name, ident.span));
+        }
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::TypeOf
+            && matches!(strip_parens(&unary.arg), Expr::Ident(ident)
+                if self.unresolved_commonjs_name(ident).is_some())
+        {
+            return;
+        }
+        unary.visit_children_with(self);
+    }
 }
 
 impl Visit for ConstBindingCollector {

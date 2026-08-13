@@ -65,8 +65,10 @@ edges.
 reports structural defects that would make it fail to load as ESM: dangling
 relative references (static, re-export, dynamic `import()`, string
 `require()`), imports of names the provider doesn't unambiguously export,
-duplicate exports, and writes to imported or `const` bindings. It exits
-nonzero when findings exist, so harnesses can gate on it.
+duplicate exports, unresolved `module` / `exports` runtime uses left in ESM
+output, and writes to imported or `const` bindings. Direct safe
+`typeof module` / `typeof exports` probes are excluded. It exits nonzero when
+findings exist, so harnesses can gate on it.
 
 ```bash
 cargo run -p wakaru-cli -- --unpack bundle.js -o out/

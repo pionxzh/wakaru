@@ -45,6 +45,84 @@ console.log(helper(), fallback);
 }
 
 #[test]
+fn esm_commonjs_runtime_residuals_are_reported_at_each_use() {
+    let findings = validate_output_modules(&modules(&[(
+        "entry.js",
+        r#"
+export const ready = true;
+if (typeof window !== "undefined") window.library = module.exports;
+exports.start();
+module.exports = ready;
+"#,
+    )]));
+
+    assert_eq!(
+        findings
+            .iter()
+            .map(|finding| (
+                finding.kind,
+                finding.line,
+                finding.column,
+                finding.message.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                OutputFindingKind::EsmCommonJsResidual,
+                3,
+                53,
+                "unresolved CommonJS runtime binding \"module\" remains in ESM output",
+            ),
+            (
+                OutputFindingKind::EsmCommonJsResidual,
+                4,
+                1,
+                "unresolved CommonJS runtime binding \"exports\" remains in ESM output",
+            ),
+            (
+                OutputFindingKind::EsmCommonJsResidual,
+                5,
+                1,
+                "unresolved CommonJS runtime binding \"module\" remains in ESM output",
+            ),
+        ]
+    );
+}
+
+#[test]
+fn safe_commonjs_typeof_probes_and_shadowed_bindings_are_not_reported() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"
+export const runtimeAvailable =
+    typeof module !== "undefined" || typeof exports !== "undefined";
+export function inspect(module, exports) {
+    return [module.exports, exports.value, globalThis.module];
+}
+"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
+fn typeof_member_dereference_is_still_a_commonjs_residual() {
+    let findings = kinds(&[("entry.js", r#"export const kind = typeof module.exports;"#)]);
+    assert_eq!(
+        findings,
+        vec![(OutputFindingKind::EsmCommonJsResidual, "entry.js".into())]
+    );
+}
+
+#[test]
+fn commonjs_script_output_is_outside_the_esm_residual_check() {
+    let findings = kinds(&[(
+        "entry.js",
+        r#"module.exports = function() { return exports.value; };"#,
+    )]);
+    assert_eq!(findings, vec![]);
+}
+
+#[test]
 fn dangling_static_import_is_reported() {
     let findings = kinds(&[(
         "entry.js",

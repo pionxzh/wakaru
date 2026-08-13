@@ -138,7 +138,9 @@ wakaru debug validate out/ --json
 
 This reports dangling relative references, missing or star-ambiguous imported
 or re-exported names, duplicate exports, and writes to imported or `const`
-bindings, then exits nonzero on findings. Text output uses
+bindings. It also reports unresolved `module` / `exports` runtime uses left in
+files that contain ESM syntax, excluding direct safe `typeof` probes, then
+exits nonzero on findings. Text output uses
 `filename:line:column`; JSON
 findings include one-based `line` and `column`. The recursive scan accepts
 `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.mts`, `.cts`, and extensionless

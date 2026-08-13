@@ -1342,7 +1342,16 @@ fn webpack5_reused_loader_normalizes_only_the_loader_lifetime() {
             && entry.matches("_load.r(exports)").count() == 1,
         "pre-write webpack helpers should be consumed:\n{entry}"
     );
-    assert_eq!(validate_output_modules(&output.modules), vec![]);
+    // The arbitrary post-write runtime value still receives the factory's
+    // original `exports` object. That object has no proven ESM replacement;
+    // keep the residual visible rather than pretending the graph is clean.
+    let findings = validate_output_modules(&output.modules);
+    assert_eq!(findings.len(), 1, "unexpected findings: {findings:#?}");
+    assert_eq!(
+        findings[0].kind,
+        wakaru_core::OutputFindingKind::EsmCommonJsResidual
+    );
+    assert_eq!(findings[0].filename, "module-0.js");
 }
 
 #[test]
@@ -1408,7 +1417,16 @@ fn webpack4_reused_loader_normalizes_prewrite_runtime_helpers() {
             && entry.matches("_load.r(exports)").count() == 1,
         "{entry}"
     );
-    assert_eq!(validate_output_modules(&output.modules), vec![]);
+    // The arbitrary post-write runtime value still receives the factory's
+    // original `exports` object. That object has no proven ESM replacement;
+    // keep the residual visible rather than pretending the graph is clean.
+    let findings = validate_output_modules(&output.modules);
+    assert_eq!(findings.len(), 1, "unexpected findings: {findings:#?}");
+    assert_eq!(
+        findings[0].kind,
+        wakaru_core::OutputFindingKind::EsmCommonJsResidual
+    );
+    assert_eq!(findings[0].filename, "module-0.js");
 }
 
 #[test]
