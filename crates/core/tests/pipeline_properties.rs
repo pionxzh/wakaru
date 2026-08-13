@@ -359,3 +359,35 @@ module.exports.runtime = function() {
         output.code
     );
 }
+
+#[test]
+fn parameter_alias_recovery_does_not_capture_existing_default_reference() {
+    let source = r#"
+const settings = { enabled: true };
+const p = !!settings.enabled;
+function select(value, options = { enabled: p }) {
+    let { enabled: a } = options;
+    return a ? value : null;
+}
+consume(select);
+"#;
+    let output = decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            diagnostics: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+    let tdz_warnings: Vec<_> = output
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == UnpackWarningKind::TdzViolation)
+        .collect();
+    assert!(
+        tdz_warnings.is_empty(),
+        "parameter alias recovery captured its default reference: {tdz_warnings:#?}\n--- output ---\n{}",
+        output.code
+    );
+}

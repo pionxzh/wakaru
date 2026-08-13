@@ -612,6 +612,18 @@ function foo({ name = fallback } = {}) {
 }
 
 #[test]
+fn destructuring_alias_does_not_capture_existing_param_default_reference() {
+    let input = r#"
+const enabled = true;
+function select(value, options = { enabled }) {
+  let { enabled } = options;
+  return enabled ? value : null;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn object_property_aliases_become_param_pattern() {
     let input = r#"
 function pick(_ref = {}) {

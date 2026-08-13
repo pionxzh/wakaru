@@ -1947,6 +1947,16 @@ fn replace_param_alias_pat(
     destructured_pat: Pat,
     default_val: Option<Box<Expr>>,
 ) -> bool {
+    let effective_default = default_val.as_deref().or_else(|| match param {
+        Pat::Assign(assign) => Some(assign.right.as_ref()),
+        _ => None,
+    });
+    if effective_default.is_some_and(|default| {
+        destructured_pat_binding_would_capture_default(&destructured_pat, default)
+    }) {
+        return false;
+    }
+
     match param {
         Pat::Ident(binding) if same_ident(&binding.id, alias) => {
             *param = if let Some(default_val) = default_val {
@@ -2026,6 +2036,25 @@ fn collect_pat_bound_emitted_names(pat: &Pat, out: &mut Vec<Atom>) {
         Pat::Rest(rest) => collect_pat_bound_emitted_names(&rest.arg, out),
         _ => {}
     }
+}
+
+fn destructured_pat_binding_would_capture_default(pat: &Pat, default: &Expr) -> bool {
+    let mut bound_names = Vec::new();
+    collect_pat_bound_emitted_names(pat, &mut bound_names);
+    if bound_names.is_empty() {
+        return false;
+    }
+
+    // The declaration currently lives in the function body, which is outside
+    // the parameter-default environment. Moving it into the parameter pattern
+    // would make any same-name reference in that default resolve to the new
+    // parameter binding. SyntaxContext cannot protect the emitted JavaScript
+    // after the declaration changes scope, so compare printed names here.
+    let mut default_names = Vec::new();
+    collect_all_expr_emitted_names(default, &mut default_names);
+    bound_names
+        .iter()
+        .any(|binding| default_names.iter().any(|name| name == binding))
 }
 
 fn destructured_pat_references_alias(pat: &Pat, alias: &Ident) -> bool {
