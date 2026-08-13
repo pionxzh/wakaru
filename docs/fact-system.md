@@ -153,7 +153,10 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   synthesized for a whole-object `require("./x")` into a namespace import when
   the provider facts prove a named or `export *` surface and no default export.
   It accepts static member reads, `Object.keys(namespace)`, and namespace values
-  used as `Object.assign` sources. Authored imports, mutation, arbitrary value
+  used as `Object.assign` sources. Simple local aliases preserve that proof; an
+  exact, unconditional top-level replacement assignment ends an alias's
+  namespace lifetime after its right-hand side is evaluated. Authored imports,
+  namespace mutation, conditional/nested alias replacement, arbitrary value
   escape, computed/meta reads, and `__esModule` observation remain unchanged.
   The existing namespace decomposition pass can then recover narrower named
   imports where its own gates allow that rewrite.

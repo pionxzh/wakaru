@@ -10,22 +10,25 @@
 //! by `UnEsm`, requires a proven named/export-star provider with no default,
 //! and accepts uses whose behavior is supported by an ESM namespace: static
 //! member reads, `Object.keys(namespace)`, and a namespace used as an
-//! `Object.assign` source. Mutation, binding escape, computed/meta access, and
-//! `__esModule` observation leave the original import unchanged.
+//! `Object.assign` source. A simple top-level alias may stop referring to the
+//! namespace after an unconditional replacement assignment. Mutation,
+//! binding escape, computed/meta access, and `__esModule` observation leave
+//! the original import unchanged.
 
 use std::collections::HashSet;
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CallExpr, Callee, Expr, Ident, ImportSpecifier,
-    ImportStarAsSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
-    SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, Ident, ImportSpecifier,
+    ImportStarAsSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
+    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 use crate::facts::{ExportKind, ModuleFactsMap};
 use crate::rules::expr_utils::is_unresolved_ident;
+use crate::utils::paren::strip_parens;
 
 pub(crate) fn run_provider_namespace_repair(
     module: &mut Module,
@@ -69,7 +72,12 @@ pub(crate) fn run_provider_namespace_repair(
                 continue;
             };
             let binding = binding_id(&default.local);
-            let mut usage = NamespaceCompatibleUsage::new(&binding, unresolved_mark);
+            let transparent_aliases = collect_transparent_aliases(module, &binding);
+            let mut usage = NamespaceCompatibleUsage::new(
+                transparent_aliases,
+                binding.clone(),
+                unresolved_mark,
+            );
             module.visit_with(&mut usage);
             if usage.compatible && usage.has_meaningful_use {
                 candidates.insert(binding);
@@ -120,17 +128,64 @@ pub(crate) fn run_provider_namespace_repair(
     module.body = rewritten;
 }
 
-struct NamespaceCompatibleUsage<'a> {
-    target: &'a BindingId,
+/// Follow simple local aliases of a synthesized import. A namespace
+/// object and `let alias = namespace` have the same identity and live-binding
+/// behavior; treating the initializer as an arbitrary bare escape would keep a
+/// known-invalid default import. A later unconditional replacement of the
+/// alias ends this lifetime without mutating the imported namespace.
+fn collect_transparent_aliases(module: &Module, root: &BindingId) -> HashSet<BindingId> {
+    let mut aliases = HashSet::from([root.clone()]);
+    loop {
+        let mut changed = false;
+        for item in &module.body {
+            let ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(swc_core::ecma::ast::Decl::Var(
+                var,
+            ))) = item
+            else {
+                continue;
+            };
+            for declarator in &var.decls {
+                let Pat::Ident(alias) = &declarator.name else {
+                    continue;
+                };
+                let Some(Expr::Ident(source)) = declarator.init.as_deref() else {
+                    continue;
+                };
+                let alias = binding_id(&alias.id);
+                if aliases.contains(&alias)
+                    || !aliases
+                        .iter()
+                        .any(|target| ident_matches_binding(source, target))
+                {
+                    continue;
+                }
+                changed |= aliases.insert(alias);
+            }
+        }
+        if !changed {
+            return aliases;
+        }
+    }
+}
+
+struct NamespaceCompatibleUsage {
+    targets: HashSet<BindingId>,
+    resettable_aliases: HashSet<BindingId>,
     unresolved_mark: Mark,
     compatible: bool,
     has_meaningful_use: bool,
 }
 
-impl<'a> NamespaceCompatibleUsage<'a> {
-    fn new(target: &'a BindingId, unresolved_mark: Mark) -> Self {
+impl NamespaceCompatibleUsage {
+    fn new(targets: HashSet<BindingId>, root: BindingId, unresolved_mark: Mark) -> Self {
+        let resettable_aliases = targets
+            .iter()
+            .filter(|target| **target != root)
+            .cloned()
+            .collect();
         Self {
-            target,
+            targets,
+            resettable_aliases,
             unresolved_mark,
             compatible: true,
             has_meaningful_use: false,
@@ -138,7 +193,9 @@ impl<'a> NamespaceCompatibleUsage<'a> {
     }
 
     fn is_target(&self, ident: &Ident) -> bool {
-        ident_matches_binding(ident, self.target)
+        self.targets
+            .iter()
+            .any(|target| ident_matches_binding(ident, target))
     }
 
     fn target_member(&self, member: &MemberExpr) -> bool {
@@ -169,9 +226,41 @@ impl<'a> NamespaceCompatibleUsage<'a> {
             _ => false,
         }
     }
+
+    fn top_level_alias_reset<'a>(&self, item: &'a ModuleItem) -> Option<(BindingId, &'a Expr)> {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return None;
+        };
+        let Expr::Assign(assign) = strip_parens(&statement.expr) else {
+            return None;
+        };
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+            return None;
+        };
+        let binding = binding_id(&binding.id);
+        (self.targets.contains(&binding) && self.resettable_aliases.contains(&binding))
+            .then_some((binding, assign.right.as_ref()))
+    }
 }
 
-impl Visit for NamespaceCompatibleUsage<'_> {
+impl Visit for NamespaceCompatibleUsage {
+    fn visit_module(&mut self, module: &Module) {
+        for item in &module.body {
+            if let Some((binding, right)) = self.top_level_alias_reset(item) {
+                // The right-hand side still observes the namespace value. The
+                // simple top-level assignment ends the transparent alias
+                // lifetime only after that evaluation completes.
+                right.visit_with(self);
+                self.targets.remove(&binding);
+            } else {
+                item.visit_with(self);
+            }
+        }
+    }
+
     fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {
         // The declaration is not a runtime use.
     }
@@ -202,6 +291,17 @@ impl Visit for NamespaceCompatibleUsage<'_> {
         }
 
         call.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        let transparent_alias = matches!(
+            (&declarator.name, declarator.init.as_deref()),
+            (Pat::Ident(alias), Some(Expr::Ident(source)))
+                if self.is_target(&alias.id) && self.is_target(source)
+        );
+        if !transparent_alias {
+            declarator.visit_children_with(self);
+        }
     }
 
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {

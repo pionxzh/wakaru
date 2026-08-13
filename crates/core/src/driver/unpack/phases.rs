@@ -1121,6 +1121,116 @@ module.exports = read;
     }
 
     #[test]
+    fn named_only_provider_repairs_a_transparent_synthetic_import_alias() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1; exports.beta = 2;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var imported = require("./provider.js");
+let provider = imported;
+const value = provider.alpha + provider.beta;
+provider = { alpha: 3 };
+module.exports = value + provider.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("a transparent alias should preserve namespace semantics");
+        assert_eq!(validate_prepared_output(&output), vec![]);
+        let consumer = output
+            .modules
+            .iter()
+            .find(|module| module.filename == "consumer.js")
+            .map(|module| module.code.as_str())
+            .expect("expected consumer module");
+        assert!(
+            consumer.contains("import * as imported from \"./provider.js\";"),
+            "the synthesized edge should become a namespace import:\n{consumer}"
+        );
+        assert!(
+            consumer.contains("provider = {") && consumer.contains("provider.alpha"),
+            "the reassigned alias must keep its later, non-namespace lifetime:\n{consumer}"
+        );
+    }
+
+    #[test]
+    fn named_only_provider_keeps_namespace_member_mutation_fail_closed() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var imported = require("./provider.js");
+let provider = imported;
+provider.alpha = 2;
+module.exports = provider.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("a namespace mutation should remain printable");
+        let findings = validate_prepared_output(&output);
+        assert!(findings.iter().any(|finding| {
+            finding.kind == OutputFindingKind::MissingImportedName
+                && finding.filename == "consumer.js"
+        }));
+    }
+
+    #[test]
+    fn named_only_provider_keeps_conditional_alias_replacement_fail_closed() {
+        let modules = vec![
+            UnpackedModule {
+                id: "provider".to_string(),
+                code: "exports.alpha = 1;".to_string(),
+                filename: "provider.js".to_string(),
+                ..Default::default()
+            },
+            UnpackedModule {
+                id: "consumer".to_string(),
+                is_entry: true,
+                code: r#"
+var imported = require("./provider.js");
+let provider = imported;
+if (replaceProvider) provider = { alpha: 2 };
+module.exports = provider.alpha;
+"#
+                .to_string(),
+                filename: "consumer.js".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("a conditional alias replacement should remain printable");
+        let findings = validate_prepared_output(&output);
+        assert!(findings.iter().any(|finding| {
+            finding.kind == OutputFindingKind::MissingImportedName
+                && finding.filename == "consumer.js"
+        }));
+    }
+
+    #[test]
     fn named_only_provider_namespace_supports_enumeration_and_copy_sources() {
         let modules = vec![
             UnpackedModule {
