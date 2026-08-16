@@ -13,9 +13,12 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::cross_module_helper_refs::{
     collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
 };
-use super::decl_utils::{collect_decl_names, collect_pat_names, collect_var_decl_names};
+use super::decl_utils::{
+    collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids,
+};
+use super::eval_utils::is_direct_eval_call;
 use super::helper_matcher::{binding_key, ident_matches_binding};
-use super::rename_utils::BindingId;
+use super::rename_utils::{rename_bindings, BindingId, BindingRename};
 use super::state_machine::{
     invert_condition, stmts_contain_state_opcode_return, ForwardJumpJoin, IndexLoopContinueMode,
     OpcodeReturnScan, StateMachineProgram,
@@ -288,12 +291,13 @@ fn try_transform_generator(
         None => return false,
     };
 
-    let extracted = match extract_generator_stmts(body.stmts[return_idx].clone(), helpers) {
+    let mut extracted = match extract_generator_stmts(body.stmts[return_idx].clone(), helpers) {
         Some(extracted) => extracted,
         None => return false,
     };
-    if callback_locals_collide_with_destination(
-        &extracted.callback_local_names,
+    if !hygienically_move_callback_locals(
+        &mut extracted.stmts,
+        &extracted.callback_local_ids,
         &body.stmts,
         return_idx,
         reserved_names,
@@ -320,7 +324,7 @@ fn is_generator_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
 
 struct ExtractedGenerator {
     stmts: Vec<Stmt>,
-    callback_local_names: HashSet<Atom>,
+    callback_local_ids: HashSet<BindingId>,
 }
 
 fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<ExtractedGenerator> {
@@ -350,7 +354,7 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<E
     let body = fn_expr.function.body?;
     let mut state_stmt = None;
     let mut callback_locals = Vec::new();
-    let mut callback_local_names = HashSet::new();
+    let mut callback_local_ids = HashSet::new();
     for stmt in body.stmts {
         match stmt {
             Stmt::Switch(_) | Stmt::Return(_) => {
@@ -362,7 +366,7 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<E
                 if var.kind == VarDeclKind::Var
                     && var.decls.iter().all(|decl| decl.init.is_none()) =>
             {
-                collect_var_decl_names(&var, &mut callback_local_names);
+                collect_var_decl_binding_ids(&var, &mut callback_local_ids);
                 callback_locals.push(Stmt::Decl(Decl::Var(var)));
             }
             Stmt::Empty(_) => {}
@@ -379,7 +383,7 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<E
     callback_locals.extend(decoded);
     Some(ExtractedGenerator {
         stmts: callback_locals,
-        callback_local_names,
+        callback_local_ids,
     })
 }
 
@@ -391,20 +395,93 @@ fn binding_names_from_params(params: &[Param]) -> HashSet<Atom> {
     names
 }
 
-fn callback_locals_collide_with_destination(
-    callback_local_names: &HashSet<Atom>,
+/// Rename moved callback locals that would collide with the destination
+/// function's parameters or other identifiers. Direct `eval` / `with` can
+/// observe the original names as strings, so those cases stay fail-closed.
+fn hygienically_move_callback_locals(
+    moved_stmts: &mut [Stmt],
+    moved_ids: &HashSet<BindingId>,
     destination_stmts: &[Stmt],
     replaced_index: usize,
     reserved_names: &HashSet<Atom>,
 ) -> bool {
-    if callback_local_names.is_empty() {
-        return false;
+    if moved_ids.is_empty() {
+        return true;
     }
     let destination_names =
         destination_identifier_names(destination_stmts, Some(replaced_index), reserved_names);
-    callback_local_names
+    let colliding: Vec<BindingId> = moved_ids
         .iter()
-        .any(|name| destination_names.contains(name))
+        .filter(|(name, _)| destination_names.contains(name))
+        .cloned()
+        .collect();
+    if colliding.is_empty() {
+        return true;
+    }
+    if stmts_have_direct_eval_or_with(moved_stmts) {
+        return false;
+    }
+
+    let mut reserved = destination_names;
+    reserved.extend(destination_identifier_names(
+        moved_stmts,
+        None,
+        &HashSet::new(),
+    ));
+    let renames: Vec<BindingRename> = colliding
+        .into_iter()
+        .map(|old| {
+            let new = allocate_unique_name(&old.0, &mut reserved);
+            BindingRename { old, new }
+        })
+        .collect();
+    for stmt in moved_stmts.iter_mut() {
+        rename_bindings(stmt, &renames);
+    }
+    true
+}
+
+fn allocate_unique_name(base: &Atom, reserved: &mut HashSet<Atom>) -> Atom {
+    let mut index = 1u32;
+    loop {
+        let candidate: Atom = format!("{base}{index}").into();
+        if reserved.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn stmts_have_direct_eval_or_with(stmts: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_with_stmt(&mut self, _: &swc_core::ecma::ast::WithStmt) {
+            self.found = true;
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if is_direct_eval_call(call) {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
 }
 
 fn destination_identifier_names(
@@ -1586,10 +1663,11 @@ fn try_transform_awaiter(
         .iter()
         .position(|stmt| is_awaiter_return(stmt, helpers))?;
 
-    let inner_stmts = extract_awaiter_body(body.stmts[return_idx].clone(), helpers)?;
-    let moved_names = moved_function_scope_names(&inner_stmts);
-    if callback_locals_collide_with_destination(
-        &moved_names,
+    let mut inner_stmts = extract_awaiter_body(body.stmts[return_idx].clone(), helpers)?;
+    let moved_ids = moved_function_scope_binding_ids(&inner_stmts);
+    if !hygienically_move_callback_locals(
+        &mut inner_stmts,
+        &moved_ids,
         &body.stmts,
         return_idx,
         reserved_names,
@@ -1602,7 +1680,6 @@ fn try_transform_awaiter(
     body.stmts.remove(return_idx);
 
     // Replace yield with await in the extracted statements
-    let mut inner_stmts = inner_stmts;
     replace_yield_with_await(&mut inner_stmts);
 
     // Splice the inner statements in place of the return
@@ -1610,27 +1687,27 @@ fn try_transform_awaiter(
     Some(saved_stmts)
 }
 
-/// Names whose binding scope changes when the awaiter callback body is spliced
+/// Bindings whose scope changes when the awaiter callback body is spliced
 /// into its containing function. Function-scoped `var` declarations are
 /// collected through nested blocks, while top-level lexical/function/class
 /// declarations are collected directly. Nested callable and class scopes stay
 /// intact and are not part of the move.
-fn moved_function_scope_names(stmts: &[Stmt]) -> HashSet<Atom> {
-    let mut names = HashSet::new();
+fn moved_function_scope_binding_ids(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
     for stmt in stmts {
         if let Stmt::Decl(decl) = stmt {
-            collect_decl_names(decl, &mut names);
+            collect_decl_binding_ids(decl, &mut ids);
         }
     }
 
-    struct FunctionVarNameCollector<'a> {
-        names: &'a mut HashSet<Atom>,
+    struct FunctionVarIdCollector<'a> {
+        ids: &'a mut HashSet<BindingId>,
     }
 
-    impl Visit for FunctionVarNameCollector<'_> {
+    impl Visit for FunctionVarIdCollector<'_> {
         fn visit_var_decl(&mut self, var: &VarDecl) {
             if var.kind == VarDeclKind::Var {
-                collect_var_decl_names(var, self.names);
+                collect_var_decl_binding_ids(var, self.ids);
             }
         }
 
@@ -1641,11 +1718,11 @@ fn moved_function_scope_names(stmts: &[Stmt]) -> HashSet<Atom> {
         fn visit_class(&mut self, _class: &swc_core::ecma::ast::Class) {}
     }
 
-    let mut collector = FunctionVarNameCollector { names: &mut names };
+    let mut collector = FunctionVarIdCollector { ids: &mut ids };
     for stmt in stmts {
         stmt.visit_with(&mut collector);
     }
-    names
+    ids
 }
 
 fn is_awaiter_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {

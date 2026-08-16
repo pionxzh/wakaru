@@ -3391,15 +3391,63 @@ fn build_class_method(
     } else {
         DUMMY_SP
     };
+    let mut function = fn_expr.function.clone();
+    // Object.defineProperty setters may have zero parameters; class `set`
+    // accessors must have exactly one.
+    if kind == MethodKind::Setter {
+        ensure_setter_has_value_param(&mut function);
+    }
     ClassMethod {
         span: method_span,
         key,
-        function: fn_expr.function.clone(),
+        function,
         kind,
         is_static,
         accessibility: None,
         is_abstract: false,
         is_optional: false,
         is_override: false,
+    }
+}
+
+fn ensure_setter_has_value_param(function: &mut Function) {
+    if !function.params.is_empty() {
+        return;
+    }
+    let name = dummy_setter_param_name(function);
+    function.params.push(Param {
+        span: DUMMY_SP,
+        decorators: vec![],
+        pat: Pat::Ident(BindingIdent {
+            id: Ident::new(name, DUMMY_SP, SyntaxContext::empty()),
+            type_ann: None,
+        }),
+    });
+}
+
+fn dummy_setter_param_name(function: &Function) -> Atom {
+    let mut names = HashSet::new();
+    struct Collector<'a> {
+        names: &'a mut HashSet<Atom>,
+    }
+    impl Visit for Collector<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.names.insert(ident.sym.clone());
+        }
+    }
+    function.visit_with(&mut Collector { names: &mut names });
+    for candidate in ["_", "_v", "_0", "_1", "_2"] {
+        let atom: Atom = candidate.into();
+        if !names.contains(&atom) {
+            return atom;
+        }
+    }
+    let mut index = 3u32;
+    loop {
+        let atom: Atom = format!("_{index}").into();
+        if !names.contains(&atom) {
+            return atom;
+        }
+        index += 1;
     }
 }

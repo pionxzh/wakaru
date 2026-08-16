@@ -286,7 +286,9 @@ function* loadValue() {
 }
 
 #[test]
-fn generator_callback_local_colliding_with_destination_param_fails_closed() {
+fn generator_callback_local_colliding_with_destination_param_is_renamed() {
+    // TypeScript `__generator` callback `var` shadows an outer parameter.
+    // Flattening must rename the moved binding, not the parameter list.
     let input = r#"
 function loadValue(localValue) {
   return __generator(this, function (_state) {
@@ -299,15 +301,21 @@ function loadValue(localValue) {
   });
 }
 "#;
+    let expected = r#"
+function* loadValue(localValue) {
+  var localValue1;
+  localValue1 = createValue();
+  return localValue1;
+}
+"#;
     let output = apply(input);
-    assert!(
-        output.contains("return __generator(this, function(_state)"),
-        "moving a shadowing callback local onto a parameter must fail closed:\n{output}"
-    );
+    assert_eq_normalized(&output, expected);
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
 }
 
 #[test]
-fn awaiter_callback_local_colliding_with_destination_param_fails_closed() {
+fn awaiter_callback_local_colliding_with_destination_param_is_renamed() {
     let input = r#"
 function loadValue(localValue) {
   return __awaiter(this, void 0, void 0, function () {
@@ -322,17 +330,118 @@ function loadValue(localValue) {
   });
 }
 "#;
+    let expected = r#"
+async function loadValue(localValue) {
+  var localValue1;
+  localValue1 = createValue();
+  return localValue1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn awaiter_callback_var_colliding_with_unused_param_is_renamed() {
+    // Minified TypeScript `__awaiter` + `__generator`: unused outer `o` plus
+    // a callback-local `var o` that holds the awaited result.
+    let input = r#"
+function join(t, i, n, o, s, c) {
+  return __awaiter(this, void 0, void 0, function () {
+    var o, r;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [4 /*yield*/, send(c)];
+        case 1:
+          o = _a.sent();
+          r = o;
+          return [2 /*return*/, r];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function join(t, i, n, o, s, c) {
+  var o1, r;
+  o1 = await send(c);
+  r = o1;
+  return r;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn awaiter_renames_only_moved_binding_when_outer_param_is_also_used() {
+    let input = r#"
+function join(o) {
+  useOuter(o);
+  return __awaiter(this, void 0, void 0, function () {
+    var o;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [4 /*yield*/, send()];
+        case 1:
+          o = _a.sent();
+          return [2 /*return*/, o];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function join(o) {
+  useOuter(o);
+  var o1;
+  o1 = await send();
+  return o1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn awaiter_callback_local_colliding_with_eval_fails_closed() {
+    // Direct `eval` can observe the original callback-local name as a string.
+    // Rename would rebind that string, so keep the function boundary.
+    let input = r#"
+function loadValue(localValue) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_state) {
+      switch (_state.label) {
+        case 0:
+          eval("localValue");
+          localValue = createValue();
+          return [2 /*return*/, localValue];
+      }
+      var localValue;
+    });
+  });
+}
+"#;
     let output = apply(input);
     assert!(
         output.contains("function loadValue(localValue)")
-            && output.contains("return async function()")
-            && output.contains("var localValue;"),
-        "a collision may recover to a nested async IIFE, but must retain the function boundary:\n{output}"
+            && output.contains("eval(\"localValue\")"),
+        "direct eval must keep the original callback-local name:\n{output}"
     );
     assert!(
         !output.contains("async function loadValue(localValue)"),
-        "the shadowing callback local must not be lifted onto the outer parameter:\n{output}"
+        "eval plus a colliding callback local must not flatten onto the parameter:\n{output}"
     );
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
 }
 
 #[test]
