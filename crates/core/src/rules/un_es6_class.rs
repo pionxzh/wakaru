@@ -14,7 +14,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::decl_utils::has_duplicate_param_names;
+use super::decl_utils::{class_method_has_invalid_signature, ensure_setter_has_value_param};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
@@ -1516,9 +1516,10 @@ fn parse_class_body(
         return None;
     }
 
-    // Class bodies are strict mode, so a sloppy-mode duplicate parameter list
-    // on any member would be an early error — keep the original IIFE.
-    if members.iter().any(class_member_has_duplicate_params) {
+    // Class bodies are strict mode and accessor syntax has stricter signatures
+    // than descriptor callback functions. Keep the original IIFE rather than
+    // emit an early error or silently discard observable parameters.
+    if members.iter().any(class_member_has_invalid_signature) {
         return None;
     }
 
@@ -1526,7 +1527,7 @@ fn parse_class_body(
     Some(members)
 }
 
-fn class_member_has_duplicate_params(member: &ClassMember) -> bool {
+fn class_member_has_invalid_signature(member: &ClassMember) -> bool {
     match member {
         ClassMember::Constructor(ctor) => {
             let mut seen = HashSet::new();
@@ -1538,7 +1539,9 @@ fn class_member_has_duplicate_params(member: &ClassMember) -> bool {
                 )
             })
         }
-        ClassMember::Method(method) => has_duplicate_param_names(&method.function.params),
+        ClassMember::Method(method) => {
+            class_method_has_invalid_signature(&method.function, method.kind)
+        }
         _ => false,
     }
 }
@@ -3407,47 +3410,5 @@ fn build_class_method(
         is_abstract: false,
         is_optional: false,
         is_override: false,
-    }
-}
-
-fn ensure_setter_has_value_param(function: &mut Function) {
-    if !function.params.is_empty() {
-        return;
-    }
-    let name = dummy_setter_param_name(function);
-    function.params.push(Param {
-        span: DUMMY_SP,
-        decorators: vec![],
-        pat: Pat::Ident(BindingIdent {
-            id: Ident::new(name, DUMMY_SP, SyntaxContext::empty()),
-            type_ann: None,
-        }),
-    });
-}
-
-fn dummy_setter_param_name(function: &Function) -> Atom {
-    let mut names = HashSet::new();
-    struct Collector<'a> {
-        names: &'a mut HashSet<Atom>,
-    }
-    impl Visit for Collector<'_> {
-        fn visit_ident(&mut self, ident: &Ident) {
-            self.names.insert(ident.sym.clone());
-        }
-    }
-    function.visit_with(&mut Collector { names: &mut names });
-    for candidate in ["_", "_v", "_0", "_1", "_2"] {
-        let atom: Atom = candidate.into();
-        if !names.contains(&atom) {
-            return atom;
-        }
-    }
-    let mut index = 3u32;
-    loop {
-        let atom: Atom = format!("_{index}").into();
-        if !names.contains(&atom) {
-            return atom;
-        }
-        index += 1;
     }
 }

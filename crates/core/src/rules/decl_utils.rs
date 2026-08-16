@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{BindingIdent, Decl, Id, Ident, Param, Pat, Stmt, VarDecl, VarDeclKind};
+use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::ecma::ast::{
+    BindingIdent, Decl, Function, Id, Ident, MethodKind, Param, Pat, Stmt, VarDecl, VarDeclKind,
+};
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -21,6 +24,73 @@ pub fn has_duplicate_param_names(params: &[Param]) -> bool {
     params.iter().any(
         |param| matches!(&param.pat, Pat::Ident(binding) if !seen.insert(binding.id.sym.clone())),
     )
+}
+
+/// Add the required value parameter to a zero-argument function that is being
+/// recovered as a class setter. The name must not capture any existing
+/// reference when the callback body moves into method scope.
+pub(crate) fn ensure_setter_has_value_param(function: &mut Function) {
+    if !function.params.is_empty() {
+        return;
+    }
+    let name = dummy_setter_param_name(function);
+    function.params.push(Param {
+        span: DUMMY_SP,
+        decorators: vec![],
+        pat: Pat::Ident(BindingIdent {
+            id: Ident::new(name, DUMMY_SP, SyntaxContext::empty()),
+            type_ann: None,
+        }),
+    });
+}
+
+/// Whether cloning a function into a class method of `kind` would create an
+/// invalid accessor or a strict-mode duplicate parameter list.
+pub(crate) fn class_method_has_invalid_signature(function: &Function, kind: MethodKind) -> bool {
+    if has_duplicate_param_names(&function.params) {
+        return true;
+    }
+    match kind {
+        MethodKind::Getter => {
+            !function.params.is_empty() || function.is_async || function.is_generator
+        }
+        MethodKind::Setter => {
+            function.params.len() != 1
+                || matches!(&function.params[0].pat, Pat::Rest(_))
+                || function.is_async
+                || function.is_generator
+        }
+        MethodKind::Method => false,
+    }
+}
+
+fn dummy_setter_param_name(function: &Function) -> Atom {
+    struct Collector<'a> {
+        names: &'a mut HashSet<Atom>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.names.insert(ident.sym.clone());
+        }
+    }
+
+    let mut names = HashSet::new();
+    function.visit_with(&mut Collector { names: &mut names });
+    for candidate in ["_", "_v", "_0", "_1", "_2"] {
+        let atom: Atom = candidate.into();
+        if !names.contains(&atom) {
+            return atom;
+        }
+    }
+    let mut index = 3u32;
+    loop {
+        let atom: Atom = format!("_{index}").into();
+        if !names.contains(&atom) {
+            return atom;
+        }
+        index += 1;
+    }
 }
 
 /// Collect all binding names declared by a `Decl` (top-level only, does not

@@ -659,6 +659,44 @@ class Foo {
 }
 
 #[test]
+fn define_property_zero_param_setter_gets_dummy_arg() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    set: function() {}
+});
+"#;
+    let expected = r#"
+class Foo {
+    set value(_) {}
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_param_getter_preserves_original_shape() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    get: function(unexpected) { return unexpected; }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn define_property_rest_setter_preserves_original_shape() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    set: function(...values) { use(values); }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn duplicate_getter_params_preserve_define_property_shape() {
     let input = r#"
 function Foo(val) { this._val = val; }
