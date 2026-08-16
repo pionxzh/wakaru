@@ -653,6 +653,85 @@ class MyClass {
 }
 
 #[test]
+fn define_property_zero_param_setter_gets_dummy_arg() {
+    // `Object.defineProperty` setters may be zero-arg; class `set` must have
+    // exactly one parameter. FairyGUI-style empty setters need a dummy.
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        get: function() { return null; },
+        set: function() {}
+    });
+    return t;
+}());
+"#;
+    let expected = r#"
+class Widget {
+    get text() { return null; }
+    set text(_) {}
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn create_class_zero_param_setter_gets_dummy_arg() {
+    let input = r#"
+var _createClass = function() {
+    function e(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            "value" in r && (r.writable = true);
+            Object.defineProperty(e, r.key, r);
+        }
+    }
+    return function(t, n, r) {
+        return n && e(t.prototype, n), r && e(t, r), t;
+    };
+}();
+var Widget = (function() {
+    function t() {}
+    _createClass(t, [
+        { key: "text", get: function() { return null; } },
+        { key: "text", set: function() {} }
+    ]);
+    return t;
+}());
+"#;
+    let expected = r#"
+class Widget {
+    get text() { return null; }
+    set text(_) {}
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn define_property_zero_param_setter_avoids_underscore_collision() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        get: function() { return null; },
+        set: function() { console.log(_); }
+    });
+    return t;
+}());
+"#;
+    let expected = r#"
+class Widget {
+    get text() { return null; }
+    set text(_v) { console.log(_); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn test_define_property_value_function_method() {
     let input = r#"
 var MyClass = (function() {
