@@ -12,7 +12,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::utils::paren::strip_parens;
 
-use super::decl_utils::has_duplicate_param_names;
+use super::decl_utils::{
+    class_method_has_invalid_signature, ensure_setter_has_value_param, has_duplicate_param_names,
+};
 use super::helper_matcher::{binding_key, BindingKey};
 
 pub struct UnPrototypeClass;
@@ -1138,15 +1140,16 @@ fn extract_define_property(stmt: &Stmt, ctor_binding: &BindingKey) -> Option<Vec
         let Expr::Fn(fn_expr) = kv.value.as_ref() else {
             continue;
         };
-        if has_duplicate_param_names(&fn_expr.function.params) {
+        let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
+        let mut method = build_class_method_from_fn(method_key, fn_expr, false);
+        method.kind = kind;
+        if kind == MethodKind::Setter {
+            ensure_setter_has_value_param(&mut method.function);
+        }
+        if class_method_has_invalid_signature(&method.function, kind) {
             return None;
         }
-        let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
-        methods.push(build_class_method_from_fn(method_key, fn_expr, false));
-        // Update kind
-        if let Some(last) = methods.last_mut() {
-            last.kind = kind;
-        }
+        methods.push(method);
     }
 
     if let Some(fn_expr) = value_fn {

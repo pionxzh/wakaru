@@ -418,7 +418,10 @@ fn hygienically_move_callback_locals(
     if colliding.is_empty() {
         return true;
     }
-    if stmts_have_direct_eval_or_with(moved_stmts) {
+    if stmts_have_direct_eval_or_with(moved_stmts)
+        || stmts_have_direct_eval_or_with(&destination_stmts[..replaced_index])
+        || stmts_have_direct_eval_or_with(&destination_stmts[replaced_index + 1..])
+    {
         return false;
     }
 

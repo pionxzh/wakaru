@@ -345,8 +345,10 @@ async function loadValue(localValue) {
 
 #[test]
 fn awaiter_callback_var_colliding_with_unused_param_is_renamed() {
-    // Minified TypeScript `__awaiter` + `__generator`: unused outer `o` plus
-    // a callback-local `var o` that holds the awaited result.
+    // Reproduced with the repo's TypeScript 5 ES5 + Terser 5 mangle harness
+    // from an async function with two parameters and two awaited locals.
+    // Terser reuses an outer parameter name for a callback-local `var`; this
+    // reduced form keeps the same cross-function binding collision.
     let input = r#"
 function join(t, i, n, o, s, c) {
   return __awaiter(this, void 0, void 0, function () {
@@ -439,6 +441,39 @@ function loadValue(localValue) {
     assert!(
         !output.contains("async function loadValue(localValue)"),
         "eval plus a colliding callback local must not flatten onto the parameter:\n{output}"
+    );
+    let findings = validate_output_modules(&[("input.js".to_string(), output)]);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn awaiter_callback_local_collision_with_destination_eval_fails_closed() {
+    // A rename to `localValue1` would introduce a hoisted binding that captures
+    // the outer eval source. The eval is outside the callback being moved, so
+    // both sides of the function-boundary move must participate in the guard.
+    let input = r#"
+function loadValue(localValue) {
+  observe(eval("typeof localValue1"));
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_state) {
+      switch (_state.label) {
+        case 0:
+          localValue = createValue();
+          return [2 /*return*/, localValue];
+      }
+      var localValue;
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("eval(\"typeof localValue1\")"),
+        "the destination eval must be preserved:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(localValue)"),
+        "a renamed callback local must not capture a destination eval source:\n{output}"
     );
     let findings = validate_output_modules(&[("input.js".to_string(), output)]);
     assert!(findings.is_empty(), "{findings:#?}");

@@ -732,6 +732,25 @@ class Widget {
 }
 
 #[test]
+fn define_property_multi_param_setter_preserves_iife_shape() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        set: function(value, metadata) { use(value, metadata); }
+    });
+    return t;
+}());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("Object.defineProperty(t.prototype, \"text\"")
+            && !output.contains("class Widget"),
+        "an incompatible setter signature must keep the descriptor callback:\n{output}"
+    );
+}
+
+#[test]
 fn test_define_property_value_function_method() {
     let input = r#"
 var MyClass = (function() {
