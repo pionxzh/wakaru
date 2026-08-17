@@ -154,6 +154,7 @@ impl VisitMut for UnEsm {
         split_compound_exports(module, self.unresolved_mark);
         rewrite_commonjs_export_star_loops(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
+        remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
         let unresolved_reference_names =
@@ -1598,6 +1599,112 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
+}
+
+/// Remove ncc's CommonJS default-compatibility postamble when the complete
+/// CommonJS surface proves that `exports.default` can never exist.
+///
+/// Absence of an emitted `export default` is not evidence by itself. The
+/// proof below starts from the same binding-use index as CommonJS self-read
+/// recovery and accepts only static, non-default `exports.name` accesses.
+/// Computed access, whole-object escape/aliasing, an unconverted export-getter
+/// helper, any meaningful `module` use, and direct eval all fail closed. Since
+/// the index traverses every function body, a later hoisted function
+/// declaration cannot hide a default write from the proof.
+fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_mark: Mark) {
+    let compat_spans: Vec<Span> = module
+        .body
+        .iter()
+        .filter_map(|item| exports_default_compat_block_span(item, unresolved_mark))
+        .collect();
+    if compat_spans.is_empty() || compat_spans.iter().any(|span| span.is_dummy()) {
+        return;
+    }
+
+    // A recovered default getter is already native ESM by this phase and no
+    // longer appears as an `exports.default` use. Keep case 2 intact: its
+    // CommonJS default-object compatibility needs a separate value model.
+    if has_esm_default_export(module) {
+        return;
+    }
+
+    let mut direct_eval = DirectEvalPresence::default();
+    module.visit_with(&mut direct_eval);
+    if direct_eval.found {
+        return;
+    }
+
+    let uses = BindingUseIndex::collect(module);
+    let mut exports_ids = UnresolvedBindingIdCollector::new("exports", unresolved_mark);
+    module.visit_with(&mut exports_ids);
+    let exports_are_named_only = exports_ids.ids.iter().all(|binding| {
+        uses.use_sites(binding).iter().all(|site| {
+            use_is_inside_any_span(site.span, &compat_spans)
+                || matches!(
+                    &site.kind,
+                    UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
+                        if property.as_ref() != "default"
+                )
+        })
+    });
+    if !exports_are_named_only {
+        return;
+    }
+
+    let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
+    module.visit_with(&mut module_ids);
+    let module_is_only_in_compat = module_ids.ids.iter().all(|binding| {
+        uses.use_sites(binding)
+            .iter()
+            .all(|site| use_is_inside_any_span(site.span, &compat_spans))
+    });
+    if !module_is_only_in_compat {
+        return;
+    }
+
+    module
+        .body
+        .retain(|item| exports_default_compat_block_span(item, unresolved_mark).is_none());
+}
+
+fn exports_default_compat_block_span(item: &ModuleItem, unresolved_mark: Mark) -> Option<Span> {
+    let ModuleItem::Stmt(Stmt::If(if_stmt)) = item else {
+        return None;
+    };
+    is_exports_default_compat_block(item, unresolved_mark).then_some(if_stmt.span)
+}
+
+fn use_is_inside_any_span(use_span: Span, enclosing: &[Span]) -> bool {
+    !use_span.is_dummy()
+        && enclosing
+            .iter()
+            .any(|span| span.lo <= use_span.lo && use_span.hi <= span.hi)
+}
+
+fn has_esm_default_export(module: &Module) -> bool {
+    module.body.iter().any(|item| match item {
+        ModuleItem::ModuleDecl(
+            ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_),
+        ) => true,
+        ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export)) => {
+            export.specifiers.iter().any(|specifier| match specifier {
+                ExportSpecifier::Named(named) => {
+                    named
+                        .exported
+                        .as_ref()
+                        .unwrap_or(&named.orig)
+                        .atom()
+                        .as_ref()
+                        == "default"
+                }
+                ExportSpecifier::Default(default) => default.exported.sym.as_ref() == "default",
+                ExportSpecifier::Namespace(namespace) => {
+                    namespace.name.atom().as_ref() == "default"
+                }
+            })
+        }
+        _ => false,
+    })
 }
 
 fn make_deferred_webpack_default_export(

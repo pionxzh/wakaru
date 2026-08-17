@@ -138,7 +138,12 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
 Stable same-module `module.exports` / `exports.name` read recovery is not a
 cross-module fact. `UnEsm` proves and consumes that identity within one resolved
 AST before this barrier; ambiguous writes and receiver-sensitive calls stay as
-visible CommonJS residuals.
+visible CommonJS residuals. The same resolved binding-use surface proves an
+exact default-compatibility postamble dead only when every `exports` access
+outside that postamble is a static, non-default member access. Computed access,
+whole-object escape, unresolved getter helpers, meaningful `module` use, direct
+eval, and a default export all fail closed. This is a same-module dead-branch
+proof, not a default-object fact available to consumers.
 
 ## Rules that read facts
 

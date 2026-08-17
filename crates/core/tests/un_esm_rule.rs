@@ -1267,6 +1267,119 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
     insta::assert_snapshot!(output);
 }
 
+const DEFAULT_COMPAT_POSTAMBLE: &str = r#"
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#;
+
+#[test]
+fn named_only_commonjs_surface_drops_dead_default_compat_postamble() {
+    let input = format!(
+        r#"
+const answer = 42;
+exports.answer = answer;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+    let output = apply(&input);
+    assert_eq_normalized(&output, "export const answer = 42;");
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output)]).is_empty(),
+        "the recovered named-only module should not retain CommonJS residuals"
+    );
+}
+
+#[test]
+fn recovered_default_keeps_default_compat_postamble() {
+    let input = format!(
+        r#"
+const answer = 42;
+exports.default = answer;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+    let output = apply(&input);
+    assert!(output.contains("export default answer"));
+    assert!(
+        output.contains("Object.assign(exports.default, exports)")
+            && output.contains("module.exports = exports.default"),
+        "default-object compatibility is not dead when a default exists:\n{output}"
+    );
+}
+
+#[test]
+fn recovered_default_getter_keeps_default_compat_postamble() {
+    let input = format!(
+        r#"
+require.d(exports, {{
+  default() {{ return answer; }}
+}});
+const answer = 42;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+    let output = apply(&input);
+    assert!(
+        output.contains("export { answer as default }"),
+        "the getter should be recovered as a live default export:\n{output}"
+    );
+    assert!(
+        output.contains("Object.assign(exports.default, exports)")
+            && output.contains("module.exports = exports.default"),
+        "a recovered ESM default must keep case-2 compatibility intact:\n{output}"
+    );
+}
+
+#[test]
+fn dynamic_commonjs_surfaces_keep_default_compat_postamble() {
+    let cases = [
+        (
+            "computed write",
+            format!("const name = chooseName();\nexports[name] = 1;\n{DEFAULT_COMPAT_POSTAMBLE}"),
+        ),
+        (
+            "exports alias",
+            format!("const publicApi = exports;\npublicApi.answer = 42;\n{DEFAULT_COMPAT_POSTAMBLE}"),
+        ),
+        (
+            "hidden default descriptor",
+            format!(
+                "Object.defineProperty(exports, \"default\", {{ value: 42 }});\n{DEFAULT_COMPAT_POSTAMBLE}"
+            ),
+        ),
+        (
+            "dynamic getter helper",
+            format!(
+                "const name = chooseName();\nrequire.d(exports, name, () => 42);\n{DEFAULT_COMPAT_POSTAMBLE}"
+            ),
+        ),
+        (
+            "direct eval",
+            format!("exports.answer = 42;\neval(source);\n{DEFAULT_COMPAT_POSTAMBLE}"),
+        ),
+        (
+            "hoisted default writer",
+            format!(
+                "exports.answer = 42;\n{DEFAULT_COMPAT_POSTAMBLE}\nfunction installDefault() {{ exports.default = 42; }}"
+            ),
+        ),
+    ];
+
+    for (name, input) in cases {
+        let output = apply(&input);
+        assert!(
+            output.contains("Object.assign(exports.default, exports)")
+                && output.contains("module.exports = exports.default"),
+            "{name} must fail closed:\n{output}"
+        );
+    }
+}
+
 #[test]
 fn webpack_export_getter_iife_recovers_live_default_after_declaration() {
     let input = r#"
