@@ -4,9 +4,9 @@ use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent,
-    CallExpr, Callee, ComputedPropName, Decl, ExportNamedSpecifier, ExportSpecifier, Expr,
-    ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, ModuleDecl,
-    ModuleExportName, ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName,
+    CallExpr, Callee, ComputedPropName, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier,
+    Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp,
+    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName,
     PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
     VarDeclarator,
 };
@@ -129,30 +129,56 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                     continue;
                 }
 
-                if let Some((local_ident, public_name, members)) = unresolved_mark
-                    .and_then(|mark| parse_exported_enum_iife_standalone(&stmt, mark))
-                    .filter(|(_, public_name, _)| !exported_names.contains(public_name))
-                    .filter(|(local_ident, public_name, _)| {
-                        has_safe_prior_bare_var(
-                            items,
-                            local_ident,
-                            public_name,
-                            unresolved_mark.expect("exported enum parsing requires a mark"),
-                        )
-                    })
-                    .filter(|(_, public_name, _)| {
-                        !module_items_reference_public_export(
-                            remaining.iter(),
-                            public_name,
-                            unresolved_mark.expect("exported enum parsing requires a mark"),
-                        )
-                    })
+                if let Some((local_ident, public_name, members, synthesized_local)) =
+                    unresolved_mark
+                        .and_then(|mark| parse_exported_enum_iife_standalone(&stmt, mark))
+                        .filter(|(_, public_name, _, _)| !exported_names.contains(public_name))
+                        .filter(|(local_ident, public_name, _, synthesized_local)| {
+                            if *synthesized_local {
+                                // Collapsed `exports.X || (exports.X = {})` has no
+                                // local assignment and no `var Local`. Synthesize
+                                // the public name only when it appears nowhere
+                                // else in the module (no declaration to collide
+                                // with, no global reference to capture).
+                                !module_items_use_name(
+                                    items.iter().chain(remaining.iter()),
+                                    &local_ident.sym,
+                                )
+                            } else {
+                                has_safe_prior_bare_var(
+                                    items,
+                                    local_ident,
+                                    public_name,
+                                    unresolved_mark.expect("exported enum parsing requires a mark"),
+                                )
+                            }
+                        })
+                        .filter(|(_, public_name, _, _)| {
+                            !module_items_reference_public_export(
+                                remaining.iter(),
+                                public_name,
+                                unresolved_mark.expect("exported enum parsing requires a mark"),
+                            )
+                        })
                 {
-                    let new_stmt =
-                        build_enum_assign_stmt(local_ident.clone(), members, stmt.span());
-                    items.push(ModuleItem::Stmt(new_stmt));
-                    exported_names.insert(public_name.clone());
-                    items.push(build_named_enum_export(&local_ident, public_name));
+                    if synthesized_local {
+                        // The binding is fresh and carries the public name, so
+                        // export the declaration directly.
+                        let Stmt::Decl(decl) = build_enum_var_decl(&local_ident, members, &stmt)
+                        else {
+                            unreachable!("build_enum_var_decl builds a declaration");
+                        };
+                        items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                            span: stmt.span(),
+                            decl,
+                        })));
+                    } else {
+                        let new_stmt =
+                            build_enum_assign_stmt(local_ident.clone(), members, stmt.span());
+                        items.push(ModuleItem::Stmt(new_stmt));
+                        items.push(build_named_enum_export(&local_ident, public_name.clone()));
+                    }
+                    exported_names.insert(public_name);
                     continue;
                 }
 
@@ -308,7 +334,8 @@ fn parse_enum_iife(stmt: &Stmt, expected_ident: &Ident) -> Option<Vec<EnumMember
 /// `var Local; (function (e) { ... })(Local = exports.Public || (exports.Public = {}));`
 ///
 /// A second emitted form, `Local || (exports.Public = Local = {})`, is also
-/// accepted. The exported variant is intentionally stricter than local enum
+/// accepted, as is the minified collapse `exports.Public || (exports.Public = {})`.
+/// The exported variant is intentionally stricter than local enum
 /// recovery: the body may contain only literal enum values, so replacing the
 /// early CommonJS publication with an ESM binding cannot hide observable work.
 fn parse_exported_enum_iife(
@@ -316,15 +343,22 @@ fn parse_exported_enum_iife(
     local_ident: &Ident,
     unresolved_mark: Mark,
 ) -> Option<(Atom, Vec<EnumMember>)> {
-    let (parsed_local, public_name, members) =
+    let (parsed_local, public_name, members, synthesized_local) =
         parse_exported_enum_iife_standalone(stmt, unresolved_mark)?;
+    // The collapsed form never assigns the local, so a preceding bare
+    // `var Local;` must keep its `undefined` value. Folding here would
+    // change what later reads of the local observe; the standalone path
+    // also declines it because the name is already declared.
+    if synthesized_local {
+        return None;
+    }
     same_binding(&parsed_local, local_ident).then_some((public_name, members))
 }
 
 fn parse_exported_enum_iife_standalone(
     stmt: &Stmt,
     unresolved_mark: Mark,
-) -> Option<(Ident, Atom, Vec<EnumMember>)> {
+) -> Option<(Ident, Atom, Vec<EnumMember>, bool)> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -334,7 +368,8 @@ fn parse_exported_enum_iife_standalone(
     if call.args.len() != 1 {
         return None;
     }
-    let (local_ident, public_name) = parse_exported_enum_arg(&call.args[0].expr, unresolved_mark)?;
+    let (local_ident, public_name, synthesized_local) =
+        parse_exported_enum_arg(&call.args[0].expr, unresolved_mark)?;
 
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -349,10 +384,10 @@ fn parse_exported_enum_iife_standalone(
         return None;
     }
 
-    Some((local_ident, public_name, members))
+    Some((local_ident, public_name, members, synthesized_local))
 }
 
-fn parse_exported_enum_arg(expr: &Expr, unresolved_mark: Mark) -> Option<(Ident, Atom)> {
+fn parse_exported_enum_arg(expr: &Expr, unresolved_mark: Mark) -> Option<(Ident, Atom, bool)> {
     let expr = strip_parens(expr);
 
     // `Local = exports.Public || (exports.Public = {})`
@@ -381,12 +416,13 @@ fn parse_exported_enum_arg(expr: &Expr, unresolved_mark: Mark) -> Option<(Ident,
         };
         let public_name = unresolved_exports_member(left_member, unresolved_mark)?;
         if assign_member_empty_object(right, &public_name, unresolved_mark) {
-            return Some((local_ident, public_name));
+            return Some((local_ident, public_name, false));
         }
         return None;
     }
 
     // `Local || (exports.Public = Local = {})`
+    // or the collapsed form `exports.Public || (exports.Public = {})`
     let Expr::Bin(BinExpr {
         op: BinaryOp::LogicalOr,
         left,
@@ -396,25 +432,35 @@ fn parse_exported_enum_arg(expr: &Expr, unresolved_mark: Mark) -> Option<(Ident,
     else {
         return None;
     };
-    let Expr::Ident(left_ident) = strip_parens(left) else {
+    if let Expr::Ident(left_ident) = strip_parens(left) {
+        let local_ident = left_ident.clone();
+        let Expr::Assign(AssignExpr {
+            op: AssignOp::Assign,
+            left,
+            right,
+            ..
+        }) = strip_parens(right)
+        else {
+            return None;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Member(export_member)) = left else {
+            return None;
+        };
+        let public_name = unresolved_exports_member(export_member, unresolved_mark)?;
+        return if is_assign_empty_obj(right, &local_ident) {
+            Some((local_ident, public_name, false))
+        } else {
+            None
+        };
+    }
+
+    let Expr::Member(left_member) = strip_parens(left) else {
         return None;
     };
-    let local_ident = left_ident.clone();
-    let Expr::Assign(AssignExpr {
-        op: AssignOp::Assign,
-        left,
-        right,
-        ..
-    }) = strip_parens(right)
-    else {
-        return None;
-    };
-    let AssignTarget::Simple(SimpleAssignTarget::Member(export_member)) = left else {
-        return None;
-    };
-    let public_name = unresolved_exports_member(export_member, unresolved_mark)?;
-    if is_assign_empty_obj(right, &local_ident) {
-        Some((local_ident, public_name))
+    let public_name = unresolved_exports_member(left_member, unresolved_mark)?;
+    if assign_member_empty_object(right, &public_name, unresolved_mark) {
+        let local_ident = Ident::new_no_ctxt(public_name.clone(), DUMMY_SP);
+        Some((local_ident, public_name, true))
     } else {
         None
     }
@@ -868,6 +914,36 @@ fn is_valid_identifier(s: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+/// Whether `name` occurs as any identifier — binding or reference, at any
+/// depth, including import/export specifiers — in the given items.
+/// Synthesizing a module-level binding is only safe when the name is
+/// completely unused: a same-name declaration (imports and block-nested
+/// hoisted `var`s included) would collide, and a same-name reference to a
+/// global would be captured by the new binding.
+fn module_items_use_name<'a>(items: impl IntoIterator<Item = &'a ModuleItem>, name: &Atom) -> bool {
+    let mut finder = NameUseFinder { name, found: false };
+    for item in items {
+        item.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+struct NameUseFinder<'a> {
+    name: &'a Atom,
+    found: bool,
+}
+
+impl Visit for NameUseFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == *self.name {
+            self.found = true;
+        }
+    }
 }
 
 fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {

@@ -83,6 +83,113 @@ export { LocalMode as Mode };
 }
 
 #[test]
+fn recovers_collapsed_exported_commonjs_enum() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export var Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn recovers_collapsed_exported_numeric_enum() {
+    let input = r#"
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export var Mode = {
+  Dev: 0,
+  0: "Dev"
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn recovers_collapsed_exported_enum_mangled_param() {
+    let input = r#"
+(function (t) {
+  t["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export var Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_later_public_export_read() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_existing_local_name() {
+    let input = r#"
+var Mode = 1;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_import_collision() {
+    let input = r#"
+import { Mode } from "./dep.js";
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+use(Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_global_reference() {
+    // `observe(Mode)` reads a global; a synthesized `var Mode` would
+    // capture it (and throw via TDZ once promoted to `const`).
+    let input = r#"
+observe(Mode);
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_prior_bare_var() {
+    // The collapsed form never assigns the local, so `var Mode` must stay
+    // `undefined` — folding into it would change what later reads observe.
+    let input = r#"
+var Mode;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+use(Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn pipeline_promotes_adjacent_exported_enum_to_const() {
     let input = r#"
 export let Mode;
@@ -96,6 +203,64 @@ export const Mode = {
   Dev: "dev"
 };
 use(Mode);
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_minified_cjs_enum() {
+    let input = r#"
+exports.Mode = void 0;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_minified_cjs_numeric_enum() {
+    let input = r#"
+exports.Mode = void 0;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+  e[e.Prod = 1] = "Prod";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: 0,
+  0: "Dev",
+  Prod: 1,
+  1: "Prod"
+};
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn pipeline_still_recovers_minified_cjs_enum_with_local_alias() {
+    // Same producer, but module-scope compress kept the local alias as a
+    // mangled name instead of collapsing it. This form already recovered
+    // before collapsed-form support; it must keep working.
+    let input = r#"
+exports.Mode = void 0;
+var r;
+(function (t) {
+  t["Dev"] = "dev";
+  t["Prod"] = "prod";
+})(r = exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: "dev",
+  Prod: "prod"
+};
 "#;
     assert_eq_normalized(&render_pipeline(input), expected);
 }
