@@ -1587,7 +1587,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
             continue;
         }
 
-        if converted_getter_map && is_exports_default_compat_block(&item, unresolved_mark) {
+        if converted_getter_map && is_exports_default_compat_postamble(&item, unresolved_mark) {
             continue;
         }
 
@@ -1612,12 +1612,15 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 /// the index traverses every function body, a later hoisted function
 /// declaration cannot hide a default write from the proof.
 fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_mark: Mark) {
-    let compat_spans: Vec<Span> = module
+    let compat_indices: HashSet<usize> = module
         .body
         .iter()
-        .filter_map(|item| exports_default_compat_block_span(item, unresolved_mark))
+        .enumerate()
+        .filter_map(|(index, item)| {
+            is_exports_default_compat_postamble(item, unresolved_mark).then_some(index)
+        })
         .collect();
-    if compat_spans.is_empty() || compat_spans.iter().any(|span| span.is_dummy()) {
+    if compat_indices.is_empty() {
         return;
     }
 
@@ -1634,17 +1637,23 @@ fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_
         return;
     }
 
-    let uses = BindingUseIndex::collect(module);
+    // SimplifySequence commonly synthesizes this `if` from an `&&` / comma
+    // expression, so its span may be dummy. Exclude the exact top-level items
+    // by identity instead of using source ranges as semantic evidence.
+    let uses = BindingUseIndex::collect_module_items_excluding(&module.body, &compat_indices);
     let mut exports_ids = UnresolvedBindingIdCollector::new("exports", unresolved_mark);
-    module.visit_with(&mut exports_ids);
+    for (index, item) in module.body.iter().enumerate() {
+        if !compat_indices.contains(&index) {
+            item.visit_with(&mut exports_ids);
+        }
+    }
     let exports_are_named_only = exports_ids.ids.iter().all(|binding| {
         uses.use_sites(binding).iter().all(|site| {
-            use_is_inside_any_span(site.span, &compat_spans)
-                || matches!(
-                    &site.kind,
-                    UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
-                        if property.as_ref() != "default"
-                )
+            matches!(
+                &site.kind,
+                UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
+                    if property.as_ref() != "default"
+            )
         })
     });
     if !exports_are_named_only {
@@ -1652,33 +1661,25 @@ fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_
     }
 
     let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
-    module.visit_with(&mut module_ids);
-    let module_is_only_in_compat = module_ids.ids.iter().all(|binding| {
-        uses.use_sites(binding)
-            .iter()
-            .all(|site| use_is_inside_any_span(site.span, &compat_spans))
-    });
+    for (index, item) in module.body.iter().enumerate() {
+        if !compat_indices.contains(&index) {
+            item.visit_with(&mut module_ids);
+        }
+    }
+    let module_is_only_in_compat = module_ids
+        .ids
+        .iter()
+        .all(|binding| uses.use_sites(binding).is_empty());
     if !module_is_only_in_compat {
         return;
     }
 
-    module
-        .body
-        .retain(|item| exports_default_compat_block_span(item, unresolved_mark).is_none());
-}
-
-fn exports_default_compat_block_span(item: &ModuleItem, unresolved_mark: Mark) -> Option<Span> {
-    let ModuleItem::Stmt(Stmt::If(if_stmt)) = item else {
-        return None;
-    };
-    is_exports_default_compat_block(item, unresolved_mark).then_some(if_stmt.span)
-}
-
-fn use_is_inside_any_span(use_span: Span, enclosing: &[Span]) -> bool {
-    !use_span.is_dummy()
-        && enclosing
-            .iter()
-            .any(|span| span.lo <= use_span.lo && use_span.hi <= span.hi)
+    let mut index = 0usize;
+    module.body.retain(|_| {
+        let keep = !compat_indices.contains(&index);
+        index += 1;
+        keep
+    });
 }
 
 fn has_esm_default_export(module: &Module) -> bool {
@@ -2187,6 +2188,35 @@ fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> 
         && is_module_exports_default_reassignment(&block.stmts[2], unresolved_mark)
 }
 
+fn is_exports_default_compat_postamble(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    is_exports_default_compat_block(item, unresolved_mark)
+        || is_exports_default_compat_logical_expression(item, unresolved_mark)
+}
+
+fn is_exports_default_compat_logical_expression(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return false;
+    };
+    let Expr::Bin(postamble) = strip_parens(statement.expr.as_ref()) else {
+        return false;
+    };
+    postamble.op == BinaryOp::LogicalAnd
+        && is_exports_default_compat_test(postamble.left.as_ref(), unresolved_mark)
+        && is_exports_default_compat_sequence(postamble.right.as_ref(), unresolved_mark)
+}
+
+fn is_exports_default_compat_sequence(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Seq(sequence) = strip_parens(expr) else {
+        return false;
+    };
+    let [define_esmodule, copy_exports, assign_default] = sequence.exprs.as_slice() else {
+        return false;
+    };
+    is_define_esmodule_on_exports_default_expr(define_esmodule, unresolved_mark)
+        && is_object_assign_exports_default_exports_expr(copy_exports, unresolved_mark)
+        && is_module_exports_default_reassignment_expr(assign_default, unresolved_mark)
+}
+
 fn is_exports_default_compat_test(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
@@ -2257,7 +2287,14 @@ fn is_exports_default_esmodule_expr(expr: &Expr, unresolved_mark: Mark) -> bool 
 }
 
 fn is_define_esmodule_on_exports_default(stmt: &Stmt, unresolved_mark: Mark) -> bool {
-    let Some(call) = expr_stmt_call(stmt) else {
+    let Stmt::Expr(statement) = stmt else {
+        return false;
+    };
+    is_define_esmodule_on_exports_default_expr(statement.expr.as_ref(), unresolved_mark)
+}
+
+fn is_define_esmodule_on_exports_default_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
         return false;
     };
     let Callee::Expr(callee) = &call.callee else {
@@ -2292,7 +2329,14 @@ fn is_define_esmodule_on_exports_default(stmt: &Stmt, unresolved_mark: Mark) -> 
 }
 
 fn is_object_assign_exports_default_exports(stmt: &Stmt, unresolved_mark: Mark) -> bool {
-    let Some(call) = expr_stmt_call(stmt) else {
+    let Stmt::Expr(statement) = stmt else {
+        return false;
+    };
+    is_object_assign_exports_default_exports_expr(statement.expr.as_ref(), unresolved_mark)
+}
+
+fn is_object_assign_exports_default_exports_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
         return false;
     };
     let Callee::Expr(callee) = &call.callee else {
@@ -2305,10 +2349,14 @@ fn is_object_assign_exports_default_exports(stmt: &Stmt, unresolved_mark: Mark) 
 }
 
 fn is_module_exports_default_reassignment(stmt: &Stmt, unresolved_mark: Mark) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+    let Stmt::Expr(statement) = stmt else {
         return false;
     };
-    let Expr::Assign(assign) = expr.as_ref() else {
+    is_module_exports_default_reassignment_expr(statement.expr.as_ref(), unresolved_mark)
+}
+
+fn is_module_exports_default_reassignment_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Assign(assign) = strip_parens(expr) else {
         return false;
     };
     if assign.op != AssignOp::Assign
@@ -2320,16 +2368,6 @@ fn is_module_exports_default_reassignment(stmt: &Stmt, unresolved_mark: Mark) ->
         return false;
     };
     is_module_exports_member(member, unresolved_mark)
-}
-
-fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return None;
-    };
-    let Expr::Call(call) = expr.as_ref() else {
-        return None;
-    };
-    Some(call)
 }
 
 fn is_exports_default_expr(expr: &Expr, unresolved_mark: Mark) -> bool {

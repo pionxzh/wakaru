@@ -1295,6 +1295,19 @@ exports.answer = answer;
 }
 
 #[test]
+fn logical_expression_default_compat_postamble_is_proven_after_normalization() {
+    let input = r#"
+const answer = 42;
+exports.answer = answer;
+("function" == typeof exports.default || "object" == typeof exports.default && null !== exports.default) && void 0 === exports.default.__esModule && (Object.defineProperty(exports.default, "__esModule", {
+  value: true
+}), Object.assign(exports.default, exports), module.exports = exports.default);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, "export const answer = 42;");
+}
+
+#[test]
 fn recovered_default_keeps_default_compat_postamble() {
     let input = format!(
         r#"

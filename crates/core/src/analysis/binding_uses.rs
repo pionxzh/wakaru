@@ -56,6 +56,35 @@ impl BindingUseIndex {
         Self::collect_node(items)
     }
 
+    /// Collect bindings from a module body while omitting selected top-level
+    /// items. This lets exact wrapper/postamble recognizers prove the rest of
+    /// a module's surface without relying on source spans, which may be dummy
+    /// after an earlier normalization synthesized the matched statement.
+    pub(crate) fn collect_module_items_excluding(
+        items: &[ModuleItem],
+        excluded_indices: &HashSet<usize>,
+    ) -> Self {
+        let mut collector = BindingUseCollector::default();
+        for (index, item) in items.iter().enumerate() {
+            if !excluded_indices.contains(&index) {
+                item.visit_with(&mut collector);
+            }
+        }
+
+        let mut legacy = LegacyIdentCounter::default();
+        for (index, item) in items.iter().enumerate() {
+            if !excluded_indices.contains(&index) {
+                item.visit_with(&mut legacy);
+            }
+        }
+
+        Self {
+            bindings: collector.bindings,
+            uninitialized: collector.uninitialized,
+            legacy_ident_occurrences: legacy.references,
+        }
+    }
+
     pub(crate) fn collect_stmts(stmts: &[Stmt]) -> Self {
         Self::collect_node(stmts)
     }
