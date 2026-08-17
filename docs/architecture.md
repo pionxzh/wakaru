@@ -270,8 +270,10 @@ value of a syntactically numeric container key; the public string module ID
 alone cannot distinguish `17` from `"17"`, and the latter does not prove the
 runtime ID type. A separate legacy-container bit records when the
 Webpack 4 `module.i` spelling is available. Exact CSS-loader runtime adapters
-consume these facts during normal processing, while recursively split children
-inherit neither fact.
+consume these facts during normal processing. Numeric identity substitution is
+kept independent from any `module.exports` recovery in the same factory, while
+the optional conditional-locals default requires a complete CommonJS runtime
+surface proof. Recursively split children inherit neither detector fact.
 Detector output may also carry a private per-module failure sidecar. The normal
 driver turns it into an operational diagnostic plus
 `ModuleStatus::DecompileFailed` while preserving the raw extracted body; raw

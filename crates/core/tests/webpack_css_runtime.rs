@@ -32,6 +32,7 @@ fn webpack5_css_runtime_recovers_module_id_and_conditional_locals() {
     19: ((module, exports, load) => {
       var content = load(18);
       content.push([module.id, "aside {}", ""]);
+      module.exports = content;
       consumeMetadataOnly(content);
     })
   });
@@ -66,7 +67,10 @@ fn webpack5_css_runtime_recovers_module_id_and_conditional_locals() {
         let metadata_only = module_code(&output.modules, "module-19.js");
         assert!(!metadata_only.contains("module.id"), "{metadata_only}");
         assert!(metadata_only.contains("19,"), "{metadata_only}");
-        assert!(!metadata_only.contains("export default"), "{metadata_only}");
+        assert!(
+            metadata_only.contains("export default content"),
+            "{metadata_only}"
+        );
         assert_eq!(validate_output_modules(&output.modules), vec![]);
         if emit_source_map {
             assert!(output
@@ -89,12 +93,9 @@ fn legacy_webpack_jsonp_css_runtime_recovers_module_i() {
 (window.webpackJsonp = window.webpackJsonp || []).push([[7], {
   21: function(module, exports, load) {
     var content = load(22);
-    if ((content = typeof content === "string"
+    (content = typeof content === "string"
       ? [[module.i, content, ""]]
-      : content).locals) {
-      module.exports = content.locals;
-    }
-    inject(content);
+      : content).locals && (module.exports = content.locals), inject(content);
   },
   22: function(module) {
     module.exports = "body {}";
@@ -129,6 +130,10 @@ fn modern_webpack_chunk_does_not_guess_that_module_i_is_the_runtime_id() {
   }),
   25: ((module) => {
     module.exports = { push: function push() {} };
+  }),
+  26: ((module, exports, load) => {
+    const content = load(25);
+    content.push([module.id, "aside {}", ""]);
   })
 }]);
 "#;
@@ -143,6 +148,9 @@ fn modern_webpack_chunk_does_not_guess_that_module_i_is_the_runtime_id() {
     .expect("synthetic modern webpack chunk should still unpack");
     let css = module_code(&output.modules, "module-24.js");
     assert!(css.contains("module.i"), "{css}");
+    let proven = module_code(&output.modules, "module-26.js");
+    assert!(!proven.contains("module.id"), "{proven}");
+    assert!(proven.contains("26,"), "{proven}");
     assert!(validate_output_modules(&output.modules)
         .iter()
         .any(|finding| finding.kind == OutputFindingKind::EsmCommonJsResidual));

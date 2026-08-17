@@ -136,13 +136,17 @@ attempting CSS source recovery. A three- or four-field CSS list tuple whose
 first item is free `module.id` receives the numeric value preserved from its
 actual webpack container key; legacy `module.i` is accepted only when the
 detector also proves a Webpack 4-style container. Quoted numeric and named keys
-stay unproven. When the same module has one exact top-level conditional
-`module.exports = value.locals` switch, normal processing models webpack's
-initial empty exports object and lets the ordinary `UnEsm` path recover a
-default export. Extra CommonJS references, computed or multiple candidates,
-mismatched locals values, nested switches, and direct eval all fail closed.
-Synthetic recursive children do not inherit the key facts, and `--raw`
-continues to expose the detector's extracted factory body unchanged.
+stay unproven. This identity substitution is independent of ordinary
+`module.exports` recovery: an unrelated default assignment continues through
+the existing `UnEsm` path instead of suppressing the proven numeric value.
+When the same module has one exact top-level conditional
+`module.exports = value.locals` switch (an `if` or generated `&&` expression),
+normal processing models webpack's initial empty exports object and lets
+`UnEsm` recover a default export. That stronger proof fails closed on extra
+CommonJS references, computed or multiple candidates, mismatched locals
+values, and nested switches. Direct eval disables both recoveries. Synthetic
+recursive children do not inherit the key facts, and `--raw` continues to
+expose the detector's extracted factory body unchanged.
 
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime

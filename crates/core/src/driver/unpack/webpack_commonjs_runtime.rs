@@ -90,11 +90,14 @@ pub(super) fn normalize_webpack_commonjs_runtime(
 /// reads become free `module` references, even though the numeric container
 /// key and webpack's initial `module.exports = {}` are detector-proven facts.
 ///
-/// This recovery requires exactly one three/four-field CSS tuple and permits
-/// at most one exact top-level locals switch. Every free `module` reference
-/// must belong to those nodes, no free `exports` may remain, and direct eval
-/// fails closed. Named/string ids are deliberately excluded because the
-/// public detector id cannot preserve their runtime type.
+/// This recovery requires exactly one three/four-field CSS tuple. Replacing
+/// its identity read is independent of ordinary `module.exports` handling:
+/// the numeric container key proves the value even when `UnEsm` must recover
+/// a separate default assignment later. The optional locals switch is held to
+/// a stricter proof: it must be the only remaining CommonJS runtime use and
+/// occur in an exact top-level `if` or generated `test && assignment` shape.
+/// Direct eval fails closed for both facts. Named/string ids are deliberately
+/// excluded because the public detector id cannot preserve their runtime type.
 fn normalize_webpack_css_runtime(
     module: &mut Module,
     unresolved_mark: Mark,
@@ -118,15 +121,16 @@ fn normalize_webpack_css_runtime(
 
     if let Some(locals) = plan.locals {
         let capture = fresh_named_capture_ident(&candidate, "_webpackCssDefault");
-        if !rewrite_css_locals_switch(&mut candidate, locals.if_span, &capture) {
-            return;
+        let mut locals_candidate = candidate.clone();
+        if rewrite_css_locals_assignment(&mut locals_candidate, locals.assignment_span, &capture) {
+            locals_candidate
+                .body
+                .insert(0, css_default_declaration(capture.clone()));
+            locals_candidate
+                .body
+                .push(module_exports_assignment(capture, unresolved_mark));
+            candidate = locals_candidate;
         }
-        candidate
-            .body
-            .insert(0, css_default_declaration(capture.clone()));
-        candidate
-            .body
-            .push(module_exports_assignment(capture, unresolved_mark));
     }
 
     *module = candidate;
@@ -139,7 +143,7 @@ struct WebpackCssRuntimePlan {
 
 #[derive(Clone, Copy)]
 struct CssLocalsPlan {
-    if_span: Span,
+    assignment_span: Span,
     module_ident_span: Span,
 }
 
@@ -164,41 +168,37 @@ fn plan_webpack_css_runtime(
         return None;
     };
 
-    let locals = module
-        .body
-        .iter()
-        .filter_map(|item| {
-            let ModuleItem::Stmt(Stmt::If(statement)) = item else {
-                return None;
-            };
-            css_locals_plan(statement, unresolved_mark)
-        })
-        .collect::<Vec<_>>();
-    let locals = match locals.as_slice() {
-        [] => None,
-        [plan] => Some(*plan),
-        _ => return None,
-    };
-
-    let mut references = CommonJsRuntimeReferenceCollector {
-        unresolved_mark,
-        ..Default::default()
-    };
-    module.visit_with(&mut references);
-    let mut allowed_module_spans = vec![*module_ident_span];
-    if let Some(locals) = locals {
-        allowed_module_spans.push(locals.module_ident_span);
+    let mut locals_candidates = Vec::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::If(statement)) => {
+                if let Some(plan) = css_locals_if_plan(statement, unresolved_mark) {
+                    locals_candidates.push(plan);
+                }
+            }
+            ModuleItem::Stmt(Stmt::Expr(statement)) => {
+                collect_immediate_css_locals_plans(
+                    &statement.expr,
+                    unresolved_mark,
+                    &mut locals_candidates,
+                );
+            }
+            _ => {}
+        }
     }
-    if !references.exports.is_empty()
-        || references.modules.len() != allowed_module_spans.len()
-        || references.modules.iter().any(|reference| {
-            !allowed_module_spans
-                .iter()
-                .any(|allowed| allowed == reference)
-        })
-    {
-        return None;
-    }
+    let locals = match locals_candidates.as_slice() {
+        [plan]
+            if css_locals_references_are_complete(
+                module,
+                unresolved_mark,
+                *module_ident_span,
+                *plan,
+            ) =>
+        {
+            Some(*plan)
+        }
+        _ => None,
+    };
 
     Some(WebpackCssRuntimePlan {
         module_id_member_span: *module_id_member_span,
@@ -265,12 +265,52 @@ impl Visit for CommonJsRuntimeReferenceCollector {
     }
 }
 
-fn css_locals_plan(statement: &IfStmt, unresolved_mark: Mark) -> Option<CssLocalsPlan> {
+fn css_locals_if_plan(statement: &IfStmt, unresolved_mark: Mark) -> Option<CssLocalsPlan> {
     if statement.alt.is_some() {
         return None;
     }
     let value = locals_test_binding(&statement.test)?;
     let assignment = single_expression_statement(&statement.cons)?;
+    css_locals_assignment_plan(value, assignment, unresolved_mark)
+}
+
+/// Collect only immediate top-level sequence elements. In particular, do not
+/// descend into call arguments, branches, assignment RHS values, or deferred
+/// bodies: those positions do not prove the generated locals switch executes
+/// in the factory's current invocation.
+fn collect_immediate_css_locals_plans(
+    expression: &Expr,
+    unresolved_mark: Mark,
+    plans: &mut Vec<CssLocalsPlan>,
+) {
+    match strip_parens(expression) {
+        Expr::Seq(sequence) => {
+            for expression in &sequence.exprs {
+                collect_immediate_css_locals_plans(expression, unresolved_mark, plans);
+            }
+        }
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalAnd,
+            left,
+            right,
+            ..
+        }) => {
+            let Some(value) = locals_test_binding(left) else {
+                return;
+            };
+            if let Some(plan) = css_locals_assignment_plan(value, right, unresolved_mark) {
+                plans.push(plan);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn css_locals_assignment_plan(
+    value: Id,
+    assignment: &Expr,
+    unresolved_mark: Mark,
+) -> Option<CssLocalsPlan> {
     let Expr::Assign(assignment) = strip_parens(assignment) else {
         return None;
     };
@@ -291,9 +331,30 @@ fn css_locals_plan(statement: &IfStmt, unresolved_mark: Mark) -> Option<CssLocal
         return None;
     }
     Some(CssLocalsPlan {
-        if_span: statement.span,
+        assignment_span: assignment.span,
         module_ident_span: module.span,
     })
+}
+
+fn css_locals_references_are_complete(
+    module: &Module,
+    unresolved_mark: Mark,
+    tuple_module_span: Span,
+    locals: CssLocalsPlan,
+) -> bool {
+    let mut references = CommonJsRuntimeReferenceCollector {
+        unresolved_mark,
+        ..Default::default()
+    };
+    module.visit_with(&mut references);
+    let allowed_module_spans = [tuple_module_span, locals.module_ident_span];
+    references.exports.is_empty()
+        && references.modules.len() == allowed_module_spans.len()
+        && references.modules.iter().all(|reference| {
+            allowed_module_spans
+                .iter()
+                .any(|allowed| allowed == reference)
+        })
 }
 
 fn locals_test_binding(test: &Expr) -> Option<Id> {
@@ -367,36 +428,32 @@ impl VisitMut for CssModuleIdRewriter {
     }
 }
 
-fn rewrite_css_locals_switch(module: &mut Module, target: Span, capture: &Ident) -> bool {
-    for item in &mut module.body {
-        let ModuleItem::Stmt(Stmt::If(statement)) = item else {
-            continue;
-        };
-        if statement.span != target {
-            continue;
-        }
-        let Some(expression) = single_expression_statement_mut(&mut statement.cons) else {
-            return false;
-        };
-        let Expr::Assign(assignment) = strip_parens_mut(expression) else {
-            return false;
-        };
-        assignment.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent::from(
-            capture.clone(),
-        )));
-        return true;
-    }
-    false
+fn rewrite_css_locals_assignment(module: &mut Module, target: Span, capture: &Ident) -> bool {
+    let mut rewriter = CssLocalsAssignmentRewriter {
+        target,
+        capture,
+        rewrites: 0,
+    };
+    module.visit_mut_with(&mut rewriter);
+    rewriter.rewrites == 1
 }
 
-fn single_expression_statement_mut(statement: &mut Stmt) -> Option<&mut Box<Expr>> {
-    match statement {
-        Stmt::Expr(statement) => Some(&mut statement.expr),
-        Stmt::Block(block) => match block.stmts.as_mut_slice() {
-            [Stmt::Expr(statement)] => Some(&mut statement.expr),
-            _ => None,
-        },
-        _ => None,
+struct CssLocalsAssignmentRewriter<'a> {
+    target: Span,
+    capture: &'a Ident,
+    rewrites: usize,
+}
+
+impl VisitMut for CssLocalsAssignmentRewriter<'_> {
+    fn visit_mut_assign_expr(&mut self, assignment: &mut AssignExpr) {
+        if assignment.span == self.target {
+            assignment.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent::from(
+                self.capture.clone(),
+            )));
+            self.rewrites += 1;
+            return;
+        }
+        assignment.visit_mut_children_with(self);
     }
 }
 
@@ -835,6 +892,7 @@ mod tests {
             r#"
 const content = loadContent();
 content.push([module.id, "body {}", "", { version: 3 }]);
+module.exports = content;
 inject(content);
 "#,
             true,
@@ -844,6 +902,7 @@ inject(content);
 
         assert!(output.contains("37,"), "{output}");
         assert!(!output.contains("module.id"), "{output}");
+        assert!(output.contains("module.exports = content"), "{output}");
         assert!(!output.contains("_webpackCssDefault"), "{output}");
     }
 
@@ -891,22 +950,35 @@ inject(content);
     }
 
     #[test]
+    fn generated_logical_and_locals_switch_restores_the_default() {
+        let output = normalize_with_module_id(
+            r#"
+let content = loadContent();
+(content = typeof content === "string"
+    ? [[module.i, content, ""]]
+    : content).locals && (module.exports = content.locals), inject(content);
+"#,
+            true,
+            Some(12.0),
+            true,
+        );
+
+        assert!(output.contains("var _webpackCssDefault = {}"), "{output}");
+        assert!(output.contains("12,"), "{output}");
+        assert!(
+            output.contains("_webpackCssDefault = content.locals"),
+            "{output}"
+        );
+        assert!(
+            output.contains("module.exports = _webpackCssDefault"),
+            "{output}"
+        );
+        assert!(!output.contains("module.i"), "{output}");
+    }
+
+    #[test]
     fn css_runtime_recovery_fails_closed_on_unproven_surfaces() {
         for input in [
-            // The module object escapes beyond the proven tuple/locals uses.
-            r#"
-const content = [[module.id, "body {}", ""]];
-observe(module);
-"#,
-            // Direct eval can observe the removed factory binding.
-            r#"
-const content = [[module.id, "body {}", ""]];
-eval("module.exports");
-"#,
-            // Computed metadata is not the generated CSS tuple contract.
-            r#"
-const content = [[module["id"], "body {}", ""]];
-"#,
             // A mismatched locals source is not the tested value.
             r#"
 let content = loadContent();
@@ -922,14 +994,40 @@ if (ready) {
     if (content.locals) module.exports = content.locals;
 }
 "#,
+            // The generated `&&` form is accepted only as an immediate
+            // top-level sequence element, never from another guarded arm.
+            r#"
+const content = [[module.id, "body {}", ""]];
+ready && (content.locals && (module.exports = content.locals));
+"#,
         ] {
             let output = normalize_with_module_id(input, true, Some(9.0), false);
-            assert!(
-                output.contains("module.id") || output.contains("module[\"id\"]"),
-                "{output}"
-            );
+            assert!(!output.contains("module.id"), "{output}");
+            assert!(output.contains("9,"), "{output}");
             assert!(!output.contains("_webpackCssDefault"), "{output}");
         }
+
+        // Direct eval can observe the removed factory binding, so even the
+        // otherwise-proven identity substitution stays disabled.
+        let direct_eval = normalize_with_module_id(
+            r#"
+const content = [[module.id, "body {}", ""]];
+eval("module.exports");
+"#,
+            true,
+            Some(9.0),
+            false,
+        );
+        assert!(direct_eval.contains("module.id"), "{direct_eval}");
+
+        // Computed metadata is not the generated CSS tuple contract.
+        let computed = normalize_with_module_id(
+            r#"const content = [[module["id"], "body {}", ""]];"#,
+            true,
+            Some(9.0),
+            false,
+        );
+        assert!(computed.contains("module[\"id\"]"), "{computed}");
 
         let without_numeric_identity = normalize_with_module_id(
             r#"const content = [[module.id, "body {}", ""]];"#,
