@@ -543,6 +543,36 @@ methods.enabled = true;
 }
 
 #[test]
+fn default_object_proto_entry_is_not_a_declared_property() {
+    let facts = collect_facts("module.exports = { __proto__: base, real: 1 };");
+    assert_eq!(
+        facts
+            .commonjs_default_object
+            .expect("the literal assignment should still prove the default object")
+            .declared_properties,
+        vec!["real"],
+        "a plain __proto__ entry sets the prototype, not an own property"
+    );
+}
+
+#[test]
+fn callable_default_prototype_write_is_not_an_attached_property() {
+    let facts = collect_facts(
+        r#"
+function api(value) { return value; }
+api.__proto__ = base;
+api.parse = parse;
+module.exports = api;
+"#,
+    );
+    assert_eq!(
+        facts.commonjs_default_attached_properties,
+        vec!["parse"],
+        "a prototype write on the callable is not part of the export surface"
+    );
+}
+
+#[test]
 fn default_object_properties_reject_a_reassigned_alias() {
     let facts = collect_facts(
         r#"

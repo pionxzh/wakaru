@@ -768,6 +768,31 @@ consume(exports.first());
 }
 
 #[test]
+fn named_export_read_recovery_rejects_prototype_mutating_member_uses() {
+    let getter_installer = r#"
+exports.first = () => 1;
+exports.__defineGetter__("first", () => () => 2);
+consume(exports.first());
+"#;
+    let output = apply(getter_installer);
+    assert!(
+        output.contains("consume(exports.first())"),
+        "a legacy getter installer can redefine any proven property:\n{output}"
+    );
+
+    let prototype_write = r#"
+exports.first = () => 1;
+exports.__proto__ = fallback;
+consume(exports.first());
+"#;
+    let output = apply(prototype_write);
+    assert!(
+        output.contains("consume(exports.first())"),
+        "a prototype write changes lookup without a visible property write:\n{output}"
+    );
+}
+
+#[test]
 fn named_export_read_recovery_does_not_rewrite_reads_before_the_export() {
     let input = r#"
 consume(exports.first);
@@ -1403,6 +1428,52 @@ fn dynamic_commonjs_surfaces_keep_default_compat_postamble() {
             "{name} must fail closed:\n{output}"
         );
     }
+}
+
+#[test]
+fn prototype_mutating_exports_write_stays_commonjs_residual() {
+    let output = apply("exports.__proto__ = { legacy: true };\nexports.answer = 42;\n");
+    assert!(
+        !output.contains("export const __proto__"),
+        "a prototype write is not a named export:\n{output}"
+    );
+    assert!(
+        output.contains("exports.__proto__"),
+        "the prototype write must stay visible as a residual:\n{output}"
+    );
+    assert!(
+        output.contains("export const answer = 42"),
+        "ordinary named exports still convert around the residual:\n{output}"
+    );
+}
+
+#[test]
+fn export_getter_map_with_prototype_mutating_name_stays_residual() {
+    let input = r#"
+require.d(exports, {
+  __proto__() { return legacy; },
+  real() { return value; }
+});
+const value = 1;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("require.d(exports"),
+        "converting would synthesize a prototype write for the __proto__ entry:\n{output}"
+    );
+    assert!(
+        !output.contains("export "),
+        "no partial conversion of the remaining map entries:\n{output}"
+    );
+}
+
+#[test]
+fn single_export_getter_with_prototype_mutating_name_stays_residual() {
+    let output = apply("require.d(exports, \"__proto__\", () => 42);\n");
+    assert!(
+        output.contains("require.d(exports"),
+        "the original own accessor definition must stay as a residual:\n{output}"
+    );
 }
 
 #[test]

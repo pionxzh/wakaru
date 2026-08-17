@@ -1084,6 +1084,14 @@ pub fn collect_commonjs_default_object(
         let PropOrSpread::Prop(prop) = prop else {
             continue;
         };
+        // A plain `__proto__: value` entry sets the literal's prototype and
+        // creates no own property. Shorthand, method, and accessor forms of
+        // the same name do create own properties and stay declared.
+        if matches!(prop.as_ref(), Prop::KeyValue(entry)
+            if prop_name_to_atom(&entry.key).is_some_and(|name| name.as_ref() == "__proto__"))
+        {
+            continue;
+        }
         if let Some(name) = static_object_property_name(prop) {
             properties.insert(name);
         }
@@ -1253,6 +1261,11 @@ fn record_callable_surface_expression(
     let MemberProp::Ident(property) = &member.prop else {
         return;
     };
+    // `callable.__proto__ = value` sets the prototype rather than attaching
+    // an own property, so it is not part of the declared export surface.
+    if property.sym.as_ref() == "__proto__" {
+        return;
+    }
     property_assignments.push((
         *evaluation_order,
         (object.sym.clone(), object.ctxt),

@@ -19,6 +19,7 @@ use crate::analysis::binding_id;
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex, UseKind};
 use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
+use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
 use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
@@ -745,6 +746,15 @@ fn collect_stable_named_properties(
     let mut write_counts: HashMap<Atom, usize> = HashMap::new();
     for site in uses.use_sites(exports_binding) {
         match &site.kind {
+            UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
+                if is_prototype_mutating_member_name(property.as_ref()) =>
+            {
+                // `exports.__defineGetter__(...)` can redefine any proven
+                // property as an accessor, and a `__proto__` write changes
+                // lookup for names without an own write. Neither surfaces as
+                // a write of the affected name, so the whole proof fails.
+                return HashSet::new();
+            }
             UseKind::StaticMemberRead(_) | UseKind::TypeofOperand => {}
             UseKind::StaticMemberWrite(property) => {
                 *write_counts.entry(property.clone()).or_default() += 1;
@@ -1689,13 +1699,6 @@ fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_
     });
 }
 
-fn is_prototype_mutating_member_name(property: &str) -> bool {
-    matches!(
-        property,
-        "__proto__" | "__defineGetter__" | "__defineSetter__"
-    )
-}
-
 fn has_esm_default_export(module: &Module) -> bool {
     module.body.iter().any(|item| match item {
         ModuleItem::ModuleDecl(
@@ -1916,7 +1919,7 @@ fn extract_direct_webpack_export_getters(
             return None;
         };
         let export_name = name.value.as_str()?;
-        if !is_valid_js_ident(export_name) {
+        if !is_valid_js_ident(export_name) || is_prototype_mutating_member_name(export_name) {
             return None;
         }
         let expr = extract_getter_expr_return_expr(call.args[2].expr.as_ref())?;
@@ -2117,6 +2120,12 @@ fn extract_export_getter_map(
             }
             _ => return None,
         };
+        // Converting such a name would synthesize `exports.__proto__ = expr`,
+        // a prototype write instead of the original own accessor. Keep the
+        // whole helper call as a residual.
+        if is_prototype_mutating_member_name(name.as_ref()) {
+            return None;
+        }
         exports.push((name, expr));
     }
     Some(exports)
@@ -3979,6 +3988,13 @@ fn try_classify_cjs_export(
                 return Some(CjsExportKind::NamedDefault {
                     expr: assign.right.clone(),
                 });
+            }
+            // `exports.__proto__ = value` triggers the prototype setter and
+            // creates no own property, so an `export const __proto__` both
+            // fabricates an export and erases the prototype change. Keep the
+            // assignment as an honest CommonJS residual.
+            if is_prototype_mutating_member_name(prop.as_ref()) {
+                return None;
             }
             let is_void = is_void_or_undefined(&assign.right, unresolved_mark);
             return Some(CjsExportKind::Named {
