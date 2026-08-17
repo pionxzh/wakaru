@@ -140,9 +140,11 @@ cross-module fact. `UnEsm` proves and consumes that identity within one resolved
 AST before this barrier; ambiguous writes and receiver-sensitive calls stay as
 visible CommonJS residuals. The same resolved binding-use surface proves an
 exact default-compatibility postamble dead only when every `exports` access
-outside that postamble is a static, non-default member access. Computed access,
-whole-object escape, unresolved getter helpers, meaningful `module` use, direct
-eval, and a default export all fail closed. This is a same-module dead-branch
+outside that postamble is a static, non-default member access to an ordinary
+name. Computed access, whole-object escape, unresolved getter helpers,
+prototype-mutating member names (`__proto__`, `__defineGetter__`,
+`__defineSetter__`), meaningful `module` use, direct eval, and a default export
+all fail closed. This is a same-module dead-branch
 proof, not a default-object fact available to consumers.
 
 ## Rules that read facts

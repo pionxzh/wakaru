@@ -1611,6 +1611,12 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 /// helper, any meaningful `module` use, and direct eval all fail closed. Since
 /// the index traverses every function body, a later hoisted function
 /// declaration cannot hide a default write from the proof.
+///
+/// Static member access is only property-creation-free for ordinary names:
+/// `exports.__proto__ = obj` makes `exports.default` resolvable through the
+/// new prototype, and `exports.__defineGetter__(...)` can install a `default`
+/// accessor while surfacing as a plain member read. Those prototype-mutating
+/// names fail closed too.
 fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_mark: Mark) {
     let compat_indices: HashSet<usize> = module
         .body
@@ -1653,6 +1659,7 @@ fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_
                 &site.kind,
                 UseKind::StaticMemberRead(property) | UseKind::StaticMemberWrite(property)
                     if property.as_ref() != "default"
+                        && !is_prototype_mutating_member_name(property.as_ref())
             )
         })
     });
@@ -1680,6 +1687,13 @@ fn remove_dead_named_only_default_compat_blocks(module: &mut Module, unresolved_
         index += 1;
         keep
     });
+}
+
+fn is_prototype_mutating_member_name(property: &str) -> bool {
+    matches!(
+        property,
+        "__proto__" | "__defineGetter__" | "__defineSetter__"
+    )
 }
 
 fn has_esm_default_export(module: &Module) -> bool {

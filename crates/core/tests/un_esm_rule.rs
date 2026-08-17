@@ -1381,6 +1381,18 @@ fn dynamic_commonjs_surfaces_keep_default_compat_postamble() {
                 "exports.answer = 42;\n{DEFAULT_COMPAT_POSTAMBLE}\nfunction installDefault() {{ exports.default = 42; }}"
             ),
         ),
+        (
+            "prototype reassignment",
+            format!(
+                "exports.__proto__ = {{ default: {{}} }};\nexports.answer = 42;\n{DEFAULT_COMPAT_POSTAMBLE}"
+            ),
+        ),
+        (
+            "legacy default getter installer",
+            format!(
+                "exports.answer = 42;\nexports.__defineGetter__(\"default\", () => ({{ answer: exports.answer }}));\n{DEFAULT_COMPAT_POSTAMBLE}"
+            ),
+        ),
     ];
 
     for (name, input) in cases {
