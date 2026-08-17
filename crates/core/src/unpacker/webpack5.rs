@@ -402,6 +402,8 @@ pub(super) fn detect_chunk_from_module_prepared(
     let mut all_modules = Vec::new();
     let mut all_prepared = Vec::new();
     let mut all_failures = HashMap::new();
+    let mut all_numeric_module_ids = HashMap::new();
+    let mut all_legacy_module_i = HashSet::new();
 
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
@@ -409,14 +411,19 @@ pub(super) fn detect_chunk_from_module_prepared(
         };
         if let Some(modules_container) = extract_chunk_push_modules(expr) {
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
+            if is_legacy_webpack_jsonp_push(expr) {
+                all_legacy_module_i.extend(extracted.numeric_module_ids.keys().cloned());
+            }
             all_modules.extend(extracted.modules);
             all_prepared.extend(extracted.prepared);
             all_failures.extend(extracted.failures);
+            all_numeric_module_ids.extend(extracted.numeric_module_ids);
         } else if let Some(modules_container) = extract_commonjs_chunk_modules(expr) {
             let extracted = extract_modules_from_container(&modules_container, cm.clone())?;
             all_modules.extend(extracted.modules);
             all_prepared.extend(extracted.prepared);
             all_failures.extend(extracted.failures);
+            all_numeric_module_ids.extend(extracted.numeric_module_ids);
         }
     }
 
@@ -432,7 +439,9 @@ pub(super) fn detect_chunk_from_module_prepared(
             all_prepared,
             cm,
         )
-        .with_module_failures(all_failures),
+        .with_module_failures(all_failures)
+        .with_webpack_numeric_module_ids(all_numeric_module_ids)
+        .with_webpack_legacy_module_i(all_legacy_module_i),
     )
 }
 
@@ -1267,6 +1276,39 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<Webpack5ModulesContainer<'_
     extract_chunk_push_parts(expr).map(|(_, modules)| modules)
 }
 
+/// Webpack 4's default JSONP receiver begins with `webpackJsonp`, and its
+/// production module object exposes the numeric id as `module.i`. The generic
+/// chunk detector also accepts modern/custom push receivers, so keep this
+/// legacy fact separate instead of treating every `.i` read as an id.
+fn is_legacy_webpack_jsonp_push(expr: &Expr) -> bool {
+    if extract_chunk_push_parts(expr).is_none() {
+        return false;
+    }
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(callee) = strip_parens(callee) else {
+        return false;
+    };
+    let Expr::Assign(assignment) = strip_parens(&callee.obj) else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return false;
+    };
+    match &target.prop {
+        MemberProp::Ident(name) => name.sym.starts_with("webpackJsonp"),
+        MemberProp::Computed(computed) => {
+            matches!(strip_parens(&computed.expr), Expr::Lit(Lit::Str(name))
+                if name.value.as_str().is_some_and(|name| name.starts_with("webpackJsonp")))
+        }
+        _ => false,
+    }
+}
+
 fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, Webpack5ModulesContainer<'_>)> {
     let Expr::Call(call) = expr else {
         return None;
@@ -1532,6 +1574,7 @@ struct ExtractedWebpack5Modules {
     modules: Vec<UnpackedModule>,
     prepared: Vec<Option<PreparedModuleAst>>,
     failures: HashMap<String, DetectedModuleFailure>,
+    numeric_module_ids: HashMap<String, f64>,
 }
 
 fn extract_modules_from_container(
@@ -1566,6 +1609,10 @@ fn extract_modules_from_container(
         modules,
         prepared: prepared_factories.prepared,
         failures: prepared_factories.failures,
+        numeric_module_ids: module_entries
+            .iter()
+            .filter_map(|entry| entry.numeric_id.map(|id| (entry.filename.clone(), id)))
+            .collect(),
     })
 }
 
@@ -1728,6 +1775,10 @@ fn extract_webpack5_modules_with_plan(
     if modules.is_empty() {
         return None;
     }
+    let numeric_module_ids = module_entries
+        .iter()
+        .filter_map(|entry| entry.numeric_id.map(|id| (entry.filename.clone(), id)))
+        .collect();
 
     Some(
         DetectedBundle::new(
@@ -1735,7 +1786,8 @@ fn extract_webpack5_modules_with_plan(
             prepared,
             cm,
         )
-        .with_module_failures(failures),
+        .with_module_failures(failures)
+        .with_webpack_numeric_module_ids(numeric_module_ids),
     )
 }
 
@@ -2983,18 +3035,25 @@ fn callee_object_for_member_call(call: &CallExpr, expected_prop: &str) -> Option
     Some(object.sym.to_string())
 }
 
-/// Extract a string module ID from any `PropName` variant.
-fn extract_module_id_from_prop_name(key: &PropName) -> Option<String> {
+/// Extract the public string id plus a numeric runtime identity when the
+/// container key itself is numeric. A quoted numeric key is deliberately not
+/// promoted because its property spelling does not prove the type passed to
+/// webpack's runtime loader.
+fn extract_module_id_from_prop_name(key: &PropName) -> Option<(String, Option<f64>)> {
     match key {
-        PropName::Str(s) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
-        PropName::Num(n) => Some(format!("{}", n.value as i64)),
-        PropName::Ident(i) => Some(i.sym.to_string()),
+        PropName::Str(s) => Some((s.value.as_str().unwrap_or("unknown").to_string(), None)),
+        PropName::Num(n) => Some((
+            format!("{}", n.value as i64),
+            (n.value.is_finite() && n.value.fract() == 0.0).then_some(n.value),
+        )),
+        PropName::Ident(i) => Some((i.sym.to_string(), None)),
         _ => None,
     }
 }
 
 struct Webpack5ModuleDescriptor<'a> {
     id: String,
+    numeric_id: Option<f64>,
     filename: String,
     params: Webpack5FactoryParams<'a>,
     body_stmts: &'a [Stmt],
@@ -3069,6 +3128,7 @@ fn collect_module_descriptors<'a>(
                 descriptors.push(Webpack5ModuleDescriptor {
                     filename: descriptor_filename(&module_id),
                     id: module_id,
+                    numeric_id: Some((id_offset + index) as f64),
                     params,
                     body_stmts,
                 });
@@ -3094,17 +3154,18 @@ fn module_descriptor_from_prop(prop: &PropOrSpread) -> Option<Webpack5ModuleDesc
     let PropOrSpread::Prop(prop) = prop else {
         return None;
     };
-    let (module_id, params, body_stmts) = match &**prop {
+    let (module_id, numeric_id, params, body_stmts) = match &**prop {
         Prop::KeyValue(key_value) => {
-            let module_id = extract_module_id_from_prop_name(&key_value.key)?;
+            let (module_id, numeric_id) = extract_module_id_from_prop_name(&key_value.key)?;
             let (params, body_stmts) = extract_factory_parts(&key_value.value)?;
-            (module_id, params, body_stmts)
+            (module_id, numeric_id, params, body_stmts)
         }
         Prop::Method(method) => {
-            let module_id = extract_module_id_from_prop_name(&method.key)?;
+            let (module_id, numeric_id) = extract_module_id_from_prop_name(&method.key)?;
             let body = method.function.body.as_ref()?;
             (
                 module_id,
+                numeric_id,
                 Webpack5FactoryParams::Function(&method.function.params),
                 body.stmts.as_slice(),
             )
@@ -3114,6 +3175,7 @@ fn module_descriptor_from_prop(prop: &PropOrSpread) -> Option<Webpack5ModuleDesc
     Some(Webpack5ModuleDescriptor {
         filename: descriptor_filename(&module_id),
         id: module_id,
+        numeric_id,
         params,
         body_stmts,
     })

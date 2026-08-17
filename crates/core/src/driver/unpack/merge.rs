@@ -42,6 +42,11 @@ pub(super) struct MultiSourceModule {
     /// initialized `module` / `exports` runtime bindings; raw output remains
     /// detector passthrough.
     webpack_commonjs_runtime: bool,
+    /// Numeric module identity retained from the original webpack container
+    /// key. `None` includes named ids and synthetic recursive children.
+    webpack_numeric_module_id: Option<f64>,
+    /// Whether the original container proves webpack 4's `module.i` spelling.
+    webpack_legacy_module_i: bool,
     allow_cross_chunk_rewrite: bool,
     report_import_cycle_warnings: bool,
     chunk_ids: Arc<HashSet<usize>>,
@@ -102,6 +107,8 @@ impl MultiSourceModule {
             detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
+            webpack_numeric_module_id: None,
+            webpack_legacy_module_i: false,
             allow_cross_chunk_rewrite: true,
             report_import_cycle_warnings,
             chunk_ids: chunk_ids.into(),
@@ -118,6 +125,16 @@ impl MultiSourceModule {
 
     pub(super) fn with_webpack_commonjs_runtime(mut self, enabled: bool) -> Self {
         self.webpack_commonjs_runtime = enabled;
+        self
+    }
+
+    pub(super) fn with_webpack_numeric_module_id(mut self, module_id: Option<f64>) -> Self {
+        self.webpack_numeric_module_id = module_id;
+        self
+    }
+
+    pub(super) fn with_webpack_legacy_module_i(mut self, enabled: bool) -> Self {
+        self.webpack_legacy_module_i = enabled;
         self
     }
 
@@ -147,6 +164,8 @@ impl MultiSourceModule {
             detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
+            webpack_numeric_module_id: None,
+            webpack_legacy_module_i: false,
             allow_cross_chunk_rewrite: false,
             report_import_cycle_warnings: false,
             chunk_ids: Arc::default(),
@@ -163,6 +182,8 @@ pub(super) struct PreparedUnpackModule {
     pub(super) detector_failure: Option<DetectedModuleFailure>,
     pub(super) implicit_commonjs_default_object: bool,
     pub(super) webpack_commonjs_runtime: bool,
+    pub(super) webpack_numeric_module_id: Option<f64>,
+    pub(super) webpack_legacy_module_i: bool,
     pub(super) numeric_rewrite: Option<NumericRewriteModuleContext>,
     pub(super) filename_rewrite: Option<FilenameRewriteModuleContext>,
     pub(super) report_import_cycle_warnings: bool,
@@ -179,6 +200,8 @@ impl PreparedUnpackModule {
             detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
+            webpack_numeric_module_id: None,
+            webpack_legacy_module_i: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings: true,
@@ -198,6 +221,8 @@ impl PreparedUnpackModule {
             detector_failure: None,
             implicit_commonjs_default_object: false,
             webpack_commonjs_runtime: false,
+            webpack_numeric_module_id: None,
+            webpack_legacy_module_i: false,
             numeric_rewrite: None,
             filename_rewrite: None,
             report_import_cycle_warnings,
@@ -324,6 +349,8 @@ pub(super) fn prepare_multi_source_modules(
                 detector_failure: module.detector_failure,
                 implicit_commonjs_default_object: module.implicit_commonjs_default_object,
                 webpack_commonjs_runtime: module.webpack_commonjs_runtime,
+                webpack_numeric_module_id: module.webpack_numeric_module_id,
+                webpack_legacy_module_i: module.webpack_legacy_module_i,
                 numeric_rewrite,
                 filename_rewrite,
                 report_import_cycle_warnings: module.report_import_cycle_warnings,

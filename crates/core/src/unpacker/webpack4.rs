@@ -452,6 +452,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Detec
 /// or `bootstrapFn(Array(n).concat([fnN, fnN1, ...]))`.
 struct Webpack4ModuleDescriptor<'a> {
     id: String,
+    numeric_id: Option<f64>,
     filename: String,
     is_entry: bool,
     factory: &'a FnExpr,
@@ -595,7 +596,24 @@ fn prepare_webpack4_modules(
         }
         return Some(
             DetectedBundle::from_result(UnpackResult::new(modules, BundleFormat::Webpack4))
-                .with_module_failures(failures),
+                .with_module_failures(failures)
+                .with_webpack_numeric_module_ids(
+                    descriptors
+                        .iter()
+                        .filter_map(|descriptor| {
+                            descriptor
+                                .numeric_id
+                                .map(|id| (descriptor.filename.clone(), id))
+                        })
+                        .collect(),
+                )
+                .with_webpack_legacy_module_i(
+                    descriptors
+                        .iter()
+                        .filter(|descriptor| descriptor.numeric_id.is_some())
+                        .map(|descriptor| descriptor.filename.clone())
+                        .collect(),
+                ),
         );
     }
 }
@@ -660,6 +678,7 @@ fn extract_webpack4_array_modules(
             };
             Some(Webpack4ModuleDescriptor {
                 id: id.to_string(),
+                numeric_id: Some(id as f64),
                 filename,
                 is_entry,
                 factory,
@@ -680,21 +699,21 @@ fn extract_webpack4_object_modules(
     }
 
     // Collect module keys and their factory FnExprs from the object properties
-    let mut module_entries: Vec<(String, &FnExpr)> = Vec::new();
+    let mut module_entries: Vec<(String, Option<f64>, &FnExpr)> = Vec::new();
     for prop in &object_lit.props {
         let PropOrSpread::Prop(prop_box) = prop else {
             return None;
         };
         match &**prop_box {
             Prop::KeyValue(kv) => {
-                let key = extract_string_module_id(&kv.key)?;
+                let (key, numeric_id) = extract_module_id(&kv.key)?;
                 let Expr::Fn(fn_expr) = strip_parens(&kv.value) else {
                     return None;
                 };
-                module_entries.push((key, fn_expr));
+                module_entries.push((key, numeric_id, fn_expr));
             }
             Prop::Method(method) => {
-                let key = extract_string_module_id(&method.key)?;
+                let (key, _) = extract_module_id(&method.key)?;
                 // Method shorthand doesn't give us a &FnExpr directly,
                 // so we skip it for wp4 object-form (wp4 dev bundles use KeyValue).
                 // Fall through to None if we encounter methods.
@@ -708,7 +727,7 @@ fn extract_webpack4_object_modules(
     // Validate: at least one function with at least 1 param
     let has_module_fn = module_entries
         .iter()
-        .any(|(_, fn_expr)| !fn_expr.function.params.is_empty());
+        .any(|(_, _, fn_expr)| !fn_expr.function.params.is_empty());
     if !has_module_fn {
         return None;
     }
@@ -719,7 +738,7 @@ fn extract_webpack4_object_modules(
     // Detect whether all keys are numeric (e.g. {0: fn, 1: fn}) vs string paths
     let all_numeric = module_entries
         .iter()
-        .all(|(key, _)| key.parse::<usize>().is_ok());
+        .all(|(key, _, _)| key.parse::<usize>().is_ok());
 
     // Build filename maps — numeric keys need a usize→String map for RequireIdRewriter,
     // string keys need a String→String map for RequireStringIdRewriter. String
@@ -727,13 +746,13 @@ fn extract_webpack4_object_modules(
     // `a.less` / `a.less.js` pairs retain distinct ownership.
     let string_filenames = (!all_numeric).then(|| {
         super::webpack_common::unique_webpack_module_filenames(
-            module_entries.iter().map(|(key, _)| key.as_str()),
+            module_entries.iter().map(|(key, _, _)| key.as_str()),
         )
     });
     let descriptors = module_entries
         .iter()
         .enumerate()
-        .map(|(entry_index, (key, factory))| {
+        .map(|(entry_index, (key, numeric_id, factory))| {
             let is_entry = if all_numeric {
                 let idx = key.parse::<usize>().unwrap_or(usize::MAX);
                 entry_ids.contains(&ModuleId::Numeric(idx))
@@ -760,6 +779,7 @@ fn extract_webpack4_object_modules(
             };
             Webpack4ModuleDescriptor {
                 id: key.clone(),
+                numeric_id: *numeric_id,
                 is_entry,
                 filename,
                 factory,
@@ -769,12 +789,16 @@ fn extract_webpack4_object_modules(
     prepare_webpack4_modules(&descriptors, all_numeric, cm)
 }
 
-/// Extract a string module ID from a property key.
-fn extract_string_module_id(key: &PropName) -> Option<String> {
+/// Extract the public string id plus its runtime number when the object key is
+/// genuinely numeric. Quoted numeric keys do not prove the runtime ID type.
+fn extract_module_id(key: &PropName) -> Option<(String, Option<f64>)> {
     match key {
-        PropName::Str(s) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
-        PropName::Num(n) => Some(format!("{}", n.value as i64)),
-        PropName::Ident(i) => Some(i.sym.to_string()),
+        PropName::Str(s) => Some((s.value.as_str().unwrap_or("unknown").to_string(), None)),
+        PropName::Num(n) => Some((
+            format!("{}", n.value as i64),
+            (n.value.is_finite() && n.value.fract() == 0.0).then_some(n.value),
+        )),
+        PropName::Ident(i) => Some((i.sym.to_string(), None)),
         _ => None,
     }
 }

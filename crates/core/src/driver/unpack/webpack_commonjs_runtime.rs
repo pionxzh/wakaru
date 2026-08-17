@@ -9,15 +9,17 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, Decl,
-    ExportDefaultExpr, Expr, Id, Ident, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, Pat, SimpleAssignTarget, Stmt, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, Callee, Decl,
+    ExportDefaultExpr, Expr, ExprStmt, Id, Ident, IfStmt, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, Number, ObjectLit, Pat, SimpleAssignTarget, Stmt, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::analysis::binding_uses::BindingUseIndex;
+use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::collect_module_names;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
 
@@ -25,9 +27,14 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     module: &mut Module,
     unresolved_mark: Mark,
     enabled: bool,
+    numeric_module_id: Option<f64>,
+    legacy_module_i: bool,
 ) {
     if !enabled {
         return;
+    }
+    if let Some(module_id) = numeric_module_id {
+        normalize_webpack_css_runtime(module, unresolved_mark, module_id, legacy_module_i);
     }
     if !has_supported_module_shell(module) {
         return;
@@ -75,6 +82,380 @@ pub(super) fn normalize_webpack_commonjs_runtime(
     *module = candidate;
 }
 
+/// Restore the narrow webpack runtime contract emitted by CSS loader chains.
+///
+/// Old and current producers represent one CSS list item as
+/// `[module.i/id, css, media, ...]`. Some also conditionally switch the
+/// CommonJS value to `value.locals`. Once the factory wrapper is removed those
+/// reads become free `module` references, even though the numeric container
+/// key and webpack's initial `module.exports = {}` are detector-proven facts.
+///
+/// This recovery requires exactly one three/four-field CSS tuple and permits
+/// at most one exact top-level locals switch. Every free `module` reference
+/// must belong to those nodes, no free `exports` may remain, and direct eval
+/// fails closed. Named/string ids are deliberately excluded because the
+/// public detector id cannot preserve their runtime type.
+fn normalize_webpack_css_runtime(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    module_id: f64,
+    legacy_module_i: bool,
+) {
+    let Some(plan) = plan_webpack_css_runtime(module, unresolved_mark, legacy_module_i) else {
+        return;
+    };
+
+    let mut candidate = module.clone();
+    let mut id_rewriter = CssModuleIdRewriter {
+        target: plan.module_id_member_span,
+        module_id,
+        rewritten: false,
+    };
+    candidate.visit_mut_with(&mut id_rewriter);
+    if !id_rewriter.rewritten {
+        return;
+    }
+
+    if let Some(locals) = plan.locals {
+        let capture = fresh_named_capture_ident(&candidate, "_webpackCssDefault");
+        if !rewrite_css_locals_switch(&mut candidate, locals.if_span, &capture) {
+            return;
+        }
+        candidate
+            .body
+            .insert(0, css_default_declaration(capture.clone()));
+        candidate
+            .body
+            .push(module_exports_assignment(capture, unresolved_mark));
+    }
+
+    *module = candidate;
+}
+
+struct WebpackCssRuntimePlan {
+    module_id_member_span: Span,
+    locals: Option<CssLocalsPlan>,
+}
+
+#[derive(Clone, Copy)]
+struct CssLocalsPlan {
+    if_span: Span,
+    module_ident_span: Span,
+}
+
+fn plan_webpack_css_runtime(
+    module: &Module,
+    unresolved_mark: Mark,
+    legacy_module_i: bool,
+) -> Option<WebpackCssRuntimePlan> {
+    let mut eval = DirectEvalAnalyzer::default();
+    module.visit_with(&mut eval);
+    if eval.unknown_direct_eval || !eval.known_direct_eval_sources.is_empty() {
+        return None;
+    }
+
+    let mut tuples = CssTupleCollector {
+        unresolved_mark,
+        legacy_module_i,
+        matches: Vec::new(),
+    };
+    module.visit_with(&mut tuples);
+    let [(module_id_member_span, module_ident_span)] = tuples.matches.as_slice() else {
+        return None;
+    };
+
+    let locals = module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::Stmt(Stmt::If(statement)) = item else {
+                return None;
+            };
+            css_locals_plan(statement, unresolved_mark)
+        })
+        .collect::<Vec<_>>();
+    let locals = match locals.as_slice() {
+        [] => None,
+        [plan] => Some(*plan),
+        _ => return None,
+    };
+
+    let mut references = CommonJsRuntimeReferenceCollector {
+        unresolved_mark,
+        ..Default::default()
+    };
+    module.visit_with(&mut references);
+    let mut allowed_module_spans = vec![*module_ident_span];
+    if let Some(locals) = locals {
+        allowed_module_spans.push(locals.module_ident_span);
+    }
+    if !references.exports.is_empty()
+        || references.modules.len() != allowed_module_spans.len()
+        || references.modules.iter().any(|reference| {
+            !allowed_module_spans
+                .iter()
+                .any(|allowed| allowed == reference)
+        })
+    {
+        return None;
+    }
+
+    Some(WebpackCssRuntimePlan {
+        module_id_member_span: *module_id_member_span,
+        locals,
+    })
+}
+
+struct CssTupleCollector {
+    unresolved_mark: Mark,
+    legacy_module_i: bool,
+    /// `(whole member span, module identifier span)`.
+    matches: Vec<(Span, Span)>,
+}
+
+impl Visit for CssTupleCollector {
+    fn visit_array_lit(&mut self, array: &ArrayLit) {
+        if matches!(array.elems.len(), 3 | 4)
+            && array.elems.iter().all(|element| {
+                element
+                    .as_ref()
+                    .is_some_and(|element| element.spread.is_none())
+            })
+            && matches!(
+                array.elems.get(2).and_then(Option::as_ref),
+                Some(element) if matches!(strip_parens(&element.expr), Expr::Lit(Lit::Str(_)))
+            )
+        {
+            if let Some(first) = array.elems.first().and_then(Option::as_ref) {
+                if let Expr::Member(member) = strip_parens(&first.expr) {
+                    let properties = if self.legacy_module_i {
+                        &["id", "i"][..]
+                    } else {
+                        &["id"][..]
+                    };
+                    if let Some(module) =
+                        runtime_module_member(member, self.unresolved_mark, properties)
+                    {
+                        self.matches.push((member.span, module.span));
+                    }
+                }
+            }
+        }
+        array.visit_children_with(self);
+    }
+}
+
+#[derive(Default)]
+struct CommonJsRuntimeReferenceCollector {
+    unresolved_mark: Mark,
+    modules: Vec<Span>,
+    exports: Vec<Span>,
+}
+
+impl Visit for CommonJsRuntimeReferenceCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.ctxt.outer() != self.unresolved_mark {
+            return;
+        }
+        match ident.sym.as_ref() {
+            "module" => self.modules.push(ident.span),
+            "exports" => self.exports.push(ident.span),
+            _ => {}
+        }
+    }
+}
+
+fn css_locals_plan(statement: &IfStmt, unresolved_mark: Mark) -> Option<CssLocalsPlan> {
+    if statement.alt.is_some() {
+        return None;
+    }
+    let value = locals_test_binding(&statement.test)?;
+    let assignment = single_expression_statement(&statement.cons)?;
+    let Expr::Assign(assignment) = strip_parens(assignment) else {
+        return None;
+    };
+    if assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return None;
+    };
+    let module = runtime_module_member(target, unresolved_mark, &["exports"])?;
+    let Expr::Member(source) = strip_parens(&assignment.right) else {
+        return None;
+    };
+    let Expr::Ident(source_value) = strip_parens(&source.obj) else {
+        return None;
+    };
+    if !static_member_name_is(&source.prop, "locals") || source_value.to_id() != value {
+        return None;
+    }
+    Some(CssLocalsPlan {
+        if_span: statement.span,
+        module_ident_span: module.span,
+    })
+}
+
+fn locals_test_binding(test: &Expr) -> Option<Id> {
+    let Expr::Member(member) = strip_parens(test) else {
+        return None;
+    };
+    if !static_member_name_is(&member.prop, "locals") {
+        return None;
+    }
+    match strip_parens(&member.obj) {
+        Expr::Ident(value) => Some(value.to_id()),
+        Expr::Assign(assignment) if assignment.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(value)) = &assignment.left else {
+                return None;
+            };
+            Some(value.id.to_id())
+        }
+        _ => None,
+    }
+}
+
+fn single_expression_statement(statement: &Stmt) -> Option<&Expr> {
+    match statement {
+        Stmt::Expr(statement) => Some(&statement.expr),
+        Stmt::Block(block) => match block.stmts.as_slice() {
+            [Stmt::Expr(statement)] => Some(&statement.expr),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn runtime_module_member<'a>(
+    member: &'a MemberExpr,
+    unresolved_mark: Mark,
+    properties: &[&str],
+) -> Option<&'a Ident> {
+    let Expr::Ident(module) = member.obj.as_ref() else {
+        return None;
+    };
+    (module.sym.as_ref() == "module"
+        && module.ctxt.outer() == unresolved_mark
+        && properties
+            .iter()
+            .any(|property| static_member_name_is(&member.prop, property)))
+    .then_some(module)
+}
+
+fn static_member_name_is(property: &MemberProp, expected: &str) -> bool {
+    matches!(property, MemberProp::Ident(name) if name.sym.as_ref() == expected)
+}
+
+struct CssModuleIdRewriter {
+    target: Span,
+    module_id: f64,
+    rewritten: bool,
+}
+
+impl VisitMut for CssModuleIdRewriter {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if matches!(expression, Expr::Member(member) if member.span == self.target) {
+            *expression = Expr::Lit(Lit::Num(Number {
+                span: DUMMY_SP,
+                value: self.module_id,
+                raw: None,
+            }));
+            self.rewritten = true;
+            return;
+        }
+        expression.visit_mut_children_with(self);
+    }
+}
+
+fn rewrite_css_locals_switch(module: &mut Module, target: Span, capture: &Ident) -> bool {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::If(statement)) = item else {
+            continue;
+        };
+        if statement.span != target {
+            continue;
+        }
+        let Some(expression) = single_expression_statement_mut(&mut statement.cons) else {
+            return false;
+        };
+        let Expr::Assign(assignment) = strip_parens_mut(expression) else {
+            return false;
+        };
+        assignment.left = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent::from(
+            capture.clone(),
+        )));
+        return true;
+    }
+    false
+}
+
+fn single_expression_statement_mut(statement: &mut Stmt) -> Option<&mut Box<Expr>> {
+    match statement {
+        Stmt::Expr(statement) => Some(&mut statement.expr),
+        Stmt::Block(block) => match block.stmts.as_mut_slice() {
+            [Stmt::Expr(statement)] => Some(&mut statement.expr),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn fresh_named_capture_ident(module: &Module, base: &str) -> Ident {
+    let mut used_names = collect_module_names(module);
+    let base: Atom = base.into();
+    let name = if used_names.insert(base.clone()) {
+        base
+    } else {
+        (1usize..)
+            .map(|suffix| Atom::from(format!("{base}_{suffix}")))
+            .find(|candidate| used_names.insert(candidate.clone()))
+            .expect("the generated name space is unbounded")
+    };
+    Ident::new(name, DUMMY_SP, SyntaxContext::empty())
+}
+
+fn css_default_declaration(capture: Ident) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent::from(capture)),
+            init: Some(Box::new(Expr::Object(ObjectLit {
+                span: DUMMY_SP,
+                props: Vec::new(),
+            }))),
+            definite: false,
+        }],
+    }))))
+}
+
+fn module_exports_assignment(capture: Ident, unresolved_mark: Mark) -> ModuleItem {
+    let module = Ident::new(
+        "module".into(),
+        DUMMY_SP,
+        SyntaxContext::empty().apply_mark(unresolved_mark),
+    );
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(module)),
+                prop: MemberProp::Ident(swc_core::ecma::ast::IdentName::new(
+                    "exports".into(),
+                    DUMMY_SP,
+                )),
+            })),
+            right: Box::new(Expr::Ident(capture)),
+        })),
+    }))
+}
+
 fn has_supported_module_shell(module: &Module) -> bool {
     match module.body.as_slice() {
         [ModuleItem::Stmt(Stmt::Expr(_))] => true,
@@ -94,17 +475,7 @@ fn has_supported_module_shell(module: &Module) -> bool {
 }
 
 fn fresh_capture_ident(module: &Module) -> Ident {
-    let mut used_names = collect_module_names(module);
-    let base: Atom = "_webpackDefault".into();
-    let name = if used_names.insert(base.clone()) {
-        base
-    } else {
-        (1usize..)
-            .map(|suffix| Atom::from(format!("{base}_{suffix}")))
-            .find(|candidate| used_names.insert(candidate.clone()))
-            .expect("the generated name space is unbounded")
-    };
-    Ident::new(name, DUMMY_SP, SyntaxContext::empty())
+    fresh_named_capture_ident(module, "_webpackDefault")
 }
 
 fn capture_declaration(capture: Ident) -> ModuleItem {
@@ -429,7 +800,12 @@ mod tests {
     use super::*;
     use crate::driver::io::{apply_fixer, parse_js, print_js};
 
-    fn normalize(source: &str, enabled: bool) -> String {
+    fn normalize_with_module_id(
+        source: &str,
+        enabled: bool,
+        numeric_module_id: Option<f64>,
+        legacy_module_i: bool,
+    ) -> String {
         GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
             let mut module =
@@ -437,10 +813,134 @@ mod tests {
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-            normalize_webpack_commonjs_runtime(&mut module, unresolved_mark, enabled);
+            normalize_webpack_commonjs_runtime(
+                &mut module,
+                unresolved_mark,
+                enabled,
+                numeric_module_id,
+                legacy_module_i,
+            );
             apply_fixer(&mut module).expect("fixture should fix");
             print_js(&module, cm).expect("fixture should print")
         })
+    }
+
+    fn normalize(source: &str, enabled: bool) -> String {
+        normalize_with_module_id(source, enabled, None, false)
+    }
+
+    #[test]
+    fn css_tuple_uses_the_proven_numeric_module_identity() {
+        let output = normalize_with_module_id(
+            r#"
+const content = loadContent();
+content.push([module.id, "body {}", "", { version: 3 }]);
+inject(content);
+"#,
+            true,
+            Some(37.0),
+            false,
+        );
+
+        assert!(output.contains("37,"), "{output}");
+        assert!(!output.contains("module.id"), "{output}");
+        assert!(!output.contains("_webpackCssDefault"), "{output}");
+    }
+
+    #[test]
+    fn module_i_requires_a_legacy_container_fact() {
+        let output = normalize_with_module_id(
+            r#"const content = [[module.i, "body {}", ""]];"#,
+            true,
+            Some(37.0),
+            false,
+        );
+
+        assert!(output.contains("module.i"), "{output}");
+        assert!(!output.contains("37,"), "{output}");
+    }
+
+    #[test]
+    fn css_locals_switch_restores_the_initial_commonjs_default() {
+        let output = normalize_with_module_id(
+            r#"
+let content = loadContent();
+if ((content = typeof content === "string"
+    ? [[module.i, content, ""]]
+    : content).locals) {
+    module.exports = content.locals;
+}
+inject(content);
+"#,
+            true,
+            Some(12.0),
+            true,
+        );
+
+        assert!(output.contains("var _webpackCssDefault = {}"), "{output}");
+        assert!(output.contains("12,"), "{output}");
+        assert!(
+            output.contains("_webpackCssDefault = content.locals"),
+            "{output}"
+        );
+        assert!(
+            output.contains("module.exports = _webpackCssDefault"),
+            "{output}"
+        );
+        assert!(!output.contains("module.i"), "{output}");
+    }
+
+    #[test]
+    fn css_runtime_recovery_fails_closed_on_unproven_surfaces() {
+        for input in [
+            // The module object escapes beyond the proven tuple/locals uses.
+            r#"
+const content = [[module.id, "body {}", ""]];
+observe(module);
+"#,
+            // Direct eval can observe the removed factory binding.
+            r#"
+const content = [[module.id, "body {}", ""]];
+eval("module.exports");
+"#,
+            // Computed metadata is not the generated CSS tuple contract.
+            r#"
+const content = [[module["id"], "body {}", ""]];
+"#,
+            // A mismatched locals source is not the tested value.
+            r#"
+let content = loadContent();
+const other = loadOther();
+if ((content = [[module.id, "body {}", ""]]).locals) {
+    module.exports = other.locals;
+}
+"#,
+            // Nested control flow does not establish the top-level switch.
+            r#"
+const content = [[module.id, "body {}", ""]];
+if (ready) {
+    if (content.locals) module.exports = content.locals;
+}
+"#,
+        ] {
+            let output = normalize_with_module_id(input, true, Some(9.0), false);
+            assert!(
+                output.contains("module.id") || output.contains("module[\"id\"]"),
+                "{output}"
+            );
+            assert!(!output.contains("_webpackCssDefault"), "{output}");
+        }
+
+        let without_numeric_identity = normalize_with_module_id(
+            r#"const content = [[module.id, "body {}", ""]];"#,
+            true,
+            None,
+            false,
+        );
+        assert!(
+            without_numeric_identity.contains("module.id"),
+            "{without_numeric_identity}"
+        );
     }
 
     #[test]

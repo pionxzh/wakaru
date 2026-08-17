@@ -265,6 +265,13 @@ proven runtime invariant into the normal driver when applying it during
 extraction would violate raw passthrough. Webpack5 and Metro can hand their
 normalized ASTs directly to Phase 1, avoiding an emit/parse cycle; raw unpack
 and source-map mode materialize the sidecar to source text.
+For numeric webpack factories, this metadata preserves the runtime type and
+value of a syntactically numeric container key; the public string module ID
+alone cannot distinguish `17` from `"17"`, and the latter does not prove the
+runtime ID type. A separate legacy-container bit records when the
+Webpack 4 `module.i` spelling is available. Exact CSS-loader runtime adapters
+consume these facts during normal processing, while recursively split children
+inherit neither fact.
 Detector output may also carry a private per-module failure sidecar. The normal
 driver turns it into an operational diagnostic plus
 `ModuleStatus::DecompileFailed` while preserving the raw extracted body; raw

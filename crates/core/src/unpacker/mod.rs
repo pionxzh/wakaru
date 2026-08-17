@@ -366,6 +366,18 @@ pub(crate) struct DetectedBundle {
     pub(crate) result: UnpackResult,
     pub(crate) prepared: Vec<Option<PreparedModuleAst>>,
     pub(crate) module_failures: std::collections::HashMap<String, DetectedModuleFailure>,
+    /// Numeric module identities proven directly from webpack container keys.
+    ///
+    /// The public/raw module id is a string for compatibility, so it cannot
+    /// distinguish a syntactically numeric object key (`17`) from a quoted
+    /// numeric key (`"17"`). The latter does not prove the type webpack passed
+    /// as `moduleId`, so runtime recovery must not parse the public id or guess
+    /// from the emitted filename.
+    pub(crate) webpack_numeric_module_ids: std::collections::HashMap<String, f64>,
+    /// Factories whose surrounding container proves webpack 4's minified
+    /// `module.i` module-identity spelling. Modern webpack uses `module.id`;
+    /// a bare `.i` in a modern chunk must not be guessed from the table key.
+    pub(crate) webpack_legacy_module_i: std::collections::HashSet<String>,
     pub(crate) chunk_ids: std::collections::HashSet<usize>,
     pub(crate) input_has_esm_declarations: bool,
     materialize_cm: Option<Lrc<SourceMap>>,
@@ -380,6 +392,8 @@ impl DetectedBundle {
             result,
             prepared,
             module_failures: Default::default(),
+            webpack_numeric_module_ids: Default::default(),
+            webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
             input_has_esm_declarations: false,
             materialize_cm: None,
@@ -400,6 +414,8 @@ impl DetectedBundle {
             result,
             prepared,
             module_failures: Default::default(),
+            webpack_numeric_module_ids: Default::default(),
+            webpack_legacy_module_i: Default::default(),
             chunk_ids: Default::default(),
             input_has_esm_declarations: false,
             materialize_cm: Some(materialize_cm),
@@ -416,6 +432,32 @@ impl DetectedBundle {
             .iter()
             .any(|module| &module.filename == filename)));
         self.module_failures = failures;
+        self
+    }
+
+    pub(crate) fn with_webpack_numeric_module_ids(
+        mut self,
+        module_ids: std::collections::HashMap<String, f64>,
+    ) -> Self {
+        debug_assert!(module_ids.keys().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.webpack_numeric_module_ids = module_ids;
+        self
+    }
+
+    pub(crate) fn with_webpack_legacy_module_i(
+        mut self,
+        filenames: std::collections::HashSet<String>,
+    ) -> Self {
+        debug_assert!(filenames.iter().all(|filename| self
+            .result
+            .modules
+            .iter()
+            .any(|module| &module.filename == filename)));
+        self.webpack_legacy_module_i = filenames;
         self
     }
 

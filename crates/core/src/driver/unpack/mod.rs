@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
@@ -488,6 +488,27 @@ pub fn unpack_prepared_inputs_with_policy(
                     } else {
                         HashSet::new()
                     };
+                let webpack_numeric_module_ids = detected
+                    .result
+                    .modules
+                    .iter()
+                    .filter_map(|module| {
+                        detected
+                            .webpack_numeric_module_ids
+                            .get(&module.filename)
+                            .copied()
+                            .map(|runtime_id| {
+                                ((module.id.clone(), module.filename.clone()), runtime_id)
+                            })
+                    })
+                    .collect::<HashMap<_, _>>();
+                let webpack_legacy_module_i = detected
+                    .result
+                    .modules
+                    .iter()
+                    .filter(|module| detected.webpack_legacy_module_i.contains(&module.filename))
+                    .map(|module| (module.id.clone(), module.filename.clone()))
+                    .collect::<HashSet<_>>();
                 let detected = if raw {
                     let result = detected.materialize()?;
                     DetectedBundle::from_result(maybe_split_scope_hoisted_modules(
@@ -519,6 +540,11 @@ pub fn unpack_prepared_inputs_with_policy(
                                     .contains(&(module.id.clone(), module.filename.clone()));
                             let webpack_commonjs_runtime = webpack_commonjs_runtime_modules
                                 .contains(&(module.id.clone(), module.filename.clone()));
+                            let webpack_numeric_module_id = webpack_numeric_module_ids
+                                .get(&(module.id.clone(), module.filename.clone()))
+                                .copied();
+                            let webpack_legacy_module_i = webpack_legacy_module_i
+                                .contains(&(module.id.clone(), module.filename.clone()));
                             MultiSourceModule::detected_with_ast_from_input(
                                 module,
                                 ast,
@@ -530,6 +556,8 @@ pub fn unpack_prepared_inputs_with_policy(
                             )
                             .with_implicit_commonjs_default_object(implicit_commonjs_default_object)
                             .with_webpack_commonjs_runtime(webpack_commonjs_runtime)
+                            .with_webpack_numeric_module_id(webpack_numeric_module_id)
+                            .with_webpack_legacy_module_i(webpack_legacy_module_i)
                             // Intra-container edges were already rewritten by
                             // the detector. If any local ID is opaque, do not
                             // let a same-numbered module from another input

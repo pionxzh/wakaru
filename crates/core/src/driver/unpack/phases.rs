@@ -327,6 +327,8 @@ pub(super) fn unpack_multi_module_with_plan(
                 &mut module,
                 unresolved_mark,
                 unpacked.webpack_commonjs_runtime,
+                unpacked.webpack_numeric_module_id,
+                unpacked.webpack_legacy_module_i,
             );
             let commonjs_default_object =
                 collect_commonjs_default_object(&module, unresolved_mark);
@@ -662,6 +664,8 @@ pub(super) fn unpack_multi_module_with_plan(
                     &mut module,
                     unresolved_mark,
                     unpacked.webpack_commonjs_runtime,
+                    unpacked.webpack_numeric_module_id,
+                    unpacked.webpack_legacy_module_i,
                 );
 
                 // Through-UnEsm range.

@@ -131,6 +131,19 @@ exactly one rewrite must match, and no unresolved CommonJS runtime references
 may remain. Synthetic children from recursive splitting do not inherit the
 proof; `--raw` remains detector passthrough.
 
+That boundary also restores two exact CSS-loader runtime values without
+attempting CSS source recovery. A three- or four-field CSS list tuple whose
+first item is free `module.id` receives the numeric value preserved from its
+actual webpack container key; legacy `module.i` is accepted only when the
+detector also proves a Webpack 4-style container. Quoted numeric and named keys
+stay unproven. When the same module has one exact top-level conditional
+`module.exports = value.locals` switch, normal processing models webpack's
+initial empty exports object and lets the ordinary `UnEsm` path recover a
+default export. Extra CommonJS references, computed or multiple candidates,
+mismatched locals values, nested switches, and direct eval all fail closed.
+Synthetic recursive children do not inherit the key facts, and `--raw`
+continues to expose the detector's extracted factory body unchanged.
+
 Helper export facts are still pure AST facts. They only record helper identity
 when the exported local binding matches a known helper body shape or runtime
 export shape after Stage 2. They do not speculate from consumer-side usage.
