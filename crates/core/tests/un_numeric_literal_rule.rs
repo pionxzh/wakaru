@@ -33,3 +33,19 @@ const g = -20000;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn preserves_non_finite_numeric_literal_spelling() {
+    let input = r#"
+const negative = -1e999;
+const positive = 2e308;
+const fraction = .75;
+"#;
+    let expected = r#"
+const negative = -1e999;
+const positive = 2e308;
+const fraction = 0.75;
+"#;
+
+    assert_eq_normalized(&apply(input), expected);
+}
