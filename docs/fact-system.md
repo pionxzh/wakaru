@@ -139,6 +139,10 @@ detector also proves a Webpack 4-style container. Quoted numeric and named keys
 stay unproven. This identity substitution is independent of ordinary
 `module.exports` recovery: an unrelated default assignment continues through
 the existing `UnEsm` path instead of suppressing the proven numeric value.
+It still requires a stable module-identity surface: every free `module` use
+must be a static or computed member read, `typeof`, or a static member write
+to a property other than `id`/`i`. A rebinding, bare escape, computed write,
+or direct identity write fails the substitution closed.
 When the same module has one exact top-level conditional
 `module.exports = value.locals` switch (an `if` or generated `&&` expression),
 normal processing models webpack's initial empty exports object and lets

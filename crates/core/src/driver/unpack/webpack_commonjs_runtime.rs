@@ -18,7 +18,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::analysis::binding_uses::BindingUseIndex;
+use crate::analysis::binding_uses::{BindingUseIndex, UseKind};
 use crate::rules::eval_utils::DirectEvalAnalyzer;
 use crate::rules::rename_utils::collect_module_names;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
@@ -112,10 +112,10 @@ fn normalize_webpack_css_runtime(
     let mut id_rewriter = CssModuleIdRewriter {
         target: plan.module_id_member_span,
         module_id,
-        rewritten: false,
+        rewrites: 0,
     };
     candidate.visit_mut_with(&mut id_rewriter);
-    if !id_rewriter.rewritten {
+    if id_rewriter.rewrites != 1 {
         return;
     }
 
@@ -167,6 +167,10 @@ fn plan_webpack_css_runtime(
     let [(module_id_member_span, module_ident_span)] = tuples.matches.as_slice() else {
         return None;
     };
+
+    if !module_identity_surface_is_stable(module, unresolved_mark) {
+        return None;
+    }
 
     let mut locals_candidates = Vec::new();
     for item in &module.body {
@@ -357,6 +361,44 @@ fn css_locals_references_are_complete(
         })
 }
 
+/// The identity substitution replaces one `module.id` / `module.i` read with
+/// the detector-proven container key. That is sound only while nothing in the
+/// factory can change the module object's identity surface: a rebinding, a
+/// bare escape, a computed write, or a direct `id`/`i` write invalidates the
+/// proven value at the read. Static member reads, `typeof`, computed reads,
+/// and static writes to other properties (webpack's own
+/// `module.exports = ...`) cannot, so they stay allowed.
+fn module_identity_surface_is_stable(module: &Module, unresolved_mark: Mark) -> bool {
+    let uses = BindingUseIndex::collect(module);
+    let mut bindings = UnresolvedModuleBindingCollector {
+        unresolved_mark,
+        ids: HashSet::new(),
+    };
+    module.visit_with(&mut bindings);
+    bindings.ids.iter().all(|binding| {
+        uses.use_sites(binding).iter().all(|site| match &site.kind {
+            UseKind::StaticMemberRead(_) | UseKind::ComputedMemberRead | UseKind::TypeofOperand => {
+                true
+            }
+            UseKind::StaticMemberWrite(property) => !matches!(property.as_ref(), "id" | "i"),
+            _ => false,
+        })
+    })
+}
+
+struct UnresolvedModuleBindingCollector {
+    unresolved_mark: Mark,
+    ids: HashSet<Id>,
+}
+
+impl Visit for UnresolvedModuleBindingCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym.as_ref() == "module" && ident.ctxt.outer() == self.unresolved_mark {
+            self.ids.insert(ident.to_id());
+        }
+    }
+}
+
 fn locals_test_binding(test: &Expr) -> Option<Id> {
     let Expr::Member(member) = strip_parens(test) else {
         return None;
@@ -410,7 +452,7 @@ fn static_member_name_is(property: &MemberProp, expected: &str) -> bool {
 struct CssModuleIdRewriter {
     target: Span,
     module_id: f64,
-    rewritten: bool,
+    rewrites: usize,
 }
 
 impl VisitMut for CssModuleIdRewriter {
@@ -421,7 +463,7 @@ impl VisitMut for CssModuleIdRewriter {
                 value: self.module_id,
                 raw: None,
             }));
-            self.rewritten = true;
+            self.rewrites += 1;
             return;
         }
         expression.visit_mut_children_with(self);
@@ -1039,6 +1081,47 @@ eval("module.exports");
             without_numeric_identity.contains("module.id"),
             "{without_numeric_identity}"
         );
+    }
+
+    #[test]
+    fn css_identity_requires_a_stable_module_surface() {
+        for input in [
+            // A prior identity write invalidates the container key at the read.
+            r#"
+module.id = transform(module.id);
+const content = [[module.id, "body {}", ""]];
+"#,
+            // A bare escape lets the callee mutate the module object.
+            r#"
+mutate(module);
+const content = [[module.id, "body {}", ""]];
+"#,
+            // A computed write can hit the identity property.
+            r#"
+module[key] = value;
+const content = [[module.id, "body {}", ""]];
+"#,
+        ] {
+            let output = normalize_with_module_id(input, true, Some(9.0), false);
+            assert!(!output.contains("9,"), "{output}");
+        }
+    }
+
+    #[test]
+    fn hot_module_replacement_reads_do_not_block_the_identity() {
+        let output = normalize_with_module_id(
+            r#"
+const content = loadContent();
+content.push([module.id, "body {}", ""]);
+module.hot && module.hot.accept();
+module.exports = content;
+"#,
+            true,
+            Some(41.0),
+            false,
+        );
+        assert!(output.contains("41,"), "{output}");
+        assert!(!output.contains("module.id"), "{output}");
     }
 
     #[test]

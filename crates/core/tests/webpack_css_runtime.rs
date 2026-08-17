@@ -189,3 +189,46 @@ fn quoted_numeric_webpack_id_does_not_invent_a_numeric_runtime_value() {
         .iter()
         .any(|finding| finding.kind == OutputFindingKind::EsmCommonJsResidual));
 }
+
+#[test]
+fn mutated_module_identity_surface_keeps_the_runtime_read() {
+    let source = r#"
+(() => {
+  var modules = ({
+    31: ((module, exports, load) => {
+      var content = load(32);
+      mutate(module);
+      content.push([module.id, "body {}", ""]);
+      consume(content);
+    }),
+    32: ((module) => {
+      module.exports = { push: function push() {} };
+    })
+  });
+  var cache = {};
+  function load(moduleId) {
+    var module = cache[moduleId];
+    if (module !== undefined) return module.exports;
+    module = cache[moduleId] = { id: moduleId, exports: {} };
+    modules[moduleId](module, module.exports, load);
+    return module.exports;
+  }
+  load(31);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "mutated-module-surface.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("synthetic webpack5 bundle should unpack");
+    let css = module_code(&output.modules, "module-31.js");
+    assert!(
+        css.contains("module.id"),
+        "an escaped module object can change the identity before the read:\n{css}"
+    );
+    assert!(!css.contains("31,"), "{css}");
+}
