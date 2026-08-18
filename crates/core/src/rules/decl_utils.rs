@@ -67,63 +67,76 @@ pub(crate) fn class_method_has_invalid_signature(function: &Function, kind: Meth
     }
 }
 
-/// Whether an accessor descriptor has the property attributes produced by
-/// class syntax. Direct `Object.defineProperty` defaults `configurable` to
-/// false, while class accessors are configurable and non-enumerable.
-pub(crate) fn class_accessor_descriptor_is_compatible(descriptor: &ObjectLit) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClassAccessorDescriptorAttributes {
+    ClassCompatible,
+    Enumerable,
+}
+
+/// Classify exact accessor descriptors that can be traced back to class
+/// syntax. Direct `Object.defineProperty` defaults `configurable` to false,
+/// while class accessors are configurable and non-enumerable. TypeScript
+/// 3.5–3.8 is the known producer of the enumerable variant.
+pub(crate) fn class_accessor_descriptor_attributes(
+    descriptor: &ObjectLit,
+) -> Option<ClassAccessorDescriptorAttributes> {
     let mut seen = HashSet::new();
     let mut has_accessor = false;
     let mut configurable = false;
+    let mut enumerable = false;
 
     for prop in &descriptor.props {
         let PropOrSpread::Prop(prop) = prop else {
-            return false;
+            return None;
         };
         match prop.as_ref() {
             Prop::KeyValue(key_value) => {
-                let Some(name) = static_prop_name(&key_value.key) else {
-                    return false;
-                };
+                let name = static_prop_name(&key_value.key)?;
                 if !seen.insert(name.clone()) {
-                    return false;
+                    return None;
                 }
                 match name.as_ref() {
                     "get" | "set" => {
                         if !matches!(strip_parens(&key_value.value), Expr::Fn(_)) {
-                            return false;
+                            return None;
                         }
                         has_accessor = true;
                     }
                     "configurable" => {
                         if !matches!(strip_parens(&key_value.value), Expr::Lit(Lit::Bool(value)) if value.value)
                         {
-                            return false;
+                            return None;
                         }
                         configurable = true;
                     }
                     "enumerable" => {
-                        if !matches!(strip_parens(&key_value.value), Expr::Lit(Lit::Bool(value)) if !value.value)
-                        {
-                            return false;
-                        }
+                        let Expr::Lit(Lit::Bool(value)) = strip_parens(&key_value.value) else {
+                            return None;
+                        };
+                        enumerable = value.value;
                     }
-                    _ => return false,
+                    _ => return None,
                 }
             }
             Prop::Method(method) => {
-                let Some(name) = static_prop_name(&method.key) else {
-                    return false;
-                };
+                let name = static_prop_name(&method.key)?;
                 if !matches!(name.as_ref(), "get" | "set") || !seen.insert(name) {
-                    return false;
+                    return None;
                 }
                 has_accessor = true;
             }
-            _ => return false,
+            _ => return None,
         }
     }
 
-    has_accessor && configurable
+    if !has_accessor || !configurable {
+        return None;
+    }
+    Some(if enumerable {
+        ClassAccessorDescriptorAttributes::Enumerable
+    } else {
+        ClassAccessorDescriptorAttributes::ClassCompatible
+    })
 }
 
 fn static_prop_name(name: &PropName) -> Option<Atom> {

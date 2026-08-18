@@ -759,23 +759,44 @@ var Widget = (function() {
 }
 
 #[test]
-fn define_property_enumerable_accessor_preserves_iife_shape() {
+fn legacy_typescript_enumerable_accessor_recovers_at_standard() {
     let input = r#"
 var Widget = (function() {
     function t() {}
     Object.defineProperty(t.prototype, "text", {
         enumerable: true,
         configurable: true,
-        set: function() {}
+        set: function(value) { this._text = value; }
     });
     return t;
 }());
 "#;
-    let output = apply(input);
+    let expected = r#"
+class Widget {
+    set text(value) { this._text = value; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn legacy_typescript_enumerable_accessor_preserves_iife_at_minimal() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        enumerable: true,
+        configurable: true,
+        set: function(value) { this._text = value; }
+    });
+    return t;
+}());
+"#;
+    let output = apply_minimal(input);
     assert!(
         output.contains("Object.defineProperty(t.prototype, \"text\"")
             && !output.contains("class Widget"),
-        "an enumerable descriptor cannot become a non-enumerable class accessor:\n{output}"
+        "minimal must preserve the emitted enumerable descriptor:\n{output}"
     );
 }
 
@@ -797,6 +818,28 @@ var Widget = (function() {
             && !output.contains("class Widget"),
         "a nonconfigurable descriptor cannot become a configurable class accessor:\n{output}"
     );
+}
+
+#[test]
+fn define_property_mixed_function_and_method_accessors_preserve_both() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        configurable: true,
+        get: function() { return this._text; },
+        set(value) { this._text = value; }
+    });
+    return t;
+}());
+"#;
+    let expected = r#"
+class Widget {
+    get text() { return this._text; }
+    set text(value) { this._text = value; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]

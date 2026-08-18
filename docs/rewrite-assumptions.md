@@ -229,6 +229,26 @@ Affects: `UnComputedProperties`.
 
 Level: `standard` and above. `minimal` preserves the sequence.
 
+### `transpiled_class_accessor_attributes`
+
+Recovering an accessor descriptor inside a proven class-lowering IIFE assumes
+that its attributes describe the original source construct rather than an
+intentional handwritten descriptor. TypeScript 3.5–3.8 lowered class accessors
+with `enumerable: true, configurable: true`; TypeScript 3.9 changed that output
+to the native class attributes (`enumerable: false, configurable: true`).
+
+At `standard` and above, `UnEs6Class` accepts both variants after the enclosing
+IIFE has independently matched a transpiler class shape. This preserves source
+recovery for older TypeScript even though reflecting on the emitted descriptor
+can observe the enumerability difference. `UnPrototypeClass` has no equivalent
+producer proof and accepts only the native class attributes. A missing or false
+`configurable` flag is rejected at every level.
+
+Affects: `UnEs6Class` direct `Object.defineProperty` accessor recovery.
+
+Level: `standard` and above. `minimal` requires attributes exactly representable
+by class syntax.
+
 ## Generated Temporaries
 
 Temporaries introduced by compilers are handled by binding analysis, not by

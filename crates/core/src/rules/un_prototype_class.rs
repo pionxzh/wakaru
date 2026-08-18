@@ -13,8 +13,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{
-    class_accessor_descriptor_is_compatible, class_method_has_invalid_signature,
-    ensure_setter_has_value_param, has_duplicate_param_names,
+    class_accessor_descriptor_attributes, class_method_has_invalid_signature,
+    ensure_setter_has_value_param, has_duplicate_param_names, ClassAccessorDescriptorAttributes,
 };
 use super::helper_matcher::{binding_key, BindingKey};
 
@@ -1117,7 +1117,10 @@ fn extract_define_property(stmt: &Stmt, ctor_binding: &BindingKey) -> Option<Vec
 
     let mut methods = Vec::new();
     let value_fn = descriptor_value_method_fn(obj);
-    let accessor_descriptor_is_compatible = class_accessor_descriptor_is_compatible(obj);
+    let accessor_descriptor_is_compatible = matches!(
+        class_accessor_descriptor_attributes(obj),
+        Some(ClassAccessorDescriptorAttributes::ClassCompatible)
+    );
     if value_fn.is_some_and(|fn_expr| has_duplicate_param_names(&fn_expr.function.params)) {
         return None;
     }
