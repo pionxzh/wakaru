@@ -3,10 +3,13 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, Decl, Function, Id, Ident, MethodKind, Param, Pat, Stmt, VarDecl, VarDeclKind,
+    BindingIdent, Decl, Expr, Function, Id, Ident, Lit, MethodKind, ObjectLit, Param, Pat, Prop,
+    PropName, PropOrSpread, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitWith};
+
+use crate::utils::paren::strip_parens;
 
 pub(crate) use crate::analysis::{binding_id, ident_matches_binding, BindingId};
 
@@ -61,6 +64,73 @@ pub(crate) fn class_method_has_invalid_signature(function: &Function, kind: Meth
                 || function.is_generator
         }
         MethodKind::Method => false,
+    }
+}
+
+/// Whether an accessor descriptor has the property attributes produced by
+/// class syntax. Direct `Object.defineProperty` defaults `configurable` to
+/// false, while class accessors are configurable and non-enumerable.
+pub(crate) fn class_accessor_descriptor_is_compatible(descriptor: &ObjectLit) -> bool {
+    let mut seen = HashSet::new();
+    let mut has_accessor = false;
+    let mut configurable = false;
+
+    for prop in &descriptor.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        match prop.as_ref() {
+            Prop::KeyValue(key_value) => {
+                let Some(name) = static_prop_name(&key_value.key) else {
+                    return false;
+                };
+                if !seen.insert(name.clone()) {
+                    return false;
+                }
+                match name.as_ref() {
+                    "get" | "set" => {
+                        if !matches!(strip_parens(&key_value.value), Expr::Fn(_)) {
+                            return false;
+                        }
+                        has_accessor = true;
+                    }
+                    "configurable" => {
+                        if !matches!(strip_parens(&key_value.value), Expr::Lit(Lit::Bool(value)) if value.value)
+                        {
+                            return false;
+                        }
+                        configurable = true;
+                    }
+                    "enumerable" => {
+                        if !matches!(strip_parens(&key_value.value), Expr::Lit(Lit::Bool(value)) if !value.value)
+                        {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+            Prop::Method(method) => {
+                let Some(name) = static_prop_name(&method.key) else {
+                    return false;
+                };
+                if !matches!(name.as_ref(), "get" | "set") || !seen.insert(name) {
+                    return false;
+                }
+                has_accessor = true;
+            }
+            _ => return false,
+        }
+    }
+
+    has_accessor && configurable
+}
+
+fn static_prop_name(name: &PropName) -> Option<Atom> {
+    match name {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(string) => Some(string.value.as_str()?.into()),
+        _ => None,
     }
 }
 

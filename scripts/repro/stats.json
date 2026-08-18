@@ -1,9 +1,9 @@
 {
-  "commit": "086c7161",
-  "date": "2026-07-22",
+  "commit": "96c36050",
+  "date": "2026-08-18",
   "aggregate": {
-    "yes": 1778,
-    "total": 1826,
+    "yes": 1799,
+    "total": 1847,
     "pct": 97.4
   },
   "matrices": [
@@ -22,6 +22,14 @@
       "error": 44,
       "total": 415,
       "pct": 96.9
+    },
+    {
+      "name": "class-accessor",
+      "yes": 21,
+      "no": 0,
+      "error": 0,
+      "total": 21,
+      "pct": 100
     },
     {
       "name": "closure-compiler",
