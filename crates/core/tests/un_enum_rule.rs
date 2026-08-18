@@ -262,6 +262,109 @@ export var Mode = {
 }
 
 #[test]
+fn collapsed_exported_enum_rejects_invalid_identifier_name() {
+    // `a\u{B2}` (a²) passes a naive alphanumeric check but is not valid
+    // JavaScript identifier grammar; the synthesized binding would be a
+    // SyntaxError.
+    let input = "
+(function (e) {
+  e[\"Dev\"] = \"dev\";
+})(exports[\"a\u{B2}\"] || (exports[\"a\u{B2}\"] = {}));
+";
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_exports_escape() {
+    // The exports object escapes as a value; `publicApi.Mode` observes the
+    // write the fold would remove.
+    let input = r#"
+const publicApi = exports;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(publicApi.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_dynamic_exports_access() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports[key]);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_module_exports_read() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(module.exports.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_allows_unrelated_static_export_write() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+exports.other = 1;
+"#;
+    let expected = r#"
+export var Mode = {
+  Dev: "dev"
+};
+exports.other = 1;
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn collapsed_exported_enum_allows_indirect_eval() {
+    // Indirect eval runs in global scope and cannot observe module
+    // bindings, so it does not block synthesis.
+    let input = r#"
+observe((0, eval)("Mode"));
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+observe((0, eval)("Mode"));
+export var Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn enum_member_key_with_invalid_identifier_grammar_stays_string() {
+    // `a\u{B2}` passes a naive alphanumeric check; an ident key would emit
+    // invalid JavaScript.
+    let input = "
+var Mode;
+(function (e) {
+  e[\"a\u{B2}\"] = \"x\";
+})(Mode || (Mode = {}));
+";
+    let expected = "
+var Mode = {
+  \"a\u{B2}\": \"x\"
+};
+";
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn collapsed_exported_enum_rejects_prior_bare_var() {
     // The collapsed form never assigns the local, so `var Mode` must stay
     // `undefined` — folding into it would change what later reads observe.
