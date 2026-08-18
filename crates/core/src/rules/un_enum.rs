@@ -14,7 +14,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::collect_decl_names;
 use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
-use crate::js_names::is_reserved_binding_name;
+use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::utils::paren::strip_parens;
 
 pub struct UnEnum {
@@ -149,7 +149,8 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                                 // reference to capture) — including inside
                                 // direct eval sources, which the AST scan
                                 // cannot see.
-                                !is_reserved_binding_name(&local_ident.sym)
+                                is_valid_identifier_name(&local_ident.sym)
+                                    && !is_reserved_binding_name(&local_ident.sym)
                                     && !module_items_use_name(
                                         items.iter().chain(remaining.iter()),
                                         &local_ident.sym,
@@ -229,20 +230,112 @@ fn module_items_reference_public_export<'a>(
     })
 }
 
+/// Finds uses that could observe `exports.<public_name>` after the fold
+/// removed its only write. Beyond the direct static member, this treats the
+/// CommonJS export surface fail-closed: a dynamic `exports[key]` access, a
+/// bare `exports` or `module` escaping as a value, or `module.exports`
+/// escaping can all reach the property at runtime.
 struct PublicExportUseFinder<'a> {
     public_name: &'a Atom,
     unresolved_mark: Mark,
     found: bool,
 }
 
-impl Visit for PublicExportUseFinder<'_> {
-    fn visit_member_expr(&mut self, member: &MemberExpr) {
-        self.found |= unresolved_exports_member(member, self.unresolved_mark).as_ref()
-            == Some(self.public_name);
-        if !self.found {
-            member.visit_children_with(self);
+impl PublicExportUseFinder<'_> {
+    fn is_exports_object(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Ident(ident) => is_unresolved_named(ident, "exports", self.unresolved_mark),
+            // `module.exports`
+            Expr::Member(member) => {
+                let Expr::Ident(obj) = strip_parens(&member.obj) else {
+                    return false;
+                };
+                is_unresolved_named(obj, "module", self.unresolved_mark)
+                    && member_prop_names(&member.prop, "exports")
+            }
+            _ => false,
         }
     }
+
+    /// Match a property access on an export surface: hazard when the key is
+    /// the public name or is not statically known.
+    fn check_surface_prop(&mut self, prop: &MemberProp, hazard_name: &Atom) {
+        match prop {
+            MemberProp::Ident(ident_name) => {
+                if ident_name.sym == *hazard_name {
+                    self.found = true;
+                }
+            }
+            MemberProp::Computed(computed) => {
+                match computed_key_atom(computed) {
+                    Some(name) => {
+                        if name == *hazard_name {
+                            self.found = true;
+                        }
+                    }
+                    // A dynamic key can name the property at runtime.
+                    None => self.found = true,
+                }
+                computed.expr.visit_with(self);
+            }
+            MemberProp::PrivateName(_) => {}
+        }
+    }
+}
+
+impl Visit for PublicExportUseFinder<'_> {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if self.found {
+            return;
+        }
+        let obj = strip_parens(&member.obj);
+        if self.is_exports_object(obj) {
+            self.check_surface_prop(&member.prop, self.public_name);
+            // The `exports` / `module.exports` inside `obj` is accounted for.
+            return;
+        }
+        if let Expr::Ident(obj_ident) = obj {
+            if is_unresolved_named(obj_ident, "module", self.unresolved_mark) {
+                // Reaching `module.exports` here — not as the object of an
+                // outer member — means the exports object itself escapes as a
+                // value. Other static `module` properties cannot reach it.
+                self.check_surface_prop(&member.prop, &Atom::from("exports"));
+                return;
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        // A bare `exports` or `module` surviving to here escaped the member
+        // classification above; the exports object itself becomes observable.
+        if is_unresolved_named(ident, "exports", self.unresolved_mark)
+            || is_unresolved_named(ident, "module", self.unresolved_mark)
+        {
+            self.found = true;
+        }
+    }
+}
+
+fn is_unresolved_named(ident: &Ident, name: &str, unresolved_mark: Mark) -> bool {
+    ident.sym == *name && ident.ctxt.outer() == unresolved_mark
+}
+
+fn member_prop_names(prop: &MemberProp, name: &str) -> bool {
+    match prop {
+        MemberProp::Ident(ident_name) => ident_name.sym == *name,
+        MemberProp::Computed(computed) => {
+            computed_key_atom(computed).is_some_and(|key| key == *name)
+        }
+        MemberProp::PrivateName(_) => false,
+    }
+}
+
+fn computed_key_atom(computed: &ComputedPropName) -> Option<Atom> {
+    let Expr::Lit(Lit::Str(value)) = strip_parens(&computed.expr) else {
+        return None;
+    };
+    value.value.as_str().map(Atom::from)
 }
 
 fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
@@ -921,16 +1014,13 @@ fn extract_string_value(expr: &Expr) -> Option<Wtf8Atom> {
     }
 }
 
+/// JavaScript identifier grammar, reserved words allowed. Property keys and
+/// export names may legally be reserved words (`exports.default`,
+/// `export { X as default }`), so reservation is checked separately where a
+/// name becomes a binding. Reserved words are all plain ASCII, so appending
+/// them to the grammar check cannot admit a grammar-invalid name.
 fn is_valid_identifier(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if !first.is_alphabetic() && first != '_' && first != '$' {
-        return false;
-    }
-    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    is_valid_identifier_name(s) || is_reserved_binding_name(s)
 }
 
 /// Whether `name` occurs as any identifier — binding or reference, at any
