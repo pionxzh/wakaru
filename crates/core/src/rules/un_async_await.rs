@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, CallExpr, Callee, Decl, Expr,
-    ExprOrSpread, ExprStmt, Function, FunctionBody, Ident, IfStmt, MemberExpr, Module, Param, Pat,
-    Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDecl,
-    VarDeclKind, VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AssignTargetPat, AwaitExpr, CallExpr, Callee,
+    Decl, Expr, ExprOrSpread, ExprStmt, Function, FunctionBody, Ident, IfStmt, MemberExpr, Module,
+    ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget,
+    Stmt, SwitchCase, VarDecl, VarDeclKind, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -14,7 +14,7 @@ use super::cross_module_helper_refs::{
     collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
 };
 use super::decl_utils::{
-    collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids,
+    binding_id, collect_decl_binding_ids, collect_pat_names, collect_var_decl_binding_ids,
 };
 use super::eval_utils::is_direct_eval_call;
 use super::helper_matcher::{binding_key, ident_matches_binding};
@@ -397,7 +397,9 @@ fn binding_names_from_params(params: &[Param]) -> HashSet<Atom> {
 
 /// Rename moved callback locals that would collide with the destination
 /// function's parameters or other identifiers. Direct `eval` / `with` can
-/// observe the original names as strings, so those cases stay fail-closed.
+/// observe the original names as strings, and callable declarations or
+/// anonymous initializers can expose them through `.name`, so those cases stay
+/// fail-closed.
 fn hygienically_move_callback_locals(
     moved_stmts: &mut [Stmt],
     moved_ids: &HashSet<BindingId>,
@@ -424,6 +426,9 @@ fn hygienically_move_callback_locals(
     {
         return false;
     }
+    if renaming_changes_callable_name(moved_stmts, &colliding) {
+        return false;
+    }
 
     let mut reserved = destination_names;
     reserved.extend(destination_identifier_names(
@@ -442,6 +447,165 @@ fn hygienically_move_callback_locals(
         rename_bindings(stmt, &renames);
     }
     true
+}
+
+/// Whether renaming any colliding binding would change an observable
+/// `Function.name` / class `name`. Declarations carry their binding name
+/// directly; anonymous function, class, and arrow expressions also infer a
+/// name from direct declarations, assignments, and destructuring defaults.
+fn renaming_changes_callable_name(stmts: &[Stmt], colliding: &[BindingId]) -> bool {
+    let colliding: HashSet<BindingId> = colliding.iter().cloned().collect();
+
+    for stmt in stmts {
+        let Stmt::Decl(decl) = stmt else {
+            continue;
+        };
+        let id = match decl {
+            Decl::Fn(function) => Some(binding_id(&function.ident)),
+            Decl::Class(class) => Some(binding_id(&class.ident)),
+            _ => None,
+        };
+        if id.is_some_and(|id| colliding.contains(&id)) {
+            return true;
+        }
+    }
+
+    struct Finder<'a> {
+        colliding: &'a HashSet<BindingId>,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            if self.found {
+                return;
+            }
+            if pat_default_infers_colliding_name(&declarator.name, self.colliding)
+                || matches!(
+                    (&declarator.name, declarator.init.as_deref()),
+                    (Pat::Ident(binding), Some(init))
+                        if self.colliding.contains(&binding_id(&binding.id))
+                            && is_anonymous_callable(init)
+                )
+            {
+                self.found = true;
+                return;
+            }
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if self.found {
+                return;
+            }
+            let direct_target_infers_name = matches!(
+                assign.op,
+                AssignOp::Assign
+                    | AssignOp::AndAssign
+                    | AssignOp::OrAssign
+                    | AssignOp::NullishAssign
+            ) && assign_target_binding(&assign.left)
+                .is_some_and(|id| self.colliding.contains(&id))
+                && is_anonymous_callable(&assign.right);
+            let pattern_default_infers_name = match &assign.left {
+                AssignTarget::Pat(pattern) => {
+                    assign_target_pat_default_infers_colliding_name(pattern, self.colliding)
+                }
+                AssignTarget::Simple(_) => false,
+            };
+            if direct_target_infers_name || pattern_default_infers_name {
+                self.found = true;
+                return;
+            }
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        colliding: &colliding,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_anonymous_callable(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Arrow(_) => true,
+        Expr::Fn(function) => function.ident.is_none(),
+        Expr::Class(class) => class.ident.is_none(),
+        _ => false,
+    }
+}
+
+fn assign_target_binding(target: &AssignTarget) -> Option<BindingId> {
+    let AssignTarget::Simple(target) = target else {
+        return None;
+    };
+    match target {
+        SimpleAssignTarget::Ident(binding) => Some(binding_id(&binding.id)),
+        SimpleAssignTarget::Paren(paren) => match strip_parens(&paren.expr) {
+            Expr::Ident(ident) => Some(binding_id(ident)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn assign_target_pat_default_infers_colliding_name(
+    pattern: &AssignTargetPat,
+    colliding: &HashSet<BindingId>,
+) -> bool {
+    match pattern {
+        AssignTargetPat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|pattern| pat_default_infers_colliding_name(pattern, colliding)),
+        AssignTargetPat::Object(object) => {
+            object_pat_default_infers_colliding_name(object, colliding)
+        }
+        AssignTargetPat::Invalid(_) => false,
+    }
+}
+
+fn pat_default_infers_colliding_name(pattern: &Pat, colliding: &HashSet<BindingId>) -> bool {
+    match pattern {
+        Pat::Assign(assign) => {
+            matches!(assign.left.as_ref(), Pat::Ident(binding)
+                if colliding.contains(&binding_id(&binding.id))
+                    && is_anonymous_callable(&assign.right))
+                || pat_default_infers_colliding_name(&assign.left, colliding)
+        }
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|pattern| pat_default_infers_colliding_name(pattern, colliding)),
+        Pat::Object(object) => object_pat_default_infers_colliding_name(object, colliding),
+        Pat::Rest(rest) => pat_default_infers_colliding_name(&rest.arg, colliding),
+        Pat::Ident(_) | Pat::Expr(_) | Pat::Invalid(_) => false,
+    }
+}
+
+fn object_pat_default_infers_colliding_name(
+    object: &ObjectPat,
+    colliding: &HashSet<BindingId>,
+) -> bool {
+    object.props.iter().any(|prop| match prop {
+        ObjectPatProp::Assign(assign) => assign.value.as_deref().is_some_and(|default| {
+            colliding.contains(&binding_id(&assign.key.id)) && is_anonymous_callable(default)
+        }),
+        ObjectPatProp::KeyValue(key_value) => {
+            pat_default_infers_colliding_name(&key_value.value, colliding)
+        }
+        ObjectPatProp::Rest(rest) => pat_default_infers_colliding_name(&rest.arg, colliding),
+    })
 }
 
 fn allocate_unique_name(base: &Atom, reserved: &mut HashSet<Atom>) -> Atom {

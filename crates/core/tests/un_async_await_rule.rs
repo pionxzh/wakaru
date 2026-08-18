@@ -484,6 +484,148 @@ function loadValue(localValue) {
 }
 
 #[test]
+fn awaiter_callback_function_decl_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(worker) {
+  return __awaiter(this, void 0, void 0, function* () {
+    function worker() {}
+    observe(worker.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("function worker()")
+            && output.contains("observe(worker.name)"),
+        "renaming a moved function declaration would change Function.name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(worker)"),
+        "an observable function declaration name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_callback_class_decl_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(Worker) {
+  return __awaiter(this, void 0, void 0, function* () {
+    class Worker {}
+    observe(Worker.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("class Worker")
+            && output.contains("observe(Worker.name)"),
+        "renaming a moved class declaration would change its name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(Worker)"),
+        "an observable class declaration name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_callback_inferred_initializer_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(task) {
+  return __awaiter(this, void 0, void 0, function* () {
+    var task = function () {};
+    observe(task.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("var task = function()")
+            && output.contains("observe(task.name)"),
+        "renaming a binding must not change an anonymous initializer's inferred name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(task)"),
+        "an inferred initializer name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_callback_named_initializer_collision_can_rename() {
+    let input = r#"
+function loadValue(task) {
+  return __awaiter(this, void 0, void 0, function* () {
+    var task = function namedTask() {};
+    observe(task.name);
+    yield ready();
+  });
+}
+"#;
+    let expected = r#"
+async function loadValue(task) {
+  var task1 = function namedTask() {};
+  observe(task1.name);
+  await ready();
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn awaiter_callback_inferred_assignment_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(task) {
+  return __awaiter(this, void 0, void 0, function* () {
+    var task;
+    task ||= class {};
+    observe(task.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("task ||= class")
+            && output.contains("observe(task.name)"),
+        "renaming a logical-assignment target would change the class name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(task)"),
+        "an inferred assignment name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
+fn awaiter_callback_inferred_destructuring_default_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(task) {
+  return __awaiter(this, void 0, void 0, function* () {
+    var { task = () => {} } = {};
+    observe(task.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("var { task =")
+            && output.contains("observe(task.name)"),
+        "renaming a destructuring binding would change its default arrow's name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(task)"),
+        "an inferred destructuring default name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
 fn generator_callback_with_observable_trailing_statement_fails_closed() {
     let input = r#"
 function loadValue() {
