@@ -699,7 +699,10 @@ impl SystemExecuteTransformer {
         if !is_default && !is_valid_ident_name(exported.as_ref()) {
             return None;
         }
-        let local = self.fresh_export_name();
+        let exported_local = exported_value_local(value.as_ref());
+        let local = exported_local
+            .clone()
+            .unwrap_or_else(|| self.fresh_export_name());
 
         let mut assignment = assign.clone();
         let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &mut assignment.left else {
@@ -714,20 +717,33 @@ impl SystemExecuteTransformer {
         assignment_stmt.visit_mut_with(self);
         let mut value = value;
         value.visit_mut_with(self);
-        let mut items = vec![self.binding_item(local.clone(), value)];
-        if is_default {
-            // Initialize the export before computed keys or the assignment RHS can re-enter.
-            items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
-                ExportDefaultExpr {
+        let mut items = if exported_local.is_some() {
+            self.add_export(local.clone(), exported);
+            match value.as_ref() {
+                Expr::Assign(_) => vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
                     span: DUMMY_SP,
-                    expr: Box::new(Expr::Ident(ident(local.clone()))),
-                },
-            )));
+                    expr: value,
+                }))],
+                Expr::Ident(_) => Vec::new(),
+                _ => unreachable!("exported_value_local accepted an unsupported expression"),
+            }
         } else {
-            self.declared_exports
-                .insert((local.clone(), exported.clone()));
-            items.push(named_export_item(local.clone(), exported));
-        }
+            let mut items = vec![self.binding_item(local.clone(), value)];
+            if is_default {
+                // Initialize the export before computed keys or the assignment RHS can re-enter.
+                items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+                    ExportDefaultExpr {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Ident(ident(local.clone()))),
+                    },
+                )));
+            } else {
+                self.declared_exports
+                    .insert((local.clone(), exported.clone()));
+                items.push(named_export_item(local.clone(), exported));
+            }
+            items
+        };
         items.push(ModuleItem::Stmt(assignment_stmt));
         Some(items)
     }
