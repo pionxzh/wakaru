@@ -15,8 +15,8 @@ use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::{
-    class_accessor_descriptor_is_compatible, class_method_has_invalid_signature,
-    ensure_setter_has_value_param,
+    class_accessor_descriptor_attributes, class_method_has_invalid_signature,
+    ensure_setter_has_value_param, ClassAccessorDescriptorAttributes,
 };
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
@@ -1311,7 +1311,7 @@ fn parse_class_body(
     create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
     has_super: bool,
-    allow_static_fields: bool,
+    allow_standard_assumptions: bool,
     unresolved_mark: Mark,
 ) -> Option<Vec<ClassMember>> {
     // The first real statement should define the constructor function.
@@ -1440,7 +1440,7 @@ fn parse_class_body(
             //
             // In derived classes this is observably different from a static
             // field if the superclass has a setter for that property.
-            if allow_static_fields
+            if allow_standard_assumptions
                 && !has_super
                 && try_parse_static_field_assignment(expr, inner_ctor_name, &mut members)
             {
@@ -1453,6 +1453,7 @@ fn parse_class_body(
                 inner_ctor_name,
                 &proto_alias,
                 &mut members,
+                allow_standard_assumptions,
                 unresolved_mark,
             ) {
                 continue;
@@ -1762,6 +1763,7 @@ fn try_parse_object_define_property(
     ctor_name: &str,
     proto_alias: &Option<Atom>,
     members: &mut Vec<ClassMember>,
+    allow_legacy_typescript_attributes: bool,
     unresolved_mark: Mark,
 ) -> bool {
     let Expr::Call(call) = expr else {
@@ -1800,16 +1802,32 @@ fn try_parse_object_define_property(
 
     let original_len = members.len();
     let value_fn = descriptor_value_method_fn(obj);
-    let accessor_descriptor_is_compatible = class_accessor_descriptor_is_compatible(obj);
+    let accessor_descriptor_is_compatible = match class_accessor_descriptor_attributes(obj) {
+        Some(ClassAccessorDescriptorAttributes::ClassCompatible) => true,
+        // Assumption: `transpiled_class_accessor_attributes`. TypeScript
+        // 3.5–3.8 emits `enumerable: true` while lowering source-level class
+        // accessors. Only UnEs6Class has the surrounding class-IIFE proof.
+        Some(ClassAccessorDescriptorAttributes::Enumerable) => allow_legacy_typescript_attributes,
+        None => false,
+    };
 
     for prop in &obj.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
             continue;
         };
-        let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else {
-            continue;
+        let (key, function) = match prop.as_ref() {
+            swc_core::ecma::ast::Prop::KeyValue(kv) => {
+                let Expr::Fn(fn_expr) = strip_parens(&kv.value) else {
+                    continue;
+                };
+                (&kv.key, fn_expr.function.as_ref())
+            }
+            // Native descriptor method syntax and ObjMethodShorthand both
+            // store the callback as a MethodProp under swc_core 77.
+            swc_core::ecma::ast::Prop::Method(method) => (&method.key, method.function.as_ref()),
+            _ => continue,
         };
-        let key_name = match &kv.key {
+        let key_name = match key {
             PropName::Ident(iden) => iden.sym.clone(),
             PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
             _ => continue,
@@ -1822,12 +1840,8 @@ fn try_parse_object_define_property(
         if !accessor_descriptor_is_compatible {
             return false;
         }
-        let fn_expr = match strip_parens(&kv.value) {
-            Expr::Fn(f) => f,
-            _ => continue,
-        };
         let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
-        let method = build_class_method(method_key, fn_expr, false, kind);
+        let method = build_class_method_from_function(method_key, function, false, kind);
         members.push(ClassMember::Method(method));
     }
 
@@ -3396,12 +3410,21 @@ fn build_class_method(
     is_static: bool,
     kind: MethodKind,
 ) -> ClassMethod {
-    let method_span = if fn_expr.function.span.lo.0 != 0 {
-        fn_expr.function.span
+    build_class_method_from_function(key, &fn_expr.function, is_static, kind)
+}
+
+fn build_class_method_from_function(
+    key: PropName,
+    source: &Function,
+    is_static: bool,
+    kind: MethodKind,
+) -> ClassMethod {
+    let method_span = if source.span.lo.0 != 0 {
+        source.span
     } else {
         DUMMY_SP
     };
-    let mut function = fn_expr.function.clone();
+    let mut function = Box::new(source.clone());
     // Object.defineProperty setters may have zero parameters; class `set`
     // accessors must have exactly one.
     if kind == MethodKind::Setter {

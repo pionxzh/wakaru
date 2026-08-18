@@ -435,8 +435,10 @@ function loadValue(localValue) {
     let output = apply(input);
     assert!(
         output.contains("function loadValue(localValue)")
+            && output.contains("return async function()")
+            && output.contains("var localValue;")
             && output.contains("eval(\"localValue\")"),
-        "direct eval must keep the original callback-local name:\n{output}"
+        "direct eval must keep the nested callback boundary and original local:\n{output}"
     );
     assert!(
         !output.contains("async function loadValue(localValue)"),
@@ -468,8 +470,10 @@ function loadValue(localValue) {
 "#;
     let output = apply(input);
     assert!(
-        output.contains("eval(\"typeof localValue1\")"),
-        "the destination eval must be preserved:\n{output}"
+        output.contains("eval(\"typeof localValue1\")")
+            && output.contains("return async function()")
+            && output.contains("var localValue;"),
+        "destination eval must preserve the nested callback boundary:\n{output}"
     );
     assert!(
         !output.contains("async function loadValue(localValue)"),

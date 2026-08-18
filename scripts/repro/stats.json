@@ -1,9 +1,9 @@
 {
-  "commit": "96c36050",
+  "commit": "66c77ef0",
   "date": "2026-08-18",
   "aggregate": {
-    "yes": 1799,
-    "total": 1847,
+    "yes": 1810,
+    "total": 1858,
     "pct": 97.4
   },
   "matrices": [
@@ -25,10 +25,10 @@
     },
     {
       "name": "class-accessor",
-      "yes": 21,
+      "yes": 32,
       "no": 0,
       "error": 0,
-      "total": 21,
+      "total": 32,
       "pct": 100
     },
     {

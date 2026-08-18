@@ -935,7 +935,9 @@ process.stdout.write(JSON.stringify(results));
 
 export function tscBatch(sources, options = {}) {
   const target = options.target ?? "ES5";
-  const toolDir = ensureNodeTool("typescript", ["typescript@5"]);
+  const version = options.version ?? "5";
+  const toolName = version === "5" ? "typescript" : `typescript-${version}`;
+  const toolDir = ensureNodeTool(toolName, [`typescript@${version}`]);
   const helper = join(toolDir, "tsc-batch.cjs");
   writeFileSync(
     helper,
