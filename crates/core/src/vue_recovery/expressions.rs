@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Globals, Mark, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function,
-    FunctionBody, Ident, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget,
-    Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    AssignExpr, AssignTarget, BindingIdent, Decl, Expr, ExprStmt, Ident, MemberProp, Module,
+    ModuleItem, Pat, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helpers::VueHelper;
@@ -18,9 +18,10 @@ use crate::vue_template::{VueExpr, VueNode, VueUnsupported};
 
 pub(super) fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let mut expr = expr.clone();
-    expr.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    clean_context_members_in_expr(&mut expr, ctx);
     rename_bindings(&mut expr, &super::setup_alias_renames(ctx));
-    expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, true));
+    let setup_refs = unresolved_expr_ident_ptrs(&expr);
+    expr.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, setup_refs, true));
 
     let mut module = Module {
         span: DUMMY_SP,
@@ -108,10 +109,11 @@ fn clean_setup_stmt_with_ref_values(
     preserve_ref_values: bool,
 ) -> Stmt {
     let mut stmt = stmt.clone();
-    stmt.visit_mut_with(&mut ContextMemberCleaner::new(ctx));
+    clean_context_members_in_stmt(&mut stmt, ctx);
     rename_bindings(&mut stmt, &super::setup_alias_renames(ctx));
     if !preserve_ref_values {
-        stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, false));
+        let setup_refs = unresolved_stmt_ident_ptrs(&stmt);
+        stmt.visit_mut_with(&mut SetupRefValueCleaner::new(ctx, setup_refs, false));
     }
     stmt
 }
@@ -127,55 +129,164 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
     cleaned
 }
 
+/// Classifies references in a detached expression or statement with SWC's
+/// resolver while preserving the syntax contexts used by the original module.
+///
+/// Vue recovery mixes nodes cloned from the resolved input module with nodes
+/// parsed from generated template fragments. Their original syntax contexts
+/// are therefore not comparable. A context-free probe is re-resolved as strict
+/// module code, then its unresolved identifiers are paired with the matching
+/// nodes in the real tree. The cleaners can leave every local shadow alone
+/// without changing binding identities used by later analysis.
+struct ClearSyntaxContexts;
+
+impl VisitMut for ClearSyntaxContexts {
+    fn visit_mut_syntax_context(&mut self, ctxt: &mut SyntaxContext) {
+        *ctxt = SyntaxContext::empty();
+    }
+}
+
+fn resolve_module_for_cleaning(module: &mut Module) -> SyntaxContext {
+    module.visit_mut_with(&mut ClearSyntaxContexts);
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+    SyntaxContext::empty().apply_mark(unresolved_mark)
+}
+
+fn with_resolver_globals<T>(operation: impl FnOnce() -> T) -> T {
+    if GLOBALS.is_set() {
+        operation()
+    } else {
+        let globals = Globals::new();
+        GLOBALS.set(&globals, operation)
+    }
+}
+
+struct UnresolvedIdentCollector {
+    unresolved_ctxt: SyntaxContext,
+    classifications: Vec<(Atom, bool)>,
+}
+
+impl Visit for UnresolvedIdentCollector {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.classifications
+            .push((ident.sym.clone(), ident.ctxt == self.unresolved_ctxt));
+    }
+}
+
+fn unresolved_expr_ident_classifications(expr: &Expr) -> Vec<(Atom, bool)> {
+    with_resolver_globals(|| {
+        let mut module = Module {
+            span: DUMMY_SP,
+            body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(expr.clone()),
+            }))],
+            shebang: None,
+        };
+        let unresolved_ctxt = resolve_module_for_cleaning(&mut module);
+        let mut collector = UnresolvedIdentCollector {
+            unresolved_ctxt,
+            classifications: Vec::new(),
+        };
+        module.visit_with(&mut collector);
+        collector.classifications
+    })
+}
+
+fn unresolved_stmt_ident_classifications(stmt: &Stmt) -> Vec<(Atom, bool)> {
+    with_resolver_globals(|| {
+        let mut module = Module {
+            span: DUMMY_SP,
+            body: vec![ModuleItem::Stmt(stmt.clone())],
+            shebang: None,
+        };
+        let unresolved_ctxt = resolve_module_for_cleaning(&mut module);
+        let mut collector = UnresolvedIdentCollector {
+            unresolved_ctxt,
+            classifications: Vec::new(),
+        };
+        module.visit_with(&mut collector);
+        collector.classifications
+    })
+}
+
+struct UnresolvedIdentPtrCollector<'a> {
+    classifications: std::slice::Iter<'a, (Atom, bool)>,
+    unresolved: HashSet<*const Ident>,
+}
+
+impl Visit for UnresolvedIdentPtrCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let (probe_sym, unresolved) = self
+            .classifications
+            .next()
+            .expect("resolver probe should have the same identifiers as its source");
+        assert_eq!(
+            probe_sym, &ident.sym,
+            "resolver probe should preserve identifier traversal order"
+        );
+        if *unresolved {
+            self.unresolved.insert(std::ptr::from_ref(ident));
+        }
+    }
+}
+
+fn unresolved_ident_ptrs<'a>(
+    node: &impl VisitWith<UnresolvedIdentPtrCollector<'a>>,
+    classifications: &'a [(Atom, bool)],
+) -> HashSet<*const Ident> {
+    let mut collector = UnresolvedIdentPtrCollector {
+        classifications: classifications.iter(),
+        unresolved: HashSet::new(),
+    };
+    node.visit_with(&mut collector);
+    assert!(
+        collector.classifications.next().is_none(),
+        "resolver probe should have the same identifiers as its source"
+    );
+    collector.unresolved
+}
+
+fn unresolved_expr_ident_ptrs(expr: &Expr) -> HashSet<*const Ident> {
+    let classifications = unresolved_expr_ident_classifications(expr);
+    unresolved_ident_ptrs(expr, &classifications)
+}
+
+fn unresolved_stmt_ident_ptrs(stmt: &Stmt) -> HashSet<*const Ident> {
+    let classifications = unresolved_stmt_ident_classifications(stmt);
+    unresolved_ident_ptrs(stmt, &classifications)
+}
+
 struct SetupRefValueCleaner<'a> {
     bindings: Vec<&'a str>,
-    shadow_depths: Vec<usize>,
+    unresolved: HashSet<*const Ident>,
     clean_assign_targets: bool,
 }
 
 impl<'a> SetupRefValueCleaner<'a> {
-    fn new(ctx: &'a VueRecoveryContext, clean_assign_targets: bool) -> Self {
+    fn new(
+        ctx: &'a VueRecoveryContext,
+        unresolved: HashSet<*const Ident>,
+        clean_assign_targets: bool,
+    ) -> Self {
         let bindings = ctx
             .bindings
             .ref_value_cleanup_bindings(clean_assign_targets);
-        let shadow_depths = vec![0; bindings.len()];
         Self {
             bindings,
-            shadow_depths,
+            unresolved,
             clean_assign_targets,
         }
     }
 
-    fn active_binding(&self, name: &str) -> bool {
-        self.bindings
-            .iter()
-            .zip(self.shadow_depths.iter())
-            .any(|(binding, shadow_depth)| *binding == name && *shadow_depth == 0)
-    }
-
-    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
-        self.bindings
-            .iter()
-            .enumerate()
-            .filter_map(|(index, binding)| {
-                params
-                    .iter()
-                    .any(|pat| pat_binds_name(pat, binding))
-                    .then_some(index)
-            })
-            .collect()
-    }
-
-    fn enter_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] += 1;
-        }
-    }
-
-    fn exit_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] -= 1;
-        }
+    fn active_binding(&self, ident: &Ident) -> bool {
+        self.unresolved.contains(&std::ptr::from_ref(ident))
+            && self
+                .bindings
+                .iter()
+                .any(|binding| *binding == ident.sym.as_ref())
     }
 }
 
@@ -189,9 +300,7 @@ impl VisitMut for SetupRefValueCleaner<'_> {
         let replacement = match &assign.left {
             AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") => {
                 match member.obj.as_ref() {
-                    Expr::Ident(object) if self.active_binding(object.sym.as_ref()) => {
-                        Some(object.clone())
-                    }
+                    Expr::Ident(object) if self.active_binding(object) => Some(object.clone()),
                     _ => None,
                 }
             }
@@ -211,9 +320,7 @@ impl VisitMut for SetupRefValueCleaner<'_> {
         let replacement = match expr {
             Expr::Member(member) if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value") => {
                 match member.obj.as_ref() {
-                    Expr::Ident(object) if self.active_binding(object.sym.as_ref()) => {
-                        Some(object.clone())
-                    }
+                    Expr::Ident(object) if self.active_binding(object) => Some(object.clone()),
                     _ => None,
                 }
             }
@@ -223,37 +330,18 @@ impl VisitMut for SetupRefValueCleaner<'_> {
             *expr = Expr::Ident(replacement);
         }
     }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        let params = arrow.params.iter().collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        arrow.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        let params = function
-            .params
-            .iter()
-            .map(|param| &param.pat)
-            .collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        function.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
 }
 
 struct ContextMemberCleaner<'a> {
     prefixes: Vec<&'a str>,
     prop_bindings: &'a HashMap<Atom, Atom>,
-    shadow_depths: Vec<usize>,
-    unresolved_ctxt: SyntaxContext,
+    output_unresolved_ctxt: SyntaxContext,
+    unresolved: HashSet<*const Ident>,
+    needs_another_pass: bool,
 }
 
 impl<'a> ContextMemberCleaner<'a> {
-    fn new(ctx: &'a VueRecoveryContext) -> Self {
+    fn new(ctx: &'a VueRecoveryContext, unresolved: HashSet<*const Ident>) -> Self {
         let mut prefixes = vec!["_ctx", "$props", "__props"];
         if let Some(render_context) = &ctx.render_context {
             if render_context.as_ref() != "_ctx" {
@@ -272,70 +360,24 @@ impl<'a> ContextMemberCleaner<'a> {
         prefixes.extend(ctx.setup_props_aliases.iter().map(|alias| alias.as_ref()));
         prefixes.sort_unstable();
         prefixes.dedup();
-        let shadow_depths = vec![0; prefixes.len()];
         Self {
             prefixes,
             prop_bindings: &ctx.bindings.props,
-            shadow_depths,
-            unresolved_ctxt: ctx.unresolved_ctxt,
+            output_unresolved_ctxt: ctx.unresolved_ctxt,
+            unresolved,
+            needs_another_pass: false,
         }
     }
 
-    fn active_prefix(&self, name: &str) -> bool {
-        self.prefixes
-            .iter()
-            .zip(self.shadow_depths.iter())
-            .any(|(prefix, shadow_depth)| *prefix == name && *shadow_depth == 0)
+    fn active_prefix(&self, ident: &Ident) -> bool {
+        self.unresolved.contains(&std::ptr::from_ref(ident))
+            && self
+                .prefixes
+                .iter()
+                .any(|prefix| *prefix == ident.sym.as_ref())
     }
 
-    fn shadowing_indices(&self, params: &[&Pat]) -> Vec<usize> {
-        self.prefixes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, prefix)| {
-                params
-                    .iter()
-                    .any(|pat| pat_binds_name(pat, prefix))
-                    .then_some(index)
-            })
-            .collect()
-    }
-
-    fn block_shadowing_indices(&self, stmts: &[Stmt]) -> Vec<usize> {
-        let mut indices = stmts
-            .iter()
-            .filter_map(|stmt| match stmt {
-                Stmt::Decl(decl) => Some(decl),
-                _ => None,
-            })
-            .flat_map(|decl| self.decl_shadowing_indices(decl))
-            .collect::<Vec<_>>();
-        indices.sort_unstable();
-        indices.dedup();
-        indices
-    }
-
-    fn decl_shadowing_indices(&self, decl: &Decl) -> Vec<usize> {
-        self.prefixes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, prefix)| decl_binds_name(decl, prefix).then_some(index))
-            .collect()
-    }
-
-    fn enter_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] += 1;
-        }
-    }
-
-    fn exit_shadowed(&mut self, indices: &[usize]) {
-        for index in indices {
-            self.shadow_depths[*index] -= 1;
-        }
-    }
-
-    fn replacement_ident(&self, prop: &MemberProp) -> Option<Ident> {
+    fn replacement_ident(&mut self, prop: &MemberProp) -> Option<Ident> {
         let (sym, span) = match prop {
             MemberProp::Ident(prop) => (prop.sym.clone(), prop.span),
             MemberProp::Computed(computed) => {
@@ -351,10 +393,11 @@ impl<'a> ContextMemberCleaner<'a> {
             MemberProp::PrivateName(_) => return None,
         };
         let sym = self.prop_bindings.get(&sym).cloned().unwrap_or(sym);
-        // The collapsed member access (`_ctx.foo` -> `foo`) is a free reference to
-        // a template-scope binding; stamp the resolver's unresolved context so the
-        // cleaned AST carries a consistent (non-colliding) context.
-        Some(Ident::new(sym, span, self.unresolved_ctxt))
+        self.needs_another_pass |= self.prefixes.iter().any(|prefix| *prefix == sym.as_ref());
+        // The collapsed member access (`_ctx.foo` -> `foo`) is a free reference
+        // to a template-scope binding. The next resolver probe classifies it for
+        // ref cleanup while this context preserves later binding analysis.
+        Some(Ident::new(sym, span, self.output_unresolved_ctxt))
     }
 }
 
@@ -363,7 +406,7 @@ impl VisitMut for ContextMemberCleaner<'_> {
         assign.visit_mut_children_with(self);
 
         let replacement = match &assign.left {
-            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object)) => {
                 self.replacement_ident(&member.prop)
             }
             _ => None,
@@ -380,7 +423,7 @@ impl VisitMut for ContextMemberCleaner<'_> {
         expr.visit_mut_children_with(self);
 
         let replacement = match expr {
-            Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object.sym.as_ref())) => {
+            Expr::Member(member) if matches!(member.obj.as_ref(), Expr::Ident(object) if self.active_prefix(object)) => {
                 self.replacement_ident(&member.prop)
             }
             _ => None,
@@ -389,74 +432,27 @@ impl VisitMut for ContextMemberCleaner<'_> {
             *expr = Expr::Ident(replacement);
         }
     }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        let params = arrow.params.iter().collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        arrow.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_function(&mut self, function: &mut Function) {
-        let params = function
-            .params
-            .iter()
-            .map(|param| &param.pat)
-            .collect::<Vec<_>>();
-        let shadowed = self.shadowing_indices(&params);
-        self.enter_shadowed(&shadowed);
-        function.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-        let shadowed = self.block_shadowing_indices(&block.stmts);
-        self.enter_shadowed(&shadowed);
-        block.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
-        let shadowed = self.block_shadowing_indices(&body.stmts);
-        self.enter_shadowed(&shadowed);
-        body.visit_mut_children_with(self);
-        self.exit_shadowed(&shadowed);
-    }
-
-    // Function bodies are a distinct node from blocks; body-level
-    // declarations that rebind a context prefix must suppress collapsing
-    // just like block-level ones.
 }
 
-fn decl_binds_name(decl: &Decl, name: &str) -> bool {
-    match decl {
-        Decl::Class(class) => class.ident.sym.as_ref() == name,
-        Decl::Fn(function) => function.ident.sym.as_ref() == name,
-        Decl::Var(var) => var
-            .decls
-            .iter()
-            .any(|decl| pat_binds_name(&decl.name, name)),
-        _ => false,
+fn clean_context_members_in_expr(expr: &mut Expr, ctx: &VueRecoveryContext) {
+    loop {
+        let unresolved = unresolved_expr_ident_ptrs(expr);
+        let mut cleaner = ContextMemberCleaner::new(ctx, unresolved);
+        expr.visit_mut_with(&mut cleaner);
+        if !cleaner.needs_another_pass {
+            break;
+        }
     }
 }
 
-fn pat_binds_name(pat: &Pat, name: &str) -> bool {
-    match pat {
-        Pat::Ident(binding) => binding.id.sym.as_ref() == name,
-        Pat::Array(array) => array
-            .elems
-            .iter()
-            .flatten()
-            .any(|elem| pat_binds_name(elem, name)),
-        Pat::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
-        Pat::Object(object) => object.props.iter().any(|prop| match prop {
-            ObjectPatProp::KeyValue(key_value) => pat_binds_name(key_value.value.as_ref(), name),
-            ObjectPatProp::Assign(assign) => assign.key.sym.as_ref() == name,
-            ObjectPatProp::Rest(rest) => pat_binds_name(rest.arg.as_ref(), name),
-        }),
-        Pat::Assign(assign) => pat_binds_name(assign.left.as_ref(), name),
-        Pat::Expr(_) | Pat::Invalid(_) => false,
+fn clean_context_members_in_stmt(stmt: &mut Stmt, ctx: &VueRecoveryContext) {
+    loop {
+        let unresolved = unresolved_stmt_ident_ptrs(stmt);
+        let mut cleaner = ContextMemberCleaner::new(ctx, unresolved);
+        stmt.visit_mut_with(&mut cleaner);
+        if !cleaner.needs_another_pass {
+            break;
+        }
     }
 }
 

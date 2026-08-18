@@ -88,6 +88,274 @@ export function render(_ctx, _cache) {
     );
 }
 
+fn recover_ref_shadow_expr(title_expr: &str) -> String {
+    let input = format!(
+        r#"
+import {{ defineComponent, ref, openBlock, createElementBlock }} from "vue";
+export default defineComponent({{
+  __name: "ShadowProbe",
+  setup() {{
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", {{ title: {title_expr} }}, null, 8, ["title"])
+    );
+  }}
+}});
+"#,
+    );
+
+    recover_vue_sfc_source_from_js(&input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn preserves_loop_head_shadowed_ref_value_members() {
+    let recovered = recover_ref_shadow_expr(
+        r#"(function () { for (let count of values) { count.value = 1; return count.value; } return ""; })()"#,
+    );
+
+    assert!(
+        recovered.contains("count.value = 1") && recovered.contains("return count.value"),
+        "a loop-head binding must shadow the setup ref throughout the loop: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_switch_shadowed_ref_value_member() {
+    let recovered = recover_ref_shadow_expr(
+        r#"(function () { switch (kind) { case 0: const count = pick(); return count.value; default: return ""; } })()"#,
+    );
+
+    assert!(
+        recovered.contains("return count.value"),
+        "switch cases share a lexical scope that must shadow the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_named_function_expression_shadowed_ref_value_member() {
+    let recovered = recover_ref_shadow_expr("(function count() { return count.value; })()");
+
+    assert!(
+        recovered.contains("return count.value"),
+        "a named function expression must shadow the setup ref in its own body: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_named_class_expression_shadowed_ref_value_member() {
+    let recovered =
+        recover_ref_shadow_expr("(class count { static result = count.value; }).result");
+
+    assert!(
+        recovered.contains("count.value"),
+        "a named class expression must shadow the setup ref in its class body: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_constructor_param_shadowed_ref_value_member() {
+    let recovered = recover_ref_shadow_expr(
+        "new (class { constructor(count) { this.result = count.value; } })(pick()).result",
+    );
+
+    assert!(
+        recovered.contains("this.result = count.value"),
+        "a constructor parameter must shadow the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn cleans_outer_ref_in_default_param_initializer() {
+    let recovered =
+        recover_ref_shadow_expr("(function (value = count.value) { var count; return value; })()");
+
+    assert!(
+        !recovered.contains("count.value"),
+        "body var bindings are not visible to default parameter initializers: {recovered}"
+    );
+}
+
+#[test]
+fn cleans_outer_ref_after_strict_block_function() {
+    let recovered = recover_ref_shadow_expr(
+        "(function () { if (flag) { function count() {} } return count.value; })()",
+    );
+
+    assert!(
+        !recovered.contains("return count.value"),
+        "a strict-mode block function must not shadow the outer ref after its block: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_function_binding_from_simple_catch_var_redeclaration() {
+    let recovered = recover_ref_shadow_expr(
+        "(function () { try { risky(); } catch (count) { var count = pick(); } return count.value; })()",
+    );
+
+    assert!(
+        recovered.contains("return count.value"),
+        "the catch var declaration creates a function-scoped binding: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_loop_head_shadowed_context_member() {
+    let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("div", {
+    title: (function () { for (let _ctx of values) { return _ctx.msg; } return ""; })()
+  }, null, 8, ["title"]);
+}
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("_ctx.msg"),
+        "a loop-head binding must shadow the render context throughout the loop: {recovered}"
+    );
+}
+
+#[test]
+fn cleans_ref_value_after_context_member_collapse() {
+    let recovered = recover_ref_shadow_expr("_ctx.count.value");
+
+    assert!(
+        recovered.contains(":title=\"count\"") && !recovered.contains("count.value"),
+        "a collapsed context member must remain eligible for ref cleanup: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_body_shadowed_ref_value_member() {
+    // The rebinding lives in a nested function BODY, not a param; the
+    // cleaner must register body-level declarations as shadows.
+    let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "BodyShadowedCounter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", { title: [count].map(function (entry) { const count = pick(entry); return count.value; }).join(",") }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("count.value"),
+        "body-level `const count` must keep shadowing the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_block_shadowed_ref_value_member() {
+    // The rebinding lives in a standalone block inside the handler body.
+    let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "BlockShadowedCounter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", { title: (()=>{ if (flag) { const count = pick(); return count.value; } return ""; })() }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("count.value"),
+        "block-level `const count` must keep shadowing the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_var_hoisted_shadowed_ref_value_member() {
+    // `var count` inside an inner block hoists to the whole nested function,
+    // so the read outside that block still refers to the local, not the ref.
+    let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "VarShadowedCounter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", { title: (function () { if (flag) { var count = pick(); } return count.value; })() }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("count.value"),
+        "hoisted `var count` must keep shadowing the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_catch_param_shadowed_ref_value_member() {
+    let input = r#"
+import { defineComponent, ref, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "CatchShadowedCounter",
+  setup() {
+    const count = ref(0);
+    return () => (
+      openBlock(), createElementBlock("div", { title: (function () { try { return risky(); } catch (count) { return count.value; } })() }, null, 8, ["title"])
+    );
+  }
+});
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("count.value"),
+        "the catch param must keep shadowing the setup ref: {recovered}"
+    );
+}
+
+#[test]
+fn preserves_var_hoisted_shadowed_context_member() {
+    // Same hoisting rule for the render-context cleaner: `var _ctx` in an
+    // inner block shadows the whole nested function.
+    let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("div", {
+    title: (function () { if (flag) { var _ctx = getCtx(); } return _ctx.msg; })()
+  }, null, 8, ["title"]);
+}
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("_ctx.msg"),
+        "hoisted `var _ctx` must keep shadowing the render context: {recovered}"
+    );
+}
+
 #[test]
 fn recovers_store_to_refs_destructured_values() {
     let input = r#"
