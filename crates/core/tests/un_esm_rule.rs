@@ -1664,6 +1664,47 @@ fn void_only_export_removed() {
 }
 
 #[test]
+fn void_export_kept_when_later_or_assign() {
+    // TypeScript CJS enum: dummy `exports.X = void 0` plus a later
+    // `exports.X || (exports.X = {})` IIFE argument. Stop after UnEsm so
+    // UnEnum does not fold the IIFE yet.
+    let input = r#"
+exports.Mode = void 0;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export let Mode;
+(function (e) {
+  e.Dev = "dev";
+})(Mode || (Mode = {}));
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn void_export_not_promoted_when_local_name_conflicts() {
+    let input = r#"
+var Mode = 1;
+exports.Mode = void 0;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert!(
+        output.contains("exports.Mode"),
+        "conflicting local should block void-export promotion: {output}"
+    );
+    assert!(
+        !output.contains("export let Mode"),
+        "must not emit a colliding export let: {output}"
+    );
+}
+
+#[test]
 fn self_ref_pattern_removed() {
     let input = "module.exports.default = module.exports;";
     let expected = "";

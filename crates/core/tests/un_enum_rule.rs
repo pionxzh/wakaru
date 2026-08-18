@@ -83,6 +83,77 @@ export { LocalMode as Mode };
 }
 
 #[test]
+fn recovers_collapsed_exported_commonjs_enum() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode = {
+  Dev: "dev"
+};
+export { Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn recovers_collapsed_exported_numeric_enum() {
+    let input = r#"
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode = {
+  Dev: 0,
+  0: "Dev"
+};
+export { Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn recovers_collapsed_exported_enum_mangled_param() {
+    let input = r#"
+(function (t) {
+  t["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+var Mode = {
+  Dev: "dev"
+};
+export { Mode };
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_later_public_export_read() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_existing_local_name() {
+    let input = r#"
+var Mode = 1;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
 fn pipeline_promotes_adjacent_exported_enum_to_const() {
     let input = r#"
 export let Mode;
@@ -96,6 +167,42 @@ export const Mode = {
   Dev: "dev"
 };
 use(Mode);
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_minified_cjs_enum() {
+    let input = r#"
+exports.Mode = void 0;
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_minified_cjs_numeric_enum() {
+    let input = r#"
+exports.Mode = void 0;
+(function (e) {
+  e[e.Dev = 0] = "Dev";
+  e[e.Prod = 1] = "Prod";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+export const Mode = {
+  Dev: 0,
+  0: "Dev",
+  Prod: 1,
+  1: "Prod"
+};
 "#;
     assert_eq_normalized(&render_pipeline(input), expected);
 }

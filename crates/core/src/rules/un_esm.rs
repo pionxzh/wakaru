@@ -248,6 +248,42 @@ impl VisitMut for UnEsm {
             }
         }
 
+        // TypeScript CJS enums emit a dummy `exports.X = void 0` and then
+        // publish members through `exports.X || (exports.X = {})`. That second
+        // write is nested, so it is not a top-level Named value and must not
+        // be treated as `value_writes == 1`. If later Keep code still names
+        // `exports.X`, keep the dummy as `export let X` and rewrite the reads.
+        let referenced_export_names =
+            collect_unresolved_exports_member_names(&classified, self.unresolved_mark);
+        let mut promoted_void_exports: HashSet<Atom> = HashSet::new();
+        for entry in &export_entries {
+            let Some(name) = entry.name.as_ref() else {
+                continue;
+            };
+            if !entry.is_void || last_real.contains_key(&entry.name) {
+                continue;
+            }
+            if !referenced_export_names.contains(name) {
+                continue;
+            }
+            if all_declared_names.contains(name) || is_reserved_binding_name(name) {
+                continue;
+            }
+            promoted_void_exports.insert(name.clone());
+        }
+        let mut kept_void_for_name: HashSet<Atom> = HashSet::new();
+        for entry in &export_entries {
+            let Some(name) = entry.name.as_ref() else {
+                continue;
+            };
+            if !promoted_void_exports.contains(name) {
+                continue;
+            }
+            if kept_void_for_name.insert(name.clone()) {
+                drop_set.remove(&entry.classified_idx);
+            }
+        }
+
         // A require binding used exclusively by kept live re-export getters no
         // longer needs a local import. The export-from declaration itself is
         // the module evaluation dependency. If any getter is dropped or the
@@ -558,6 +594,14 @@ impl VisitMut for UnEsm {
             }
         }
 
+        if !promoted_void_exports.is_empty() {
+            rewrite_promoted_void_export_refs(
+                &mut new_body,
+                self.unresolved_mark,
+                &promoted_void_exports,
+            );
+        }
+
         recover_stable_commonjs_reads(&mut new_body, self.unresolved_mark, &commonjs_read_recovery);
         merge_decl_and_named_export(&mut new_body);
         inline_adjacent_default_export_aliases(&mut new_body);
@@ -821,6 +865,96 @@ impl Visit for UnresolvedBindingIdCollector<'_> {
 /// object as `this`. Function declarations are skipped because hoisting allows
 /// a later declaration body to run before an earlier-looking export
 /// assignment.
+fn collect_unresolved_exports_member_names(
+    classified: &[Classified],
+    unresolved_mark: Mark,
+) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    let mut collector = UnresolvedExportsMemberCollector {
+        unresolved_mark,
+        names: &mut names,
+    };
+    for item in classified {
+        if let Classified::Keep(module_item) = item {
+            module_item.visit_with(&mut collector);
+        }
+    }
+    names
+}
+
+struct UnresolvedExportsMemberCollector<'a> {
+    unresolved_mark: Mark,
+    names: &'a mut HashSet<Atom>,
+}
+
+impl Visit for UnresolvedExportsMemberCollector<'_> {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if let Some(name) = unresolved_exports_named_member(member, self.unresolved_mark) {
+            self.names.insert(name);
+        }
+        member.visit_children_with(self);
+    }
+}
+
+fn unresolved_exports_named_member(member: &MemberExpr, unresolved_mark: Mark) -> Option<Atom> {
+    let Expr::Ident(object) = strip_parens(&member.obj) else {
+        return None;
+    };
+    if !is_unresolved_ident(object, "exports", unresolved_mark) {
+        return None;
+    }
+    is_ident_prop(&member.prop).filter(|name| name.as_ref() != "default")
+}
+
+fn rewrite_promoted_void_export_refs(
+    body: &mut [ModuleItem],
+    unresolved_mark: Mark,
+    promoted: &HashSet<Atom>,
+) {
+    for item in body {
+        item.visit_mut_with(&mut PromotedVoidExportRewriter {
+            unresolved_mark,
+            promoted,
+        });
+    }
+}
+
+struct PromotedVoidExportRewriter<'a> {
+    unresolved_mark: Mark,
+    promoted: &'a HashSet<Atom>,
+}
+
+impl VisitMut for PromotedVoidExportRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        let Expr::Member(member) = expr else {
+            return;
+        };
+        let Some(name) = unresolved_exports_named_member(member, self.unresolved_mark) else {
+            return;
+        };
+        if self.promoted.contains(&name) {
+            *expr = Expr::Ident(make_ident(name));
+        }
+    }
+
+    fn visit_mut_assign_target(&mut self, target: &mut AssignTarget) {
+        target.visit_mut_children_with(self);
+        let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
+            return;
+        };
+        let Some(name) = unresolved_exports_named_member(member, self.unresolved_mark) else {
+            return;
+        };
+        if self.promoted.contains(&name) {
+            *target = AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: make_ident(name),
+                type_ann: None,
+            }));
+        }
+    }
+}
+
 fn recover_stable_commonjs_reads(
     body: &mut [ModuleItem],
     unresolved_mark: Mark,
@@ -2658,7 +2792,33 @@ fn build_export_items(
                 }))]
             }
         }
-        CjsExportKind::Named { is_void: true, .. } => vec![], // should have been dropped
+        CjsExportKind::Named {
+            name,
+            is_void: true,
+            ..
+        } => {
+            used_names.insert(name.clone());
+            // Dummy `exports.X = void 0` kept because later code still
+            // references `exports.X` (typically `exports.X || (exports.X = {})`).
+            vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span,
+                decl: Decl::Var(Box::new(VarDecl {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    kind: VarDeclKind::Let,
+                    declare: false,
+                    decls: vec![VarDeclarator {
+                        span: DUMMY_SP,
+                        name: Pat::Ident(BindingIdent {
+                            id: make_ident(name),
+                            type_ann: None,
+                        }),
+                        init: None,
+                        definite: false,
+                    }],
+                })),
+            }))]
+        }
         CjsExportKind::SelfRef => vec![],
     }
 }
