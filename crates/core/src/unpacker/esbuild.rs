@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool,
-    CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt,
-    FnDecl, ForInStmt, Function, Ident, IdentName, ImportDecl, ImportSpecifier, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit,
+    ArrowExpr, ArrowFunctionBody, AssignTarget, AssignTargetPat, BindingIdent, Bool, CallExpr,
+    Callee, ClassDecl, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnDecl,
+    ForInStmt, Function, FunctionBody, Ident, IdentName, ImportDecl, ImportSpecifier, KeyValueProp,
+    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit,
     ObjectPatProp, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, VarDecl,
     VarDeclKind, VarDeclarator,
 };
@@ -1312,8 +1312,8 @@ fn is_lazy_helper(expr: &Expr) -> bool {
         return false;
     }
     let body_expr = match &*outer.body {
-        BlockStmtOrExpr::Expr(e) => e,
-        BlockStmtOrExpr::BlockStmt(_) => return false,
+        ArrowFunctionBody::Expr(e) => e,
+        ArrowFunctionBody::FunctionBody(_) => return false,
     };
     matches!(**body_expr, Expr::Arrow(_) | Expr::Fn(_))
 }
@@ -1548,8 +1548,8 @@ fn take_factory_body(decl: &mut VarDeclarator) -> Option<Vec<Stmt>> {
             Some(std::mem::take(&mut method.function.body.as_mut()?.stmts))
         }
         Expr::Arrow(arrow) => match arrow.body.as_mut() {
-            BlockStmtOrExpr::BlockStmt(block) => Some(std::mem::take(&mut block.stmts)),
-            BlockStmtOrExpr::Expr(expr) => {
+            ArrowFunctionBody::FunctionBody(block) => Some(std::mem::take(&mut block.stmts)),
+            ArrowFunctionBody::Expr(expr) => {
                 let expr = std::mem::replace(expr, Box::new(Expr::Invalid(Default::default())));
                 Some(vec![Stmt::Expr(ExprStmt {
                     span: DUMMY_SP,
@@ -1699,8 +1699,8 @@ fn collect_factory_analysis_bindings(
             FactoryBodyRef::Stmts(&method.function.body.as_ref()?.stmts)
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => FactoryBodyRef::Stmts(&block.stmts),
-            BlockStmtOrExpr::Expr(expr) => FactoryBodyRef::Expr(expr),
+            ArrowFunctionBody::FunctionBody(block) => FactoryBodyRef::Stmts(&block.stmts),
+            ArrowFunctionBody::Expr(expr) => FactoryBodyRef::Expr(expr),
         },
         Expr::Fn(fn_expr) => FactoryBodyRef::Stmts(&fn_expr.function.body.as_ref()?.stmts),
         _ => return None,
@@ -1789,8 +1789,8 @@ fn call_target_helper_sym(call: &CallExpr, helper_syms: &HashSet<Atom>) -> Optio
 
 fn arrow_body_stmts(arrow: &ArrowExpr) -> Vec<Stmt> {
     match &*arrow.body {
-        BlockStmtOrExpr::BlockStmt(block) => block.stmts.clone(),
-        BlockStmtOrExpr::Expr(expr) => vec![Stmt::Expr(ExprStmt {
+        ArrowFunctionBody::FunctionBody(block) => block.stmts.clone(),
+        ArrowFunctionBody::Expr(expr) => vec![Stmt::Expr(ExprStmt {
             span: Default::default(),
             expr: expr.clone(),
         })],
@@ -3361,7 +3361,7 @@ fn is_export_helper(expr: &Expr) -> bool {
     if arrow.params.len() != 2 {
         return false;
     }
-    let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body else {
+    let ArrowFunctionBody::FunctionBody(block) = &*arrow.body else {
         return false;
     };
     if block.stmts.len() != 1 {
@@ -3457,7 +3457,7 @@ fn extract_export_entries(item: &ModuleItem) -> Vec<(Atom, BindingId)> {
         let Expr::Arrow(arrow) = &*kv.value else {
             continue;
         };
-        if let BlockStmtOrExpr::Expr(body_expr) = &*arrow.body {
+        if let ArrowFunctionBody::Expr(body_expr) = &*arrow.body {
             if let Expr::Ident(id) = &**body_expr {
                 entries.push((export_name, (id.sym.clone(), id.ctxt)));
             }
@@ -4338,7 +4338,7 @@ fn make_namespace_define_property_items(
                                         span: DUMMY_SP,
                                         ctxt: SyntaxContext::empty(),
                                         params: Vec::new(),
-                                        body: Box::new(BlockStmtOrExpr::Expr(Box::new(
+                                        body: Box::new(ArrowFunctionBody::Expr(Box::new(
                                             Expr::Ident(Ident::new(
                                                 binding_name.clone(),
                                                 DUMMY_SP,
@@ -4647,7 +4647,7 @@ fn is_noop_arrow_expr(expr: &Expr) -> bool {
     params.is_empty()
         && matches!(
             &**body,
-            BlockStmtOrExpr::BlockStmt(block) if block.stmts.is_empty()
+            ArrowFunctionBody::FunctionBody(block) if block.stmts.is_empty()
         )
 }
 
@@ -4662,9 +4662,9 @@ fn make_noop_export_function(name: &Atom) -> ModuleItem {
                 decorators: vec![],
                 span: Default::default(),
                 ctxt: Default::default(),
-                body: Some(BlockStmt {
+                this_param: None,
+                body: Some(FunctionBody {
                     span: Default::default(),
-                    ctxt: Default::default(),
                     stmts: vec![],
                 }),
                 is_generator: false,

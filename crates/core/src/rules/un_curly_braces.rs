@@ -1,7 +1,7 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, Decl, DoWhileStmt, EmptyStmt, Expr, ForInStmt,
-    ForOfStmt, ForStmt, IfStmt, ReturnStmt, Stmt, VarDeclKind, WhileStmt,
+    ArrowExpr, ArrowFunctionBody, BlockStmt, Decl, DoWhileStmt, EmptyStmt, Expr, ForInStmt,
+    ForOfStmt, ForStmt, FunctionBody, IfStmt, ReturnStmt, Stmt, VarDeclKind, WhileStmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -89,13 +89,14 @@ impl VisitMut for UnCurlyBraces {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         arrow.visit_mut_children_with(self);
 
-        if !matches!(&*arrow.body, BlockStmtOrExpr::Expr(expr) if needs_block_normalization(expr)) {
+        if !matches!(&*arrow.body, ArrowFunctionBody::Expr(expr) if needs_block_normalization(expr))
+        {
             return;
         }
 
         let taken = std::mem::replace(
             &mut *arrow.body,
-            BlockStmtOrExpr::Expr(Box::new(Expr::Lit(swc_core::ecma::ast::Lit::Num(
+            ArrowFunctionBody::Expr(Box::new(Expr::Lit(swc_core::ecma::ast::Lit::Num(
                 swc_core::ecma::ast::Number {
                     span: DUMMY_SP,
                     value: 0.0,
@@ -105,9 +106,8 @@ impl VisitMut for UnCurlyBraces {
         );
 
         *arrow.body = match taken {
-            BlockStmtOrExpr::Expr(expr) => BlockStmtOrExpr::BlockStmt(BlockStmt {
+            ArrowFunctionBody::Expr(expr) => ArrowFunctionBody::FunctionBody(FunctionBody {
                 span: DUMMY_SP,
-                ctxt: Default::default(),
                 stmts: vec![Stmt::Return(ReturnStmt {
                     span: DUMMY_SP,
                     arg: Some(expr),

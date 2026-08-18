@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember,
-    ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident,
+    AssignOp, AssignTarget, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod,
+    Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident,
     IdentName, Lit, MemberProp, MethodKind, ModuleDecl, ModuleItem, Param, ParamOrTsParamProp, Pat,
     PropName, SimpleAssignTarget, Stmt, VarDeclKind,
 };
@@ -1292,9 +1292,8 @@ fn build_constructor_from_fn(
     func: &Function,
     super_class_binding: Option<&BindingKey>,
 ) -> Constructor {
-    let mut body = func.body.clone().unwrap_or(BlockStmt {
+    let mut body = func.body.clone().unwrap_or(FunctionBody {
         span: DUMMY_SP,
-        ctxt: Default::default(),
         stmts: vec![],
     });
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BlockStmtOrExpr, CallExpr, Callee,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee,
     CatchClause, ClassDecl, CondExpr, Decl, ExportDecl, ExportSpecifier, Expr, ExprOrSpread,
     FnDecl, Function, Ident, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleItem, ObjectLit, ObjectPat, ObjectPatProp, Param, ParenExpr, Pat, Prop,
@@ -127,7 +127,7 @@ fn compiled_script_setup_from_function(function: &Function) -> Option<CompiledSc
 }
 
 fn compiled_script_setup_from_arrow(arrow: &ArrowExpr) -> Option<CompiledScriptSetup<'_>> {
-    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
         return None;
     };
     if !has_script_setup_marker(body) {
@@ -180,7 +180,7 @@ fn named_object_pat_binding<'a>(pat: &'a Pat, name: &str) -> Option<&'a Ident> {
     })
 }
 
-fn has_script_setup_marker(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+fn has_script_setup_marker(body: &swc_core::ecma::ast::FunctionBody) -> bool {
     struct MarkerFinder(bool);
 
     impl Visit for MarkerFinder {

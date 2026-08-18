@@ -3,14 +3,14 @@ use std::collections::{hash_map::Entry, HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function, Id, Ident,
-    IdentName, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
-    ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr,
-    SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryOp, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
+    CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function,
+    FunctionBody, Id, Ident, IdentName, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    NamedExport, ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -1410,8 +1410,8 @@ fn export_star_callback(expr: &Expr) -> Option<(Ident, &Expr)> {
                 return None;
             };
             let expr = match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => single_expr_stmt(block)?,
-                BlockStmtOrExpr::Expr(expr) => expr.as_ref(),
+                ArrowFunctionBody::FunctionBody(block) => single_expr_stmt(block)?,
+                ArrowFunctionBody::Expr(expr) => expr.as_ref(),
             };
             Some((key.id.clone(), expr))
         }
@@ -1419,7 +1419,7 @@ fn export_star_callback(expr: &Expr) -> Option<(Ident, &Expr)> {
     }
 }
 
-fn single_expr_stmt(block: &BlockStmt) -> Option<&Expr> {
+fn single_expr_stmt(block: &FunctionBody) -> Option<&Expr> {
     if block.stmts.len() != 1 {
         return None;
     }
@@ -1785,7 +1785,7 @@ fn extract_unused_iife_webpack_export_getter_body(
     let Expr::Arrow(arrow) = strip_parens(callee_expr.as_ref()) else {
         return None;
     };
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
         return None;
     };
     if block_has_top_level_return(block) || block_contains_arguments_ident(block) {
@@ -1810,21 +1810,24 @@ fn extract_unused_iife_webpack_export_getter_body(
     Some(items)
 }
 
-fn block_contains_direct_webpack_export_getter(block: &BlockStmt, unresolved_mark: Mark) -> bool {
+fn block_contains_direct_webpack_export_getter(
+    block: &FunctionBody,
+    unresolved_mark: Mark,
+) -> bool {
     block.stmts.iter().any(|stmt| {
         extract_direct_webpack_export_getters(&ModuleItem::Stmt(stmt.clone()), unresolved_mark)
             .is_some()
     })
 }
 
-fn block_has_top_level_return(block: &BlockStmt) -> bool {
+fn block_has_top_level_return(block: &FunctionBody) -> bool {
     block
         .stmts
         .iter()
         .any(|stmt| matches!(stmt, Stmt::Return(_)))
 }
 
-fn arrow_params_used_in_block(arrow: &ArrowExpr, block: &BlockStmt) -> bool {
+fn arrow_params_used_in_block(arrow: &ArrowExpr, block: &FunctionBody) -> bool {
     let params: Vec<Ident> = arrow
         .params
         .iter()
@@ -1861,7 +1864,7 @@ impl Visit for IdentUseFinder<'_> {
     }
 }
 
-fn block_contains_arguments_ident(block: &BlockStmt) -> bool {
+fn block_contains_arguments_ident(block: &FunctionBody) -> bool {
     let mut finder = ArgumentsIdentFinder { found: false };
     block.visit_with(&mut finder);
     finder.found
@@ -1984,7 +1987,7 @@ fn is_webpack_export_getter_loop(
     target_param: &Ident,
     map_param: &Ident,
 ) -> bool {
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
         return false;
     };
     if block.stmts.len() != 1 {
@@ -2148,15 +2151,15 @@ fn extract_getter_expr_return_expr(expr: &Expr) -> Option<Box<Expr>> {
                 return None;
             }
             match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => extract_single_return_expr(block),
-                BlockStmtOrExpr::Expr(expr) => Some(expr.clone()),
+                ArrowFunctionBody::FunctionBody(block) => extract_single_return_expr(block),
+                ArrowFunctionBody::Expr(expr) => Some(expr.clone()),
             }
         }
         _ => None,
     }
 }
 
-fn extract_single_return_expr(block: &BlockStmt) -> Option<Box<Expr>> {
+fn extract_single_return_expr(block: &FunctionBody) -> Option<Box<Expr>> {
     if block.stmts.len() != 1 {
         return None;
     }

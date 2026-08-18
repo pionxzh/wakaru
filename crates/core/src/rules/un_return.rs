@@ -1,6 +1,6 @@
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, Expr, ExprStmt, Function, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
+    ArrowExpr, ArrowFunctionBody, Expr, ExprStmt, Function, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -30,7 +30,7 @@ impl VisitMut for UnReturn {
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         arrow.visit_mut_children_with(self);
-        if let BlockStmtOrExpr::BlockStmt(block) = &mut *arrow.body {
+        if let ArrowFunctionBody::FunctionBody(block) = &mut *arrow.body {
             simplify_tail_return(&mut block.stmts, false, self.unresolved_mark);
         }
     }

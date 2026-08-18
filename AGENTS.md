@@ -106,6 +106,16 @@ declaration kind of the statements you consumed (or `var`) — never hardcode
 analysis, and it never widens an existing `const`, so a hardcoded `const` on a
 binding that is later reassigned becomes a runtime `TypeError`.
 
+### Function bodies are not blocks
+
+Since swc_core 77, function/method/constructor/accessor bodies (and
+block-bodied arrow bodies) are `FunctionBody` nodes, not `BlockStmt` —
+`visit_mut_block_stmt` never fires for them. A visitor that must see both
+statement lists needs both overrides (`visit_mut_block_stmt` and
+`visit_mut_function_body`). Getter/setter props wrap a `Function`, so
+`visit_mut_function` overrides fire for accessor bodies too. Standalone
+blocks, `catch` clauses, and class static blocks remain `BlockStmt`.
+
 ### Scope-aware identifier matching
 
 If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding:

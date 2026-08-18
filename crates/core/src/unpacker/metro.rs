@@ -68,7 +68,7 @@ impl MetroModuleId {
 struct MetroModuleDescriptor<'a> {
     id: MetroModuleId,
     params: Vec<Atom>,
-    body: &'a BlockStmt,
+    body: &'a FunctionBody,
     dependencies: HashMap<usize, Option<MetroModuleId>>,
     dependency_map_expr: Option<Box<Expr>>,
 }
@@ -262,7 +262,7 @@ fn parse_module_definition(call: &CallExpr) -> Option<MetroModuleDescriptor<'_>>
     })
 }
 
-fn factory_parts(expr: &Expr) -> Option<(Vec<Atom>, &BlockStmt)> {
+fn factory_parts(expr: &Expr) -> Option<(Vec<Atom>, &FunctionBody)> {
     match strip_parens(expr) {
         Expr::Fn(function) => {
             let body = function.function.body.as_ref()?;
@@ -275,7 +275,7 @@ fn factory_parts(expr: &Expr) -> Option<(Vec<Atom>, &BlockStmt)> {
             Some((params, body))
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
                 return None;
             };
             let params = arrow
@@ -753,7 +753,7 @@ impl Visit for MetroDependencyMapRefFinder {
     fn visit_binding_ident(&mut self, _: &BindingIdent) {}
 }
 
-fn source_fallback_for_body(cm: &SourceMap, body: &BlockStmt) -> String {
+fn source_fallback_for_body(cm: &SourceMap, body: &FunctionBody) -> String {
     let (Some(first), Some(last)) = (body.stmts.first(), body.stmts.last()) else {
         return String::new();
     };

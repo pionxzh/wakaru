@@ -26,9 +26,9 @@
 
 use swc_core::common::{Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr,
-    Callee, Decl, Expr, ExprStmt, FnExpr, Function, Ident, MemberProp, MetaPropExpr, MetaPropKind,
-    Pat, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowFunctionBody, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
+    CallExpr, Callee, Decl, Expr, ExprStmt, FnExpr, Function, FunctionBody, Ident, MemberProp,
+    MetaPropExpr, MetaPropKind, Pat, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -88,7 +88,7 @@ fn build_namespace_block(stmt: &Stmt) -> Option<BlockStmt> {
     })
 }
 
-fn namespace_callee(call: &CallExpr) -> Option<(BindingIdent, &BlockStmt)> {
+fn namespace_callee(call: &CallExpr) -> Option<(BindingIdent, &FunctionBody)> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
@@ -102,7 +102,7 @@ fn namespace_callee(call: &CallExpr) -> Option<(BindingIdent, &BlockStmt)> {
             let Pat::Ident(binding) = &arrow.params[0] else {
                 return None;
             };
-            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             Some((binding.clone(), body))
@@ -111,7 +111,7 @@ fn namespace_callee(call: &CallExpr) -> Option<(BindingIdent, &BlockStmt)> {
     }
 }
 
-fn function_namespace_parts(function: &Function) -> Option<(BindingIdent, &BlockStmt)> {
+fn function_namespace_parts(function: &Function) -> Option<(BindingIdent, &FunctionBody)> {
     if function.is_async || function.is_generator || function.params.len() != 1 {
         return None;
     }
@@ -220,7 +220,7 @@ fn same_binding(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt
 }
 
-fn has_function_scope_hazard(body: &BlockStmt) -> bool {
+fn has_function_scope_hazard(body: &FunctionBody) -> bool {
     let mut eval = DirectEvalFinder::default();
     body.visit_with(&mut eval);
     if eval.found {

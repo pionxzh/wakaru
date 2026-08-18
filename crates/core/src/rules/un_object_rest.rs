@@ -5,8 +5,8 @@ use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, Span, Spanned};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
-    BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, ComputedPropName, CondExpr,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget,
+    AssignTargetPat, BinaryOp, BindingIdent, Bool, CallExpr, Callee, ComputedPropName, CondExpr,
     Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, JSXElementName,
     KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
     ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget, Stmt, VarDecl,
@@ -535,7 +535,7 @@ fn swc_typeof_callable_matches(expr: &Expr, unresolved_mark: Mark) -> bool {
             let Pat::Ident(param) = &arrow.params[0] else {
                 return false;
             };
-            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
                 return false;
             };
             swc_typeof_block_matches(&block.stmts, &param.id, unresolved_mark)
@@ -704,11 +704,11 @@ fn property_key_coercion_callable_matches(
                 return false;
             };
             match arrow.body.as_ref() {
-                BlockStmtOrExpr::Expr(expr) => {
+                ArrowFunctionBody::Expr(expr) => {
                     property_key_cond_candidate(expr, typeof_helpers, unresolved_mark)
                         .is_some_and(|candidate| candidate == binding_key(&param.id))
                 }
-                BlockStmtOrExpr::BlockStmt(block) => property_key_block_matches(
+                ArrowFunctionBody::FunctionBody(block) => property_key_block_matches(
                     &block.stmts,
                     &param.id,
                     typeof_helpers,
@@ -1496,7 +1496,7 @@ fn esbuild_object_rest_helper_matches(
 
 fn object_rest_helper_two_param_block(
     expr: &Expr,
-) -> Option<(&Ident, &Ident, &swc_core::ecma::ast::BlockStmt)> {
+) -> Option<(&Ident, &Ident, &swc_core::ecma::ast::FunctionBody)> {
     match strip_parens(expr) {
         Expr::Arrow(arrow) => {
             if arrow.params.len() != 2 {
@@ -1504,7 +1504,7 @@ fn object_rest_helper_two_param_block(
             }
             let source = pat_ident(&arrow.params[0])?;
             let excluded = pat_ident(&arrow.params[1])?;
-            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
                 return None;
             };
             Some((source, excluded, block))
@@ -1548,7 +1548,7 @@ fn find_empty_object_accumulator_ident(stmts: &[Stmt]) -> Option<Ident> {
     None
 }
 
-fn block_returns_binding(block: &swc_core::ecma::ast::BlockStmt, binding: &Ident) -> bool {
+fn block_returns_binding(block: &swc_core::ecma::ast::FunctionBody, binding: &Ident) -> bool {
     matches!(
         block.stmts.last(),
         Some(Stmt::Return(ret))
@@ -2618,7 +2618,7 @@ fn try_extract_owp_call(
     let callee = strip_parens(callee);
     let body_stmts = match callee {
         Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 2 => match &**body {
-            BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
+            ArrowFunctionBody::FunctionBody(block) => &block.stmts,
             _ => return None,
         },
         Expr::Fn(FnExpr { function, .. }) if function.params.len() == 2 => {

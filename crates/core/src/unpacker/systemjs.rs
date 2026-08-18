@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, EsVersion,
-    ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Function, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
+    ArrayLit, ArrowFunctionBody, BindingIdent, CallExpr, Callee, Decl, EsVersion, ExportDecl,
+    ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread, ExprStmt, FnExpr,
+    Function, FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
     ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp, MetaPropExpr,
     MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectLit,
     ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, Str, UnaryOp, VarDecl,
@@ -90,7 +90,7 @@ fn try_unpack_dynamic_export_bundle(
     crate::unpacker::try_unpack_bundle(&source).ok().flatten()
 }
 
-fn dynamic_export_expr<'a>(body: &'a BlockStmt, export_sym: &Atom) -> Option<&'a Expr> {
+fn dynamic_export_expr<'a>(body: &'a FunctionBody, export_sym: &Atom) -> Option<&'a Expr> {
     if body.stmts.len() != 1 {
         return None;
     }
@@ -215,7 +215,7 @@ fn is_register_expr_stmt(expr: &ExprStmt) -> bool {
     )
 }
 
-fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
+fn iife_body(expr: &Expr) -> Option<&FunctionBody> {
     match expr {
         Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
         Expr::Unary(unary) if unary.op == UnaryOp::Bang => iife_body(unary.arg.as_ref()),
@@ -223,8 +223,8 @@ fn iife_body(expr: &Expr) -> Option<&BlockStmt> {
             Callee::Expr(callee) => match callee.as_ref() {
                 Expr::Fn(function) => function.function.body.as_ref(),
                 Expr::Arrow(arrow) => match arrow.body.as_ref() {
-                    BlockStmtOrExpr::BlockStmt(body) => Some(body),
-                    BlockStmtOrExpr::Expr(_) => None,
+                    ArrowFunctionBody::FunctionBody(body) => Some(body),
+                    ArrowFunctionBody::Expr(_) => None,
                 },
                 Expr::Paren(paren) => iife_body(paren.expr.as_ref()),
                 _ => None,
@@ -257,7 +257,7 @@ fn extract_function(expr: &Expr) -> Option<Function> {
         Expr::Fn(FnExpr { function, .. }) => Some(*function.clone()),
         Expr::Paren(paren) => extract_function(paren.expr.as_ref()),
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             let params = arrow
@@ -275,6 +275,7 @@ fn extract_function(expr: &Expr) -> Option<Function> {
                 decorators: vec![],
                 span: DUMMY_SP,
                 ctxt: Default::default(),
+                this_param: None,
                 body: Some(body.clone()),
                 is_generator: arrow.is_generator,
                 is_async: arrow.is_async,
@@ -332,7 +333,7 @@ struct RegisterDescriptor {
     execute: Function,
 }
 
-fn extract_register_descriptor(body: &BlockStmt) -> Option<RegisterDescriptor> {
+fn extract_register_descriptor(body: &FunctionBody) -> Option<RegisterDescriptor> {
     let return_stmt = body.stmts.iter().find_map(|stmt| match stmt {
         Stmt::Return(ReturnStmt { arg: Some(arg), .. }) => Some(arg.as_ref()),
         _ => None,
@@ -387,7 +388,7 @@ fn extract_setters(expr: &Expr) -> Option<Vec<Option<Function>>> {
     Some(setters)
 }
 
-fn outer_hoisted_stmts(body: &BlockStmt, imported_locals: &HashSet<Atom>) -> Vec<Stmt> {
+fn outer_hoisted_stmts(body: &FunctionBody, imported_locals: &HashSet<Atom>) -> Vec<Stmt> {
     let mut out = Vec::new();
     for stmt in &body.stmts {
         match stmt {

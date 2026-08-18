@@ -392,8 +392,8 @@ pub fn binding_replacement_would_be_shadowed(
             pat_binds_name(pat, self.replacement_name)
         }
 
-        fn block_binds_replacement(&self, block: &BlockStmt) -> bool {
-            block_binds_name(block, self.replacement_name)
+        fn block_binds_replacement(&self, stmts: &[Stmt]) -> bool {
+            block_binds_name(stmts, self.replacement_name)
         }
 
         fn is_old_ident(&self, ident: &Ident) -> bool {
@@ -475,7 +475,7 @@ pub fn binding_replacement_would_be_shadowed(
             let body_shadow = function
                 .body
                 .as_ref()
-                .is_some_and(|body| self.block_binds_replacement(body));
+                .is_some_and(|body| self.block_binds_replacement(&body.stmts));
             self.scope_stack.push(params_shadow || body_shadow);
 
             for param in &function.params {
@@ -494,10 +494,10 @@ pub fn binding_replacement_would_be_shadowed(
                 .iter()
                 .any(|param| self.pat_binds_replacement(param));
             let body_shadow = match arrow.body.as_ref() {
-                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => {
-                    self.block_binds_replacement(body)
+                swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) => {
+                    self.block_binds_replacement(&body.stmts)
                 }
-                swc_core::ecma::ast::BlockStmtOrExpr::Expr(_) => false,
+                swc_core::ecma::ast::ArrowFunctionBody::Expr(_) => false,
             };
             self.scope_stack.push(params_shadow || body_shadow);
 
@@ -510,7 +510,7 @@ pub fn binding_replacement_would_be_shadowed(
         }
 
         fn visit_block_stmt(&mut self, block: &BlockStmt) {
-            let body_shadow = self.block_binds_replacement(block);
+            let body_shadow = self.block_binds_replacement(&block.stmts);
             self.scope_stack.push(body_shadow);
             block.visit_children_with(self);
             self.scope_stack.pop();
@@ -521,7 +521,7 @@ pub fn binding_replacement_would_be_shadowed(
                 .param
                 .as_ref()
                 .is_some_and(|param| self.pat_binds_replacement(param));
-            let body_shadow = self.block_binds_replacement(&catch.body);
+            let body_shadow = self.block_binds_replacement(&catch.body.stmts);
             self.scope_stack.push(param_shadow || body_shadow);
 
             if let Some(param) = &catch.param {
@@ -600,7 +600,7 @@ where
     node.visit_mut_with(&mut renamer);
 }
 
-fn block_binds_name(block: &BlockStmt, name: &Atom) -> bool {
+fn block_binds_name(stmts: &[Stmt], name: &Atom) -> bool {
     struct Collector<'a> {
         name: &'a Atom,
         found: bool,
@@ -654,7 +654,9 @@ fn block_binds_name(block: &BlockStmt, name: &Atom) -> bool {
     }
 
     let mut collector = Collector { name, found: false };
-    block.visit_with(&mut collector);
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
     collector.found
 }
 

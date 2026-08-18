@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, TaggedTpl, Tpl,
+    ArrowFunctionBody, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Decl, Expr,
+    Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, TaggedTpl, Tpl,
     TplElement,
 };
 use swc_core::ecma::utils::ExprFactory;
@@ -445,8 +445,8 @@ fn is_inline_template_helper(expr: &Expr) -> bool {
                     .iter()
                     .all(|param| matches!(param, Pat::Ident(_)))
                 && match arrow.body.as_ref() {
-                    BlockStmtOrExpr::Expr(_) => true,
-                    BlockStmtOrExpr::BlockStmt(body) => body
+                    ArrowFunctionBody::Expr(_) => true,
+                    ArrowFunctionBody::FunctionBody(body) => body
                         .stmts
                         .iter()
                         .any(|stmt| matches!(stmt, Stmt::Return(_))),

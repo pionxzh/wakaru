@@ -222,7 +222,7 @@ fn top_level_call(expr: &Expr) -> Option<&CallExpr> {
     }
 }
 
-fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &BlockStmt)> {
+fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &FunctionBody)> {
     let Callee::Expr(callee_expr) = callee else {
         return None;
     };
@@ -231,7 +231,7 @@ fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &BlockStmt)> {
             Some((function_params(&function.params), function.body.as_ref()?))
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
                 return None;
             };
             Some((pat_params(&arrow.params), body))
@@ -264,7 +264,7 @@ fn factory_to_module(
         Expr::Arrow(arrow) => {
             let params = pat_params(&arrow.params);
             match &*arrow.body {
-                BlockStmtOrExpr::BlockStmt(body) => Some(module_from_factory_parts(
+                ArrowFunctionBody::FunctionBody(body) => Some(module_from_factory_parts(
                     body.stmts.clone(),
                     None,
                     deps,
@@ -273,7 +273,7 @@ fn factory_to_module(
                     module_id,
                     id_to_filename,
                 )),
-                BlockStmtOrExpr::Expr(expr) => Some(module_from_factory_parts(
+                ArrowFunctionBody::Expr(expr) => Some(module_from_factory_parts(
                     Vec::new(),
                     Some(strip_parens(expr).clone()),
                     deps,

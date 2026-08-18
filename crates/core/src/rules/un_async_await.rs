@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CallExpr, Callee, Decl,
-    Expr, ExprOrSpread, ExprStmt, Function, Ident, IfStmt, MemberExpr, Module, Param, Pat, Prop,
-    PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDecl, VarDeclKind,
-    VarDeclarator, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, CallExpr, Callee, Decl, Expr,
+    ExprOrSpread, ExprStmt, Function, FunctionBody, Ident, IfStmt, MemberExpr, Module, Param, Pat,
+    Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, VarDecl,
+    VarDeclKind, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -217,7 +217,10 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
 /// return the generator iterator itself instead of awaiting the state machine's
 /// result. Independent nested callables are transformed on their own and must
 /// not make the containing awaiter roll back.
-fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelperContext) -> bool {
+fn contains_unresolved_generator_wrapper(
+    body: &FunctionBody,
+    helpers: &AsyncHelperContext,
+) -> bool {
     struct Finder<'a> {
         helpers: &'a AsyncHelperContext,
         found: bool,
@@ -255,7 +258,7 @@ fn contains_unresolved_generator_wrapper(body: &BlockStmt, helpers: &AsyncHelper
 // ============================================================
 
 pub(crate) fn try_transform_ts_generator_body(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     generator_helpers: &[BindingKey],
     reserved_names: &HashSet<Atom>,
 ) -> bool {
@@ -271,7 +274,7 @@ pub(crate) fn try_transform_ts_generator_body(
 }
 
 fn try_transform_generator(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     helpers: &AsyncHelperContext,
     reserved_names: &HashSet<Atom>,
 ) -> bool {
@@ -1573,7 +1576,7 @@ fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> 
 // ============================================================
 
 fn try_transform_awaiter(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     helpers: &AsyncHelperContext,
     reserved_names: &HashSet<Atom>,
 ) -> Option<Vec<Stmt>> {
@@ -1818,9 +1821,9 @@ fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
             decorators: vec![],
             span: fn_span,
             ctxt: Default::default(),
-            body: Some(BlockStmt {
+            this_param: None,
+            body: Some(FunctionBody {
                 span: DUMMY_SP,
-                ctxt: Default::default(),
                 stmts,
             }),
             is_generator: false,

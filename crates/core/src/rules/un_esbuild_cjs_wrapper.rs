@@ -1,6 +1,6 @@
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function,
+    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Decl, Expr, Function,
     Ident, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Param, Pat,
     Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
 };
@@ -123,7 +123,7 @@ fn inlined_commonjs_factory_body(init: &Expr) -> Option<LiftedFactory> {
     let modules = pat_ident(&helper.params[0])?;
     let cache = pat_ident(&helper.params[1])?;
 
-    let BlockStmtOrExpr::Expr(helper_body) = helper.body.as_ref() else {
+    let ArrowFunctionBody::Expr(helper_body) = helper.body.as_ref() else {
         return None;
     };
     let Expr::Fn(require_fn) = strip_parens(helper_body.as_ref()) else {

@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, BlockStmtOrExpr, Callee, Decl, DefaultDecl,
-    ExportSpecifier, Expr, Function, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit,
-    Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BlockStmt, Callee, Decl, DefaultDecl,
+    ExportSpecifier, Expr, Function, FunctionBody, Lit, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, Pat, Prop, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, UpdateExpr,
     VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -122,8 +122,8 @@ fn function_block_stmts(function: FunctionLike<'_>) -> Option<&[Stmt]> {
             function.body.as_ref().map(|body| body.stmts.as_slice())
         }
         FunctionLike::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
-            BlockStmtOrExpr::Expr(_) => None,
+            ArrowFunctionBody::FunctionBody(block) => Some(block.stmts.as_slice()),
+            ArrowFunctionBody::Expr(_) => None,
         },
     }
 }
@@ -317,8 +317,8 @@ fn function_return_exprs(function: FunctionLike<'_>) -> Vec<Expr> {
             .map(|body| block_return_exprs(body.stmts.as_slice()))
             .unwrap_or_default(),
         FunctionLike::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => block_return_exprs(block.stmts.as_slice()),
-            BlockStmtOrExpr::Expr(expr) => vec![expr.as_ref().clone()],
+            ArrowFunctionBody::FunctionBody(block) => block_return_exprs(block.stmts.as_slice()),
+            ArrowFunctionBody::Expr(expr) => vec![expr.as_ref().clone()],
         },
     }
 }
@@ -476,12 +476,12 @@ fn function_strong_value_member_bindings(function: FunctionLike<'_>) -> HashSet<
             }
         }
         FunctionLike::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::FunctionBody(block) => {
                 for stmt in &block.stmts {
                     stmt.visit_with(&mut collector);
                 }
             }
-            BlockStmtOrExpr::Expr(expr) => {
+            ArrowFunctionBody::Expr(expr) => {
                 expr.visit_with(&mut collector);
             }
         },
@@ -555,9 +555,19 @@ impl Visit for StrongValueMemberCollector {
     }
 
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
-        let shadowed = block_shadowed_bindings(block);
+        let shadowed = block_shadowed_bindings(&block.stmts);
         let entered = self.enter_shadowed(shadowed);
         block.visit_children_with(self);
+        self.exit_shadowed(entered);
+    }
+
+    // Function bodies are a distinct node from blocks; body-level
+    // declarations are the only thing that registers nested-function locals
+    // as shadowing a Vue ref binding.
+    fn visit_function_body(&mut self, body: &FunctionBody) {
+        let shadowed = block_shadowed_bindings(&body.stmts);
+        let entered = self.enter_shadowed(shadowed);
+        body.visit_children_with(self);
         self.exit_shadowed(entered);
     }
 
@@ -586,9 +596,9 @@ impl Visit for StrongValueMemberCollector {
     }
 }
 
-fn block_shadowed_bindings(block: &BlockStmt) -> HashSet<Atom> {
+fn block_shadowed_bindings(stmts: &[Stmt]) -> HashSet<Atom> {
     let mut bindings = HashSet::new();
-    for stmt in &block.stmts {
+    for stmt in stmts {
         if let Stmt::Decl(decl) = stmt {
             collect_decl_bound_atoms(decl, &mut bindings);
         }

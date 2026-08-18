@@ -5,8 +5,8 @@ use std::rc::Rc;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, BlockStmt, CallExpr, Callee, Decl, Expr, FnExpr, Function, Ident, Module,
-    ModuleItem, Param, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    BindingIdent, BlockStmt, CallExpr, Callee, Decl, Expr, FnExpr, Function, FunctionBody, Ident,
+    Module, ModuleItem, Param, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -89,6 +89,33 @@ impl VisitMut for ExtractInlinedFunction {
             }
         }
         block.stmts = stmts;
+    }
+
+    // Function bodies are a distinct node from blocks; without this override
+    // IIFE extraction would stop working inside function bodies.
+    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
+        body.visit_mut_children_with(self);
+
+        if self.level < RewriteLevel::Aggressive {
+            return;
+        }
+        if has_direct_eval_in_scope(body) {
+            return;
+        }
+
+        let mut names = collect_stmt_binding_names(&body.stmts);
+        let mut extracted_function_names = self.extracted_function_names.borrow_mut();
+        let mut stmts = Vec::with_capacity(body.stmts.len());
+        for stmt in std::mem::take(&mut body.stmts) {
+            match extract_from_stmt(stmt, &mut names, &mut extracted_function_names) {
+                Ok((helper, stmt)) => {
+                    stmts.push(helper);
+                    stmts.push(stmt);
+                }
+                Err(stmt) => stmts.push(stmt),
+            }
+        }
+        body.stmts = stmts;
     }
 }
 

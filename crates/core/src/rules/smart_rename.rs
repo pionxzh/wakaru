@@ -5,7 +5,7 @@ use std::rc::Rc;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignPatProp, CallExpr, Callee, ClassDecl, ClassExpr,
     Decl, Expr, FnDecl, FnExpr, Function, GetterProp, Ident, ImportDecl, ImportSpecifier, JSXAttr,
     JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
     JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
@@ -200,7 +200,7 @@ fn react_rename_arrow_body(
     arrow: &mut ArrowExpr,
     pending_value_position_names: &HashMap<BindingId, String>,
 ) {
-    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() else {
+    let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_mut() else {
         return;
     };
     if !has_react_candidates_in_stmts(&body.stmts) {
@@ -713,15 +713,15 @@ fn destructuring_rename_module_with(
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     let has_param_candidates = arrow.params.iter().any(has_short_obj_pat_alias);
     let has_body_candidates = match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(b) => has_destructuring_candidates_in_stmts(&b.stmts),
+        ArrowFunctionBody::FunctionBody(b) => has_destructuring_candidates_in_stmts(&b.stmts),
         _ => false,
     };
     if !has_param_candidates && !has_body_candidates {
         return;
     }
     let mut all_names = match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(b) => collect_names_in_stmts(&b.stmts),
-        BlockStmtOrExpr::Expr(e) => {
+        ArrowFunctionBody::FunctionBody(b) => collect_names_in_stmts(&b.stmts),
+        ArrowFunctionBody::Expr(e) => {
             let mut names = HashSet::new();
             collect_names_in_expr(e, &mut names);
             names
@@ -735,7 +735,7 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     for r in &renames {
         all_names.insert(r.new.clone());
     }
-    if let BlockStmtOrExpr::BlockStmt(b) = arrow.body.as_ref() {
+    if let ArrowFunctionBody::FunctionBody(b) = arrow.body.as_ref() {
         renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
     }
     if renames.is_empty() {
@@ -743,11 +743,11 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     }
     rename_bindings(&mut arrow.params, &renames);
     match arrow.body.as_mut() {
-        BlockStmtOrExpr::BlockStmt(block) => {
+        ArrowFunctionBody::FunctionBody(block) => {
             rename_bindings(&mut block.stmts, &renames);
             block.visit_mut_with(&mut ObjectPatShorthandConverter);
         }
-        BlockStmtOrExpr::Expr(expr) => rename_bindings(expr, &renames),
+        ArrowFunctionBody::Expr(expr) => rename_bindings(expr, &renames),
     }
     let mut shorthand = ObjectPatShorthandConverter;
     arrow
@@ -1032,7 +1032,7 @@ fn member_init_rename_function(func: &mut Function) {
 }
 
 fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
+    let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_mut() else {
         return;
     };
     if !has_member_init_candidates_in_stmts(&block.stmts) {
@@ -1205,7 +1205,7 @@ fn symbol_for_rename_module_with(
 }
 
 fn symbol_for_rename_arrow(arrow: &mut ArrowExpr, unresolved_mark: Mark) {
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
+    let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_mut() else {
         return;
     };
     if !has_symbol_for_candidates_in_stmts(&block.stmts) {
@@ -1777,31 +1777,10 @@ impl BindingScopeNameIndex {
                 self.pop_scope();
             }
 
-            fn visit_getter_prop(&mut self, getter: &GetterProp) {
-                // A computed key is evaluated in the enclosing scope; only
-                // the getter body gets its own function/var scope.
-                getter.key.visit_with(self);
-                self.push_scope(true);
-                if let Some(body) = &getter.body {
-                    body.visit_with(self);
-                }
-                self.pop_scope();
-            }
-
-            fn visit_setter_prop(&mut self, setter: &swc_core::ecma::ast::SetterProp) {
-                setter.key.visit_with(self);
-                self.push_scope(true);
-                if let Some(this_param) = &setter.this_param {
-                    self.record_pat_current(this_param);
-                    this_param.visit_with(self);
-                }
-                self.record_pat_current(&setter.param);
-                setter.param.visit_with(self);
-                if let Some(body) = &setter.body {
-                    body.visit_with(self);
-                }
-                self.pop_scope();
-            }
+            // Getter/setter props need no overrides: the computed key is a
+            // direct child visited in the enclosing scope, and the backing
+            // `Function` child routes through `visit_function`, which pushes
+            // the accessor's function scope and records its params.
 
             fn visit_constructor(&mut self, constructor: &swc_core::ecma::ast::Constructor) {
                 constructor.key.visit_with(self);
@@ -1833,6 +1812,19 @@ impl BindingScopeNameIndex {
             fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
                 self.push_scope(false);
                 block.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            // Keep a body frame separate from the param frame pushed by
+            // `visit_function`, mirroring the pre-swc-29 shape where function
+            // bodies were blocks: a param referenced in the body stays out of
+            // the body frame's declared bindings and remains forbidden for
+            // body-level candidates. The rename checker independently rejects
+            // captures, so this only keeps first-choice proposals collision
+            // free instead of relying on that fallback.
+            fn visit_function_body(&mut self, body: &swc_core::ecma::ast::FunctionBody) {
+                self.push_scope(false);
+                body.visit_children_with(self);
                 self.pop_scope();
             }
 
@@ -2080,7 +2072,7 @@ impl Visit for ValuePositionClassifier {
                     return;
                 }
             }
-            if let Some(body) = &getter.body {
+            if let Some(body) = &getter.function.body {
                 body.visit_with(self);
             }
             return;
@@ -2197,7 +2189,7 @@ impl Visit for ValuePositionClassifier {
 }
 
 fn getter_single_return_ident(getter: &GetterProp) -> Option<&Ident> {
-    let body = getter.body.as_ref()?;
+    let body = getter.function.body.as_ref()?;
     if body.stmts.len() != 1 {
         return None;
     }

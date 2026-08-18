@@ -4,10 +4,10 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, Callee, Decl, Expr, ExprStmt, Function, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp,
+    BindingIdent, Callee, Decl, Expr, ExprStmt, Function, FunctionBody, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 
 use super::cross_module_helper_refs::{
@@ -403,7 +403,7 @@ fn rewrite_arrow_callback_params(
         return;
     }
 
-    if let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() {
+    if let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_mut() {
         loop {
             let matched = arrow.params.iter().enumerate().find_map(|(index, param)| {
                 let Pat::Ident(source) = param else {
@@ -451,8 +451,8 @@ fn rewrite_arrow_callback_params(
         }
         let source = source.clone();
         let expr = match arrow.body.as_mut() {
-            BlockStmtOrExpr::Expr(expr) => expr,
-            BlockStmtOrExpr::BlockStmt(body) => {
+            ArrowFunctionBody::Expr(expr) => expr,
+            ArrowFunctionBody::FunctionBody(body) => {
                 let Some(expr) = callback_direct_return_expr(&mut body.stmts) else {
                     continue;
                 };
@@ -672,7 +672,7 @@ fn pat_binds_symbol(pat: &Pat, symbol: &swc_core::atoms::Atom) -> bool {
 
 fn count_param_uses_in_function(
     params: &[Param],
-    body: &BlockStmt,
+    body: &FunctionBody,
     target: &swc_core::ecma::ast::Ident,
 ) -> usize {
     let mut counter = CallbackParamUseCounter { target, count: 0 };
@@ -683,7 +683,7 @@ fn count_param_uses_in_function(
 
 fn count_param_uses_in_arrow(
     params: &[Pat],
-    body: &BlockStmt,
+    body: &FunctionBody,
     target: &swc_core::ecma::ast::Ident,
 ) -> usize {
     let mut counter = CallbackParamUseCounter { target, count: 0 };
@@ -694,7 +694,7 @@ fn count_param_uses_in_arrow(
 
 fn count_param_uses_in_arrow_body(
     params: &[Pat],
-    body: &BlockStmtOrExpr,
+    body: &ArrowFunctionBody,
     target: &swc_core::ecma::ast::Ident,
 ) -> usize {
     let mut counter = CallbackParamUseCounter { target, count: 0 };
@@ -718,7 +718,7 @@ impl Visit for CallbackParamUseCounter<'_> {
     }
 }
 
-fn callback_body_has_dynamic_scope_hazard(body: &BlockStmt) -> bool {
+fn callback_body_has_dynamic_scope_hazard(body: &FunctionBody) -> bool {
     let mut finder = CallbackDynamicScopeFinder { found: false };
     body.visit_with(&mut finder);
     finder.found

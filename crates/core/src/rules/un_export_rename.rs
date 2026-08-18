@@ -993,7 +993,7 @@ fn extract_exported_getter_namespace(item: &ModuleItem) -> Option<Vec<(Atom, Bin
             PropName::Ident(id) => id.sym.clone(),
             _ => return None,
         };
-        let body = getter.body.as_ref()?;
+        let body = getter.function.body.as_ref()?;
         if body.stmts.len() != 1 {
             return None;
         }

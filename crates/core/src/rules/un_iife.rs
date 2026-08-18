@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, CatchClause, ClassDecl,
-    Constructor, Decl, Expr, ExprOrSpread, FnDecl, Function, GetterProp, Ident, Lit, MemberProp,
-    MethodProp, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp, Stmt, ThisExpr, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, BindingIdent, CallExpr, Callee, CatchClause, ClassDecl,
+    Constructor, Decl, Expr, ExprOrSpread, FnDecl, Function, FunctionBody, GetterProp, Ident, Lit,
+    MemberProp, MethodProp, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp, Stmt,
+    ThisExpr, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -76,7 +76,7 @@ fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
     }
     // Body must be an expression (not a block)
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(e) => Some(e.clone()),
+        ArrowFunctionBody::Expr(e) => Some(e.clone()),
         _ => None,
     }
 }
@@ -173,7 +173,7 @@ fn process_fn_iife(function: &mut Function, args: &mut Vec<ExprOrSpread>) {
 }
 
 fn process_arrow_iife(arrow: &mut ArrowExpr, args: &mut Vec<ExprOrSpread>) {
-    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() else {
+    let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_mut() else {
         return;
     };
     if should_preserve_iife_shape(body, arrow.params.len(), args.len()) {
@@ -184,7 +184,7 @@ fn process_arrow_iife(arrow: &mut ArrowExpr, args: &mut Vec<ExprOrSpread>) {
     process_arrow_params_and_args(&mut arrow.params, args, body, false);
 }
 
-fn should_preserve_iife_shape(body: &BlockStmt, param_count: usize, arg_count: usize) -> bool {
+fn should_preserve_iife_shape(body: &FunctionBody, param_count: usize, arg_count: usize) -> bool {
     // UnEs6Class detects Babel's inline `_inherits` helper from its original
     // two-param/two-arg IIFE shape. If UnIife rewrites the superclass param
     // first, that later class rewrite can lose its inheritance evidence.
@@ -194,7 +194,7 @@ fn should_preserve_iife_shape(body: &BlockStmt, param_count: usize, arg_count: u
 fn process_params_and_args(
     params: &mut Vec<Param>,
     args: &mut Vec<ExprOrSpread>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     preserve_arg_list: bool,
 ) {
     let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, true, |i| {
@@ -227,7 +227,7 @@ fn process_params_and_args(
 fn process_arrow_params_and_args(
     params: &mut Vec<Pat>,
     args: &mut Vec<ExprOrSpread>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     preserve_arg_list: bool,
 ) {
     let plan = plan_param_rewrites(params.len(), args, body, preserve_arg_list, false, |i| {
@@ -277,7 +277,7 @@ struct RewritePlan {
 fn plan_param_rewrites<F>(
     param_count: usize,
     args: &[ExprOrSpread],
-    body: &BlockStmt,
+    body: &FunctionBody,
     preserve_arg_list: bool,
     params_map_arguments: bool,
     param_at: F,
@@ -390,7 +390,7 @@ where
     plan
 }
 
-fn apply_body_rewrites(body: &mut BlockStmt, plan: &RewritePlan) {
+fn apply_body_rewrites(body: &mut FunctionBody, plan: &RewritePlan) {
     // Rename refs (sym only; keep ctxt so the inner binding stays distinct).
     for (_, old_sym, new_sym, param_ctxt) in &plan.renames {
         let mut renamer = RenameIdent {
@@ -403,7 +403,7 @@ fn apply_body_rewrites(body: &mut BlockStmt, plan: &RewritePlan) {
 }
 
 fn prepend_literal_decls(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     literal_inserts: &[(usize, Atom, SyntaxContext, Lit, VarDeclKind)],
 ) {
     if literal_inserts.is_empty() {
@@ -441,7 +441,7 @@ fn pick_non_conflicting_name(preferred: &Atom, taken: &HashSet<Atom>) -> Atom {
 /// nested function/arrow params and bodies, catch params, etc. Used to decide
 /// whether substituting an outer ident into the body could be shadowed by an
 /// inner binding with the same name.
-fn collect_all_binding_names(body: &BlockStmt) -> HashSet<Atom> {
+fn collect_all_binding_names(body: &FunctionBody) -> HashSet<Atom> {
     struct Collector {
         names: HashSet<Atom>,
     }
@@ -560,7 +560,7 @@ impl VisitMut for RenameIdent {
     }
 }
 
-fn body_uses_own_arguments(body: &BlockStmt) -> bool {
+fn body_uses_own_arguments(body: &FunctionBody) -> bool {
     struct Checker {
         found: bool,
     }
@@ -587,7 +587,7 @@ fn body_uses_own_arguments(body: &BlockStmt) -> bool {
     checker.found
 }
 
-fn body_contains_object_create(body: &BlockStmt) -> bool {
+fn body_contains_object_create(body: &FunctionBody) -> bool {
     struct Finder {
         found: bool,
     }

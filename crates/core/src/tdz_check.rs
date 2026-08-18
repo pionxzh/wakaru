@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::BytePos;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, FnDecl, Function,
-    GetterProp, Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl,
-    ModuleItem, NamedExport, ObjectPatProp, Pat, PropName, SetterProp, Stmt, VarDecl, VarDeclKind,
+    ArrowExpr, ArrowFunctionBody, BlockStmt, Class, ClassDecl, ClassMember, Decl, FnDecl, Function,
+    FunctionBody, GetterProp, Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module,
+    ModuleDecl, ModuleItem, NamedExport, ObjectPatProp, Pat, PropName, SetterProp, Stmt, VarDecl,
+    VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -116,25 +117,14 @@ impl Visit for TdzChecker {
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
         self.check_param_scope(arrow.params.iter());
-        if let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+        if let ArrowFunctionBody::FunctionBody(block) = &*arrow.body {
             self.check_scope(block);
         }
         arrow.visit_children_with(self);
     }
 
-    fn visit_getter_prop(&mut self, prop: &GetterProp) {
-        if let Some(body) = &prop.body {
-            self.check_scope(body);
-        }
-        prop.visit_children_with(self);
-    }
-
-    fn visit_setter_prop(&mut self, prop: &SetterProp) {
-        if let Some(body) = &prop.body {
-            self.check_scope(body);
-        }
-        prop.visit_children_with(self);
-    }
+    // Getter/setter props need no overrides: their backing `Function` child
+    // routes through `visit_function`, which checks the param scope and body.
 }
 
 // -- Pre-scan: collect all lexical binding IDs in a scope --
@@ -192,6 +182,13 @@ impl Visit for OrderedScopeChecker<'_> {
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
         hoist_stmts(&block.stmts, &mut self.declared);
         block.visit_children_with(self);
+    }
+
+    // `check_scope` roots the walk at a `FunctionBody`, so hoisting must
+    // fire there just like it does for standalone blocks.
+    fn visit_function_body(&mut self, body: &FunctionBody) {
+        hoist_stmts(&body.stmts, &mut self.declared);
+        body.visit_children_with(self);
     }
 
     fn visit_var_decl(&mut self, var: &VarDecl) {

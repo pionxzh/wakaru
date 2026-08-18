@@ -9,9 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    AssignExpr, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function, Ident,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat, PropName,
-    Stmt, VarDeclarator,
+    ArrowFunctionBody, AssignExpr, BinExpr, BinaryOp, CallExpr, Callee, Decl, Expr, Function,
+    Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
+    PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -486,7 +486,7 @@ fn ts_helper_callable_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
             Some((fn_expr.function.params.len(), body.stmts.as_slice()))
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             Some((arrow.params.len(), body.stmts.as_slice()))

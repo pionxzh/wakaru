@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee,
-    CatchClause, ComputedPropName, Constructor, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent,
+    Callee, CatchClause, ComputedPropName, Constructor, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt,
     Function, GetterProp, Ident, ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp,
     Module, ModuleExportName, ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName,
     SetterProp, SimpleAssignTarget, StaticBlock, Stmt, VarDecl, VarDeclKind, VarDeclarator,
@@ -186,9 +186,11 @@ impl VisitMut for SmartInline {
     fn visit_mut_getter_prop(&mut self, getter: &mut GetterProp) {
         // The key is evaluated in the enclosing activation, but the body runs
         // in a later accessor activation and cannot inherit its entry proofs.
+        // Visit the backing function's fields directly so its parameters are
+        // not seeded as entry bindings the way `visit_mut_function` would.
         getter.key.visit_mut_with(self);
         let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
-        getter.body.visit_mut_with(self);
+        getter.function.body.visit_mut_with(self);
         self.initialized_binding_scopes = outer_scopes;
     }
 
@@ -197,9 +199,9 @@ impl VisitMut for SmartInline {
         // only the computed key belongs to the enclosing activation.
         setter.key.visit_mut_with(self);
         let outer_scopes = std::mem::take(&mut self.initialized_binding_scopes);
-        setter.this_param.visit_mut_with(self);
-        setter.param.visit_mut_with(self);
-        setter.body.visit_mut_with(self);
+        setter.function.this_param.visit_mut_with(self);
+        setter.function.params.visit_mut_with(self);
+        setter.function.body.visit_mut_with(self);
         self.initialized_binding_scopes = outer_scopes;
     }
 }
@@ -275,25 +277,9 @@ impl Visit for FunctionEntrySafetyCollector<'_> {
         self.visit_nested(class);
     }
 
-    fn visit_getter_prop(&mut self, prop: &GetterProp) {
-        // The computed key is evaluated with the object literal; the body is
-        // deferred until the property is read.
-        prop.key.visit_with(self);
-        if let Some(body) = &prop.body {
-            self.visit_nested(body);
-        }
-    }
-
-    fn visit_setter_prop(&mut self, prop: &SetterProp) {
-        // The computed key is lexical, while the parameter and body are
-        // evaluated only when the property is assigned.
-        prop.key.visit_with(self);
-        self.nested_depth += 1;
-        prop.this_param.visit_with(self);
-        prop.param.visit_with(self);
-        prop.body.visit_with(self);
-        self.nested_depth -= 1;
-    }
+    // Getter/setter props need no overrides: their backing `Function` child
+    // routes through `visit_function`, which already defers params and body
+    // via `visit_nested` while the computed key stays lexical.
 
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         let mut targets = HashSet::new();
@@ -479,7 +465,7 @@ fn try_extract_zero_param_arrow_ident(expr: &Expr) -> Option<Box<Expr>> {
     if !arrow.params.is_empty() {
         return None;
     }
-    if let BlockStmtOrExpr::Expr(body_expr) = arrow.body.as_ref() {
+    if let ArrowFunctionBody::Expr(body_expr) = arrow.body.as_ref() {
         if matches!(body_expr.as_ref(), Expr::Ident(_)) {
             return Some(body_expr.clone());
         }
@@ -1303,26 +1289,9 @@ impl Visit for TempUsageCollector<'_> {
         };
         class.visit_children_with(&mut collector);
     }
-    fn visit_getter_prop(&mut self, prop: &GetterProp) {
-        prop.key.visit_with(self);
-        if let Some(body) = &prop.body {
-            let mut collector = NestedTempCollector {
-                analysis: &mut *self.analysis,
-                candidates: self.candidates,
-            };
-            body.visit_with(&mut collector);
-        }
-    }
-    fn visit_setter_prop(&mut self, prop: &SetterProp) {
-        prop.key.visit_with(self);
-        let mut collector = NestedTempCollector {
-            analysis: &mut *self.analysis,
-            candidates: self.candidates,
-        };
-        prop.this_param.visit_with(&mut collector);
-        prop.param.visit_with(&mut collector);
-        prop.body.visit_with(&mut collector);
-    }
+    // Getter/setter props need no overrides: their backing `Function` child
+    // routes through `visit_function`, which spawns a nested collector over
+    // the deferred params and body while the computed key stays lexical.
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
         self.record_for_head_mutations(&stmt.left);
         stmt.visit_children_with(self);

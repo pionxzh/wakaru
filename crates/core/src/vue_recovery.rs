@@ -5,9 +5,10 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, BlockStmtOrExpr, CallExpr, Decl, DefaultDecl, ExportDecl, ExportSpecifier,
-    Expr, ExprStmt, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, CallExpr, Decl, DefaultDecl, ExportDecl,
+    ExportSpecifier, Expr, ExprStmt, FnDecl, Function, Ident, ImportSpecifier, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, ObjectPatProp, Pat, Prop, PropOrSpread,
+    ReturnStmt, Stmt,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -1711,7 +1712,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
     match expr {
         Expr::Paren(paren) => setup_return_source_from_expr(paren.expr.as_ref()),
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::FunctionBody(block) => {
                 return_arrow_from_stmts(&block.stmts).map(|render| RenderSource::SetupArrow {
                     render,
                     setup_stmts: block.stmts.as_slice(),
@@ -1722,7 +1723,7 @@ fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
                     component_options: None,
                 })
             }
-            BlockStmtOrExpr::Expr(expr) => {
+            ArrowFunctionBody::Expr(expr) => {
                 arrow_expr(expr.as_ref()).map(|render| RenderSource::SetupArrow {
                     render,
                     setup_stmts: &[],

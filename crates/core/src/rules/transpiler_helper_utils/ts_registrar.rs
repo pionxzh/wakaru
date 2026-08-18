@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BlockStmtOrExpr, Callee, Expr, Function,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, Callee, Expr, Function,
     MemberExpr, MemberProp, Module, ReturnStmt, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -120,10 +120,10 @@ fn arrow_is_ts_helper_export_registrar(arrow: &ArrowExpr) -> bool {
         return false;
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(body) => {
+        ArrowFunctionBody::FunctionBody(body) => {
             body_writes_helper_export(&body.stmts, &name_key, &value_key)
         }
-        BlockStmtOrExpr::Expr(expr) => expr_writes_helper_export(expr, &name_key, &value_key),
+        ArrowFunctionBody::Expr(expr) => expr_writes_helper_export(expr, &name_key, &value_key),
     }
 }
 
@@ -196,8 +196,10 @@ fn callable_passes_registrar_to_param(expr: &Expr, param: &BindingKey) -> bool {
             .as_ref()
             .is_some_and(|body| body_passes_registrar_to_param(&body.stmts, param)),
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(body) => body_passes_registrar_to_param(&body.stmts, param),
-            BlockStmtOrExpr::Expr(expr) => expr_passes_registrar_to_param(expr, param),
+            ArrowFunctionBody::FunctionBody(body) => {
+                body_passes_registrar_to_param(&body.stmts, param)
+            }
+            ArrowFunctionBody::Expr(expr) => expr_passes_registrar_to_param(expr, param),
         },
         _ => false,
     }
@@ -372,11 +374,13 @@ fn arrow_returns_ts_helper_export_registrar(arrow: &ArrowExpr) -> bool {
         return false;
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(body) => body
+        ArrowFunctionBody::FunctionBody(body) => body
             .stmts
             .iter()
             .any(|stmt| return_stmt_returns_target_registrar(stmt, &target_key)),
-        BlockStmtOrExpr::Expr(expr) => expr_is_target_ts_helper_export_registrar(expr, &target_key),
+        ArrowFunctionBody::Expr(expr) => {
+            expr_is_target_ts_helper_export_registrar(expr, &target_key)
+        }
     }
 }
 
@@ -430,10 +434,10 @@ fn arrow_is_target_ts_helper_export_registrar(arrow: &ArrowExpr, target_key: &Bi
         return false;
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(body) => {
+        ArrowFunctionBody::FunctionBody(body) => {
             body_writes_target_helper_export(&body.stmts, target_key, &name_key, &value_key)
         }
-        BlockStmtOrExpr::Expr(expr) => {
+        ArrowFunctionBody::Expr(expr) => {
             expr_writes_target_helper_export(expr, target_key, &name_key, &value_key)
         }
     }

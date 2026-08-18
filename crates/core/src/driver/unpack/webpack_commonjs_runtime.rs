@@ -680,7 +680,8 @@ impl WebpackCommonJsRuntimeNormalizer {
                 }
             }
             Expr::Arrow(arrow) if !arrow.is_async => {
-                if let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) = &mut *arrow.body {
+                if let swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) = &mut *arrow.body
+                {
                     self.rewrite_immediate_statements(&mut body.stmts);
                 }
             }

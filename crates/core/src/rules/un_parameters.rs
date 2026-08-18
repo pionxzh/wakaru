@@ -1,9 +1,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr,
-    BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl,
-    ComputedPropName, Decl, Expr, FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit,
+    ArrayPat, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignPat, AssignPatProp,
+    AssignTarget, BinExpr, BinaryOp, BindingIdent, Bool, CatchClause, ClassDecl, ComputedPropName,
+    Decl, Expr, FnDecl, Function, FunctionBody, Ident, IdentName, IfStmt, KeyValuePatProp, Lit,
     MemberExpr, MemberProp, Number, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName,
     SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, UpdateExpr, VarDecl, VarDeclKind,
 };
@@ -42,7 +42,7 @@ impl VisitMut for UnParameters {
 
     fn visit_mut_arrow_expr(&mut self, expr: &mut ArrowExpr) {
         expr.visit_mut_children_with(self);
-        if let BlockStmtOrExpr::BlockStmt(body) = &mut *expr.body {
+        if let ArrowFunctionBody::FunctionBody(body) = &mut *expr.body {
             process_arrow_params(&mut expr.params, body, self.level, self.unresolved_mark);
         }
     }
@@ -52,7 +52,7 @@ impl VisitMut for UnParameters {
 /// for regular functions with Vec<Param>.
 fn process_function_params(
     params: &mut Vec<Param>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
 ) {
@@ -77,7 +77,7 @@ fn process_function_params(
 /// Process Pattern A for arrow functions with Vec<Pat>.
 fn process_arrow_params(
     params: &mut Vec<Pat>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     level: RewriteLevel,
     unresolved_mark: Mark,
 ) {
@@ -96,7 +96,7 @@ fn process_arrow_params(
 
 fn process_pattern_a_params(
     params: &mut Vec<Param>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -140,7 +140,7 @@ fn process_pattern_a_params(
 
 fn process_pattern_a_arrow_params(
     params: &mut Vec<Pat>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -304,7 +304,7 @@ fn extract_assign_expr(expr: &Expr, param_ident: &Ident) -> Option<Box<Expr>> {
 
 fn process_pattern_c_params(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -483,7 +483,7 @@ impl Visit for AssignFinder<'_> {
 
 fn process_pattern_c_arrow_params(
     params: &mut [Pat],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -657,7 +657,7 @@ fn collect_pat_binding_ids(pat: &Pat, out: &mut Vec<BindingId>) {
     }
 }
 
-fn collect_body_bindings(body: &BlockStmt) -> Vec<BindingId> {
+fn collect_body_bindings(body: &FunctionBody) -> Vec<BindingId> {
     let mut collector = BodyBindingCollector {
         bindings: Vec::new(),
     };
@@ -791,7 +791,7 @@ fn is_ident_expr(expr: &Expr, ident: &Ident) -> bool {
 
 fn fold_destructured_param_aliases(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
 ) {
     loop {
@@ -852,7 +852,7 @@ fn fold_destructured_param_aliases(
 
 fn promote_destructured_binding_defaults(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
 ) -> bool {
     let scan_limit = body.stmts.len().min(10);
@@ -1069,7 +1069,7 @@ fn is_bare_decl(stmt: &Stmt) -> bool {
 
 fn fold_object_property_param_aliases(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
 ) {
     loop {
@@ -1119,7 +1119,7 @@ fn fold_object_property_param_aliases(
 
 fn fold_array_index_param_aliases(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
 ) {
     loop {
@@ -1154,7 +1154,7 @@ fn fold_array_index_param_aliases(
 
 fn fold_destructured_arrow_param_aliases(
     params: &mut [Pat],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
 ) {
     loop {
@@ -1189,7 +1189,7 @@ fn fold_destructured_arrow_param_aliases(
 }
 
 fn extract_prefix_destructuring_alias(
-    body: &BlockStmt,
+    body: &FunctionBody,
     unresolved_mark: Mark,
 ) -> Option<(Ident, Pat, Option<Box<Expr>>)> {
     extract_destructuring_alias_stmt(body.stmts.first()?, unresolved_mark)
@@ -1242,7 +1242,7 @@ fn extract_destructuring_alias_default(
 
 fn extract_prefix_object_property_aliases(
     params: &[Param],
-    body: &BlockStmt,
+    body: &FunctionBody,
     unresolved_mark: Mark,
 ) -> Option<(usize, Ident, Pat, Option<Box<Expr>>, usize)> {
     for (param_idx, param) in params.iter().enumerate() {
@@ -1270,7 +1270,7 @@ fn extract_prefix_object_property_aliases(
 
 fn extract_prefix_array_index_aliases(
     params: &[Param],
-    body: &BlockStmt,
+    body: &FunctionBody,
     unresolved_mark: Mark,
 ) -> Option<(usize, Ident, Pat, Option<Box<Expr>>, usize)> {
     for (param_idx, param) in params.iter().enumerate() {
@@ -1311,7 +1311,7 @@ fn param_alias_ident(param: &Pat) -> Option<Ident> {
 }
 
 fn extract_array_index_alias_elems(
-    body: &BlockStmt,
+    body: &FunctionBody,
     alias: &Ident,
     unresolved_mark: Mark,
 ) -> Option<(Vec<Option<Pat>>, Option<Box<Expr>>, usize)> {
@@ -1436,7 +1436,7 @@ fn extract_array_index_alias_default(
 }
 
 fn extract_object_property_alias_props(
-    body: &BlockStmt,
+    body: &FunctionBody,
     alias: &Ident,
     unresolved_mark: Mark,
 ) -> Option<(Vec<ObjectPatProp>, Option<Box<Expr>>, usize)> {
@@ -1582,7 +1582,7 @@ fn extract_default_from_temp_stmt(
     Some((binding.clone(), cond.cons.clone()))
 }
 
-fn materialize_inline_temp_defaults(body: &mut BlockStmt, unresolved_mark: Mark) {
+fn materialize_inline_temp_defaults(body: &mut FunctionBody, unresolved_mark: Mark) {
     let mut stmt_idx = 1;
     while stmt_idx + 1 < body.stmts.len() {
         let Some(temp) = extract_member_alias_local_ident(&body.stmts[stmt_idx - 1]) else {
@@ -2475,7 +2475,7 @@ impl Visit for IdentReferenceFinder<'_> {
 
 fn process_pattern_b_params(
     params: &mut Vec<Param>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -2782,7 +2782,7 @@ fn make_ident_param(name: Atom) -> Param {
 
 fn rewrite_inline_arguments_defaults(
     params: &mut Vec<Param>,
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
@@ -2986,7 +2986,9 @@ impl InlineArgumentsDefaultRewriter<'_> {
     }
 }
 
-fn collect_inline_param_name_candidates(body: &BlockStmt) -> Vec<Option<InlineParamNameCandidate>> {
+fn collect_inline_param_name_candidates(
+    body: &FunctionBody,
+) -> Vec<Option<InlineParamNameCandidate>> {
     let mut candidates = Vec::new();
 
     for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
@@ -3020,7 +3022,7 @@ fn collect_inline_param_name_candidates(body: &BlockStmt) -> Vec<Option<InlinePa
     candidates
 }
 
-fn remove_consumed_empty_param_name_decls(body: &mut BlockStmt, consumed: &[BindingId]) {
+fn remove_consumed_empty_param_name_decls(body: &mut FunctionBody, consumed: &[BindingId]) {
     if consumed.is_empty() {
         return;
     }

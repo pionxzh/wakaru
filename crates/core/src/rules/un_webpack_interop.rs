@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Expr, Ident,
+    ArrowFunctionBody, AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Expr, Ident,
     IdentName, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
     ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
@@ -218,8 +218,8 @@ fn match_interop_getter(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> 
         return None;
     }
     let base = match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(body) => match_interop_cond(body.as_ref(), require_bindings),
-        BlockStmtOrExpr::BlockStmt(block) => match_interop_block(block, require_bindings),
+        ArrowFunctionBody::Expr(body) => match_interop_cond(body.as_ref(), require_bindings),
+        ArrowFunctionBody::FunctionBody(block) => match_interop_block(block, require_bindings),
     }?;
     Some(base)
 }
@@ -511,7 +511,7 @@ fn match_interop_cond(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Op
 }
 
 fn match_interop_block(
-    block: &swc_core::ecma::ast::BlockStmt,
+    block: &swc_core::ecma::ast::FunctionBody,
     require_bindings: &HashSet<BindingKey>,
 ) -> Option<Ident> {
     // Form A: { return cond ? cons : alt; }  (single return of ternary)

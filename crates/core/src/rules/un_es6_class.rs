@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::util::take::Take;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName,
-    Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
+    Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName, Constructor,
+    Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident,
     IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
     SimpleAssignTarget, Stmt, VarDecl,
@@ -851,7 +851,7 @@ fn get_fn_or_arrow_body(expr: &Expr) -> Option<&[Stmt]> {
     match expr {
         Expr::Fn(fn_expr) => fn_expr.function.body.as_ref().map(|b| b.stmts.as_slice()),
         Expr::Arrow(arrow) => match &*arrow.body {
-            BlockStmtOrExpr::BlockStmt(block) => Some(&block.stmts),
+            ArrowFunctionBody::FunctionBody(block) => Some(&block.stmts),
             _ => None,
         },
         _ => None,
@@ -1089,7 +1089,7 @@ fn try_iife_to_class(
             (pats, &body.stmts)
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body else {
+            let ArrowFunctionBody::FunctionBody(block) = &*arrow.body else {
                 return None;
             };
             let pats: Vec<&Pat> = arrow.params.iter().collect();
@@ -1237,7 +1237,7 @@ fn find_inline_inherits_super(stmts: &[Stmt], unresolved_mark: Mark) -> Option<B
         let inner = strip_parens(callee);
         let body_stmts = match inner {
             Expr::Arrow(arrow) if arrow.params.len() == 2 => match &*arrow.body {
-                BlockStmtOrExpr::BlockStmt(block) => &block.stmts[..],
+                ArrowFunctionBody::FunctionBody(block) => &block.stmts[..],
                 _ => continue,
             },
             Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => {
@@ -1567,7 +1567,7 @@ fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str, unresolved_ma
     let inner = strip_parens(callee);
     let body_stmts = match inner {
         Expr::Arrow(arrow) if arrow.params.len() == 2 => match &*arrow.body {
-            BlockStmtOrExpr::BlockStmt(block) => &block.stmts[..],
+            ArrowFunctionBody::FunctionBody(block) => &block.stmts[..],
             _ => return false,
         },
         Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => match &fn_expr.function.body {
@@ -2348,7 +2348,7 @@ fn is_inline_inherits_iife(
                 return false;
             }
             match &*arrow.body {
-                BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
+                ArrowFunctionBody::FunctionBody(block) => &block.stmts,
                 _ => return false,
             }
         }
@@ -2545,7 +2545,7 @@ fn build_constructor(
 /// or the arrow variant: `((e, t) => { ... })(this, superCall)`
 ///
 /// Replaced with: `return superCall`
-fn unwrap_inline_pcr_iife(body: &mut BlockStmt) {
+fn unwrap_inline_pcr_iife(body: &mut FunctionBody) {
     for stmt in body.stmts.iter_mut() {
         // Handle `return pcrIIFE(this, expr)` → `return expr`
         if let Stmt::Return(ret) = stmt {
@@ -2605,7 +2605,7 @@ fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
             (pats, &body.stmts)
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body else {
+            let ArrowFunctionBody::FunctionBody(block) = &*arrow.body else {
                 return None;
             };
             let pats: Vec<&Pat> = arrow.params.iter().collect();
@@ -2678,7 +2678,7 @@ fn is_new_reference_error(expr: &Expr) -> bool {
 
 /// Strip `return super(...)` at the end of a constructor body → `super(...)` as expr stmt.
 /// In derived constructors, `return super()` is unnecessary; super() implicitly returns this.
-fn strip_return_super(body: &mut BlockStmt) {
+fn strip_return_super(body: &mut FunctionBody) {
     if let Some(Stmt::Return(ret)) = body.stmts.last() {
         if let Some(arg) = &ret.arg {
             if is_super_call(arg) {
@@ -2700,7 +2700,7 @@ fn strip_return_super(body: &mut BlockStmt) {
 /// Babel minifiers produce `(o = super()).x = 1, o.y = 2, ...` where the assignment
 /// and property access are fused. Splitting allows `cleanup_super_aliases` to detect
 /// the alias and replace `o.x` with `this.x`.
-fn split_assign_prop_chains(body: &mut BlockStmt) {
+fn split_assign_prop_chains(body: &mut FunctionBody) {
     let mut new_stmts = Vec::with_capacity(body.stmts.len());
     for stmt in std::mem::take(&mut body.stmts) {
         if let Stmt::Expr(ExprStmt { expr, span }) = &stmt {
@@ -3092,7 +3092,7 @@ fn is_proto_or_get_prototype_of(expr: &Expr, unresolved_mark: Mark) -> bool {
 /// - Replace all references to aliases with `this`
 /// - Remove `var` declarations for aliases
 /// - Remove trailing `return alias`
-fn cleanup_super_aliases(body: &mut BlockStmt) {
+fn cleanup_super_aliases(body: &mut FunctionBody) {
     use std::collections::HashSet;
 
     let mut aliases: HashSet<Atom> = HashSet::new();
@@ -3185,7 +3185,7 @@ fn cleanup_super_aliases(body: &mut BlockStmt) {
 }
 
 fn remove_constructor_set_prototype_of_this(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     inner_ctor_name: &str,
     unresolved_mark: Mark,
 ) {

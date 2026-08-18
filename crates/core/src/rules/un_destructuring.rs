@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
-    BinaryOp, BindingIdent, BlockStmt, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt,
-    Function, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, ReturnStmt,
+    BinaryOp, BindingIdent, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt, Function,
+    FunctionBody, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, ReturnStmt,
     SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -2683,7 +2683,7 @@ fn build_var_stmt_from_parts(
 
 fn nest_param_destructuring(
     params: &mut [Param],
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     unresolved_mark: Mark,
     array_like_to_array_helpers: &HashSet<BindingKey>,
 ) {

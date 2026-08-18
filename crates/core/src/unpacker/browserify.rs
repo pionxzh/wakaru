@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrayLit, AssignOp, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Expr, ExprOrSpread,
+    ArrayLit, ArrowFunctionBody, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread,
     ExprStmt, FnExpr, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat,
     Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
 };
@@ -330,7 +330,7 @@ fn extract_factory_parts(expr: &Expr) -> Option<(FactoryParams<'_>, &[Stmt])> {
             Some((FactoryParams::Function(&function.params), &body.stmts))
         }
         Expr::Arrow(arrow) => {
-            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             Some((FactoryParams::Arrow(&arrow.params), &body.stmts))

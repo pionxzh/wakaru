@@ -301,6 +301,7 @@ fn try_cond_to_switch_expr_stmt(cond: &CondExpr) -> Option<Stmt> {
 
     Some(Stmt::Switch(SwitchStmt {
         span: DUMMY_SP,
+        body_ctxt: Default::default(),
         discriminant: Box::new(Expr::Ident(chain.discriminant.clone())),
         cases: switch_cases_from_expr_chain(chain),
     }))
@@ -332,6 +333,7 @@ fn try_cond_to_switch_return(cond: &CondExpr, return_span: Span) -> Option<Stmt>
 
     Some(Stmt::Switch(SwitchStmt {
         span: DUMMY_SP,
+        body_ctxt: Default::default(),
         discriminant: Box::new(Expr::Ident(chain.discriminant)),
         cases,
     }))

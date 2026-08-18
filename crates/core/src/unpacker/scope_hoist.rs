@@ -458,7 +458,7 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
     };
     let stmts = match inner {
         Expr::Arrow(arrow) if arrow.params.is_empty() => {
-            if let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+            if let ArrowFunctionBody::FunctionBody(block) = &*arrow.body {
                 Some(&block.stmts)
             } else {
                 None
@@ -838,14 +838,13 @@ impl Visit for RefCollector<'_> {
                 if let PropName::Computed(c) = &g.key {
                     c.visit_with(self);
                 }
-                g.body.visit_with(self);
+                g.function.visit_with(self);
             }
             Prop::Setter(s) => {
                 if let PropName::Computed(c) = &s.key {
                     c.visit_with(self);
                 }
-                s.param.visit_with(self);
-                s.body.visit_with(self);
+                s.function.visit_with(self);
             }
             Prop::Assign(a) => {
                 a.value.visit_with(self);
@@ -1068,7 +1067,7 @@ impl VisitMut for DynamicRequireHelperRewriter<'_> {
         for param in &arrow.params {
             collect_pat_bindings(param, &mut names);
         }
-        if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+        if let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() {
             collect_local_bindings_from_stmts(&block.stmts, &mut names);
         }
         self.push_shadowed(names);
@@ -1227,7 +1226,7 @@ impl VisitMut for DefaultInteropMemberRewriter<'_> {
         for param in &arrow.params {
             collect_pat_bindings(param, &mut names);
         }
-        if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+        if let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() {
             collect_local_bindings_from_stmts(&block.stmts, &mut names);
         }
         self.push_shadowed(names);

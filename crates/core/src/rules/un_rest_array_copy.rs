@@ -1,6 +1,6 @@
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, Callee, Expr, Function, Ident,
+    ArrowExpr, AssignOp, AssignTarget, BindingIdent, Callee, Expr, Function, FunctionBody, Ident,
     MemberProp, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
     VarDeclarator,
 };
@@ -89,7 +89,7 @@ fn get_rest_param(func: &Function) -> Option<BindingId> {
 
 /// Scan `body` for the Babel rest-args copy pattern whose source matches `rest`.
 /// Returns `(statement_index, copy_binding_id)` on the first match.
-fn find_copy_loop(body: &BlockStmt, rest: &BindingId) -> Option<(usize, BindingId)> {
+fn find_copy_loop(body: &FunctionBody, rest: &BindingId) -> Option<(usize, BindingId)> {
     body.stmts
         .iter()
         .enumerate()
@@ -301,7 +301,7 @@ pub(super) fn matches_copy_body(
 ///
 /// In that situation replacing `copy` with `to_sym` would silently resolve to the
 /// inner binding rather than the outer rest param, producing wrong semantics.
-fn copy_escapes_into_rebinding_scope(body: &BlockStmt, copy: &BindingId, to_sym: &Atom) -> bool {
+fn copy_escapes_into_rebinding_scope(body: &FunctionBody, copy: &BindingId, to_sym: &Atom) -> bool {
     let mut checker = EscapeChecker {
         copy: copy.clone(),
         to_sym: to_sym.clone(),

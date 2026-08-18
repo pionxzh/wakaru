@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, EsVersion, Expr, ExprOrSpread, FnExpr,
-    Lit, MemberProp, Module, ModuleItem, Pat, Stmt, Str, TryStmt, UnaryOp,
+    ArrayLit, ArrowFunctionBody, CallExpr, Callee, EsVersion, Expr, ExprOrSpread, FnExpr,
+    FunctionBody, Lit, MemberProp, Module, ModuleItem, Pat, Stmt, Str, TryStmt, UnaryOp,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -423,7 +423,7 @@ fn module_body_view(module: &Module) -> Option<ModuleBodyView> {
     })
 }
 
-fn invoked_function_body(expr: &Expr) -> Option<&BlockStmt> {
+fn invoked_function_body(expr: &Expr) -> Option<&FunctionBody> {
     match strip_parens(expr) {
         Expr::Unary(unary) if unary.op == UnaryOp::Bang => invoked_function_body(&unary.arg),
         Expr::Call(call) => {
@@ -433,8 +433,8 @@ fn invoked_function_body(expr: &Expr) -> Option<&BlockStmt> {
             match strip_parens(callee) {
                 Expr::Fn(FnExpr { function, .. }) => function.body.as_ref(),
                 Expr::Arrow(arrow) => match arrow.body.as_ref() {
-                    BlockStmtOrExpr::BlockStmt(body) => Some(body),
-                    BlockStmtOrExpr::Expr(_) => None,
+                    ArrowFunctionBody::FunctionBody(body) => Some(body),
+                    ArrowFunctionBody::Expr(_) => None,
                 },
                 Expr::Member(member)
                     if member_prop_name(&member.prop).as_deref() == Some("call") =>
@@ -456,12 +456,12 @@ fn invoked_function_body(expr: &Expr) -> Option<&BlockStmt> {
     }
 }
 
-fn function_expr_body(expr: &Expr) -> Option<&BlockStmt> {
+fn function_expr_body(expr: &Expr) -> Option<&FunctionBody> {
     match strip_parens(expr) {
         Expr::Fn(FnExpr { function, .. }) => function.body.as_ref(),
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(body) => Some(body),
-            BlockStmtOrExpr::Expr(_) => None,
+            ArrowFunctionBody::FunctionBody(body) => Some(body),
+            ArrowFunctionBody::Expr(_) => None,
         },
         _ => None,
     }
@@ -485,13 +485,16 @@ fn coalesce_ranges(ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
 }
 
 impl VisitMut for WrapperBodyReplacer {
-    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-        if block.span == self.target {
-            block.stmts = std::mem::take(&mut self.replacement);
+    // The target span always comes from `invoked_function_body` /
+    // `function_expr_body`, i.e. an IIFE wrapper body, which is a
+    // `FunctionBody` node — never a standalone block.
+    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
+        if body.span == self.target {
+            body.stmts = std::mem::take(&mut self.replacement);
             self.replaced = true;
             return;
         }
-        block.visit_mut_children_with(self);
+        body.visit_mut_children_with(self);
     }
 }
 

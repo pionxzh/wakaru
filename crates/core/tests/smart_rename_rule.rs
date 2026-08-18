@@ -770,6 +770,29 @@ use(t);
 }
 
 #[test]
+fn value_position_rename_must_not_capture_param_referenced_in_body() {
+    // The body-level candidate `t` is hinted toward the name `count` by the
+    // value position, but the function body also references the param
+    // `count`. Since swc_ecma_ast 29 function bodies are a separate node from
+    // blocks, the capture index must still push a body frame so the param
+    // reference stays forbidden — otherwise this renames to
+    // `const count = count + 1`, a self-capture and a SyntaxError.
+    let input = r#"
+function make(count) {
+  const t = count + 1;
+  return { count: t };
+}
+use(make);
+"#;
+    let output = normalize(&apply(input));
+    assert!(
+        output.contains("const count_1 =") && !output.contains("const count ="),
+        "body candidate must not capture the `count` param: {output}"
+    );
+    insta::assert_snapshot!(output);
+}
+
+#[test]
 fn react_rename_should_not_leak_into_shadowed_function_local() {
     let input = r#"
 export const l = o.createContext(null);

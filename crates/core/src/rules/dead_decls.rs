@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use swc_core::common::{BytePos, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, Decl, Expr, Function, Ident, ImportDecl, Lit,
-    MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl, VarDeclarator,
+    ArrowExpr, ArrowFunctionBody, Class, Decl, Expr, Function, FunctionBody, Ident, ImportDecl,
+    Lit, MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -420,10 +420,10 @@ fn collect_current_scope_uninitialized_from_arrow(arrow: &ArrowExpr) -> HashSet<
         ..Default::default()
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::BlockStmt(body) => {
+        ArrowFunctionBody::FunctionBody(body) => {
             collect_current_scope_uninitialized_from_block(body, &mut collector);
         }
-        BlockStmtOrExpr::Expr(expr) => {
+        ArrowFunctionBody::Expr(expr) => {
             expr.visit_with(&mut collector);
         }
     }
@@ -431,7 +431,7 @@ fn collect_current_scope_uninitialized_from_arrow(arrow: &ArrowExpr) -> HashSet<
 }
 
 fn collect_current_scope_uninitialized_from_block(
-    block: &BlockStmt,
+    block: &FunctionBody,
     collector: &mut CurrentScopeUninitializedCollector,
 ) {
     for stmt in &block.stmts {

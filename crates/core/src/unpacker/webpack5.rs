@@ -5,7 +5,7 @@ use swc_core::common::{
     sync::Lrc, Globals, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
+    ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr,
     Callee, Expr, ExprStmt, FnExpr, Id, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
     MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr,
     SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
@@ -329,9 +329,8 @@ fn detect_webpack5_top_level(module: &Module, cm: Lrc<SourceMap>) -> Option<Dete
     // entry extraction below.
     let require_plan = plan_webpack_require_fn(&stmts, &modules_sym)?;
 
-    let bootstrap_body = swc_core::ecma::ast::BlockStmt {
+    let bootstrap_body = swc_core::ecma::ast::FunctionBody {
         span: DUMMY_SP,
-        ctxt: SyntaxContext::empty(),
         stmts,
     };
     extract_webpack5_modules_with_plan(&bootstrap_body, cm, Some(require_plan))
@@ -762,7 +761,7 @@ fn region_fn_candidates(stmts: &[Stmt]) -> Vec<RegionFnCandidate<'_>> {
                             });
                         }
                         Expr::Arrow(arrow) => {
-                            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+                            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
                                 continue;
                             };
                             let mut excluded: HashSet<Id> = HashSet::new();
@@ -848,7 +847,7 @@ fn require_candidate_from_call(stmt_idx: usize, call: &CallExpr) -> Option<Regio
             for pat in &arrow.params {
                 collect_pat_binding_ids(pat, &mut excluded);
             }
-            let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+            let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
                 return None;
             };
             &body.stmts
@@ -961,9 +960,9 @@ fn resolve_probe(stmts: &[Stmt]) -> Option<(Vec<Stmt>, SyntaxContext)> {
             decorators: Vec::new(),
             span: DUMMY_SP,
             ctxt: SyntaxContext::empty(),
-            body: Some(swc_core::ecma::ast::BlockStmt {
+            this_param: None,
+            body: Some(swc_core::ecma::ast::FunctionBody {
                 span: DUMMY_SP,
-                ctxt: SyntaxContext::empty(),
                 stmts: stmts.to_vec(),
             }),
             is_generator: false,
@@ -1617,7 +1616,7 @@ fn extract_modules_from_container(
 }
 
 fn extract_webpack5_modules(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
 ) -> Option<DetectedBundle> {
     extract_webpack5_modules_with_plan(bootstrap_body, cm, None)
@@ -1627,7 +1626,7 @@ fn extract_webpack5_modules(
 /// container validation and entry extraction instead of resolving the region
 /// again.
 fn extract_webpack5_modules_with_plan(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     cm: Lrc<SourceMap>,
     mut require_plan: Option<RequireFnPlan>,
 ) -> Option<DetectedBundle> {
@@ -1892,7 +1891,7 @@ fn normalize_extracted_webpack_entry_module(
 }
 
 fn extract_trailing_entry_body(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
 ) -> Option<Vec<Stmt>> {
     bootstrap_body
         .stmts
@@ -1917,7 +1916,7 @@ struct NccInlineEntry {
 /// assigned to `module.exports` by the final bootstrap statement; unlike the
 /// generated variable name, that export assignment survives minification.
 fn extract_ncc_inline_entry(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
 ) -> Option<NccInlineEntry> {
     let require_sym = find_ncc_require_sym(bootstrap_body)?;
 
@@ -1970,7 +1969,7 @@ struct Webpack5InlineStartup {
 /// case everything after the last runtime definition is treated as the entry,
 /// provided it calls the require binding.
 fn extract_webpack5_inline_startup(
-    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+    bootstrap_body: &swc_core::ecma::ast::FunctionBody,
     modules_sym: &Atom,
     require_plan: Option<&RequireFnPlan>,
 ) -> Option<Webpack5InlineStartup> {
@@ -2573,8 +2572,8 @@ impl Visit for ExecutedRequireEffectsFinder<'_> {
                     }
                 }
                 Expr::Arrow(arrow) => match &*arrow.body {
-                    BlockStmtOrExpr::BlockStmt(body) => body.visit_with(self),
-                    BlockStmtOrExpr::Expr(expr) => expr.visit_with(self),
+                    ArrowFunctionBody::FunctionBody(body) => body.visit_with(self),
+                    ArrowFunctionBody::Expr(expr) => expr.visit_with(self),
                 },
                 _ => {}
             }
@@ -2731,7 +2730,7 @@ fn is_webpack_runtime_property(property: &str) -> bool {
     )
 }
 
-fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<Atom> {
+fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::FunctionBody) -> Option<Atom> {
     bootstrap_body.stmts.iter().find_map(|stmt| {
         let Stmt::Decl(swc_core::ecma::ast::Decl::Fn(function)) = stmt else {
             return None;
@@ -2747,7 +2746,7 @@ fn find_ncc_require_sym(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Opti
 
 /// Recognize ncc's direct CommonJS startup:
 /// `module.exports = __nccwpck_require__(<entry id>)`.
-fn find_ncc_direct_entry(bootstrap_body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+fn find_ncc_direct_entry(bootstrap_body: &swc_core::ecma::ast::FunctionBody) -> Option<String> {
     let require_sym = find_ncc_require_sym(bootstrap_body)?;
     bootstrap_body
         .stmts
@@ -2820,7 +2819,7 @@ fn ncc_module_exports_binding_from_expr(expression: &Expr) -> Option<Atom> {
     }
 }
 
-fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::FunctionBody) -> bool {
     // Cheap pre-check: scan only the direct statements of the IIFE body for
     // member assignments `obj.e =`, `obj.u =`, `obj.t =`, and `obj.m =` or
     // `obj.f =` on the same identifier.  This rejects non-runtime IIFEs
@@ -2841,7 +2840,7 @@ fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool
     })
 }
 
-fn has_runtime_property_assignments(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+fn has_runtime_property_assignments(body: &swc_core::ecma::ast::FunctionBody) -> bool {
     let mut bits_by_object: HashMap<Atom, u8> = HashMap::new();
     for stmt in &body.stmts {
         let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
@@ -3215,7 +3214,7 @@ fn extract_factory_parts(expr: &Expr) -> Option<(Webpack5FactoryParams<'_>, &[St
             ))
         }
         Expr::Arrow(arrow) => {
-            let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+            let swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
                 return None;
             };
             Some((
@@ -3377,14 +3376,14 @@ fn normalize_extracted_webpack_module(
     Ok((synthetic_module, unresolved_mark))
 }
 
-fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::BlockStmt> {
+fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::FunctionBody> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
     extract_iife_body(expr)
 }
 
-fn extract_iife_body(expr: &Expr) -> Option<&swc_core::ecma::ast::BlockStmt> {
+fn extract_iife_body(expr: &Expr) -> Option<&swc_core::ecma::ast::FunctionBody> {
     match expr {
         Expr::Call(call) => extract_callee_body(&call.callee),
         Expr::Unary(unary) if matches!(unary.op, swc_core::ecma::ast::UnaryOp::Bang) => {
@@ -3397,20 +3396,20 @@ fn extract_iife_body(expr: &Expr) -> Option<&swc_core::ecma::ast::BlockStmt> {
     }
 }
 
-fn extract_callee_body(callee: &Callee) -> Option<&swc_core::ecma::ast::BlockStmt> {
+fn extract_callee_body(callee: &Callee) -> Option<&swc_core::ecma::ast::FunctionBody> {
     let Callee::Expr(callee_expr) = callee else {
         return None;
     };
     match &**callee_expr {
         Expr::Fn(FnExpr { function, .. }) => function.body.as_ref(),
         Expr::Arrow(arrow) => match &*arrow.body {
-            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => Some(body),
+            swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) => Some(body),
             _ => None,
         },
         Expr::Paren(paren) => match &*paren.expr {
             Expr::Fn(FnExpr { function, .. }) => function.body.as_ref(),
             Expr::Arrow(arrow) => match &*arrow.body {
-                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => Some(body),
+                swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) => Some(body),
                 _ => None,
             },
             _ => None,
@@ -3426,7 +3425,7 @@ fn sanitize_filename(module_id: &str) -> String {
 
 /// Scan the bootstrap body for `__webpack_require__(__webpack_require__.s = <id>)` and return
 /// the entry module ID as a string.
-fn find_require_s_entry(body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+fn find_require_s_entry(body: &swc_core::ecma::ast::FunctionBody) -> Option<String> {
     for stmt in &body.stmts {
         if let Some(id) = find_require_s_in_stmt(stmt) {
             return Some(id);
@@ -3489,7 +3488,7 @@ fn find_require_s_in_expr(expr: &Expr) -> Option<String> {
 
 /// Scan the bootstrap body for webpack 5 runtime startup:
 /// `require.O(void 0, [chunkId], function() { return require(<id>); })`.
-fn find_require_o_entry(body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+fn find_require_o_entry(body: &swc_core::ecma::ast::FunctionBody) -> Option<String> {
     for stmt in &body.stmts {
         if let Some(id) = find_require_o_in_stmt(stmt) {
             return Some(id);
@@ -3561,15 +3560,17 @@ fn extract_require_call_from_callback(expr: &Expr, require_sym: &Atom) -> Option
             extract_require_call_from_body(body, require_sym)
         }
         Expr::Arrow(arrow) => match &*arrow.body {
-            BlockStmtOrExpr::BlockStmt(body) => extract_require_call_from_body(body, require_sym),
-            BlockStmtOrExpr::Expr(expr) => extract_require_call_id(expr, require_sym),
+            ArrowFunctionBody::FunctionBody(body) => {
+                extract_require_call_from_body(body, require_sym)
+            }
+            ArrowFunctionBody::Expr(expr) => extract_require_call_id(expr, require_sym),
         },
         _ => None,
     }
 }
 
 fn extract_require_call_from_body(
-    body: &swc_core::ecma::ast::BlockStmt,
+    body: &swc_core::ecma::ast::FunctionBody,
     require_sym: &Atom,
 ) -> Option<String> {
     if body.stmts.len() != 1 {

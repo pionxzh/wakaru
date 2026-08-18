@@ -4,13 +4,13 @@ use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, BindingIdent, BlockStmt, Bool, CallExpr, Callee, Decl, Expr,
-    ExprOrSpread, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName, JSXAttrOrSpread,
-    JSXAttrValue, JSXClosingElement, JSXClosingFragment, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
-    JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, Number,
-    ObjectLit, OptCall, Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str,
-    TaggedTpl, VarDecl, VarDeclKind, VarDeclarator,
+    ExprOrSpread, FunctionBody, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName,
+    JSXAttrOrSpread, JSXAttrValue, JSXClosingElement, JSXClosingFragment, JSXElement,
+    JSXElementChild, JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr,
+    JSXNamespacedName, JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText,
+    KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    NewExpr, Number, ObjectLit, OptCall, Param, Pat, Prop, PropName, PropOrSpread, SpreadElement,
+    Stmt, Str, TaggedTpl, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -596,6 +596,20 @@ impl VisitMut for UnJsx {
             self.process_stmts(&mut block.stmts);
         } else {
             block.visit_mut_children_with(self);
+        }
+    }
+
+    // Function bodies are a distinct node from blocks; without this override
+    // hoisted component aliases would land in the enclosing statement list
+    // instead of the function that uses them.
+    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+        if stmts_have_jsx_content(&body.stmts, &self.import_pragmas) {
+            self.process_stmts(&mut body.stmts);
+        } else {
+            body.visit_mut_children_with(self);
         }
     }
 

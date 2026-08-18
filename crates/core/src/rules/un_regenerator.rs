@@ -3,11 +3,11 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function, Ident,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Number,
-    ObjectLit, Param, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AwaitExpr,
+    BlockStmt, CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, FnExpr, Function,
+    FunctionBody, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, Number, ObjectLit, Param, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -348,7 +348,7 @@ fn is_regenerator_runtime_helper_arrow(arrow: &ArrowExpr) -> bool {
     if !arrow.params.is_empty() {
         return false;
     }
-    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
         return false;
     };
     let mut finder = RegeneratorRuntimeHelperFinder::default();
@@ -499,9 +499,8 @@ fn transform_babel_async_trampolines(
 
         replace_yield_with_await(&mut stmts);
         public_decl.function.params = params;
-        public_decl.function.body = Some(BlockStmt {
+        public_decl.function.body = Some(FunctionBody {
             span: DUMMY_SP,
-            ctxt: Default::default(),
             stmts,
         });
         public_decl.function.is_async = true;
@@ -950,9 +949,9 @@ impl VisitMut for FunctionTransformer<'_> {
                                 decorators: vec![],
                                 span: DUMMY_SP,
                                 ctxt: Default::default(),
-                                body: Some(BlockStmt {
+                                this_param: None,
+                                body: Some(FunctionBody {
                                     span: DUMMY_SP,
-                                    ctxt: Default::default(),
                                     stmts,
                                 }),
                                 is_generator: false,
@@ -994,12 +993,12 @@ impl VisitMut for FunctionTransformer<'_> {
 // ============================================================
 
 /// Returns the consumed mark binding key (sym + ctxt) on success.
-fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<BindingKey>> {
+fn try_transform_regenerator_wrap(body: &mut FunctionBody) -> Option<Option<BindingKey>> {
     try_transform_regenerator_wrap_with_reserved(body, &HashSet::new())
 }
 
 fn try_transform_regenerator_wrap_with_reserved(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     reserved_names: &HashSet<Atom>,
 ) -> Option<Option<BindingKey>> {
     let mut outer_names = reserved_names.clone();
@@ -1120,7 +1119,7 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
                 _ => return false,
             };
             match a.body.as_ref() {
-                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => {
+                swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) => {
                     extract_switch_cases_ref(body).map(|c| (param_name, c))
                 }
                 _ => None,
@@ -1248,7 +1247,7 @@ fn case_uses_catch(state_name: &Atom, case: &SwitchCase) -> bool {
     false
 }
 
-fn extract_switch_cases_ref(body: &BlockStmt) -> Option<&[SwitchCase]> {
+fn extract_switch_cases_ref(body: &FunctionBody) -> Option<&[SwitchCase]> {
     for stmt in &body.stmts {
         match stmt {
             Stmt::While(while_stmt) => {
@@ -1325,7 +1324,7 @@ fn is_state_machine_fn(expr: &Expr) -> bool {
                 _ => return false,
             };
             match arrow.body.as_ref() {
-                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => {
+                swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(body) => {
                     has_state_machine_structure(body, param_name)
                 }
                 _ => false,
@@ -1337,7 +1336,7 @@ fn is_state_machine_fn(expr: &Expr) -> bool {
 
 /// Check for `while(true) { switch(param.prev = param.next) { ... case "end": ... } }`
 /// or `for(;;) { switch(...) { ... } }`
-fn has_state_machine_structure(body: &BlockStmt, param_name: &Atom) -> bool {
+fn has_state_machine_structure(body: &FunctionBody, param_name: &Atom) -> bool {
     // Look for a while(true) or for(;;) loop containing the switch
     for stmt in &body.stmts {
         match stmt {
@@ -1510,7 +1509,7 @@ fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>, Vec
                 _ => return None,
             };
             let body = match *arrow.body {
-                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(b) => b,
+                swc_core::ecma::ast::ArrowFunctionBody::FunctionBody(b) => b,
                 _ => return None,
             };
             let (cases, hoisted_locals) = extract_switch_cases_from_body(body)?;
@@ -1520,7 +1519,7 @@ fn extract_state_machine_parts(expr: Expr) -> Option<(Atom, Vec<SwitchCase>, Vec
     }
 }
 
-fn extract_switch_cases_from_body(body: BlockStmt) -> Option<(Vec<SwitchCase>, Vec<Stmt>)> {
+fn extract_switch_cases_from_body(body: FunctionBody) -> Option<(Vec<SwitchCase>, Vec<Stmt>)> {
     // The state callback may carry trailing uninitialized `var` declarations.
     // They are runtime no-ops but their bindings scope assignments in the
     // switch, so preserve them when the callback is folded into the recovered
@@ -3063,8 +3062,8 @@ fn try_collapse_async_trampoline_iife(expr: &Expr) -> Option<Expr> {
     let body = match strip_parens(callee) {
         Expr::Fn(fn_expr) => fn_expr.function.body.as_ref()?,
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => block,
-            BlockStmtOrExpr::Expr(_) => return None,
+            ArrowFunctionBody::FunctionBody(block) => block,
+            ArrowFunctionBody::Expr(_) => return None,
         },
         _ => return None,
     };
@@ -3619,10 +3618,10 @@ fn is_esbuild_async_helper_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
     };
 
     match body {
-        BlockStmtOrExpr::BlockStmt(block) => {
+        ArrowFunctionBody::FunctionBody(block) => {
             esbuild_async_helper_body_has_shape(&block.stmts, unresolved_mark)
         }
-        BlockStmtOrExpr::Expr(expr) => {
+        ArrowFunctionBody::Expr(expr) => {
             let mut finder = EsbuildAsyncHelperFinder::new(unresolved_mark);
             expr.visit_with(&mut finder);
             finder.found_promise && finder.found_generator_apply
@@ -3681,7 +3680,7 @@ impl Visit for EsbuildAsyncHelperFinder {
 }
 
 fn try_transform_esbuild_async_function(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     esbuild_async_helpers: &[BindingKey],
 ) -> bool {
     if body.stmts.len() != 1 {
@@ -3706,8 +3705,10 @@ fn try_transform_esbuild_async_arrow(
     esbuild_async_helpers: &[BindingKey],
 ) -> bool {
     let Some(mut stmts) = (match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => extract_esbuild_async_call_body(expr, esbuild_async_helpers),
-        BlockStmtOrExpr::BlockStmt(block) if block.stmts.len() == 1 => {
+        ArrowFunctionBody::Expr(expr) => {
+            extract_esbuild_async_call_body(expr, esbuild_async_helpers)
+        }
+        ArrowFunctionBody::FunctionBody(block) if block.stmts.len() == 1 => {
             let Stmt::Return(ret) = &block.stmts[0] else {
                 return false;
             };
@@ -3723,9 +3724,8 @@ fn try_transform_esbuild_async_arrow(
 
     replace_yield_with_await(&mut stmts);
     arrow.is_async = true;
-    *arrow.body = BlockStmtOrExpr::BlockStmt(BlockStmt {
+    *arrow.body = ArrowFunctionBody::FunctionBody(FunctionBody {
         span: DUMMY_SP,
-        ctxt: Default::default(),
         stmts,
     });
     true
@@ -3913,7 +3913,7 @@ fn build_async_fn_expr_from_gen_arg(
 }
 
 fn try_transform_async_to_generator(
-    body: &mut BlockStmt,
+    body: &mut FunctionBody,
     async_to_gen_callees: &AsyncToGenCallees,
     generator_helpers: &[BindingKey],
     _unresolved_mark: Mark,

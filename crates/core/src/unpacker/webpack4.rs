@@ -4,10 +4,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinExpr, BinaryOp, BindingIdent,
-    BlockStmt, BlockStmtOrExpr, CallExpr, Callee, ClassProp, CondExpr, Constructor, Decl, Expr,
-    ExprOrSpread, ExprStmt, FnExpr, Function, GetterProp, Id, Ident, IdentName, Lit, MemberExpr,
-    MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleItem, Number, ObjectLit,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, AutoAccessor, BinExpr,
+    BinaryOp, BindingIdent, CallExpr, Callee, ClassProp, CondExpr, Constructor, Decl, Expr,
+    ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, GetterProp, Id, Ident, IdentName, Lit,
+    MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleItem, Number, ObjectLit,
     ParamOrTsParamProp, Pat, PrivateProp, Prop, PropName, PropOrSpread, SetterProp,
     SimpleAssignTarget, StaticBlock, Stmt, Str, ThisExpr, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
     VarDeclarator,
@@ -291,7 +291,7 @@ impl RequireNRewriter {
             span: Default::default(),
             ctxt: Default::default(),
             params: vec![],
-            body: Box::new(swc_core::ecma::ast::BlockStmtOrExpr::Expr(Box::new(
+            body: Box::new(swc_core::ecma::ast::ArrowFunctionBody::Expr(Box::new(
                 Expr::Cond(CondExpr {
                     span: Default::default(),
                     test: Box::new(esmodule_check),
@@ -1346,7 +1346,8 @@ fn extract_inner_callee(expr: &Expr) -> Option<(Vec<Id>, Vec<Stmt>)> {
                 return None;
             }
             let param_ids = collect_param_ids(arrow.params.iter())?;
-            let BlockStmtOrExpr::BlockStmt(BlockStmt { stmts, .. }) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(FunctionBody { stmts, .. }) = arrow.body.as_ref()
+            else {
                 return None;
             };
             Some((param_ids, stmts.clone()))

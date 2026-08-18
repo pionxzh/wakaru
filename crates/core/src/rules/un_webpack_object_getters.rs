@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BlockStmt, BlockStmtOrExpr, Bool, Callee, Decl, Expr, ExprStmt, FnExpr, GetterProp, Ident, Lit,
-    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, Stmt, Str, VarDeclarator,
+    ArrowFunctionBody, Bool, Callee, Decl, Expr, ExprStmt, FnExpr, Function, FunctionBody,
+    GetterProp, Ident, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -513,8 +513,7 @@ fn extract_require_d_map_getters_module_item(
                 GetterProp {
                     span: DUMMY_SP,
                     key: method.key.clone(),
-                    type_ann: None,
-                    body: Some(body),
+                    function: getter_function(body),
                 }
             }
             Prop::KeyValue(entry) => {
@@ -525,8 +524,7 @@ fn extract_require_d_map_getters_module_item(
                 GetterProp {
                     span: DUMMY_SP,
                     key: entry.key.clone(),
-                    type_ann: None,
-                    body: Some(extract_getter_body(entry.value.as_ref())?),
+                    function: getter_function(extract_getter_body(entry.value.as_ref())?),
                 }
             }
             _ => return None,
@@ -616,12 +614,11 @@ fn extract_getter_descriptor(key: &PropName, descriptor: &Expr) -> Option<Getter
     Some(GetterProp {
         span: DUMMY_SP,
         key: key.clone(),
-        type_ann: None,
-        body: Some(getter_body?),
+        function: getter_function(getter_body?),
     })
 }
 
-fn extract_getter_body(expr: &Expr) -> Option<BlockStmt> {
+fn extract_getter_body(expr: &Expr) -> Option<FunctionBody> {
     match expr {
         Expr::Fn(FnExpr { ident, function }) => {
             if ident.is_some()
@@ -638,10 +635,9 @@ fn extract_getter_body(expr: &Expr) -> Option<BlockStmt> {
                 return None;
             }
             match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => Some(block.clone()),
-                BlockStmtOrExpr::Expr(expr) => Some(BlockStmt {
+                ArrowFunctionBody::FunctionBody(block) => Some(block.clone()),
+                ArrowFunctionBody::Expr(expr) => Some(FunctionBody {
                     span: DUMMY_SP,
-                    ctxt: arrow.ctxt,
                     stmts: vec![Stmt::Return(ReturnStmt {
                         span: DUMMY_SP,
                         arg: Some(expr.clone()),
@@ -651,6 +647,23 @@ fn extract_getter_body(expr: &Expr) -> Option<BlockStmt> {
         }
         _ => None,
     }
+}
+
+/// Wraps a recovered getter body in the parameterless `Function` node that
+/// `GetterProp` carries since swc_ecma_ast 29.
+fn getter_function(body: FunctionBody) -> Box<Function> {
+    Box::new(Function {
+        params: vec![],
+        decorators: vec![],
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        this_param: None,
+        body: Some(body),
+        is_generator: false,
+        is_async: false,
+        type_params: None,
+        return_type: None,
+    })
 }
 
 fn str_to_prop_name(s: &Str) -> PropName {

@@ -1,7 +1,7 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function,
+    ArrowExpr, ArrowFunctionBody, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function, FunctionBody,
     Ident, Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -59,7 +59,7 @@ pub(super) fn try_detect_bun_compile_candidate<T>(
     None
 }
 
-fn bun_compile_body_mut(expr: &mut Box<Expr>) -> Option<&mut BlockStmt> {
+fn bun_compile_body_mut(expr: &mut Box<Expr>) -> Option<&mut FunctionBody> {
     let Expr::Fn(FnExpr { function, .. }) = strip_parens_mut(expr) else {
         return None;
     };
@@ -143,7 +143,7 @@ fn top_level_call(expr: &Expr) -> Option<&CallExpr> {
     }
 }
 
-fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &BlockStmt)> {
+fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &FunctionBody)> {
     let Callee::Expr(callee_expr) = callee else {
         return None;
     };
@@ -154,7 +154,7 @@ fn wrapper_callee_parts(callee: &Callee) -> Option<(Vec<Atom>, &BlockStmt)> {
     }
 }
 
-fn function_parts(function: &Function) -> Option<(Vec<Atom>, &BlockStmt)> {
+fn function_parts(function: &Function) -> Option<(Vec<Atom>, &FunctionBody)> {
     let params = function
         .params
         .iter()
@@ -163,9 +163,9 @@ fn function_parts(function: &Function) -> Option<(Vec<Atom>, &BlockStmt)> {
     Some((params, function.body.as_ref()?))
 }
 
-fn arrow_parts(arrow: &ArrowExpr) -> Option<(Vec<Atom>, &BlockStmt)> {
+fn arrow_parts(arrow: &ArrowExpr) -> Option<(Vec<Atom>, &FunctionBody)> {
     let params = arrow.params.iter().filter_map(pat_ident_sym).collect();
-    let BlockStmtOrExpr::BlockStmt(body) = &*arrow.body else {
+    let ArrowFunctionBody::FunctionBody(body) = &*arrow.body else {
         return None;
     };
     Some((params, body))
@@ -178,7 +178,7 @@ fn pat_ident_sym(pat: &Pat) -> Option<Atom> {
     }
 }
 
-pub(super) fn body_looks_like_umd_wrapper(body: &BlockStmt, factory_sym: &Atom) -> bool {
+pub(super) fn body_looks_like_umd_wrapper(body: &FunctionBody, factory_sym: &Atom) -> bool {
     let mut visitor = UmdWrapperUseVisitor {
         factory_sym,
         seen_factory_call: false,
@@ -238,12 +238,12 @@ fn collect_function_candidates(function: &Function, candidates: &mut Vec<Module>
 
 fn collect_arrow_candidates(arrow: &ArrowExpr, candidates: &mut Vec<Module>) {
     match &*arrow.body {
-        BlockStmtOrExpr::BlockStmt(body) => collect_block_candidates(body, candidates),
-        BlockStmtOrExpr::Expr(expr) => push_expr_candidate(strip_parens(expr), candidates),
+        ArrowFunctionBody::FunctionBody(body) => collect_block_candidates(body, candidates),
+        ArrowFunctionBody::Expr(expr) => push_expr_candidate(strip_parens(expr), candidates),
     }
 }
 
-fn collect_block_candidates(body: &BlockStmt, candidates: &mut Vec<Module>) {
+fn collect_block_candidates(body: &FunctionBody, candidates: &mut Vec<Module>) {
     if let [Stmt::Return(ReturnStmt {
         arg: Some(expr), ..
     })] = body.stmts.as_slice()

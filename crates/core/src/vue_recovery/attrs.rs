@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CondExpr,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignOp, AssignTarget, BinExpr, BinaryOp, CondExpr,
     Decl, Expr, ExprOrSpread, Function, Lit, MemberExpr, MemberProp, ModuleItem, ObjectLit, Pat,
     Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
 };
@@ -839,7 +839,7 @@ fn is_noop_event_handler(value: &Expr) -> bool {
             is_noop_event_handler(assign.right.as_ref())
         }
         Expr::Arrow(arrow) => {
-            matches!(arrow.body.as_ref(), BlockStmtOrExpr::BlockStmt(block) if block.stmts.is_empty())
+            matches!(arrow.body.as_ref(), ArrowFunctionBody::FunctionBody(block) if block.stmts.is_empty())
         }
         Expr::Fn(function) => function
             .function
@@ -894,8 +894,10 @@ fn arrow_handler_expr(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Opt
     }
     let event_param = arrow_event_param(arrow);
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => handler_expr_name(expr.as_ref(), ctx, event_param),
-        BlockStmtOrExpr::BlockStmt(block) => block_handler_expr(&block.stmts, ctx, event_param),
+        ArrowFunctionBody::Expr(expr) => handler_expr_name(expr.as_ref(), ctx, event_param),
+        ArrowFunctionBody::FunctionBody(block) => {
+            block_handler_expr(&block.stmts, ctx, event_param)
+        }
     }
 }
 

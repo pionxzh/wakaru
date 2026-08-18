@@ -1352,10 +1352,12 @@ fn provider_ref_props_from_callback(
 ) -> Option<HashSet<Atom>> {
     match unwrap_paren_expr(expr) {
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::FunctionBody(block) => {
                 provider_ref_props_from_stmts(block.stmts.as_slice(), ctx)
             }
-            BlockStmtOrExpr::Expr(expr) => provider_ref_props_from_return_expr(expr.as_ref(), ctx),
+            ArrowFunctionBody::Expr(expr) => {
+                provider_ref_props_from_return_expr(expr.as_ref(), ctx)
+            }
         },
         Expr::Fn(function) => function
             .function

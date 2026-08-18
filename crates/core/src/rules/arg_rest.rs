@@ -1,8 +1,8 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor,
-    Decl, Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp,
+    ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Constructor, Decl, Expr,
+    Function, FunctionBody, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp,
     Pat, RestPat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclKind, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -129,14 +129,14 @@ impl VisitMut for ArgRest {
 /// ```text
 /// for (var len = arguments.length, copy = Array(len), idx = 0; …) …
 /// ```
-fn detect_copy_var_ident(body: &BlockStmt, fixed_param_count: usize) -> Option<Ident> {
+fn detect_copy_var_ident(body: &FunctionBody, fixed_param_count: usize) -> Option<Ident> {
     body.stmts
         .iter()
         .find_map(|stmt| detect_copy_var_ident_from_stmt(stmt, fixed_param_count))
         .or_else(|| detect_ts_copy_var_ident(body, fixed_param_count))
 }
 
-fn detect_ts_copy_var_ident(body: &BlockStmt, fixed_param_count: usize) -> Option<Ident> {
+fn detect_ts_copy_var_ident(body: &FunctionBody, fixed_param_count: usize) -> Option<Ident> {
     body.stmts.windows(2).find_map(|pair| {
         let copy_id = ts_empty_array_ident_from_stmt(&pair[0])?;
         let loop_copy = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
@@ -744,7 +744,7 @@ fn is_binding_ident(expr: &Expr, bindings: &[BindingId]) -> bool {
 /// Remove the Babel arguments copy loop:
 /// `for (var len = arguments.length, arr = Array(len), i = 0; i < len; i++) arr[i] = arguments[i];`
 /// This loop is dead code once the rest param is added.
-fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
+fn remove_arguments_copy_loop(body: &mut FunctionBody, fixed_param_count: usize) {
     let old = std::mem::take(&mut body.stmts);
     let mut result = Vec::with_capacity(old.len());
     let mut i = 0;

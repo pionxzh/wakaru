@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{ArrowExpr, BlockStmtOrExpr, ReturnStmt, Stmt};
+use swc_core::ecma::ast::{ArrowExpr, ArrowFunctionBody, ReturnStmt, Stmt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Converts `() => { return expr; }` → `() => expr`.
@@ -8,7 +8,7 @@ impl VisitMut for ArrowReturn {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         arrow.visit_mut_children_with(self);
 
-        let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+        let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
             return;
         };
 
@@ -20,6 +20,6 @@ impl VisitMut for ArrowReturn {
             return;
         };
 
-        *arrow.body = BlockStmtOrExpr::Expr(arg.clone());
+        *arrow.body = ArrowFunctionBody::Expr(arg.clone());
     }
 }

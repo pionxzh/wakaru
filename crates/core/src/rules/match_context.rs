@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn from_params_rejects_wrong_count() {
         GLOBALS.set(&Default::default(), || {
-            use swc_core::ecma::ast::{BlockStmt, Param};
+            use swc_core::ecma::ast::{FunctionBody, Param};
             let func = Function {
                 params: vec![Param {
                     span: DUMMY_SP,
@@ -209,9 +209,9 @@ mod tests {
                 decorators: vec![],
                 span: DUMMY_SP,
                 ctxt: SyntaxContext::empty(),
-                body: Some(BlockStmt {
+                this_param: None,
+                body: Some(FunctionBody {
                     span: DUMMY_SP,
-                    ctxt: SyntaxContext::empty(),
                     stmts: vec![],
                 }),
                 is_generator: false,

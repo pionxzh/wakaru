@@ -64,6 +64,31 @@ export default defineComponent({
 }
 
 #[test]
+fn preserves_body_shadowed_context_member() {
+    // The `_ctx` rebinding lives in a nested function BODY, not a param:
+    // since swc_ecma_ast 29 function bodies are a distinct node from blocks,
+    // the context-member cleaner's body-level shadow registration must fire
+    // for `FunctionBody` or `_ctx.msg` would wrongly collapse to `msg`.
+    let input = r#"
+import { openBlock, createElementBlock } from "vue";
+const __sfc__ = {};
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("div", {
+    title: (function () { const _ctx = getCtx(); return _ctx.msg; })()
+  }, null, 8, ["title"]);
+}
+"#;
+
+    let recovered = recover_vue_sfc_source_from_js(input, VueSfcRecoveryOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(
+        recovered.contains("_ctx.msg"),
+        "body-level `const _ctx` must keep shadowing the render context: {recovered}"
+    );
+}
+
+#[test]
 fn recovers_store_to_refs_destructured_values() {
     let input = r#"
 import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";

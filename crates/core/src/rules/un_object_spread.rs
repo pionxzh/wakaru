@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
-    ForInStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    SpreadElement, Stmt, UnaryExpr, UnaryOp,
+    ArrowFunctionBody, AssignOp, AssignTarget, BinaryOp, CallExpr, Callee, Decl, Expr, ForInStmt,
+    Function, FunctionBody, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, SpreadElement, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -597,7 +597,7 @@ fn helper_two_param_body(expr: &Expr) -> Option<(&Ident, &Ident, &Expr)> {
     }
 }
 
-fn helper_two_param_block(expr: &Expr) -> Option<(&Ident, &Ident, &BlockStmt)> {
+fn helper_two_param_block(expr: &Expr) -> Option<(&Ident, &Ident, &FunctionBody)> {
     match strip_parens(expr) {
         Expr::Arrow(arrow) => {
             if arrow.params.len() != 2 {
@@ -605,7 +605,7 @@ fn helper_two_param_block(expr: &Expr) -> Option<(&Ident, &Ident, &BlockStmt)> {
             }
             let target = pat_ident(&arrow.params[0])?;
             let source = pat_ident(&arrow.params[1])?;
-            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
                 return None;
             };
             Some((target, source, block))
@@ -618,10 +618,10 @@ fn helper_two_param_block(expr: &Expr) -> Option<(&Ident, &Ident, &BlockStmt)> {
     }
 }
 
-fn arrow_body_expr(body: &BlockStmtOrExpr) -> Option<&Expr> {
+fn arrow_body_expr(body: &ArrowFunctionBody) -> Option<&Expr> {
     match body {
-        BlockStmtOrExpr::Expr(expr) => Some(expr),
-        BlockStmtOrExpr::BlockStmt(block) => {
+        ArrowFunctionBody::Expr(expr) => Some(expr),
+        ArrowFunctionBody::FunctionBody(block) => {
             if block.stmts.len() != 1 {
                 return None;
             }
@@ -654,7 +654,7 @@ fn function_single_return_expr(func: &Function) -> Option<&Expr> {
     Some(arg)
 }
 
-fn block_returns_binding(block: &BlockStmt, binding: &Ident) -> bool {
+fn block_returns_binding(block: &FunctionBody, binding: &Ident) -> bool {
     matches!(
         block.stmts.last(),
         Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
@@ -1252,7 +1252,7 @@ fn is_inline_object_spread_helper(
                 return false;
             };
             match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => {
+                ArrowFunctionBody::FunctionBody(block) => {
                     block_matches_inline_object_spread(
                         &block.stmts,
                         target,
@@ -1268,7 +1268,7 @@ fn is_inline_object_spread_helper(
                         )
                     })
                 }
-                BlockStmtOrExpr::Expr(expr) => expr_matches_inline_object_spread(
+                ArrowFunctionBody::Expr(expr) => expr_matches_inline_object_spread(
                     expr,
                     target,
                     source,

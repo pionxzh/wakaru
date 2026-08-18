@@ -9,9 +9,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
-    Callee, ComputedPropName, Decl, Expr, ForHead, Function, Ident, IdentName, IfStmt,
-    KeyValueProp, Lit, MemberProp, Module, ModuleItem, Pat, Prop, PropName, PropOrSpread,
+    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, CallExpr,
+    Callee, ComputedPropName, Decl, Expr, ForHead, Function, FunctionBody, Ident, IdentName,
+    IfStmt, KeyValueProp, Lit, MemberProp, Module, ModuleItem, Pat, Prop, PropName, PropOrSpread,
     ReturnStmt, SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -229,7 +229,7 @@ struct TaggedTemplateLiteralSignals {
     define_property_raw: bool,
 }
 fn collect_tagged_template_literal_signals(
-    body: &BlockStmt,
+    body: &FunctionBody,
     ctx: &MatchContext,
 ) -> TaggedTemplateLiteralSignals {
     struct SignalVisitor<'a> {
@@ -574,7 +574,7 @@ fn function_from_inline_callable(expr: &Expr) -> Option<Function> {
 /// expression-body arrows (there is no statement block to reuse); callers that
 /// need those match the expression form separately.
 fn function_from_arrow(arrow: &swc_core::ecma::ast::ArrowExpr) -> Option<Function> {
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() else {
         return None;
     };
     Some(Function {
@@ -590,6 +590,7 @@ fn function_from_arrow(arrow: &swc_core::ecma::ast::ArrowExpr) -> Option<Functio
         decorators: vec![],
         span: DUMMY_SP,
         ctxt: Default::default(),
+        this_param: None,
         body: Some(block.clone()),
         is_generator: arrow.is_generator,
         is_async: arrow.is_async,
@@ -611,7 +612,7 @@ fn detect_interop_default_expr_arrow(
     let Pat::Ident(param) = &arrow.params[0] else {
         return None;
     };
-    let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() else {
+    let ArrowFunctionBody::Expr(expr) = arrow.body.as_ref() else {
         return None;
     };
     let mut ctx = MatchContext::new();
@@ -1109,8 +1110,8 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
             };
             let param_key = binding_key(&param.id);
             match &*arrow.body {
-                BlockStmtOrExpr::Expr(body_expr) => is_typeof_of_binding(body_expr, &param_key),
-                BlockStmtOrExpr::BlockStmt(block) => {
+                ArrowFunctionBody::Expr(body_expr) => is_typeof_of_binding(body_expr, &param_key),
+                ArrowFunctionBody::FunctionBody(block) => {
                     if block.stmts.len() != 1 {
                         return false;
                     }
@@ -1161,8 +1162,12 @@ fn is_typeof_fallback_fn(expr: &Expr) -> bool {
             };
             let param_binding = binding_key(&param.id);
             match &*arrow.body {
-                BlockStmtOrExpr::Expr(body) => is_typeof_fallback_conditional(body, &param_binding),
-                BlockStmtOrExpr::BlockStmt(body) => is_typeof_fallback_block(body, &param_binding),
+                ArrowFunctionBody::Expr(body) => {
+                    is_typeof_fallback_conditional(body, &param_binding)
+                }
+                ArrowFunctionBody::FunctionBody(body) => {
+                    is_typeof_fallback_block(body, &param_binding)
+                }
             }
         }
         Expr::Fn(fn_expr) => {
@@ -1181,7 +1186,7 @@ fn is_typeof_fallback_fn(expr: &Expr) -> bool {
     }
 }
 
-fn is_typeof_fallback_block(body: &BlockStmt, param_binding: &BindingKey) -> bool {
+fn is_typeof_fallback_block(body: &FunctionBody, param_binding: &BindingKey) -> bool {
     match body.stmts.as_slice() {
         [Stmt::Return(ReturnStmt {
             arg: Some(expr), ..
@@ -2324,7 +2329,7 @@ fn scan_inline_helper_call_markers(call: &CallExpr, markers: &mut BodyMarkerStat
     };
     match strip_parens(callee.as_ref()) {
         Expr::Arrow(arrow) => {
-            if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+            if let ArrowFunctionBody::FunctionBody(block) = arrow.body.as_ref() {
                 scan_stmts_for_markers(&block.stmts, markers);
             }
         }
@@ -2663,7 +2668,7 @@ pub(crate) fn is_call_super_fn(func: &Function) -> bool {
 /// `param2.apply(param1, ...)` in the body. The dual-path pattern is the
 /// structural hallmark of Babel's `_callSuper` helper:
 /// `_isNR() ? Reflect.construct(o, e||[], ...) : o.apply(t, e)`
-fn body_has_call_super_shape(body: &swc_core::ecma::ast::BlockStmt, ctx: &MatchContext) -> bool {
+fn body_has_call_super_shape(body: &swc_core::ecma::ast::FunctionBody, ctx: &MatchContext) -> bool {
     use swc_core::ecma::ast::CallExpr;
 
     struct Finder<'a> {

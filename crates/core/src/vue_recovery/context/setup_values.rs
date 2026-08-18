@@ -53,8 +53,8 @@ pub(super) fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
             .as_ref()
             .map(|body| body.stmts.as_slice()),
         RenderSource::SetupArrow { render, .. } => match render.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
-            BlockStmtOrExpr::Expr(_) => None,
+            ArrowFunctionBody::FunctionBody(block) => Some(block.stmts.as_slice()),
+            ArrowFunctionBody::Expr(_) => None,
         },
     }
 }
@@ -164,7 +164,7 @@ fn arrow_returns_object_expr(expr: &Expr) -> bool {
     };
     matches!(
         arrow.body.as_ref(),
-        BlockStmtOrExpr::Expr(expr) if matches!(unwrap_paren_expr(expr.as_ref()), Expr::Object(_))
+        ArrowFunctionBody::Expr(expr) if matches!(unwrap_paren_expr(expr.as_ref()), Expr::Object(_))
     )
 }
 
@@ -395,11 +395,11 @@ fn computed_getter_expr(
         return Ok(None);
     };
     match arrow.body.as_ref() {
-        BlockStmtOrExpr::Expr(expr) => Ok(Some(VueSetupValueBinding {
+        ArrowFunctionBody::Expr(expr) => Ok(Some(VueSetupValueBinding {
             value: clean_expr(&print_expr(expr.as_ref(), ctx)?, ctx),
             expr: Some(*expr.clone()),
         })),
-        BlockStmtOrExpr::BlockStmt(block) => computed_block_value_expr(&block.stmts, ctx),
+        ArrowFunctionBody::FunctionBody(block) => computed_block_value_expr(&block.stmts, ctx),
     }
 }
 
@@ -1176,8 +1176,8 @@ fn function_scope_bindings(function: &swc_core::ecma::ast::Function) -> HashSet<
     bindings
 }
 
-fn collect_block_or_expr_scope_bindings(body: &BlockStmtOrExpr, bindings: &mut HashSet<Atom>) {
-    if let BlockStmtOrExpr::BlockStmt(block) = body {
+fn collect_block_or_expr_scope_bindings(body: &ArrowFunctionBody, bindings: &mut HashSet<Atom>) {
+    if let ArrowFunctionBody::FunctionBody(block) = body {
         collect_stmt_scope_bindings(&block.stmts, bindings);
     }
 }

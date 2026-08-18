@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function, Ident,
-    MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BindingIdent, BlockStmt, Decl, Expr, Function,
+    FunctionBody, Ident, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget,
+    Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -301,9 +301,8 @@ impl<'a> ContextMemberCleaner<'a> {
             .collect()
     }
 
-    fn block_shadowing_indices(&self, block: &BlockStmt) -> Vec<usize> {
-        let mut indices = block
-            .stmts
+    fn block_shadowing_indices(&self, stmts: &[Stmt]) -> Vec<usize> {
+        let mut indices = stmts
             .iter()
             .filter_map(|stmt| match stmt {
                 Stmt::Decl(decl) => Some(decl),
@@ -412,11 +411,22 @@ impl VisitMut for ContextMemberCleaner<'_> {
     }
 
     fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-        let shadowed = self.block_shadowing_indices(block);
+        let shadowed = self.block_shadowing_indices(&block.stmts);
         self.enter_shadowed(&shadowed);
         block.visit_mut_children_with(self);
         self.exit_shadowed(&shadowed);
     }
+
+    fn visit_mut_function_body(&mut self, body: &mut FunctionBody) {
+        let shadowed = self.block_shadowing_indices(&body.stmts);
+        self.enter_shadowed(&shadowed);
+        body.visit_mut_children_with(self);
+        self.exit_shadowed(&shadowed);
+    }
+
+    // Function bodies are a distinct node from blocks; body-level
+    // declarations that rebind a context prefix must suppress collapsing
+    // just like block-level ones.
 }
 
 fn decl_binds_name(decl: &Decl, name: &str) -> bool {

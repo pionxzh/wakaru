@@ -3,11 +3,12 @@ use std::collections::{HashSet, VecDeque};
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{Mark, Span, Spanned, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr,
-    Callee, ComputedPropName, Decl, ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, FnExpr,
-    Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, ModuleDecl, ModuleExportName,
-    ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread,
-    SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent,
+    CallExpr, Callee, ComputedPropName, Decl, ExportNamedSpecifier, ExportSpecifier, Expr,
+    ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, ModuleDecl,
+    ModuleExportName, ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName,
+    PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -551,7 +552,7 @@ fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Ident, &Expr)> {
             let Pat::Ident(param_ident) = &arrow.params[0] else {
                 return None;
             };
-            let BlockStmtOrExpr::Expr(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::Expr(body) = arrow.body.as_ref() else {
                 return None;
             };
             Some((&param_ident.id, body.as_ref()))
@@ -571,7 +572,7 @@ fn extract_enum_iife_body(expr: &Expr) -> Option<(&Ident, &[Stmt])> {
             let Pat::Ident(param_ident) = &arrow.params[0] else {
                 return None;
             };
-            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             Some((&param_ident.id, &body.stmts))

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BlockStmtOrExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp,
+    ArrowFunctionBody, AssignOp, BinaryOp, Callee, Expr, ExprOrSpread, Lit, MemberProp,
     ObjectPatProp, Pat, ReturnStmt, Stmt, Tpl, UnaryOp,
 };
 
@@ -93,8 +93,8 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
             .as_ref()
             .map(|body| body.stmts.as_slice()),
         RenderSource::SetupArrow { render, .. } => match render.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
-            BlockStmtOrExpr::Expr(_) => None,
+            ArrowFunctionBody::FunctionBody(block) => Some(block.stmts.as_slice()),
+            ArrowFunctionBody::Expr(_) => None,
         },
     }
 }
@@ -1032,10 +1032,10 @@ fn model_directive_prop(attr: &VueAttr) -> Option<String> {
     }
 }
 
-pub(super) fn arrow_return_expr(body: &BlockStmtOrExpr) -> Option<&Expr> {
+pub(super) fn arrow_return_expr(body: &ArrowFunctionBody) -> Option<&Expr> {
     match body {
-        BlockStmtOrExpr::Expr(expr) => Some(expr.as_ref()),
-        BlockStmtOrExpr::BlockStmt(block) => block.stmts.iter().find_map(|stmt| match stmt {
+        ArrowFunctionBody::Expr(expr) => Some(expr.as_ref()),
+        ArrowFunctionBody::FunctionBody(block) => block.stmts.iter().find_map(|stmt| match stmt {
             Stmt::Return(ReturnStmt {
                 arg: Some(expr), ..
             }) => Some(expr.as_ref()),

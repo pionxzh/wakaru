@@ -3,8 +3,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
-    Callee, Class, Expr, FnExpr, Function, Ident, KeyValueProp, MemberExpr, MemberProp,
+    ArrowExpr, ArrowFunctionBody, AssignExpr, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee,
+    Class, Expr, FnExpr, Function, FunctionBody, Ident, KeyValueProp, MemberExpr, MemberProp,
     MetaPropExpr, MetaPropKind, Module, NewExpr, Pat, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -299,13 +299,13 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
 /// Build the arrow body:
 /// - Always keep the original block body.
 /// - ArrowReturn is responsible for `{ return expr; }` → `expr`.
-fn build_arrow_body(func: &Function) -> BlockStmtOrExpr {
+fn build_arrow_body(func: &Function) -> ArrowFunctionBody {
     let body = match func.body.as_ref() {
         Some(b) => b,
-        None => return BlockStmtOrExpr::BlockStmt(Default::default()),
+        None => return ArrowFunctionBody::FunctionBody(Default::default()),
     };
 
-    BlockStmtOrExpr::BlockStmt(body.clone())
+    ArrowFunctionBody::FunctionBody(body.clone())
 }
 
 /// Try to convert `fn.bind(this)` to an arrow function.
@@ -383,7 +383,7 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
     })
 }
 
-fn body_has_arrow_sensitive_direct_eval(body: &BlockStmt, include_this: bool) -> bool {
+fn body_has_arrow_sensitive_direct_eval(body: &FunctionBody, include_this: bool) -> bool {
     let mut analyzer = ArrowSensitiveDirectEvalAnalyzer::default();
     body.visit_with(&mut analyzer);
     if analyzer.unknown_direct_eval {
