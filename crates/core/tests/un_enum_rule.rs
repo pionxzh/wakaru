@@ -176,6 +176,92 @@ observe(Mode);
 }
 
 #[test]
+fn collapsed_exported_enum_rejects_reserved_name() {
+    // `exports.class` is a legal property, but the synthesized binding
+    // `export var class` would be a SyntaxError.
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.class || (exports.class = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_earlier_public_export_read() {
+    // A function defined before the IIFE can defer its `exports.Mode` read
+    // until after the fold removed the only write.
+    let input = r#"
+function readMode() {
+  return exports.Mode;
+}
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(readMode());
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_rejects_earlier_public_export_read() {
+    // Same deferred-read hazard for the local-alias form: the fold removes
+    // the `exports.Mode` write that `readMode` observes.
+    let input = r#"
+function readMode() {
+  return exports.Mode;
+}
+var LocalMode;
+(function (e) {
+  e["Dev"] = "dev";
+})(LocalMode = exports.Mode || (exports.Mode = {}));
+observe(readMode());
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_direct_eval_mentioning_name() {
+    // Direct eval resolves names lexically; the synthesized module binding
+    // would capture what used to be a global lookup.
+    let input = r#"
+observe(eval("Mode"));
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_unknown_direct_eval() {
+    let input = r#"
+observe(eval(source));
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_allows_unrelated_direct_eval() {
+    let input = r#"
+observe(eval("1 + 1"));
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+"#;
+    let expected = r#"
+observe(eval("1 + 1"));
+export var Mode = {
+  Dev: "dev"
+};
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn collapsed_exported_enum_rejects_prior_bare_var() {
     // The collapsed form never assigns the local, so `var Mode` must stay
     // `undefined` — folding into it would change what later reads observe.

@@ -13,6 +13,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::collect_decl_names;
+use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
+use crate::js_names::is_reserved_binding_name;
 use crate::utils::paren::strip_parens;
 
 pub struct UnEnum {
@@ -105,8 +107,12 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                             })
                             .filter(|(public_name, _)| !exported_names.contains(public_name))
                             .filter(|(public_name, _)| {
+                                // Earlier items matter too: a function defined
+                                // before the IIFE can defer a read of
+                                // `exports.X` until after the fold removed its
+                                // only write.
                                 !module_items_reference_public_export(
-                                    remaining.iter().skip(1),
+                                    items.iter().chain(remaining.iter().skip(1)),
                                     public_name,
                                     unresolved_mark.expect("exported enum parsing requires a mark"),
                                 )
@@ -137,13 +143,21 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                             if *synthesized_local {
                                 // Collapsed `exports.X || (exports.X = {})` has no
                                 // local assignment and no `var Local`. Synthesize
-                                // the public name only when it appears nowhere
-                                // else in the module (no declaration to collide
-                                // with, no global reference to capture).
-                                !module_items_use_name(
-                                    items.iter().chain(remaining.iter()),
-                                    &local_ident.sym,
-                                )
+                                // the public name only when it is legal as a
+                                // binding and appears nowhere else in the module
+                                // (no declaration to collide with, no global
+                                // reference to capture) — including inside
+                                // direct eval sources, which the AST scan
+                                // cannot see.
+                                !is_reserved_binding_name(&local_ident.sym)
+                                    && !module_items_use_name(
+                                        items.iter().chain(remaining.iter()),
+                                        &local_ident.sym,
+                                    )
+                                    && !module_items_direct_eval_can_observe(
+                                        items.iter().chain(remaining.iter()),
+                                        &local_ident.sym,
+                                    )
                             } else {
                                 has_safe_prior_bare_var(
                                     items,
@@ -154,8 +168,11 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>, unresolved_mark: O
                             }
                         })
                         .filter(|(_, public_name, _, _)| {
+                            // Earlier items matter too: a function defined
+                            // before the IIFE can defer a read of `exports.X`
+                            // until after the fold removed its only write.
                             !module_items_reference_public_export(
-                                remaining.iter(),
+                                items.iter().chain(remaining.iter()),
                                 public_name,
                                 unresolved_mark.expect("exported enum parsing requires a mark"),
                             )
@@ -944,6 +961,26 @@ impl Visit for NameUseFinder<'_> {
             self.found = true;
         }
     }
+}
+
+/// Direct eval resolves names lexically, invisibly to the AST scan above: a
+/// synthesized module-level binding would capture an `eval("X")` that read a
+/// global before. Reject when any direct eval source is unknown or a known
+/// source mentions the name. Indirect eval runs in global scope and cannot
+/// observe module bindings, so it stays irrelevant here.
+fn module_items_direct_eval_can_observe<'a>(
+    items: impl IntoIterator<Item = &'a ModuleItem>,
+    name: &Atom,
+) -> bool {
+    let mut analyzer = DirectEvalAnalyzer::default();
+    for item in items {
+        item.visit_with(&mut analyzer);
+    }
+    analyzer.unknown_direct_eval
+        || analyzer
+            .known_direct_eval_sources
+            .iter()
+            .any(|source| js_source_mentions_binding(source, name))
 }
 
 fn collect_exported_names(items: &[ModuleItem]) -> HashSet<Atom> {
