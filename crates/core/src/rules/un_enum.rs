@@ -6,16 +6,19 @@ use swc_core::ecma::ast::{
     ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent,
     CallExpr, Callee, ComputedPropName, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier,
     Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp,
-    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, Number, ObjectLit, Pat, Prop, PropName,
-    PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, Number, ObjectLit, OptCall,
+    OptChainBase, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, Str, TaggedTpl,
+    UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::collect_decl_names;
-use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
+use super::eval_utils::{
+    direct_eval_call_source, js_source_mentions_binding, DirectEvalAnalyzer, EvalCallSource,
+};
 use crate::js_names::{is_reserved_binding_name, is_valid_identifier_name};
 use crate::utils::paren::strip_parens;
+use crate::utils::prototype_members::is_prototype_mutating_member_name;
 
 pub struct UnEnum {
     unresolved_mark: Option<Mark>,
@@ -258,18 +261,21 @@ impl PublicExportUseFinder<'_> {
     }
 
     /// Match a property access on an export surface: hazard when the key is
-    /// the public name or is not statically known.
+    /// the public name, a prototype-mutating member, or not statically known.
     fn check_surface_prop(&mut self, prop: &MemberProp, hazard_name: &Atom) {
         match prop {
             MemberProp::Ident(ident_name) => {
-                if ident_name.sym == *hazard_name {
+                if ident_name.sym == *hazard_name
+                    || is_prototype_mutating_member_name(ident_name.sym.as_ref())
+                {
                     self.found = true;
                 }
             }
             MemberProp::Computed(computed) => {
                 match computed_key_atom(computed) {
                     Some(name) => {
-                        if name == *hazard_name {
+                        if name == *hazard_name || is_prototype_mutating_member_name(name.as_ref())
+                        {
                             self.found = true;
                         }
                     }
@@ -280,6 +286,41 @@ impl PublicExportUseFinder<'_> {
             }
             MemberProp::PrivateName(_) => {}
         }
+    }
+
+    /// A call whose receiver is the export surface or the `module` object
+    /// can observe the property (`exports.hasOwnProperty("Mode")`) or return
+    /// the surface itself (`exports.valueOf()`, `module.valueOf()`).
+    fn is_surface_receiver(&self, callee: &Expr) -> bool {
+        let Some(member) = member_like(callee) else {
+            return false;
+        };
+        let obj = strip_parens(&member.obj);
+        if self.is_exports_object(obj) {
+            return true;
+        }
+        matches!(obj, Expr::Ident(ident) if is_unresolved_named(ident, "module", self.unresolved_mark))
+    }
+
+    /// Direct eval resolves `exports`/`module` from the calling scope, so it
+    /// can read the surface invisibly to the AST scan. Returns true when the
+    /// call was a direct eval (handled here, hazardous or not).
+    fn check_direct_eval(&mut self, call: &CallExpr) -> bool {
+        let Some(source) = direct_eval_call_source(call) else {
+            return false;
+        };
+        match source {
+            EvalCallSource::NoSource => {}
+            EvalCallSource::Unknown => self.found = true,
+            EvalCallSource::Known(source) => {
+                if js_source_mentions_binding(&source, &Atom::from("exports"))
+                    || js_source_mentions_binding(&source, &Atom::from("module"))
+                {
+                    self.found = true;
+                }
+            }
+        }
+        true
     }
 }
 
@@ -314,6 +355,58 @@ impl Visit for PublicExportUseFinder<'_> {
         {
             self.found = true;
         }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if self.found {
+            return;
+        }
+        if !self.check_direct_eval(call) {
+            if let Callee::Expr(callee) = &call.callee {
+                if self.is_surface_receiver(strip_parens(callee)) {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        if !self.found {
+            call.visit_children_with(self);
+        }
+    }
+
+    fn visit_opt_call(&mut self, call: &OptCall) {
+        if self.found {
+            return;
+        }
+        // `eval?.()` is an indirect eval per spec, so only the receiver
+        // classification applies here.
+        if self.is_surface_receiver(strip_parens(&call.callee)) {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_tagged_tpl(&mut self, tpl: &TaggedTpl) {
+        if self.found {
+            return;
+        }
+        if self.is_surface_receiver(strip_parens(&tpl.tag)) {
+            self.found = true;
+            return;
+        }
+        tpl.visit_children_with(self);
+    }
+}
+
+fn member_like(expr: &Expr) -> Option<&MemberExpr> {
+    match strip_parens(expr) {
+        Expr::Member(member) => Some(member),
+        Expr::OptChain(chain) => match &*chain.base {
+            OptChainBase::Member(member) => Some(member),
+            OptChainBase::Call(_) => None,
+        },
+        _ => None,
     }
 }
 

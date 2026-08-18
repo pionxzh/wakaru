@@ -365,6 +365,119 @@ var Mode = {
 }
 
 #[test]
+fn collapsed_exported_enum_rejects_surface_method_call() {
+    // A call with the export surface as receiver can observe the property
+    // the fold would remove.
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.hasOwnProperty("Mode"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_surface_identity_call() {
+    // `exports.valueOf()` returns the surface itself; the chained read
+    // bypasses static member matching.
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.valueOf().Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_module_identity_call() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(module.valueOf().exports.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_optional_surface_call() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports?.hasOwnProperty("Mode"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_surface_tagged_template() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.valueOf``.Mode);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_prototype_mutating_member() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(exports.__proto__);
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_rejects_direct_eval_reading_exports() {
+    // The eval source never names `Mode`, but it reads the export surface.
+    let input = r#"
+const key = "Mode";
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(eval("exports[key]"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn exported_enum_rejects_direct_eval_reading_exports() {
+    // The local-alias path shares the same public-export proof.
+    let input = r#"
+var LocalMode;
+(function (e) {
+  e["Dev"] = "dev";
+})(LocalMode = exports.Mode || (exports.Mode = {}));
+observe(eval("exports.Mode"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), input);
+}
+
+#[test]
+fn collapsed_exported_enum_allows_unrelated_method_call() {
+    let input = r#"
+(function (e) {
+  e["Dev"] = "dev";
+})(exports.Mode || (exports.Mode = {}));
+observe(other.hasOwnProperty("Mode"));
+"#;
+    let expected = r#"
+export var Mode = {
+  Dev: "dev"
+};
+observe(other.hasOwnProperty("Mode"));
+"#;
+    assert_eq_normalized(&apply_resolved(input), expected);
+}
+
+#[test]
 fn collapsed_exported_enum_rejects_prior_bare_var() {
     // The collapsed form never assigns the local, so `var Mode` must stay
     // `undefined` — folding into it would change what later reads observe.
