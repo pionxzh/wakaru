@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates SystemJS test fixtures from the source files in src/.
+// Generates SystemJS test fixtures from the checked-in source directories.
 // Requires Node.js + npm. Generated outputs are checked into the repo so tests
 // do not require Node.js.
 
@@ -74,6 +74,14 @@ run("npm", [
 run("npx", [
   "babel",
   "src",
+  "--out-dir",
+  "dist/babel",
+  "--plugins",
+  "@babel/plugin-transform-modules-systemjs",
+]);
+run("npx", [
+  "babel",
+  "src-babel",
   "--out-dir",
   "dist/babel",
   "--plugins",

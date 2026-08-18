@@ -1,7 +1,7 @@
 use std::fs;
 
 use wakaru_core::driver::test_support::{unpack, unpack_raw};
-use wakaru_core::DecompileOptions;
+use wakaru_core::{validate_output_modules, DecompileOptions};
 
 fn fixture(path: &str) -> String {
     let full = format!("tests/bundles/systemjs-gen/dist/{path}");
@@ -137,6 +137,42 @@ fn babel_systemjs_raw_reconstructs_outer_exports() {
     assert!(
         entry.contains("export { run, value };") || entry.contains("export { value, run };"),
         "Babel outer export and execute export should both survive:\n{entry}"
+    );
+}
+
+#[test]
+fn babel_chained_member_updates_share_one_live_export() {
+    let raw = unpack_fixture_raw("babel/chained-export.js");
+    assert_eq!(raw.len(), 1);
+
+    let entry = module_code(&raw, "entry.js");
+    assert_eq!(
+        validate_output_modules(&raw),
+        vec![],
+        "Babel chained updates should not create duplicate ESM exports:\n{entry}"
+    );
+
+    let first_value = entry
+        .find("item = makeOne();")
+        .unwrap_or_else(|| panic!("first exported assignment should survive:\n{entry}"));
+    let first_member = entry
+        .find("item.a = 1;")
+        .unwrap_or_else(|| panic!("first member update should use the live binding:\n{entry}"));
+    let second_value = entry
+        .find("item = makeTwo();")
+        .unwrap_or_else(|| panic!("second exported assignment should survive:\n{entry}"));
+    let second_member = entry
+        .find("item.b = 2;")
+        .unwrap_or_else(|| panic!("second member update should use the live binding:\n{entry}"));
+
+    assert!(
+        first_value < first_member && first_member < second_value && second_value < second_member,
+        "Babel chained export evaluation order should survive:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("export { item };").count(),
+        1,
+        "item should have one live ESM export:\n{entry}"
     );
 }
 
