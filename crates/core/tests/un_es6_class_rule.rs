@@ -636,6 +636,8 @@ fn test_getter_setter_define_property() {
 var MyClass = (function() {
     function t(val) { this._val = val; }
     Object.defineProperty(t.prototype, "value", {
+        enumerable: false,
+        configurable: true,
         get: function() { return this._val; },
         set: function(v) { this._val = v; }
     });
@@ -660,6 +662,8 @@ fn define_property_zero_param_setter_gets_dummy_arg() {
 var Widget = (function() {
     function t() {}
     Object.defineProperty(t.prototype, "text", {
+        enumerable: false,
+        configurable: true,
         get: function() { return null; },
         set: function() {}
     });
@@ -716,6 +720,8 @@ fn define_property_zero_param_setter_avoids_underscore_collision() {
 var Widget = (function() {
     function t() {}
     Object.defineProperty(t.prototype, "text", {
+        enumerable: false,
+        configurable: true,
         get: function() { return null; },
         set: function() { console.log(_); }
     });
@@ -737,6 +743,8 @@ fn define_property_multi_param_setter_preserves_iife_shape() {
 var Widget = (function() {
     function t() {}
     Object.defineProperty(t.prototype, "text", {
+        enumerable: false,
+        configurable: true,
         set: function(value, metadata) { use(value, metadata); }
     });
     return t;
@@ -747,6 +755,47 @@ var Widget = (function() {
         output.contains("Object.defineProperty(t.prototype, \"text\"")
             && !output.contains("class Widget"),
         "an incompatible setter signature must keep the descriptor callback:\n{output}"
+    );
+}
+
+#[test]
+fn define_property_enumerable_accessor_preserves_iife_shape() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        enumerable: true,
+        configurable: true,
+        set: function() {}
+    });
+    return t;
+}());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("Object.defineProperty(t.prototype, \"text\"")
+            && !output.contains("class Widget"),
+        "an enumerable descriptor cannot become a non-enumerable class accessor:\n{output}"
+    );
+}
+
+#[test]
+fn define_property_nonconfigurable_accessor_preserves_iife_shape() {
+    let input = r#"
+var Widget = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "text", {
+        enumerable: false,
+        set: function() {}
+    });
+    return t;
+}());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("Object.defineProperty(t.prototype, \"text\"")
+            && !output.contains("class Widget"),
+        "a nonconfigurable descriptor cannot become a configurable class accessor:\n{output}"
     );
 }
 

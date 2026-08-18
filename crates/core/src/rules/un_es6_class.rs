@@ -14,7 +14,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::decl_utils::{class_method_has_invalid_signature, ensure_setter_has_value_param};
+use super::decl_utils::{
+    class_accessor_descriptor_is_compatible, class_method_has_invalid_signature,
+    ensure_setter_has_value_param,
+};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
@@ -1797,6 +1800,7 @@ fn try_parse_object_define_property(
 
     let original_len = members.len();
     let value_fn = descriptor_value_method_fn(obj);
+    let accessor_descriptor_is_compatible = class_accessor_descriptor_is_compatible(obj);
 
     for prop in &obj.props {
         let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
@@ -1815,6 +1819,9 @@ fn try_parse_object_define_property(
             "set" => MethodKind::Setter,
             _ => continue,
         };
+        if !accessor_descriptor_is_compatible {
+            return false;
+        }
         let fn_expr = match strip_parens(&kv.value) {
             Expr::Fn(f) => f,
             _ => continue,

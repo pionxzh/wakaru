@@ -39,6 +39,7 @@ if (jobsFlagIndex !== -1) {
 const matrices = [
   "array-spread-rest",
   "async-await",
+  "class-accessor",
   "closure-compiler",
   "conditional-switch",
   "enum",

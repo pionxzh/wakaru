@@ -644,6 +644,8 @@ fn test_getter_setter() {
     let input = r#"
 function Foo(val) { this._val = val; }
 Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
     get: function() { return this._val; },
     set: function(v) { this._val = v; }
 });
@@ -663,6 +665,8 @@ fn define_property_zero_param_setter_gets_dummy_arg() {
     let input = r#"
 function Foo() {}
 Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
     set: function() {}
 });
 "#;
@@ -675,10 +679,38 @@ class Foo {
 }
 
 #[test]
+fn define_property_zero_param_setter_survives_obj_method_shorthand() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
+    get: function() { return this._value; },
+    set: function() {}
+});
+var foo = new Foo();
+use(foo.value);
+foo.value = 1;
+"#;
+    let expected = r#"
+class Foo {
+    get value() { return this._value; }
+    set value(_) {}
+}
+const foo = new Foo();
+use(foo.value);
+foo.value = 1;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn define_property_param_getter_preserves_original_shape() {
     let input = r#"
 function Foo() {}
 Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
     get: function(unexpected) { return unexpected; }
 });
 "#;
@@ -690,6 +722,8 @@ fn define_property_rest_setter_preserves_original_shape() {
     let input = r#"
 function Foo() {}
 Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
     set: function(...values) { use(values); }
 });
 "#;
@@ -701,7 +735,34 @@ fn duplicate_getter_params_preserve_define_property_shape() {
     let input = r#"
 function Foo(val) { this._val = val; }
 Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
     get: function(a, a) { return this._val; }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn define_property_enumerable_accessor_preserves_original_shape() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: true,
+    configurable: true,
+    set: function() {}
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn define_property_nonconfigurable_accessor_preserves_original_shape() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    set: function() {}
 });
 "#;
     assert_eq_normalized(&apply(input), input);

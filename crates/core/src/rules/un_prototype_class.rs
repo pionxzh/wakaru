@@ -13,7 +13,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::{
-    class_method_has_invalid_signature, ensure_setter_has_value_param, has_duplicate_param_names,
+    class_accessor_descriptor_is_compatible, class_method_has_invalid_signature,
+    ensure_setter_has_value_param, has_duplicate_param_names,
 };
 use super::helper_matcher::{binding_key, BindingKey};
 
@@ -1116,18 +1117,28 @@ fn extract_define_property(stmt: &Stmt, ctor_binding: &BindingKey) -> Option<Vec
 
     let mut methods = Vec::new();
     let value_fn = descriptor_value_method_fn(obj);
+    let accessor_descriptor_is_compatible = class_accessor_descriptor_is_compatible(obj);
     if value_fn.is_some_and(|fn_expr| has_duplicate_param_names(&fn_expr.function.params)) {
         return None;
     }
 
     for prop in &obj.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
             continue;
         };
-        let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else {
-            continue;
+        let (key, function) = match prop.as_ref() {
+            swc_core::ecma::ast::Prop::KeyValue(kv) => {
+                let Expr::Fn(fn_expr) = kv.value.as_ref() else {
+                    continue;
+                };
+                (&kv.key, fn_expr.function.as_ref())
+            }
+            // ObjMethodShorthand runs before UnPrototypeClass in the full
+            // pipeline, so descriptor callbacks can already be method props.
+            swc_core::ecma::ast::Prop::Method(method) => (&method.key, method.function.as_ref()),
+            _ => continue,
         };
-        let key_name = match &kv.key {
+        let key_name = match key {
             PropName::Ident(i) => i.sym.clone(),
             PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
             _ => continue,
@@ -1137,11 +1148,11 @@ fn extract_define_property(stmt: &Stmt, ctor_binding: &BindingKey) -> Option<Vec
             "set" => MethodKind::Setter,
             _ => continue,
         };
-        let Expr::Fn(fn_expr) = kv.value.as_ref() else {
-            continue;
-        };
+        if !accessor_descriptor_is_compatible {
+            return None;
+        }
         let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
-        let mut method = build_class_method_from_fn(method_key, fn_expr, false);
+        let mut method = build_class_method_from_function(method_key, function, false);
         method.kind = kind;
         if kind == MethodKind::Setter {
             ensure_setter_has_value_param(&mut method.function);
@@ -1329,10 +1340,18 @@ fn build_constructor_from_fn(
 }
 
 fn build_class_method_from_fn(key: PropName, fn_expr: &FnExpr, is_static: bool) -> ClassMethod {
+    build_class_method_from_function(key, &fn_expr.function, is_static)
+}
+
+fn build_class_method_from_function(
+    key: PropName,
+    function: &Function,
+    is_static: bool,
+) -> ClassMethod {
     ClassMethod {
         span: DUMMY_SP,
         key,
-        function: fn_expr.function.clone(),
+        function: Box::new(function.clone()),
         kind: MethodKind::Method,
         is_static,
         accessibility: None,
