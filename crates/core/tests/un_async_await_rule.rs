@@ -602,6 +602,31 @@ function loadValue(task) {
 }
 
 #[test]
+fn awaiter_callback_inferred_plain_assignment_name_collision_fails_closed() {
+    let input = r#"
+function loadValue(task) {
+  return __awaiter(this, void 0, void 0, function* () {
+    var task;
+    task = function () {};
+    observe(task.name);
+    yield ready();
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("return async function()")
+            && output.contains("task = function()")
+            && output.contains("observe(task.name)"),
+        "renaming a plain-assignment target would change the function name:\n{output}"
+    );
+    assert!(
+        !output.contains("async function loadValue(task)"),
+        "an inferred plain-assignment name must keep the callback boundary:\n{output}"
+    );
+}
+
+#[test]
 fn awaiter_callback_inferred_destructuring_default_name_collision_fails_closed() {
     let input = r#"
 function loadValue(task) {
