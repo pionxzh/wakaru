@@ -4,11 +4,11 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, EqIgnoreSpan, SourceMap, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Class, ClassDecl,
-    ClassMember, ClassMethod, Decl, Expr, ExprOrSpread, Ident, IdentName, KeyValueProp, Lit,
-    MemberExpr, MemberProp, MethodKind, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ArrowFunctionBody, AssignExpr, AssignTarget, BindingIdent, CallExpr, Class, ClassDecl,
+    ClassMember, ClassMethod, Decl, Expr, ExprOrSpread, FunctionBody, Ident, IdentName,
+    KeyValueProp, Lit, MemberExpr, MemberProp, MethodKind, Module, ModuleDecl, ModuleItem,
+    ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -753,10 +753,10 @@ pub(super) fn handler_expression(
             }
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::Expr(expression) => {
+            ArrowFunctionBody::Expr(expression) => {
                 print_template_expression(expression, component_contexts, local_references, cm)
             }
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::FunctionBody(block) => {
                 if let Some(expression) = single_return_expression(block) {
                     print_template_expression(expression, component_contexts, local_references, cm)
                 } else if let Some(expressions) = handler_effect_expressions(block) {
@@ -792,7 +792,7 @@ fn restore_event_parameter(expression: &mut Expr) {
     );
 }
 
-fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&Expr> {
+fn single_return_expression(block: &FunctionBody) -> Option<&Expr> {
     let [Stmt::Return(ReturnStmt {
         arg: Some(expression),
         ..
@@ -803,7 +803,7 @@ fn single_return_expression(block: &swc_core::ecma::ast::BlockStmt) -> Option<&E
     Some(expression.as_ref())
 }
 
-fn handler_effect_expressions(block: &swc_core::ecma::ast::BlockStmt) -> Option<Vec<&Expr>> {
+fn handler_effect_expressions(block: &FunctionBody) -> Option<Vec<&Expr>> {
     let mut expressions = Vec::new();
     for (index, statement) in block.stmts.iter().enumerate() {
         match statement {

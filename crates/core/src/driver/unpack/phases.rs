@@ -303,6 +303,7 @@ pub(super) fn unpack_multi_module_with_plan_and_capture(
                 filename: unpacked.module.filename.clone(),
                 facts: crate::facts::ModuleFacts::default(),
                 prepared: None,
+                pre_rewrite_source: None,
                 warning: Some(detector_failure_warning(&unpacked.module.filename, failure)),
                 input_parse_warnings: Vec::new(),
                 suggested_filename: None,
