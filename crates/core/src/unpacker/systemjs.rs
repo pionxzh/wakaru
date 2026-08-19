@@ -14,6 +14,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::js_names::is_reserved_binding_name;
 use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
@@ -820,26 +821,7 @@ impl SystemExecuteTransformer {
                 if is_valid_ident_name(exported.as_ref()) {
                     self.declared_exports
                         .insert((exported.clone(), exported.clone()));
-                    return Some(vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
-                        ExportDecl {
-                            span: DUMMY_SP,
-                            decl: Decl::Var(Box::new(VarDecl {
-                                span: DUMMY_SP,
-                                ctxt: Default::default(),
-                                kind: swc_core::ecma::ast::VarDeclKind::Const,
-                                declare: false,
-                                decls: vec![VarDeclarator {
-                                    span: DUMMY_SP,
-                                    name: Pat::Ident(BindingIdent {
-                                        id: ident(exported),
-                                        type_ann: None,
-                                    }),
-                                    init: Some(value),
-                                    definite: false,
-                                }],
-                            })),
-                        },
-                    ))]);
+                    return Some(vec![named_export_decl_item(exported, value)]);
                 }
                 None
             }
@@ -864,7 +846,7 @@ impl SystemExecuteTransformer {
         if assign.op != AssignOp::Assign {
             return None;
         }
-        let local = assign.left.as_simple()?.as_ident()?.id.sym.clone();
+        let target = assign.left.as_simple()?.as_ident()?.clone();
         let exprs = self.as_export_seq(assign.right.as_ref())?;
         let last_idx = exprs.len().checked_sub(1)?;
         let mut items = Vec::new();
@@ -874,36 +856,21 @@ impl SystemExecuteTransformer {
                 _ => None,
             };
             if idx == last_idx {
-                // The assign target is often not a declared binding, so
-                // `export { h as Name }` is dropped by the decompile pipeline.
-                // Emit `export const Name = value` and `h = Name` to keep object identity.
-                let alias = match &export_call {
-                    Some(ExportCall::Single { exported, .. })
-                        if exported.as_ref() != "default" && is_valid_ident_name(exported) =>
-                    {
-                        Some(exported.clone())
-                    }
-                    _ => None,
-                };
                 if let Some(export_call) = export_call {
-                    if let Some(export_items) = self.export_call_items(export_call) {
+                    if let Some((export_items, result)) = self.export_call_result_items(export_call)
+                    {
                         items.extend(export_items);
-                        if let Some(exported) = alias {
-                            items.push(assign_ident_item(
-                                local,
-                                Box::new(Expr::Ident(ident(exported))),
-                            ));
-                            return Some(items);
-                        }
+                        items.push(assign_ident_item(target, result));
+                        return Some(items);
                     }
                 }
                 let mut last = part.clone();
                 last.visit_mut_with(self);
-                items.push(assign_ident_item(local, last));
+                items.push(assign_ident_item(target, last));
                 return Some(items);
             }
             if let Some(export_call) = export_call {
-                if let Some(export_items) = self.export_call_items(export_call) {
+                if let Some(export_items) = self.export_sequence_prefix_items(export_call) {
                     items.extend(export_items);
                     continue;
                 }
@@ -918,6 +885,73 @@ impl SystemExecuteTransformer {
         None
     }
 
+    fn export_sequence_prefix_items(&mut self, export_call: ExportCall) -> Option<Vec<ModuleItem>> {
+        match export_call {
+            single @ ExportCall::Single { .. } => self
+                .export_call_result_items(single)
+                .map(|(items, _)| items),
+            bulk @ ExportCall::Bulk(_) => self.export_call_items(bulk),
+        }
+    }
+
+    fn export_call_result_items(
+        &mut self,
+        export_call: ExportCall,
+    ) -> Option<(Vec<ModuleItem>, Box<Expr>)> {
+        let ExportCall::Single {
+            exported,
+            mut value,
+        } = export_call
+        else {
+            return None;
+        };
+        value.visit_mut_with(self);
+
+        if let Some(local) = exported_value_local(value.as_ref()) {
+            self.add_export(local.clone(), exported);
+            let result = Box::new(Expr::Ident(ident(local)));
+            let items = if matches!(value.as_ref(), Expr::Assign(_)) {
+                vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: value,
+                }))]
+            } else {
+                Vec::new()
+            };
+            return Some((items, result));
+        }
+
+        let is_default = exported.as_ref() == "default";
+        if !is_default && !is_valid_ident_name(exported.as_ref()) {
+            return None;
+        }
+        let can_use_exported_name = !is_default
+            && !is_reserved_binding_name(exported.as_ref())
+            && self.used_names.insert(exported.clone());
+        if can_use_exported_name {
+            self.declared_exports
+                .insert((exported.clone(), exported.clone()));
+            let result = Box::new(Expr::Ident(ident(exported.clone())));
+            return Some((vec![named_export_decl_item(exported, value)], result));
+        }
+
+        let local = self.fresh_export_name();
+        let mut items = vec![self.binding_item(local.clone(), value)];
+        if is_default {
+            items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+                ExportDefaultExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Ident(ident(local.clone()))),
+                },
+            )));
+        } else {
+            self.declared_exports
+                .insert((local.clone(), exported.clone()));
+            items.push(named_export_item(local.clone(), exported));
+        }
+        Some((items, Box::new(Expr::Ident(ident(local)))))
+    }
+
     fn take_var_export_seq_decls(&mut self, var: &VarDecl) -> Option<Vec<ModuleItem>> {
         let has_seq = var.decls.iter().any(|decl| {
             decl.init
@@ -929,62 +963,51 @@ impl SystemExecuteTransformer {
         }
 
         let mut items = Vec::new();
-        let mut kept = Vec::new();
         for decl in &var.decls {
-            let Some(local) = pat_single_ident(&decl.name).cloned() else {
-                let mut leftover = decl.clone();
-                leftover.visit_mut_with(self);
-                kept.push(leftover);
-                continue;
-            };
-            let Some(init) = &decl.init else {
-                kept.push(decl.clone());
-                continue;
-            };
-
-            if let Some((prefix, value)) =
-                self.take_bound_export_seq(init.as_ref(), Some(local.clone()))
+            if let (Some(local), Some(init)) =
+                (pat_single_ident(&decl.name).cloned(), decl.init.as_ref())
             {
-                items.extend(prefix);
-                kept.push(VarDeclarator {
-                    span: decl.span,
-                    name: decl.name.clone(),
-                    init: Some(value),
-                    definite: decl.definite,
-                });
-                continue;
-            }
-
-            if let Expr::Call(call) = strip_paren_expr(init.as_ref()) {
-                if let Some(ExportCall::Single { exported, value }) =
-                    parse_export_call(call, &self.export_sym)
+                if let Some((prefix, value)) =
+                    self.take_bound_export_seq(init.as_ref(), Some(local.clone()))
                 {
-                    let mut value = value;
-                    value.visit_mut_with(self);
-                    self.add_export(local, exported);
-                    kept.push(VarDeclarator {
-                        span: decl.span,
-                        name: decl.name.clone(),
-                        init: Some(value),
-                        definite: decl.definite,
-                    });
+                    items.extend(prefix);
+                    items.push(var_declarator_item(
+                        var,
+                        VarDeclarator {
+                            span: decl.span,
+                            name: decl.name.clone(),
+                            init: Some(value),
+                            definite: decl.definite,
+                        },
+                    ));
                     continue;
+                }
+
+                if let Expr::Call(call) = strip_paren_expr(init.as_ref()) {
+                    if let Some(ExportCall::Single {
+                        exported,
+                        mut value,
+                    }) = parse_export_call(call, &self.export_sym)
+                    {
+                        value.visit_mut_with(self);
+                        self.add_export(local, exported);
+                        items.push(var_declarator_item(
+                            var,
+                            VarDeclarator {
+                                span: decl.span,
+                                name: decl.name.clone(),
+                                init: Some(value),
+                                definite: decl.definite,
+                            },
+                        ));
+                        continue;
+                    }
                 }
             }
 
             let mut leftover = decl.clone();
             leftover.visit_mut_with(self);
-            kept.push(leftover);
-        }
-
-        if !kept.is_empty() {
-            items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                span: var.span,
-                ctxt: var.ctxt,
-                kind: var.kind,
-                declare: var.declare,
-                decls: kept,
-            })))));
+            items.push(var_declarator_item(var, leftover));
         }
         Some(items)
     }
@@ -1031,7 +1054,7 @@ impl SystemExecuteTransformer {
                 return Some((items, last));
             }
             if let Some(export_call) = export_call {
-                if let Some(export_items) = self.export_call_items(export_call) {
+                if let Some(export_items) = self.export_sequence_prefix_items(export_call) {
                     items.extend(export_items);
                     continue;
                 }
@@ -1169,6 +1192,27 @@ fn named_export_item(local: Atom, exported: Atom) -> ModuleItem {
     }))
 }
 
+fn named_export_decl_item(exported: Atom, value: Box<Expr>) -> ModuleItem {
+    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+        span: DUMMY_SP,
+        decl: Decl::Var(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind: swc_core::ecma::ast::VarDeclKind::Const,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                    id: ident(exported),
+                    type_ann: None,
+                }),
+                init: Some(value),
+                definite: false,
+            }],
+        })),
+    }))
+}
+
 enum ExportCall {
     Single { exported: Atom, value: Box<Expr> },
     Bulk(Vec<(Atom, Box<Expr>)>),
@@ -1269,19 +1313,26 @@ fn param_sym(function: &Function, idx: usize) -> Option<Atom> {
     pat_single_ident(&param.pat).cloned()
 }
 
-fn assign_ident_item(local: Atom, value: Box<Expr>) -> ModuleItem {
+fn assign_ident_item(target: BindingIdent, value: Box<Expr>) -> ModuleItem {
     ModuleItem::Stmt(Stmt::Expr(ExprStmt {
         span: DUMMY_SP,
         expr: Box::new(Expr::Assign(AssignExpr {
             span: DUMMY_SP,
             op: AssignOp::Assign,
-            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
-                id: ident(local),
-                type_ann: None,
-            })),
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(target)),
             right: value,
         })),
     }))
+}
+
+fn var_declarator_item(var: &VarDecl, decl: VarDeclarator) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: var.span,
+        ctxt: var.ctxt,
+        kind: var.kind,
+        declare: var.declare,
+        decls: vec![decl],
+    }))))
 }
 
 fn strip_paren_expr(expr: &Expr) -> &Expr {
