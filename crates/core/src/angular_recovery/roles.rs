@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Spanned, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, ClassProp, Expr, ExprOrSpread,
+    ArrowFunctionBody, AssignExpr, AssignTarget, CallExpr, Callee, ClassProp, Expr, ExprOrSpread,
     ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Prop, PropName,
     SimpleAssignTarget, Stmt,
 };
@@ -1170,8 +1170,8 @@ fn exported_symbol_expr(expression: &Expr) -> Option<&Expr> {
     match expression {
         Expr::Ident(_) | Expr::Member(_) => Some(expression),
         Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
-            BlockStmtOrExpr::Expr(expression) => exported_symbol_expr(expression),
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::Expr(expression) => exported_symbol_expr(expression),
+            ArrowFunctionBody::FunctionBody(block) => {
                 let [Stmt::Return(return_statement)] = block.stmts.as_slice() else {
                     return None;
                 };

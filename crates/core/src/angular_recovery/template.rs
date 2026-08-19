@@ -4,10 +4,10 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, Ident, Lit, MemberExpr,
-    MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, ThisExpr,
-    UnaryOp, VarDeclarator,
+    ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, CallExpr,
+    Callee, Decl, Expr, ExprOrSpread, ExprStmt, FnDecl, Function, FunctionBody, Ident, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    ThisExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1385,7 +1385,7 @@ fn collect_variable_declaration(
     }
 }
 
-fn unobserved_assignment_candidates(body: &BlockStmt) -> HashSet<BindingKey> {
+fn unobserved_assignment_candidates(body: &FunctionBody) -> HashSet<BindingKey> {
     #[derive(Default)]
     struct DirectEvalFinder {
         found: bool,
@@ -1444,7 +1444,7 @@ fn record_unresolved_alias_declarations(
 }
 
 fn inlined_current_view_captures(
-    body: &BlockStmt,
+    body: &FunctionBody,
     roles: &IvyRoleTable,
     unresolved_ctxt: SyntaxContext,
 ) -> HashSet<BindingKey> {
@@ -1499,7 +1499,7 @@ fn inlined_current_view_captures(
         .collect()
 }
 
-fn member_object_bindings(body: &BlockStmt) -> HashSet<BindingKey> {
+fn member_object_bindings(body: &FunctionBody) -> HashSet<BindingKey> {
     #[derive(Default)]
     struct Collector {
         bindings: HashSet<BindingKey>,
@@ -3063,10 +3063,11 @@ fn recover_structured_view_listener_handler(
         })
         .collect();
     let function = Function {
+        this_param: None,
         params,
         decorators: Vec::new(),
         span: block.span,
-        ctxt: block.ctxt,
+        ctxt: SyntaxContext::empty(),
         body: Some(body),
         is_generator: false,
         is_async: false,
@@ -4250,12 +4251,12 @@ fn contains_runtime_call(expression: &Expr, environment: &TemplateRecoveryEnviro
     finder.found
 }
 
-fn handler_block(handler: &Expr) -> Option<&BlockStmt> {
+fn handler_block(handler: &Expr) -> Option<&FunctionBody> {
     match strip_parentheses(handler) {
         Expr::Fn(function) => function.function.body.as_ref(),
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => Some(block),
-            BlockStmtOrExpr::Expr(_) => None,
+            ArrowFunctionBody::FunctionBody(block) => Some(block),
+            ArrowFunctionBody::Expr(_) => None,
         },
         _ => None,
     }
@@ -4305,7 +4306,7 @@ fn recover_two_way_listener_target(
 }
 
 fn direct_two_way_listener_target<'a>(
-    block: &'a BlockStmt,
+    block: &'a FunctionBody,
     event: &BindingKey,
     environment: &TemplateRecoveryEnvironment<'_>,
 ) -> std::result::Result<Option<&'a Expr>, String> {
@@ -4376,7 +4377,7 @@ fn validate_two_way_binding_update<'a>(
 }
 
 fn recover_restored_two_way_listener_target(
-    block: &BlockStmt,
+    block: &FunctionBody,
     event: &BindingKey,
     tree: &TemplateTree,
     ancestor_references: &[ReferenceScope],
@@ -6114,8 +6115,8 @@ fn recover_repeater_track_expression(
     let (parameters, body) = match strip_parentheses(resolved.as_ref()) {
         Expr::Arrow(arrow) => {
             let body = match arrow.body.as_ref() {
-                BlockStmtOrExpr::Expr(expression) => expression.as_ref(),
-                BlockStmtOrExpr::BlockStmt(block) => single_return_value(block)
+                ArrowFunctionBody::Expr(expression) => expression.as_ref(),
+                ArrowFunctionBody::FunctionBody(block) => single_return_value(block)
                     .ok_or_else(|| "track function is not a single expression".to_string())?,
             };
             (arrow.params.as_slice(), body)
@@ -6177,7 +6178,7 @@ fn print_repeater_track_body(
     Ok(printed)
 }
 
-fn single_return_value(block: &BlockStmt) -> Option<&Expr> {
+fn single_return_value(block: &FunctionBody) -> Option<&Expr> {
     let [Stmt::Return(ReturnStmt {
         arg: Some(expression),
         ..
@@ -7819,8 +7820,8 @@ fn expand_pure_function(
                 })
                 .collect::<Option<Vec<_>>>();
             let body = match arrow.body.as_ref() {
-                BlockStmtOrExpr::Expr(expression) => Some(expression.clone()),
-                BlockStmtOrExpr::BlockStmt(block) => {
+                ArrowFunctionBody::Expr(expression) => Some(expression.clone()),
+                ArrowFunctionBody::FunctionBody(block) => {
                     single_return_value(block).map(|expression| Box::new(expression.clone()))
                 }
             };
@@ -7975,8 +7976,8 @@ fn decode_component_constant_entries(expression: &Expr) -> Option<DecodedCompone
             function.function.body.as_ref()?
         }
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(body) if arrow.params.is_empty() => body,
-            BlockStmtOrExpr::Expr(expression) => {
+            ArrowFunctionBody::FunctionBody(body) if arrow.params.is_empty() => body,
+            ArrowFunctionBody::Expr(expression) => {
                 let Expr::Array(array) = strip_parentheses(expression.as_ref()) else {
                     return None;
                 };
