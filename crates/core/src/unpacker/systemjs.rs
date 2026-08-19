@@ -3,13 +3,13 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowFunctionBody, AssignTarget, BindingIdent, CallExpr, Callee, Decl, EsVersion,
-    ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
-    ExprStmt, FnExpr, Function, FunctionBody, Ident, ImportDecl, ImportDefaultSpecifier,
-    ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit, MemberExpr, MemberProp,
-    MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport,
-    ObjectLit, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
-    Str, UnaryOp, VarDecl, VarDeclarator,
+    ArrayLit, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr,
+    Callee, Decl, EsVersion, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier,
+    Expr, ExprOrSpread, ExprStmt, FnExpr, Function, FunctionBody, Ident, ImportDecl,
+    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, ImportStarAsSpecifier, Lit,
+    MemberExpr, MemberProp, MetaPropExpr, MetaPropKind, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, NamedExport, ObjectLit, ParenExpr, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -595,6 +595,14 @@ impl SystemExecuteTransformer {
             return;
         }
 
+        // `var x = (_export("A", v1), _export("B", v2))`: init is a Seq; the old rewrite only accepts Call.
+        if let Stmt::Decl(Decl::Var(var)) = &stmt {
+            if let Some(export_items) = self.take_var_export_seq_decls(var) {
+                items.extend(export_items);
+                return;
+            }
+        }
+
         if let Stmt::Decl(Decl::Var(var)) = &mut stmt {
             self.rewrite_var_exports(var);
         }
@@ -653,7 +661,9 @@ impl SystemExecuteTransformer {
                 let export_call = parse_export_call(call, &self.export_sym)?;
                 self.export_call_items(export_call)
             }
-            Expr::Assign(assign) => self.export_member_assignment_items(assign),
+            Expr::Assign(assign) => self
+                .export_member_assignment_items(assign)
+                .or_else(|| self.take_ident_assign_export_seq(assign)),
             Expr::Seq(seq) => {
                 let mut items = Vec::new();
                 let mut saw_export = false;
@@ -661,7 +671,9 @@ impl SystemExecuteTransformer {
                     let export_items = match expr.as_ref() {
                         Expr::Call(call) => parse_export_call(call, &self.export_sym)
                             .and_then(|export_call| self.export_call_items(export_call)),
-                        Expr::Assign(assign) => self.export_member_assignment_items(assign),
+                        Expr::Assign(assign) => self
+                            .export_member_assignment_items(assign)
+                            .or_else(|| self.take_ident_assign_export_seq(assign)),
                         _ => None,
                     };
                     if let Some(export_items) = export_items {
@@ -846,6 +858,192 @@ impl SystemExecuteTransformer {
                 Some(assignment_items)
             }
         }
+    }
+
+    fn take_ident_assign_export_seq(&mut self, assign: &AssignExpr) -> Option<Vec<ModuleItem>> {
+        if assign.op != AssignOp::Assign {
+            return None;
+        }
+        let local = assign.left.as_simple()?.as_ident()?.id.sym.clone();
+        let exprs = self.as_export_seq(assign.right.as_ref())?;
+        let last_idx = exprs.len().checked_sub(1)?;
+        let mut items = Vec::new();
+        for (idx, part) in exprs.iter().enumerate() {
+            let export_call = match strip_paren_expr(part) {
+                Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                _ => None,
+            };
+            if idx == last_idx {
+                // The assign target is often not a declared binding, so
+                // `export { h as Name }` is dropped by the decompile pipeline.
+                // Emit `export const Name = value` and `h = Name` to keep object identity.
+                let alias = match &export_call {
+                    Some(ExportCall::Single { exported, .. })
+                        if exported.as_ref() != "default" && is_valid_ident_name(exported) =>
+                    {
+                        Some(exported.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(export_call) = export_call {
+                    if let Some(export_items) = self.export_call_items(export_call) {
+                        items.extend(export_items);
+                        if let Some(exported) = alias {
+                            items.push(assign_ident_item(
+                                local,
+                                Box::new(Expr::Ident(ident(exported))),
+                            ));
+                            return Some(items);
+                        }
+                    }
+                }
+                let mut last = part.clone();
+                last.visit_mut_with(self);
+                items.push(assign_ident_item(local, last));
+                return Some(items);
+            }
+            if let Some(export_call) = export_call {
+                if let Some(export_items) = self.export_call_items(export_call) {
+                    items.extend(export_items);
+                    continue;
+                }
+            }
+            let mut stmt = Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: part.clone(),
+            });
+            stmt.visit_mut_with(self);
+            items.push(ModuleItem::Stmt(stmt));
+        }
+        None
+    }
+
+    fn take_var_export_seq_decls(&mut self, var: &VarDecl) -> Option<Vec<ModuleItem>> {
+        let has_seq = var.decls.iter().any(|decl| {
+            decl.init
+                .as_ref()
+                .is_some_and(|init| self.as_export_seq(init).is_some())
+        });
+        if !has_seq {
+            return None;
+        }
+
+        let mut items = Vec::new();
+        let mut kept = Vec::new();
+        for decl in &var.decls {
+            let Some(local) = pat_single_ident(&decl.name).cloned() else {
+                let mut leftover = decl.clone();
+                leftover.visit_mut_with(self);
+                kept.push(leftover);
+                continue;
+            };
+            let Some(init) = &decl.init else {
+                kept.push(decl.clone());
+                continue;
+            };
+
+            if let Some((prefix, value)) =
+                self.take_bound_export_seq(init.as_ref(), Some(local.clone()))
+            {
+                items.extend(prefix);
+                kept.push(VarDeclarator {
+                    span: decl.span,
+                    name: decl.name.clone(),
+                    init: Some(value),
+                    definite: decl.definite,
+                });
+                continue;
+            }
+
+            if let Expr::Call(call) = strip_paren_expr(init.as_ref()) {
+                if let Some(ExportCall::Single { exported, value }) =
+                    parse_export_call(call, &self.export_sym)
+                {
+                    let mut value = value;
+                    value.visit_mut_with(self);
+                    self.add_export(local, exported);
+                    kept.push(VarDeclarator {
+                        span: decl.span,
+                        name: decl.name.clone(),
+                        init: Some(value),
+                        definite: decl.definite,
+                    });
+                    continue;
+                }
+            }
+
+            let mut leftover = decl.clone();
+            leftover.visit_mut_with(self);
+            kept.push(leftover);
+        }
+
+        if !kept.is_empty() {
+            items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                span: var.span,
+                ctxt: var.ctxt,
+                kind: var.kind,
+                declare: var.declare,
+                decls: kept,
+            })))));
+        }
+        Some(items)
+    }
+
+    fn as_export_seq<'a>(&self, expr: &'a Expr) -> Option<&'a [Box<Expr>]> {
+        let Expr::Seq(seq) = strip_paren_expr(expr) else {
+            return None;
+        };
+        let has_export = seq.exprs.iter().any(|part| {
+            matches!(
+                strip_paren_expr(part),
+                Expr::Call(call) if parse_export_call(call, &self.export_sym).is_some()
+            )
+        });
+        has_export.then_some(seq.exprs.as_slice())
+    }
+
+    /// Split an `_export` comma sequence into prefix export items plus the last value.
+    /// When the last item is `_export(name, v)` and `bind` is set, `add_export(bind, name)` and return `v`.
+    fn take_bound_export_seq(
+        &mut self,
+        expr: &Expr,
+        bind: Option<Atom>,
+    ) -> Option<(Vec<ModuleItem>, Box<Expr>)> {
+        let exprs = self.as_export_seq(expr)?;
+        let last_idx = exprs.len().checked_sub(1)?;
+        let mut items = Vec::new();
+        for (idx, part) in exprs.iter().enumerate() {
+            let export_call = match strip_paren_expr(part) {
+                Expr::Call(call) => parse_export_call(call, &self.export_sym),
+                _ => None,
+            };
+            if idx == last_idx {
+                if let (Some(local), Some(ExportCall::Single { exported, value })) =
+                    (bind.as_ref(), export_call)
+                {
+                    let mut value = value;
+                    value.visit_mut_with(self);
+                    self.add_export(local.clone(), exported);
+                    return Some((items, value));
+                }
+                let mut last = part.clone();
+                last.visit_mut_with(self);
+                return Some((items, last));
+            }
+            if let Some(export_call) = export_call {
+                if let Some(export_items) = self.export_call_items(export_call) {
+                    items.extend(export_items);
+                    continue;
+                }
+            }
+            let mut stmt = Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: part.clone(),
+            });
+            stmt.visit_mut_with(self);
+            items.push(ModuleItem::Stmt(stmt));
+        }
+        None
     }
 
     fn rewrite_var_exports(&mut self, var: &mut Box<VarDecl>) {
@@ -1069,6 +1267,28 @@ fn string_lit_arg(arg: &ExprOrSpread) -> Option<Atom> {
 fn param_sym(function: &Function, idx: usize) -> Option<Atom> {
     let param = function.params.get(idx)?;
     pat_single_ident(&param.pat).cloned()
+}
+
+fn assign_ident_item(local: Atom, value: Box<Expr>) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: ident(local),
+                type_ann: None,
+            })),
+            right: value,
+        })),
+    }))
+}
+
+fn strip_paren_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren_expr(paren.expr.as_ref()),
+        other => other,
+    }
 }
 
 fn pat_single_ident(pat: &Pat) -> Option<&Atom> {

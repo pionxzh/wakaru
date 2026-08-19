@@ -753,3 +753,176 @@ System.register("entry", [], function (_export) {
         "nested IIFE replacement should remain parseable without leaking the helper:\n{entry}"
     );
 }
+
+fn exports_name(entry: &str, name: &str) -> bool {
+    entry.contains(&format!("export const {name}"))
+        || entry.contains(&format!("export let {name}"))
+        || entry.contains(&format!("export var {name}"))
+        || entry.contains(&format!("export function {name}"))
+        || entry.contains(&format!("export class {name}"))
+        || entry.contains(&format!("export {{ {name} }}"))
+        || entry.contains(&format!(" as {name}"))
+        || entry.contains(&format!("export {{ {name},"))
+        || entry.contains(&format!(", {name} }}"))
+        || entry.contains(&format!(", {name},"))
+}
+
+#[test]
+fn var_init_export_sequence_keeps_all_names() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var last = (_export("Alpha", 1), _export("Beta", ["x"]), _export("Gamma", 2));
+      use(last);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "Alpha") && exports_name(entry, "Beta") && exports_name(entry, "Gamma"),
+        "all sequence export names must survive:\n{entry}"
+    );
+    assert!(
+        entry.contains("2") && entry.contains("last"),
+        "local should keep the last value:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_literal_and_iife_keeps_names() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      h = (_export("Root", "ok"), _export("Widget", function () {
+        function Widget() {}
+        return Widget;
+      }()));
+    }
+  };
+});
+"#;
+    let raw_modules = unpack_source_raw(source);
+    let raw = module_code(&raw_modules, "entry.js");
+    assert!(
+        exports_name(raw, "Root") && exports_name(raw, "Widget"),
+        "literal + IIFE sequence export names must survive:\n{raw}"
+    );
+    assert!(
+        !raw.lines()
+            .any(|line| line.trim_start().starts_with("function (")),
+        "top-level anonymous function should not be emitted:\n{raw}"
+    );
+
+    let modules = unpack_source(source);
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "decompiled sequence export should stay parseable:\n{}",
+        module_code(&modules, "entry.js")
+    );
+    let decompiled = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(decompiled, "Root") && exports_name(decompiled, "Widget"),
+        "pipeline must keep sequence export names:\n{decompiled}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_uninvoked_ctors_keeps_names() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      w = (_export("First", function (a, b) {
+        this.a = a;
+        this.b = b;
+      }), _export("Second", function (i) {
+        this.i = i;
+      }));
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "First") && exports_name(entry, "Second"),
+        "uninvoked ctor sequence export names must survive:\n{entry}"
+    );
+}
+
+#[test]
+fn mixed_var_call_and_seq_export_keeps_names() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var c = _export("one", "left"), h = (_export("two", "right"), _export("Box", function () {
+        function Box() {}
+        return Box;
+      }()));
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "one") && exports_name(entry, "two") && exports_name(entry, "Box"),
+        "mixed Call + Seq declarators must keep all export names:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_trailing_iife_keeps_prefix_name() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      last = (_export("Kind", function (e) {
+        return e[e.Left = 1] = "Left", e;
+      }({})), function (Base) {
+        function Derived() {
+          return Base.apply(this, arguments) || this;
+        }
+        return Derived;
+      }(Base));
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        exports_name(entry, "Kind"),
+        "prefix _export in a sequence must survive when the last item is a plain IIFE:\n{entry}"
+    );
+    assert!(
+        entry.contains("last") && (entry.contains("Derived") || entry.contains("Base.apply")),
+        "trailing IIFE should remain bound to the assign target:\n{entry}"
+    );
+}
+
+#[test]
+fn unrelated_comma_assign_is_not_an_export() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var h = (1, 2, 3);
+      use(h);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        !entry.contains("export"),
+        "plain comma values must not invent exports:\n{entry}"
+    );
+}
