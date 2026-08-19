@@ -3,11 +3,11 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread, FnDecl,
-    ForHead, ForInStmt, ForOfStmt, Function, ImportDecl, ImportSpecifier, Lit, MemberProp,
-    ObjectLit, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget,
-    Stmt, ThrowStmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
+    ArrayLit, ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp,
+    BlockStmt, CallExpr, Callee, CatchClause, Class, ClassDecl, ClassMember, Expr, ExprOrSpread,
+    FnDecl, ForHead, ForInStmt, ForOfStmt, Function, FunctionBody, ImportDecl, ImportSpecifier,
+    Lit, MemberProp, ObjectLit, ObjectPatProp, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, ThrowStmt, UnaryExpr, UnaryOp, UpdateExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -1247,7 +1247,7 @@ fn pat_binding(pattern: &Pat) -> Option<BindingKey> {
     Some(binding_key(&binding.id))
 }
 
-fn single_returned_binding(body: &BlockStmt) -> Option<BindingKey> {
+fn single_returned_binding(body: &FunctionBody) -> Option<BindingKey> {
     let mut returns = ReturnExpressionCollector::default();
     body.visit_with(&mut returns);
     let [expression] = returns.expressions.as_slice() else {
@@ -1263,7 +1263,7 @@ fn single_returned_binding(body: &BlockStmt) -> Option<BindingKey> {
     Some(binding_key(identifier))
 }
 
-fn single_returned_call(body: &BlockStmt) -> Option<&CallExpr> {
+fn single_returned_call(body: &FunctionBody) -> Option<&CallExpr> {
     let mut expression = None;
     for statement in &body.stmts {
         match statement {
@@ -1322,7 +1322,7 @@ fn expression_contains_binding(expression: &Expr, expected: &BindingKey) -> bool
     finder.found
 }
 
-fn block_contains_binding(block: &BlockStmt, expected: &BindingKey) -> bool {
+fn block_contains_binding(block: &FunctionBody, expected: &BindingKey) -> bool {
     struct Finder<'a> {
         expected: &'a BindingKey,
         found: bool,
@@ -1419,7 +1419,7 @@ fn expression_has_member_on_binding(
     finder.found
 }
 
-fn object_create_state_bindings(body: &BlockStmt) -> Vec<BindingKey> {
+fn object_create_state_bindings(body: &FunctionBody) -> Vec<BindingKey> {
     let mut bindings = Vec::new();
     for statement in &body.stmts {
         let Stmt::Decl(swc_core::ecma::ast::Decl::Var(declaration)) = statement else {
@@ -1452,7 +1452,7 @@ fn object_create_state_bindings(body: &BlockStmt) -> Vec<BindingKey> {
     bindings
 }
 
-fn top_level_assignments(body: &BlockStmt) -> Vec<AssignExpr> {
+fn top_level_assignments(body: &FunctionBody) -> Vec<AssignExpr> {
     #[derive(Default)]
     struct Collector {
         assignments: Vec<AssignExpr>,
@@ -1597,10 +1597,10 @@ fn computed_state_is_attached(
 #[derive(Clone)]
 struct LocalFunctionValue {
     params: Vec<Pat>,
-    body: BlockStmt,
+    body: FunctionBody,
 }
 
-fn local_function_value(body: &BlockStmt, binding: &BindingKey) -> Option<LocalFunctionValue> {
+fn local_function_value(body: &FunctionBody, binding: &BindingKey) -> Option<LocalFunctionValue> {
     struct Finder<'a> {
         binding: &'a BindingKey,
         values: Vec<LocalFunctionValue>,
@@ -1623,10 +1623,9 @@ fn local_function_value(body: &BlockStmt, binding: &BindingKey) -> Option<LocalF
 
         fn record_arrow(&mut self, arrow: &ArrowExpr) {
             let body = match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(body) => body.clone(),
-                BlockStmtOrExpr::Expr(expression) => BlockStmt {
+                ArrowFunctionBody::FunctionBody(body) => body.clone(),
+                ArrowFunctionBody::Expr(expression) => FunctionBody {
                     span: DUMMY_SP,
-                    ctxt: SyntaxContext::empty(),
                     stmts: vec![Stmt::Return(ReturnStmt {
                         span: DUMMY_SP,
                         arg: Some(expression.clone()),
@@ -1712,7 +1711,11 @@ fn local_function_contains_member(
     expression_or_block_has_member(&function.body, object, property)
 }
 
-fn expression_or_block_has_member(body: &BlockStmt, object: &BindingKey, property: &str) -> bool {
+fn expression_or_block_has_member(
+    body: &FunctionBody,
+    object: &BindingKey,
+    property: &str,
+) -> bool {
     struct Finder<'a> {
         object: &'a BindingKey,
         property: &'a str,
@@ -1751,7 +1754,7 @@ fn local_function_contains_number(function: &LocalFunctionValue, expected: f64) 
     block_contains_number(&function.body, expected)
 }
 
-fn block_contains_number(body: &BlockStmt, expected: f64) -> bool {
+fn block_contains_number(body: &FunctionBody, expected: f64) -> bool {
     struct Finder {
         expected: f64,
         found: bool,
@@ -1779,7 +1782,7 @@ fn block_contains_number(body: &BlockStmt, expected: f64) -> bool {
     finder.found
 }
 
-fn contains_object_property(body: &BlockStmt, expected: &str) -> bool {
+fn contains_object_property(body: &FunctionBody, expected: &str) -> bool {
     struct Finder<'a> {
         expected: &'a str,
         found: bool,
@@ -1819,7 +1822,7 @@ fn contains_object_property(body: &BlockStmt, expected: &str) -> bool {
     finder.found
 }
 
-fn block_contains_string(body: &BlockStmt, expected: &str) -> bool {
+fn block_contains_string(body: &FunctionBody, expected: &str) -> bool {
     struct Finder<'a> {
         expected: &'a str,
         found: bool,
@@ -2036,7 +2039,7 @@ fn value_alias_identity(value: &Expr, unresolved_ctxt: SyntaxContext) -> Option<
 struct RuntimeFunction {
     identity: SymbolIdentity,
     params: Vec<Pat>,
-    body: BlockStmt,
+    body: FunctionBody,
     unresolved_ctxt: SyntaxContext,
 }
 
@@ -3090,7 +3093,7 @@ fn optimized_i18n_start_target(definition: &RuntimeFunction) -> Option<SymbolIde
 }
 
 fn reassigns_binding_with_literal_offset(
-    body: &BlockStmt,
+    body: &FunctionBody,
     binding: &BindingKey,
     offset: isize,
 ) -> bool {
@@ -3820,7 +3823,7 @@ fn is_nullish_or_callable(expression: &Expr, unresolved_ctxt: SyntaxContext) -> 
         )
 }
 
-fn contains_string_literal(block: &BlockStmt, expected: &str) -> bool {
+fn contains_string_literal(block: &FunctionBody, expected: &str) -> bool {
     struct Finder<'a> {
         expected: &'a str,
         found: bool,
@@ -4111,7 +4114,7 @@ fn is_boolean_literal(expression: &Expr) -> bool {
     }
 }
 
-fn contains_try_finally(block: &BlockStmt) -> bool {
+fn contains_try_finally(block: &FunctionBody) -> bool {
     struct Finder {
         found: bool,
     }
@@ -4135,7 +4138,7 @@ fn contains_try_finally(block: &BlockStmt) -> bool {
     finder.found
 }
 
-fn contains_member_property(block: &BlockStmt, expected: &str) -> bool {
+fn contains_member_property(block: &FunctionBody, expected: &str) -> bool {
     struct Finder<'a> {
         expected: &'a str,
         found: bool,
@@ -4506,7 +4509,7 @@ fn returns_identity_through_tracing_wrapper(
                 has_direct_identity_return,
             )
         })
-        && !block_can_fall_through(&function.body)
+        && !function_body_can_fall_through(&function.body)
 }
 
 fn expression_returns_identity_through_tracing(
@@ -4574,10 +4577,10 @@ fn callback_returns_identity(
 ) -> bool {
     match strip_parentheses(expression) {
         Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
-            BlockStmtOrExpr::Expr(expression) => {
+            ArrowFunctionBody::Expr(expression) => {
                 expression_returns_identity(expression.as_ref(), identity, unresolved_ctxt)
             }
-            BlockStmtOrExpr::BlockStmt(block) => {
+            ArrowFunctionBody::FunctionBody(block) => {
                 let function = RuntimeFunction {
                     identity: identity.clone(),
                     params: Vec::new(),
@@ -5065,7 +5068,7 @@ fn direct_iife_with_plain_parameters(call: &CallExpr) -> Option<(&Function, Vec<
     Some((&function.function, parameters))
 }
 
-fn single_top_level_return_expression(body: &BlockStmt) -> Option<&Expr> {
+fn single_top_level_return_expression(body: &FunctionBody) -> Option<&Expr> {
     let mut returned = None;
     for statement in &body.stmts {
         match statement {
@@ -5112,7 +5115,7 @@ fn value_path(expression: &Expr) -> Option<ValuePath> {
 }
 
 fn loop_traversal_slot(
-    body: &BlockStmt,
+    body: &FunctionBody,
     depth: &BindingKey,
     view: &BindingKey,
     integer_constants: &HashMap<BindingKey, u64>,
@@ -5372,7 +5375,7 @@ fn unique_atom(atoms: &HashSet<Atom>) -> Option<&Atom> {
     atoms.next().is_none().then_some(atom)
 }
 
-fn assigned_member_properties(block: &BlockStmt) -> HashSet<Atom> {
+fn assigned_member_properties(block: &FunctionBody) -> HashSet<Atom> {
     struct Collector {
         properties: HashSet<Atom>,
     }
@@ -5402,7 +5405,7 @@ fn assigned_member_properties(block: &BlockStmt) -> HashSet<Atom> {
 }
 
 fn member_properties_assigned_from_binding(
-    block: &BlockStmt,
+    block: &FunctionBody,
     binding: &BindingKey,
 ) -> HashSet<Atom> {
     struct Collector<'a> {
@@ -5437,7 +5440,7 @@ fn member_properties_assigned_from_binding(
     collector.properties
 }
 
-fn block_contains_loop(block: &BlockStmt) -> bool {
+fn block_contains_loop(block: &FunctionBody) -> bool {
     struct Finder {
         found: bool,
     }
@@ -5716,7 +5719,7 @@ fn returns_parameter_offset_member(
                     if member_uses_parameter_offset(member, parameter, offset)
             )
         })
-        && !block_can_fall_through(&function.body)
+        && !function_body_can_fall_through(&function.body)
 }
 
 fn loads_parameter_from_offset_member(
@@ -5764,7 +5767,7 @@ fn loads_parameter_from_offset_member(
     finder.found
 }
 
-fn contains_throw_statement(block: &BlockStmt) -> bool {
+fn contains_throw_statement(block: &FunctionBody) -> bool {
     struct Finder {
         found: bool,
     }
@@ -6019,7 +6022,7 @@ fn is_template_index(expression: &Expr) -> bool {
         )
 }
 
-fn contains_negative_one(block: &BlockStmt) -> bool {
+fn contains_negative_one(block: &FunctionBody) -> bool {
     struct Finder {
         found: bool,
     }
@@ -6354,7 +6357,7 @@ fn computed_member_index(property: &MemberProp) -> Option<u64> {
     (number.value >= 0.0 && number.value.fract() == 0.0).then_some(number.value as u64)
 }
 
-fn contains_computed_member_index(block: &BlockStmt, expected: u64) -> bool {
+fn contains_computed_member_index(block: &FunctionBody, expected: u64) -> bool {
     struct Finder {
         expected: u64,
         found: bool,
@@ -6397,7 +6400,7 @@ fn returns_computed_member_index(function: &RuntimeFunction, expected: u64) -> b
     })
 }
 
-fn decrements_binding(block: &BlockStmt, binding: &BindingKey) -> bool {
+fn decrements_binding(block: &FunctionBody, binding: &BindingKey) -> bool {
     struct Finder<'a> {
         binding: &'a BindingKey,
         found: bool,
@@ -6480,10 +6483,9 @@ impl RuntimeFunctionCollector {
 
     fn record_arrow(&mut self, identity: SymbolIdentity, arrow: &ArrowExpr) {
         let body = match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(body) => body.clone(),
-            BlockStmtOrExpr::Expr(expression) => BlockStmt {
+            ArrowFunctionBody::FunctionBody(body) => body.clone(),
+            ArrowFunctionBody::Expr(expression) => FunctionBody {
                 span: DUMMY_SP,
-                ctxt: SyntaxContext::empty(),
                 stmts: vec![Stmt::Return(ReturnStmt {
                     span: DUMMY_SP,
                     arg: Some(expression.clone()),
@@ -7206,7 +7208,7 @@ fn returns_identity(function: &RuntimeFunction, identity: &SymbolIdentity) -> bo
         && returns.expressions.iter().all(|expression| {
             expression_returns_identity(expression.as_ref(), identity, function.unresolved_ctxt)
         })
-        && !block_can_fall_through(&function.body)
+        && !function_body_can_fall_through(&function.body)
 }
 
 fn expression_returns_identity(
@@ -7226,9 +7228,17 @@ fn expression_returns_identity(
     }
 }
 
+fn function_body_can_fall_through(body: &FunctionBody) -> bool {
+    statements_can_fall_through(&body.stmts)
+}
+
 fn block_can_fall_through(block: &BlockStmt) -> bool {
+    statements_can_fall_through(&block.stmts)
+}
+
+fn statements_can_fall_through(statements: &[Stmt]) -> bool {
     let mut reachable = true;
-    for statement in &block.stmts {
+    for statement in statements {
         if !reachable {
             break;
         }
