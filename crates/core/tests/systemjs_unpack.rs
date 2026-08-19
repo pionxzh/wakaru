@@ -878,6 +878,237 @@ System.register("entry", [], function (_export) {
 }
 
 #[test]
+fn var_export_sequence_preserves_declarator_evaluation_order() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      var first = before(), middle = (_export("Named", during()), finish()), last = after();
+      use(first, middle, last);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let before = entry
+        .find("before()")
+        .unwrap_or_else(|| panic!("first declarator should survive:\n{entry}"));
+    let during = entry
+        .find("during()")
+        .unwrap_or_else(|| panic!("export value should survive:\n{entry}"));
+    let finish = entry
+        .find("finish()")
+        .unwrap_or_else(|| panic!("sequence result should survive:\n{entry}"));
+    let after = entry
+        .find("after()")
+        .unwrap_or_else(|| panic!("last declarator should survive:\n{entry}"));
+
+    assert!(
+        before < during && during < finish && finish < after,
+        "splitting a sequence initializer must preserve declarator evaluation order:\n{entry}"
+    );
+    for call in ["before()", "during()", "finish()", "after()"] {
+        assert_eq!(
+            entry.matches(call).count(),
+            1,
+            "{call} should be evaluated exactly once:\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn assign_export_sequence_uses_last_identifier_value() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var result, value;
+  return {
+    execute: function () {
+      result = (_export("First", first()), _export("Named", value));
+      use(result);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("result = value;") && !entry.contains("result = Named;"),
+        "assignment must use the exported call's local value, not its public name:\n{entry}"
+    );
+    assert!(
+        exports_name(entry, "First") && exports_name(entry, "Named"),
+        "both exports should survive:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_uses_last_assignment_value() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var result, value;
+  return {
+    execute: function () {
+      result = (_export("First", first()), _export("Named", value = makeValue()));
+      use(result);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+    let first = entry
+        .find("first()")
+        .unwrap_or_else(|| panic!("prefix export should survive:\n{entry}"));
+    let value = entry
+        .find("value = makeValue();")
+        .unwrap_or_else(|| panic!("exported assignment should survive:\n{entry}"));
+    let result = entry
+        .find("result = value;")
+        .unwrap_or_else(|| panic!("outer assignment should use the assigned value:\n{entry}"));
+    let use_result = entry
+        .find("use(result);")
+        .unwrap_or_else(|| panic!("following use should survive:\n{entry}"));
+
+    assert!(
+        first < value && value < result && result < use_result,
+        "nested and outer assignments must preserve evaluation order:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("makeValue()").count(),
+        1,
+        "the assigned export value should be evaluated exactly once:\n{entry}"
+    );
+    assert!(
+        exports_name(entry, "First") && exports_name(entry, "Named"),
+        "both exports should survive:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_default_value_is_evaluated_once() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var result;
+  return {
+    execute: function () {
+      result = (_export("First", first()), _export("default", makeValue()));
+      use(result);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        entry.matches("makeValue()").count(),
+        1,
+        "the default export and assignment must share one evaluated value:\n{entry}"
+    );
+    assert!(
+        entry.contains("export default") && !entry.contains("_export("),
+        "the default export should be reconstructed without leaking the runtime helper:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_avoids_local_and_reserved_name_collisions() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var Named, namedResult, reservedResult;
+  return {
+    execute: function () {
+      namedResult = (_export("First", first()), _export("Named", makeNamed()));
+      reservedResult = (_export("Second", second()), _export("class", makeReserved()));
+      use(namedResult, reservedResult);
+    }
+  };
+});
+"#;
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "sequence exports must not introduce duplicate or reserved declarations:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const Named =") && !entry.contains("export const class ="),
+        "colliding and reserved export names should use local aliases:\n{entry}"
+    );
+    assert!(
+        exports_name(entry, "Named") && exports_name(entry, "class"),
+        "both public export names should survive through aliases:\n{entry}"
+    );
+}
+
+#[test]
+fn assign_export_sequence_prefix_avoids_local_and_reserved_name_collisions() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  var PrefixName, namedResult, reservedResult;
+  return {
+    execute: function () {
+      namedResult = (_export("PrefixName", makeNamed()), _export("NamedTail", namedTail()));
+      reservedResult = (_export("while", makeReserved()), _export("ReservedTail", reservedTail()));
+      use(namedResult, reservedResult);
+    }
+  };
+});
+"#;
+    let modules = unpack_source(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        validate_output_modules(&modules),
+        vec![],
+        "prefix sequence exports must not introduce duplicate or reserved declarations:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export const PrefixName =") && !entry.contains("export const while ="),
+        "colliding and reserved prefix names should use local aliases:\n{entry}"
+    );
+    for name in ["PrefixName", "NamedTail", "while", "ReservedTail"] {
+        assert!(
+            exports_name(entry, name),
+            "public export {name} should survive through an alias:\n{entry}"
+        );
+    }
+}
+
+#[test]
+fn assign_export_sequence_prefix_rewrites_context_values() {
+    let source = r#"
+System.register("entry", [], function (_export, _context) {
+  var result;
+  return {
+    execute: function () {
+      result = (_export("Named", makeValue(
+        _context.import("./dep.js"),
+        _context.meta.url
+      )), finish());
+      use(result);
+    }
+  };
+});
+"#;
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains(r#"import("./dep.js")"#) && entry.contains("import.meta.url"),
+        "prefix export values should rewrite SystemJS context expressions:\n{entry}"
+    );
+    assert!(
+        !entry.contains("_context"),
+        "the SystemJS context binding must not leak from a sequence export:\n{entry}"
+    );
+}
+
+#[test]
 fn assign_export_sequence_trailing_iife_keeps_prefix_name() {
     let source = r#"
 System.register("entry", [], function (_export) {
