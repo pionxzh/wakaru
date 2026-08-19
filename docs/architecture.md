@@ -319,6 +319,7 @@ unpack_bundle(source)
   → Phase 1: par_iter → obtain resolved AST → rules through UnEsm
                         → ESM recovery on a facts clone → collect facts
   → Phase 2: par_iter → resume retained AST → cross-module late pass
+                    → exact CommonJS default-object composition recovery
                     → registry range resuming after UnEsm, through UnReturn
                     → targeted late cleanup → emit
 ```
@@ -512,14 +513,17 @@ When unpacking bundles, the driver runs a two-phase pipeline:
    extract import/export facts. Retain the pre-recovery AST together with its
    `Globals` and unresolved mark.
 2. **Phase 2 (parallel):** Resume the retained Phase 1 AST → cross-module late
-   pass (re-export consolidation, namespace decomposition, fact-aware helper
-   recovery) → run the registry range resuming after `UnEsm`, through `UnReturn` →
-   targeted late cleanup/recovery → emit.
+   pass (exact CommonJS default-object composition, re-export consolidation,
+   namespace decomposition, fact-aware helper recovery) → run the registry
+   range resuming after `UnEsm`, through `UnReturn` → targeted late
+   cleanup/recovery → emit.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g.,
-repairing a proven CommonJS object or callable-property edge, converting
+repairing a proven CommonJS object or callable-property edge, preserving one
+mutable object across an exact ordered CommonJS composition chain, converting
 `ns.foo` to `import { foo }`, or recognizing a split helper module). Facts are
 extracted in `crates/core/src/facts.rs` and consumed by
+`crates/core/src/commonjs_default_object_composition.rs`,
 `crates/core/src/provider_import_repair.rs`,
 `crates/core/src/namespace_decomposition.rs`,
 `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See
@@ -570,6 +574,7 @@ crates/
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
+      commonjs_default_object_composition.rs — exact mutable-default composition recovery
       sourcemap_rename.rs           — source-map-driven name recovery
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
       reexport_consolidation.rs     — cross-module re-export consolidation

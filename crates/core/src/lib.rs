@@ -7,6 +7,7 @@
 )]
 
 pub(crate) mod analysis;
+pub(crate) mod commonjs_default_object_composition;
 pub mod driver;
 pub mod facts;
 pub(crate) mod js_names;

@@ -451,12 +451,93 @@ fn empty_default_object_is_distinct_from_an_unknown_default_value() {
         .commonjs_default_object
         .expect("an empty object assignment should still be proven");
     assert!(object.declared_properties.is_empty());
+    assert!(object.default_assignment_is_only_commonjs_use);
+    assert!(object.composition_sources.is_empty());
 
     let unknown = collect_facts("module.exports = makeProvider();");
     assert!(
         unknown.commonjs_default_object.is_none(),
         "an arbitrary factory result must remain unknown: {unknown}"
     );
+}
+
+#[test]
+fn default_object_composition_fact_requires_the_complete_exact_shell() {
+    let facts = collect_facts(
+        r#"
+"use strict";
+module.exports = {},
+Object.assign(module.exports, require("./first.js") || {}),
+Object.assign(module.exports, require("../second.js") || {});
+"#,
+    );
+    let object = facts
+        .commonjs_default_object
+        .expect("the initial empty object should remain proven");
+    assert_eq!(
+        object.composition_sources,
+        vec!["./first.js", "../second.js"],
+        "the exact copy order is part of the proof"
+    );
+    assert!(
+        !object.default_assignment_is_only_commonjs_use,
+        "the copy shell has additional module runtime uses"
+    );
+
+    for source in [
+        r#"
+module.exports = {};
+observe(module.exports);
+Object.assign(module.exports, require("./provider.js") || {});
+"#,
+        r#"
+module.exports = {};
+Object.assign(module.exports, require(dynamicSource) || {});
+"#,
+        r#"
+module.exports = {};
+Object.assign(module.exports, require("package-name") || {});
+"#,
+    ] {
+        let facts = collect_facts(source);
+        assert!(
+            facts
+                .commonjs_default_object
+                .as_ref()
+                .expect("the initial empty object should remain independently proven")
+                .composition_sources
+                .is_empty(),
+            "an inexact whole-module shell must fail closed: {facts}"
+        );
+    }
+}
+
+#[test]
+fn default_object_importability_fact_sees_deferred_commonjs_rewrites_and_eval() {
+    for source in [
+        r#"
+module.exports = {};
+setTimeout(function() { module.exports = replacement; });
+"#,
+        r#"
+module.exports = {};
+function later() { return exports.value; }
+"#,
+        r#"
+module.exports = {};
+function later() { eval("module.exports = replacement"); }
+"#,
+    ] {
+        let facts = collect_facts(source);
+        assert!(
+            !facts
+                .commonjs_default_object
+                .as_ref()
+                .expect("the synchronous object assignment should remain independently proven")
+                .default_assignment_is_only_commonjs_use,
+            "hidden CommonJS access must block direct provider use: {facts}"
+        );
+    }
 }
 
 #[test]

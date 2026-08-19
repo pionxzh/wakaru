@@ -18,14 +18,15 @@ use std::{
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, Callee, Decl, DefaultDecl, ExportSpecifier, Expr,
-    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, CallExpr, Callee, Decl, DefaultDecl,
+    ExportSpecifier, Expr, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem,
+    ObjectLit, Pat, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::analysis::binding_uses::{BindingId, BindingUseIndex};
 use crate::module_path::resolve_relative_specifier;
+use crate::rules::expr_utils::is_unresolved_ident;
 use crate::rules::helper_matcher::{binding_key, binding_key_from_ident_pat, BindingKey};
 use crate::rules::transpiler_helper_utils::{
     collect_inline_ts_helpers_deep, collect_transpiler_helpers,
@@ -153,6 +154,18 @@ pub struct TypeScriptHelperExportFact {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommonJsDefaultObjectFact {
     pub declared_properties: Vec<Atom>,
+    /// The sole unresolved CommonJS runtime use in the complete module is the
+    /// `module.exports = object` assignment that established this fact.
+    ///
+    /// This does not by itself make the value importable: the post-`UnEsm`
+    /// surface must still prove one default export and no competing surface.
+    pub default_assignment_is_only_commonjs_use: bool,
+    /// Ordered provider specifiers for the exact default-object composition
+    /// shell `module.exports = {}; Object.assign(module.exports,
+    /// require(source) || {}); ...`.
+    ///
+    /// An empty list means no such complete-module proof was established.
+    pub composition_sources: Vec<Atom>,
 }
 
 /// Facts extracted from one module after Stage 2.
@@ -286,6 +299,11 @@ impl ModuleFactsMap {
     /// Whether the map is empty.
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    /// Iterate over canonical module keys and their immutable facts.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &ModuleFacts)> {
+        self.inner.iter().map(|(key, facts)| (key.as_str(), facts))
     }
 
     /// Normalize a module specifier to canonical form.
@@ -530,6 +548,18 @@ impl fmt::Display for ModuleFacts {
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, " properties: {properties}")?;
+            }
+            if default_object.default_assignment_is_only_commonjs_use {
+                write!(f, " (exclusive runtime assignment)")?;
+            }
+            if !default_object.composition_sources.is_empty() {
+                let sources = default_object
+                    .composition_sources
+                    .iter()
+                    .map(Atom::as_ref)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, " composition sources: {sources}")?;
             }
         }
         if !self.commonjs_default_attached_properties.is_empty() {
@@ -1099,9 +1129,162 @@ pub fn collect_commonjs_default_object(
 
     let mut properties = properties.into_iter().collect::<Vec<_>>();
     properties.sort();
+    let mut runtime_surface = CommonJsRuntimeSurfaceCollector {
+        unresolved_mark,
+        module_uses: 0,
+        exports_uses: 0,
+        has_direct_eval: false,
+    };
+    module.visit_with(&mut runtime_surface);
     Some(CommonJsDefaultObjectFact {
         declared_properties: properties,
+        default_assignment_is_only_commonjs_use: runtime_surface.module_uses == 1
+            && runtime_surface.exports_uses == 0
+            && !runtime_surface.has_direct_eval,
+        composition_sources: collect_commonjs_default_object_composition_sources(
+            module,
+            unresolved_mark,
+        )
+        .unwrap_or_default(),
     })
+}
+
+/// Collect every unresolved CommonJS runtime identifier, including uses in
+/// deferred function bodies. The ordinary default-object property fact may
+/// ignore a callback assignment because it does not describe the synchronous
+/// initialization surface; proving that the exported object is the complete
+/// raw `require()` value cannot ignore a later rewrite or escape.
+struct CommonJsRuntimeSurfaceCollector {
+    unresolved_mark: Mark,
+    module_uses: usize,
+    exports_uses: usize,
+    has_direct_eval: bool,
+}
+
+impl Visit for CommonJsRuntimeSurfaceCollector {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(&call.callee, Callee::Expr(callee)
+            if matches!(strip_parens(callee), Expr::Ident(ident)
+                if is_unresolved_ident(ident, "eval", self.unresolved_mark)))
+        {
+            self.has_direct_eval = true;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if is_unresolved_ident(ident, "module", self.unresolved_mark) {
+            self.module_uses += 1;
+        } else if is_unresolved_ident(ident, "exports", self.unresolved_mark) {
+            self.exports_uses += 1;
+        }
+    }
+}
+
+fn collect_commonjs_default_object_composition_sources(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<Vec<Atom>> {
+    let mut expressions = Vec::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+            return None;
+        };
+        if is_use_strict_directive(&statement.expr) {
+            continue;
+        }
+        collect_direct_sequence_expression_clones(&statement.expr, &mut expressions);
+    }
+
+    let first = expressions.first()?;
+    if !is_empty_module_exports_assignment(first, unresolved_mark) {
+        return None;
+    }
+    let sources = expressions
+        .iter()
+        .skip(1)
+        .map(|expr| commonjs_default_object_copy_source(expr, unresolved_mark))
+        .collect::<Option<Vec<_>>>()?;
+    if sources.is_empty() {
+        return None;
+    }
+    // Preserve exact source order: later copies win on duplicate property
+    // names, and repeated sources are observable when their properties are
+    // accessors.
+    Some(sources)
+}
+
+fn collect_direct_sequence_expression_clones(expr: &Expr, out: &mut Vec<Box<Expr>>) {
+    match strip_parens(expr) {
+        Expr::Seq(sequence) => {
+            for expression in &sequence.exprs {
+                collect_direct_sequence_expression_clones(expression, out);
+            }
+        }
+        expression => out.push(Box::new(expression.clone())),
+    }
+}
+
+fn is_use_strict_directive(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Str(value))
+        if value.value.as_str() == Some("use strict"))
+}
+
+fn is_empty_module_exports_assignment(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return false;
+    };
+    assign.op == swc_core::ecma::ast::AssignOp::Assign
+        && is_unresolved_module_exports_target(&assign.left, unresolved_mark)
+        && matches!(strip_parens(&assign.right), Expr::Object(object) if object.props.is_empty())
+}
+
+fn commonjs_default_object_copy_source(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return None;
+    };
+    if !matches!(member.obj.as_ref(), Expr::Ident(object)
+        if is_unresolved_ident(object, "Object", unresolved_mark))
+        || !matches!(&member.prop, MemberProp::Ident(property) if property.sym == "assign")
+        || call.args.len() != 2
+        || call.args.iter().any(|argument| argument.spread.is_some())
+        || !is_unresolved_module_exports_expr(&call.args[0].expr, unresolved_mark)
+    {
+        return None;
+    }
+
+    let Expr::Bin(fallback) = strip_parens(&call.args[1].expr) else {
+        return None;
+    };
+    if fallback.op != BinaryOp::LogicalOr
+        || !matches!(strip_parens(&fallback.right), Expr::Object(object) if object.props.is_empty())
+    {
+        return None;
+    }
+    let Expr::Call(require) = strip_parens(&fallback.left) else {
+        return None;
+    };
+    let Callee::Expr(require_callee) = &require.callee else {
+        return None;
+    };
+    if !matches!(strip_parens(require_callee), Expr::Ident(require_ident)
+        if is_unresolved_ident(require_ident, "require", unresolved_mark))
+        || require.args.len() != 1
+        || require.args[0].spread.is_some()
+    {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(source)) = strip_parens(&require.args[0].expr) else {
+        return None;
+    };
+    let source = source.value.as_str()?;
+    (source.starts_with("./") || source.starts_with("../")).then(|| source.into())
 }
 
 /// Collect static properties attached unconditionally to a stable top-level
@@ -1344,6 +1527,17 @@ fn is_unresolved_module_exports_target(target: &AssignTarget, unresolved_mark: M
     };
     module.sym.as_ref() == "module"
         && module.ctxt.outer() == unresolved_mark
+        && matches!(&member.prop, MemberProp::Ident(property) if property.sym.as_ref() == "exports")
+}
+
+fn is_unresolved_module_exports_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(module) = member.obj.as_ref() else {
+        return false;
+    };
+    is_unresolved_ident(module, "module", unresolved_mark)
         && matches!(&member.prop, MemberProp::Ident(property) if property.sym.as_ref() == "exports")
 }
 

@@ -8,14 +8,15 @@ rules fit in the pipeline.
 
 A barrier-and-read mechanism that lets Phase 2 rules read provider shape from
 **other** modules in the same bundle. Most facts describe normalized ESM
-imports/exports. Two deliberately narrow pre-`UnEsm` facts preserve CommonJS
+imports/exports. Deliberately narrow pre-`UnEsm` facts preserve CommonJS
 provider shape that `UnEsm` would otherwise erase: the proven identity and
 statically declared properties of an object assigned directly to
-`module.exports`, and positively observed properties attached to a stable
-callable before it becomes `module.exports`. For object defaults, the identity
-proof is independent of the property list: an empty list may describe a proven
-empty object rather than an unknown value. An empty callable-property list is
-not such a proof.
+`module.exports`, whether that assignment is the module's only CommonJS
+runtime use, an exact ordered default-object composition shell, and positively
+observed properties attached to a stable callable before it becomes
+`module.exports`. For object defaults, the identity proof is independent of
+the property list: an empty list may describe a proven empty object rather
+than an unknown value. An empty callable-property list is not such a proof.
 
 ## Why it's simpler than the original proposal
 
@@ -51,6 +52,7 @@ Phase 1 (per module, parallel):
 
 Phase 2 (per module, parallel):
     resume retained barrier AST
+    run_commonjs_default_object_composition(module, plan) ← exact mutable default
     run_provider_import_repair(&mut module, facts)    ← proven CJS property edges
     run_provider_namespace_repair(&mut module, facts) ← proven ESM namespace edges
     run_reexport_consolidation(&mut module, facts)
@@ -102,6 +104,17 @@ proven object whose declared-property list is empty. Multiple whole-value
 assignments, reassigned aliases, non-object values, nested callbacks, and
 `exports.default` fail closed. Computed keys and spreads are omitted from the
 declared-property list without weakening the proven object identity.
+
+The same object fact separately records two stronger proofs without weakening
+that ordinary property fact. `default_assignment_is_only_commonjs_use` scans
+the complete resolved AST, including deferred function bodies, and holds only
+when the establishing assignment is the sole unresolved `module`/`exports`
+use and no direct eval exists. `composition_sources` is populated only when
+the complete executable body is an optional strict directive followed by
+`module.exports = {}` and one or more exact ordered
+`Object.assign(module.exports, require(relativeSource) || {})` calls. Dynamic
+or bare sources, extra statements, alternate targets, and alternate fallback
+shapes leave that list empty.
 
 `collect_commonjs_default_attached_properties` separately records static
 identifier properties assigned directly and unconditionally to a stable
@@ -191,6 +204,16 @@ fact available to consumers.
 
 ## Rules that read facts
 
+- **`commonjs_default_object_composition`** — builds a monotone fixed point at
+  the barrier. A provider seeds it only when the raw assignment is its sole
+  CommonJS runtime use and its recovered surface is exactly one default export
+  with no imports. A composition enters only after every relative provider is
+  already proven, so cycles never become eligible. Phase 2 then re-matches the
+  complete normalized body before introducing default imports, one stable
+  local object, the original ordered `Object.assign` calls, and a default
+  export of that same object. Authored ESM defaults, mixed surfaces, unresolved
+  providers, dynamic sources, extra consumer behavior, and cycles remain
+  visible CommonJS residuals.
 - **`provider_import_repair`** — repairs only dummy-span imports synthesized by
   `UnEsm` for `require("./x").name`. If provider facts prove that the raw
   CommonJS value is the recovered default object, or positively prove `name`

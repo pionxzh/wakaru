@@ -334,6 +334,70 @@ fn webpack5_require_n_default_interop_is_recovered() {
 }
 
 #[test]
+fn webpack5_css_module_composition_recovers_one_mutable_default_object() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    0: ((module, exports, __webpack_require__) => {
+      module.exports = {};
+      Object.assign(module.exports, __webpack_require__(1) || {});
+      Object.assign(module.exports, __webpack_require__(2) || {});
+    }),
+    1: ((module) => {
+      module.exports = { alpha: "alpha-token", shared: "first-token" };
+    }),
+    2: ((module) => {
+      module.exports = { beta: "beta-token", shared: "second-token" };
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__(0);
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-css-composition.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 CSS composition should unpack");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let composed = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-0.js")
+        .map(|(_, code)| code)
+        .expect("expected composed module");
+    assert!(
+        !composed.contains("module.exports") && !composed.contains("require("),
+        "the runtime composition should become a valid ESM module:\n{composed}"
+    );
+    assert_eq!(composed.matches("Object.assign(").count(), 2, "{composed}");
+    assert!(
+        !composed.contains("export default {};"),
+        "the exported default must be the object mutated by both copies:\n{composed}"
+    );
+    assert!(
+        composed.contains("Object.assign(_defaultObject,")
+            && composed.contains("export default _defaultObject;"),
+        "the recovered copies and export must share one object:\n{composed}"
+    );
+    assert_eq!(validate_output_modules(&output.modules), vec![]);
+}
+
+#[test]
 fn webpack4_string_module_ids_use_relative_output_imports() {
     let source = r#"
 !function(__webpack_modules__) {
