@@ -21,8 +21,9 @@ use swc_core::common::{
     sync::Lrc, FileName, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS,
 };
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function, Lit, Module, ObjectLit,
-    Pat, Prop, PropOrSpread, SimpleAssignTarget, Str, VarDeclarator,
+    ArrowFunctionBody, AssignExpr, AssignTarget, CallExpr, Class, ClassDecl, Expr, Function,
+    FunctionBody, Lit, Module, ObjectLit, Pat, Prop, PropOrSpread, SimpleAssignTarget, Str,
+    VarDeclarator,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
@@ -1702,7 +1703,7 @@ fn query_locator(
 }
 
 fn function_contains_render_flag(
-    body: &Option<swc_core::ecma::ast::BlockStmt>,
+    body: &Option<FunctionBody>,
     render_flags: &BindingKey,
     expected: u8,
 ) -> bool {
@@ -2027,10 +2028,10 @@ fn is_zero_parameter_array_factory(expression: &Expr) -> bool {
             function.function.body.as_ref()
         }
         Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
-            swc_core::ecma::ast::BlockStmtOrExpr::Expr(expression) => {
+            ArrowFunctionBody::Expr(expression) => {
                 return is_array_return(expression.as_ref());
             }
-            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => Some(body),
+            ArrowFunctionBody::FunctionBody(body) => Some(body),
         },
         _ => None,
     };
@@ -2054,7 +2055,7 @@ fn component_constant_factory_score(expression: &Expr) -> Option<usize> {
         }
     }
 
-    fn returned_array(body: &swc_core::ecma::ast::BlockStmt) -> Option<&Expr> {
+    fn returned_array(body: &FunctionBody) -> Option<&Expr> {
         let mut returns = body.stmts.iter().filter_map(|statement| {
             let swc_core::ecma::ast::Stmt::Return(statement) = statement else {
                 return None;
@@ -2070,8 +2071,8 @@ fn component_constant_factory_score(expression: &Expr) -> Option<usize> {
             returned_array(function.function.body.as_ref()?)?
         }
         Expr::Arrow(arrow) if arrow.params.is_empty() => match arrow.body.as_ref() {
-            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => returned_array(body)?,
-            swc_core::ecma::ast::BlockStmtOrExpr::Expr(expression) => expression.as_ref(),
+            ArrowFunctionBody::FunctionBody(body) => returned_array(body)?,
+            ArrowFunctionBody::Expr(expression) => expression.as_ref(),
         },
         _ => return None,
     };
@@ -2108,7 +2109,7 @@ fn i18n_constant_factory_score(expression: &Expr) -> Option<usize> {
             function.function.body.as_ref()?
         }
         Expr::Arrow(arrow) if arrow.params.is_empty() => {
-            let swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+            let ArrowFunctionBody::FunctionBody(body) = arrow.body.as_ref() else {
                 return None;
             };
             body
