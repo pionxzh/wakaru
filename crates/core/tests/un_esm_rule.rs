@@ -1672,6 +1672,215 @@ fn self_ref_pattern_removed() {
 }
 
 #[test]
+fn coupled_lazy_default_helper_uses_live_binding_and_preserves_self_mirrors() {
+    let input = r#"
+function helper(value) {
+  module.exports = helper = (next) => typeof next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    let expected = r#"
+function helper(value) {
+  helper = next => typeof next;
+  helper.default = helper;
+  return helper(value);
+}
+export { helper as default };
+helper.default = helper;
+"#;
+    assert_eq_normalized(&output, expected);
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output)]).is_empty(),
+        "the recovered live default should be a valid ESM module"
+    );
+}
+
+#[test]
+fn coupled_lazy_default_helper_ignores_shadowed_module_bindings() {
+    let input = r#"
+function helper(value) {
+  {
+    const module = { exports: "local" };
+    consume(module.exports);
+  }
+  module.exports = helper = (next) => next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("consume(module.exports)"),
+        "a lexically shadowed module binding must remain untouched:\n{output}"
+    );
+    assert_eq!(
+        output.matches("module.exports").count(),
+        1,
+        "only the shadowed local read should remain:\n{output}"
+    );
+    assert!(output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_handles_mutually_exclusive_replacements() {
+    let input = r#"
+function helper(value) {
+  if (supportsFastPath) {
+    module.exports = helper = fastPath;
+  } else {
+    module.exports = helper = slowPath;
+  }
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("module.exports"),
+        "every whole-value replacement is coupled to the same helper binding:\n{output}"
+    );
+    assert!(
+        output.contains("helper = fastPath") && output.contains("helper = slowPath"),
+        "both runtime branches must keep their original binding updates:\n{output}"
+    );
+    assert!(output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_handles_called_sequence_value() {
+    let input = r#"
+function helper() {
+  return (module.exports = helper = () => true,
+    module.exports.__esModule = true,
+    module.exports.default = module.exports)();
+}
+module.exports = helper;
+module.exports.__esModule = true;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("module.exports"),
+        "the called sequence should use the proven coupled binding:\n{output}"
+    );
+    assert!(
+        output.contains("helper.__esModule = true"),
+        "a nested marker that is part of the runtime value must stay observable:\n{output}"
+    );
+    assert!(output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_uncoupled_module_replacement() {
+    let input = r#"
+function helper(value) {
+  module.exports = chooseOtherValue();
+  module.exports.default = module.exports;
+  return value;
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports = chooseOtherValue()")
+            && output.contains("module.exports.default = module.exports"),
+        "an uncoupled CommonJS replacement must remain visible:\n{output}"
+    );
+    assert!(
+        !output.contains("export { helper as default }"),
+        "the ordinary snapshot default must not be upgraded without coupling proof:\n{output}"
+    );
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_independent_binding_write() {
+    let input = r#"
+function helper(value) {
+  helper = chooseOtherValue();
+  module.exports = helper = (next) => next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports"),
+        "the helper and CommonJS value can diverge before the coupled write:\n{output}"
+    );
+    assert!(!output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_direct_eval() {
+    let input = r#"
+function helper(value) {
+  eval(source);
+  module.exports = helper = (next) => next;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports"),
+        "direct eval can observe or mutate both candidate identities:\n{output}"
+    );
+    assert!(!output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_receiver_sensitive_call() {
+    let input = r#"
+function helper(value) {
+  module.exports = helper = (next) => next;
+  module.exports.default = module.exports;
+  return module.exports(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports(value)"),
+        "a direct member call supplies the CommonJS module as `this`:\n{output}"
+    );
+    assert!(!output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
+fn coupled_lazy_default_helper_fails_closed_on_exports_alias_use() {
+    let input = r#"
+function helper(value) {
+  module.exports = helper = (next) => next;
+  exports.alias = helper;
+  module.exports.default = module.exports;
+  return helper(value);
+}
+module.exports = helper;
+module.exports.default = module.exports;
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("module.exports"),
+        "exports still names the initial object after module.exports is replaced:\n{output}"
+    );
+    assert!(!output.contains("export { helper as default }"), "{output}");
+}
+
+#[test]
 fn existing_import_absorbed() {
     let input = r#"
 import { a } from 'foo';

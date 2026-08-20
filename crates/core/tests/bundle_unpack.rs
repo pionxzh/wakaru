@@ -1617,6 +1617,73 @@ fn webpack5_recovers_proven_commonjs_reads_without_runtime_residuals() {
 }
 
 #[test]
+fn webpack5_recovers_coupled_lazy_default_helpers_across_phase1_paths() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      const helper = load(1);
+      consume(helper("value"), helper.default);
+      module.exports = "entry";
+    }),
+    1: ((module) => {
+      function helper(value) {
+        module.exports = helper = (next) => typeof next;
+        module.exports.default = module.exports;
+        return helper(value);
+      }
+      module.exports = helper;
+      module.exports.default = module.exports;
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    for emit_source_map in [false, true] {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "webpack5-coupled-lazy-default.js".to_string(),
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("the coupled lazy helper should unpack");
+
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+        let helper = output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == "module-1.js")
+            .map(|(_, code)| code)
+            .expect("expected the helper module");
+        assert!(
+            helper.contains("export { helper as default }"),
+            "the mutable helper needs a live default binding:\n{helper}"
+        );
+        assert_eq!(
+            helper.matches("helper.default = helper").count(),
+            2,
+            "both CommonJS property mirrors must remain:\n{helper}"
+        );
+        assert!(!helper.contains("module.exports"), "{helper}");
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+        if emit_source_map {
+            assert!(output
+                .source_maps
+                .iter()
+                .any(|(filename, _)| filename == "module-1.js"));
+        }
+    }
+}
+
+#[test]
 fn webpack5_reused_loader_splits_a_mid_initializer_sequence() {
     let source = r#"
 (() => {

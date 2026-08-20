@@ -146,6 +146,7 @@ impl VisitMut for UnEsm {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        recover_coupled_commonjs_default_binding(module, self.unresolved_mark);
         // Phase -1: hoist require() calls out of complex expressions
         hoist_embedded_requires(module, self.unresolved_mark);
         split_called_module_exports_assignments(module, self.unresolved_mark);
@@ -616,6 +617,562 @@ impl Visit for DirectEvalPresence {
             return;
         }
         call.visit_children_with(self);
+    }
+}
+
+/// Recover Babel runtime helpers whose mutable CommonJS value is always kept
+/// identical to one top-level function binding:
+///
+/// ```js
+/// function helper(value) {
+///   module.exports = helper = selectImplementation();
+///   module.exports.default = module.exports;
+///   return helper(value);
+/// }
+/// module.exports = helper;
+/// module.exports.default = module.exports;
+/// ```
+///
+/// A snapshot `export default helper` is insufficient here: the helper and
+/// `module.exports` are replaced together on first use. When the complete
+/// resolved module proves that every write remains coupled, use the function
+/// binding as the runtime value and expose it through a live export specifier.
+/// Property mirrors stay as real mutations of that binding.
+fn recover_coupled_commonjs_default_binding(module: &mut Module, unresolved_mark: Mark) {
+    let Some(plan) = find_coupled_commonjs_default_plan(module, unresolved_mark) else {
+        return;
+    };
+
+    // UnAssignmentMerging may have expanded a simple
+    // `module.exports = helper = value` into two adjacent assignments. Prove
+    // against a normalized clone so a failed proof never mutates the input.
+    let mut proof_module = module.clone();
+    if !merge_candidate_split_assignments(&mut proof_module, &plan.binding, unresolved_mark)
+        || !prove_coupled_commonjs_default_plan(&proof_module, &plan, unresolved_mark)
+    {
+        return;
+    }
+
+    let merged = merge_candidate_split_assignments(module, &plan.binding, unresolved_mark);
+    debug_assert!(
+        merged,
+        "the proven candidate function must remain available"
+    );
+
+    module.body[plan.assignment_index] =
+        make_live_default_export_item(plan.assignment_span, plan.binding.clone());
+    module.visit_mut_with(&mut CoupledCommonJsDefaultRewriter {
+        unresolved_mark,
+        binding: plan.binding,
+    });
+}
+
+struct CoupledCommonJsDefaultPlan {
+    binding: Ident,
+    function_index: usize,
+    assignment_index: usize,
+    assignment_span: Span,
+}
+
+fn find_coupled_commonjs_default_plan(
+    module: &Module,
+    unresolved_mark: Mark,
+) -> Option<CoupledCommonJsDefaultPlan> {
+    // Do not combine an authored/recovered ESM surface with this CommonJS
+    // lifetime proof. Imports are harmless and still go through normal UnEsm
+    // source coalescing afterwards.
+    if module.body.iter().any(|item| {
+        matches!(
+            item,
+            ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::Import(_))
+        )
+    }) {
+        return None;
+    }
+
+    let assignments: Vec<_> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            top_level_module_exports_ident_assignment(item, unresolved_mark)
+                .map(|(span, binding)| (index, span, binding))
+        })
+        .collect();
+    let [(assignment_index, assignment_span, binding)] = assignments.as_slice() else {
+        return None;
+    };
+
+    let functions: Vec<_> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = item else {
+                return None;
+            };
+            (binding_id(&function.ident) == binding_id(binding)).then_some(index)
+        })
+        .collect();
+    let [function_index] = functions.as_slice() else {
+        return None;
+    };
+    if function_index >= assignment_index {
+        return None;
+    }
+
+    let self_refs: Vec<_> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            is_module_exports_self_ref_item(item, unresolved_mark).then_some(index)
+        })
+        .collect();
+    let [self_ref_index] = self_refs.as_slice() else {
+        return None;
+    };
+    if self_ref_index <= assignment_index {
+        return None;
+    }
+
+    // Calling or exposing the hoisted helper before the CommonJS assignment
+    // could observe the initial `{}` value instead of the candidate binding.
+    let binding_key = binding_id(binding);
+    if module.body[..*assignment_index]
+        .iter()
+        .enumerate()
+        .any(|(index, item)| {
+            index != *function_index && count_binding_refs(item, &binding_key) != 0
+        })
+    {
+        return None;
+    }
+
+    // Outside the exact top-level assignment, mirror, and candidate function,
+    // no statement may observe the CommonJS module object. This excludes a
+    // second deferred writer, an early read, or an alias hidden in another
+    // closure without needing control-flow inference.
+    if module.body.iter().enumerate().any(|(index, item)| {
+        index != *function_index
+            && index != *assignment_index
+            && index != *self_ref_index
+            && item_has_unresolved_binding(item, "module", unresolved_mark)
+    }) {
+        return None;
+    }
+
+    Some(CoupledCommonJsDefaultPlan {
+        binding: binding.clone(),
+        function_index: *function_index,
+        assignment_index: *assignment_index,
+        assignment_span: *assignment_span,
+    })
+}
+
+fn top_level_module_exports_ident_assignment(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<(Span, Ident)> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
+        return None;
+    };
+    if assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return None;
+    };
+    if !is_module_exports_member(target, unresolved_mark) {
+        return None;
+    }
+    let Expr::Ident(binding) = strip_parens(&assignment.right) else {
+        return None;
+    };
+    Some((statement.span, binding.clone()))
+}
+
+fn is_module_exports_self_ref_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return false;
+    };
+    let Expr::Assign(assignment) = strip_parens(&statement.expr) else {
+        return false;
+    };
+    is_module_exports_self_ref_assignment(assignment, unresolved_mark)
+}
+
+fn is_module_exports_self_ref_assignment(assignment: &AssignExpr, unresolved_mark: Mark) -> bool {
+    if assignment.op != AssignOp::Assign
+        || !is_module_exports_expr(strip_parens(&assignment.right), unresolved_mark)
+    {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &assignment.left else {
+        return false;
+    };
+    is_module_exports_expr(target.obj.as_ref(), unresolved_mark)
+        && is_ident_prop(&target.prop).is_some_and(|property| property.as_ref() == "default")
+}
+
+fn item_has_unresolved_binding(item: &ModuleItem, name: &str, unresolved_mark: Mark) -> bool {
+    let mut collector = UnresolvedBindingIdCollector::new(name, unresolved_mark);
+    item.visit_with(&mut collector);
+    !collector.ids.is_empty()
+}
+
+fn merge_candidate_split_assignments(
+    module: &mut Module,
+    binding: &Ident,
+    unresolved_mark: Mark,
+) -> bool {
+    let binding_key = binding_id(binding);
+    let mut found = false;
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = item else {
+            continue;
+        };
+        if binding_id(&function.ident) != binding_key {
+            continue;
+        }
+        let Some(body) = &mut function.function.body else {
+            return false;
+        };
+        let mut merger = CoupledSplitAssignmentMerger {
+            unresolved_mark,
+            binding: &binding_key,
+        };
+        merger.visit_mut_stmts(&mut body.stmts);
+        found = true;
+    }
+    found
+}
+
+struct CoupledSplitAssignmentMerger<'a> {
+    unresolved_mark: Mark,
+    binding: &'a BindingId,
+}
+
+impl VisitMut for CoupledSplitAssignmentMerger<'_> {
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+
+    fn visit_mut_stmts(&mut self, statements: &mut Vec<Stmt>) {
+        statements.visit_mut_children_with(self);
+
+        let mut index = 0usize;
+        while index + 1 < statements.len() {
+            let Some(merged) = merge_split_coupled_assignment_pair(
+                &statements[index],
+                &statements[index + 1],
+                self.binding,
+                self.unresolved_mark,
+            ) else {
+                index += 1;
+                continue;
+            };
+            let span = match &statements[index] {
+                Stmt::Expr(statement) => statement.span,
+                _ => unreachable!("the pair matcher accepts only expression statements"),
+            };
+            statements[index] = Stmt::Expr(ExprStmt {
+                span,
+                expr: Box::new(Expr::Assign(merged)),
+            });
+            statements.remove(index + 1);
+        }
+    }
+}
+
+fn merge_split_coupled_assignment_pair(
+    first: &Stmt,
+    second: &Stmt,
+    binding: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<AssignExpr> {
+    let Stmt::Expr(first_statement) = first else {
+        return None;
+    };
+    let Expr::Assign(module_assignment) = strip_parens(&first_statement.expr) else {
+        return None;
+    };
+    if module_assignment.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(target)) = &module_assignment.left else {
+        return None;
+    };
+    if !is_module_exports_member(target, unresolved_mark) {
+        return None;
+    }
+
+    let Stmt::Expr(second_statement) = second else {
+        return None;
+    };
+    let Expr::Assign(binding_assignment) = strip_parens(&second_statement.expr) else {
+        return None;
+    };
+    if binding_assignment.op != AssignOp::Assign
+        || !assign_target_matches_binding(&binding_assignment.left, binding)
+        || !same_split_coupled_value(&module_assignment.right, &binding_assignment.right)
+    {
+        return None;
+    }
+
+    let mut merged = module_assignment.clone();
+    merged.right = Box::new(Expr::Assign(binding_assignment.clone()));
+    Some(merged)
+}
+
+fn same_split_coupled_value(left: &Expr, right: &Expr) -> bool {
+    matches!(
+        (strip_parens(left), strip_parens(right)),
+        (Expr::Ident(left), Expr::Ident(right))
+            if binding_id(left) == binding_id(right)
+    )
+}
+
+fn assign_target_matches_binding(target: &AssignTarget, binding: &BindingId) -> bool {
+    matches!(
+        target,
+        AssignTarget::Simple(SimpleAssignTarget::Ident(candidate))
+            if binding_id(&candidate.id) == *binding
+    )
+}
+
+fn prove_coupled_commonjs_default_plan(
+    module: &Module,
+    plan: &CoupledCommonJsDefaultPlan,
+    unresolved_mark: Mark,
+) -> bool {
+    let mut direct_eval = DirectEvalPresence::default();
+    module.visit_with(&mut direct_eval);
+    if direct_eval.found {
+        return false;
+    }
+
+    let mut unresolved_exports = UnresolvedBindingIdCollector::new("exports", unresolved_mark);
+    module.visit_with(&mut unresolved_exports);
+    if !unresolved_exports.ids.is_empty() {
+        return false;
+    }
+
+    let mut receiver_sensitive = ReceiverSensitiveModuleExportsCall {
+        unresolved_mark,
+        found: false,
+    };
+    module.visit_with(&mut receiver_sensitive);
+    if receiver_sensitive.found {
+        return false;
+    }
+
+    let Some(function) = module.body.get(plan.function_index).and_then(|item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = item else {
+            return None;
+        };
+        (binding_id(&function.ident) == binding_id(&plan.binding)).then_some(function)
+    }) else {
+        return false;
+    };
+    let Some(body) = &function.function.body else {
+        return false;
+    };
+    let binding_key = binding_id(&plan.binding);
+    let mut writes = CoupledCommonJsWriteProof {
+        unresolved_mark,
+        binding: &binding_key,
+        recognized_module_writes: 0,
+        recognized_binding_writes: 0,
+        saw_nested_self_ref: false,
+        valid: true,
+    };
+    body.stmts.visit_with(&mut writes);
+    if !writes.valid
+        || !writes.saw_nested_self_ref
+        || writes.recognized_module_writes == 0
+        || writes.recognized_module_writes != writes.recognized_binding_writes
+    {
+        return false;
+    }
+
+    let uses = BindingUseIndex::collect(module);
+    let binding_writes = uses
+        .use_sites(&binding_key)
+        .iter()
+        .filter(|site| matches!(site.kind, UseKind::Write | UseKind::ReadWrite))
+        .count();
+    if binding_writes != writes.recognized_binding_writes {
+        return false;
+    }
+
+    let mut unresolved_module = UnresolvedBindingIdCollector::new("module", unresolved_mark);
+    module.visit_with(&mut unresolved_module);
+    let mut whole_value_writes = 0usize;
+    for module_binding in &unresolved_module.ids {
+        for site in uses.use_sites(module_binding) {
+            match &site.kind {
+                UseKind::StaticMemberRead(property) if property.as_ref() == "exports" => {}
+                UseKind::StaticMemberWrite(property) if property.as_ref() == "exports" => {
+                    whole_value_writes += 1;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    // One whole-value write is the direct top-level `module.exports = helper`;
+    // every remaining write must be paired inside the helper body.
+    whole_value_writes == writes.recognized_module_writes + 1
+}
+
+struct CoupledCommonJsWriteProof<'a> {
+    unresolved_mark: Mark,
+    binding: &'a BindingId,
+    recognized_module_writes: usize,
+    recognized_binding_writes: usize,
+    saw_nested_self_ref: bool,
+    valid: bool,
+}
+
+impl Visit for CoupledCommonJsWriteProof<'_> {
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if !self.valid {
+            return;
+        }
+        if is_module_exports_self_ref_assignment(assignment, self.unresolved_mark) {
+            self.saw_nested_self_ref = true;
+            assignment.visit_children_with(self);
+            return;
+        }
+
+        if matches!(
+            &assignment.left,
+            AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                if is_module_exports_member(target, self.unresolved_mark)
+        ) {
+            let Expr::Assign(binding_assignment) = strip_parens(&assignment.right) else {
+                self.valid = false;
+                return;
+            };
+            if binding_assignment.op != AssignOp::Assign
+                || !assign_target_matches_binding(&binding_assignment.left, self.binding)
+            {
+                self.valid = false;
+                return;
+            }
+            self.recognized_module_writes += 1;
+            self.recognized_binding_writes += 1;
+            binding_assignment.right.visit_with(self);
+            return;
+        }
+
+        if assign_target_matches_binding(&assignment.left, self.binding) {
+            self.valid = false;
+            return;
+        }
+        assignment.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+struct ReceiverSensitiveModuleExportsCall {
+    unresolved_mark: Mark,
+    found: bool,
+}
+
+impl Visit for ReceiverSensitiveModuleExportsCall {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if matches!(
+            &call.callee,
+            Callee::Expr(callee)
+                if is_module_exports_expr(strip_parens(callee), self.unresolved_mark)
+        ) {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_opt_call(&mut self, call: &OptCall) {
+        if is_module_exports_expr(strip_parens(&call.callee), self.unresolved_mark) {
+            self.found = true;
+            return;
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_tagged_tpl(&mut self, tagged: &TaggedTpl) {
+        if is_module_exports_expr(strip_parens(&tagged.tag), self.unresolved_mark) {
+            self.found = true;
+            return;
+        }
+        tagged.visit_children_with(self);
+    }
+}
+
+fn make_live_default_export_item(span: Span, mut binding: Ident) -> ModuleItem {
+    binding.span = DUMMY_SP;
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span,
+        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+            span: DUMMY_SP,
+            orig: ModuleExportName::Ident(binding),
+            exported: Some(ModuleExportName::Ident(
+                IdentName::new("default".into(), DUMMY_SP).into(),
+            )),
+            is_type_only: false,
+        })],
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
+struct CoupledCommonJsDefaultRewriter {
+    unresolved_mark: Mark,
+    binding: Ident,
+}
+
+impl VisitMut for CoupledCommonJsDefaultRewriter {
+    fn visit_mut_expr(&mut self, expression: &mut Expr) {
+        if let Expr::Assign(assignment) = expression {
+            let is_whole_value_write = matches!(
+                &assignment.left,
+                AssignTarget::Simple(SimpleAssignTarget::Member(target))
+                    if is_module_exports_member(target, self.unresolved_mark)
+            );
+            if is_whole_value_write {
+                let Expr::Assign(binding_assignment) = strip_parens(&assignment.right) else {
+                    debug_assert!(false, "the proof accepted an uncoupled CommonJS write");
+                    return;
+                };
+                debug_assert!(assign_target_matches_binding(
+                    &binding_assignment.left,
+                    &binding_id(&self.binding),
+                ));
+                *expression = Expr::Assign(binding_assignment.clone());
+                expression.visit_mut_children_with(self);
+                return;
+            }
+        }
+
+        expression.visit_mut_children_with(self);
+        if is_module_exports_expr(expression, self.unresolved_mark) {
+            let span = match expression {
+                Expr::Member(member) => member.span,
+                _ => DUMMY_SP,
+            };
+            let mut binding = self.binding.clone();
+            binding.span = span;
+            *expression = Expr::Ident(binding);
+        }
     }
 }
 
