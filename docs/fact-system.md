@@ -166,14 +166,23 @@ mutations of that binding, while a live ESM default specifier exposes later
 replacements. Independent writes, early observation, direct eval,
 receiver-sensitive calls, and additional CommonJS object escapes fail closed.
 
-The same resolved binding-use surface also proves an exact
-default-compatibility postamble dead only when every `exports` access outside
-that postamble is a static, non-default member access to an ordinary name.
+Two same-module proofs handle the exact
+default-compatibility postamble. The named-only proof treats it as a dead branch
+only when every `exports` access outside the postamble is a static, non-default
+member access to an ordinary name. The default-only proof instead rewrites the
+generated CommonJS adapter onto the recovered binding when the complete surface
+has exactly one live identifier getter for `exports.default`, the postamble is
+the final statement, and there is no authored ESM or other unresolved
+`exports` / `module` use. Its observable `__esModule` definition and
+`.default = self` mirror remain; native ESM replaces only the namespace copy
+and final `module.exports` reassignment. A one-argument type helper in the
+guard need not be identified: its call and receiver remain in place, and only
+the exact live `exports.default` getter read becomes its recovered binding.
 Computed access, whole-object escape, unresolved getter helpers,
 prototype-mutating member names (`__proto__`, `__defineGetter__`,
-`__defineSetter__`), meaningful `module` use, direct eval, and a default export
-all fail closed. These are same-module identity and dead-branch proofs, not
-default-object facts available to consumers.
+`__defineSetter__`), meaningful `module` use, direct eval, and mixed or named
+default-bearing surfaces all fail closed. Neither proof creates a default-object
+fact available to consumers.
 
 ## Rules that read facts
 

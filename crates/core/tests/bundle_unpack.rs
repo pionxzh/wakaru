@@ -1684,6 +1684,87 @@ fn webpack5_recovers_coupled_lazy_default_helpers_across_phase1_paths() {
 }
 
 #[test]
+fn webpack5_recovers_default_only_compat_adapter_without_runtime_residuals() {
+    let source = r#"
+(() => {
+  var modules = ({
+    0: ((module, exports, load) => {
+      module.exports = load(1);
+    }),
+    1: ((module, exports, load) => {
+      var typeHelpers = load(2);
+      Object.defineProperty(exports, "__esModule", {
+        value: true
+      });
+      Object.defineProperty(exports, "default", {
+        enumerable: true,
+        get: function() {
+          return entry;
+        }
+      });
+      function entry(value) {
+        return value;
+      }
+      ("function" == typeof exports.default || "object" === typeHelpers._(exports.default) && null !== exports.default) && void 0 === exports.default.__esModule && (Object.defineProperty(exports.default, "__esModule", {
+        value: true
+      }), Object.assign(exports.default, exports), module.exports = exports.default);
+    }),
+    2: ((module, exports) => {
+      function typeOf(value) {
+        return typeof value;
+      }
+      exports._ = typeOf;
+    })
+  });
+  var cache = {};
+  (function load(id) {
+    var module = cache[id] = { exports: {} };
+    modules[id](module, module.exports, load);
+    return module.exports;
+  })(0);
+})();
+"#;
+
+    for emit_source_map in [false, true] {
+        let output = unpack(
+            source,
+            DecompileOptions {
+                filename: "webpack5-default-only-compat-adapter.js".to_string(),
+                emit_source_map,
+                ..Default::default()
+            },
+        )
+        .expect("the exact default-only adapter should unpack");
+
+        assert_eq!(output.detected_formats, [BundleFormat::Webpack5]);
+        let provider = output
+            .modules
+            .iter()
+            .find(|(filename, _)| filename == "module-1.js")
+            .map(|(_, code)| code)
+            .expect("expected the default-only provider");
+        assert!(
+            provider.contains("export { entry as default }"),
+            "{provider}"
+        );
+        assert!(provider.contains("(entry) === \"object\""), "{provider}");
+        assert!(provider.contains("entry.default = entry"), "{provider}");
+        assert!(!provider.contains("exports.default"), "{provider}");
+        assert!(!provider.contains("module.exports"), "{provider}");
+        assert_eq!(validate_output_modules(&output.modules), vec![]);
+        if emit_source_map {
+            assert!(
+                output
+                    .source_maps
+                    .iter()
+                    .any(|(filename, _)| filename == "module-1.js"),
+                "the recovered provider should retain its source map"
+            );
+        }
+    }
+}
+
+#[test]
 fn webpack5_reused_loader_splits_a_mid_initializer_sequence() {
     let source = r#"
 (() => {

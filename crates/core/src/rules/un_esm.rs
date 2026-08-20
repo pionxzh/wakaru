@@ -4,13 +4,13 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, ArrowFunctionBody, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent,
-    CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
+    BlockStmt, CallExpr, Callee, CondExpr, Decl, ExportAll, ExportDecl, ExportDefaultExpr,
     ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Function,
-    FunctionBody, Id, Ident, IdentName, ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    NamedExport, ObjectPatProp, OptCall, OptChainBase, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl, ThisExpr, UnaryOp, VarDecl,
-    VarDeclKind, VarDeclarator,
+    FunctionBody, Id, Ident, IdentName, IfStmt, ImportDecl, ImportDefaultSpecifier,
+    ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, OptCall, OptChainBase, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, TaggedTpl,
+    ThisExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -156,6 +156,7 @@ impl VisitMut for UnEsm {
         split_compound_exports(module, self.unresolved_mark);
         rewrite_commonjs_export_star_loops(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
+        rewrite_recovered_default_only_default_compat_block(module, self.unresolved_mark);
         remove_dead_named_only_default_compat_blocks(module, self.unresolved_mark);
         lower_exported_cjs_requires(module, self.unresolved_mark);
         preserve_mutable_cjs_require_bindings(module, self.unresolved_mark);
@@ -2168,6 +2169,98 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     module.body = new_body;
 }
 
+/// Rewrite ncc's CommonJS default-object adapter when the complete generated
+/// export surface is exactly one live `default` getter.
+///
+/// In that exact shape, `Object.assign(exports.default, exports)` copies only
+/// the enumerable `default` getter back onto the default value itself. Keep
+/// that self mirror and the observable `__esModule` definition on the
+/// recovered binding, while native ESM replaces the final `module.exports`
+/// reassignment.
+///
+/// This is deliberately not inferred from the eventual printed export. The
+/// proof requires one top-level generated getter, one final exact postamble,
+/// no pre-existing ESM declarations, and no other unresolved `exports` or
+/// `module` use anywhere in the module. Named properties, aliases, escapes,
+/// hidden mutations, and direct eval therefore fail closed.
+fn rewrite_recovered_default_only_default_compat_block(module: &mut Module, unresolved_mark: Mark) {
+    let compat_indices: Vec<usize> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            extract_strict_default_compat_parts(item, unresolved_mark)
+                .is_some()
+                .then_some(index)
+        })
+        .collect();
+    let [compat_index] = compat_indices.as_slice() else {
+        return;
+    };
+    if *compat_index + 1 != module.body.len() {
+        return;
+    }
+
+    // Authored ESM mixed with a CommonJS facade needs a different provenance
+    // model. This recovery is only for a fully generated CommonJS surface.
+    if module
+        .body
+        .iter()
+        .any(|item| matches!(item, ModuleItem::ModuleDecl(_)))
+    {
+        return;
+    }
+
+    let default_getters: Vec<(usize, Ident)> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            extract_exports_default_ident_getter(item, unresolved_mark)
+                .map(|binding| (index, binding))
+        })
+        .collect();
+    let [(default_getter_index, default_binding)] = default_getters.as_slice() else {
+        return;
+    };
+    if default_getter_index >= compat_index {
+        return;
+    }
+
+    let mut direct_eval = DirectEvalPresence::default();
+    module.visit_with(&mut direct_eval);
+    if direct_eval.found {
+        return;
+    }
+
+    for (index, item) in module.body.iter().enumerate() {
+        if index == *compat_index || index == *default_getter_index {
+            continue;
+        }
+
+        let mut exports_ids = UnresolvedBindingIdCollector::new("exports", unresolved_mark);
+        item.visit_with(&mut exports_ids);
+        if !exports_ids.ids.is_empty() {
+            return;
+        }
+
+        let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
+        item.visit_with(&mut module_ids);
+        if !module_ids.ids.is_empty() {
+            return;
+        }
+    }
+
+    let Some(rewritten) = make_default_binding_compat_block(
+        &module.body[*compat_index],
+        default_binding,
+        unresolved_mark,
+    ) else {
+        return;
+    };
+    module.body[*compat_index] = rewritten;
+}
+
 /// Remove ncc's CommonJS default-compatibility postamble when the complete
 /// CommonJS surface proves that `exports.default` can never exist.
 ///
@@ -2769,6 +2862,243 @@ fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> 
     is_define_esmodule_on_exports_default(&block.stmts[0], unresolved_mark)
         && is_object_assign_exports_default_exports(&block.stmts[1], unresolved_mark)
         && is_module_exports_default_reassignment(&block.stmts[2], unresolved_mark)
+}
+
+fn extract_exports_default_ident_getter(item: &ModuleItem, unresolved_mark: Mark) -> Option<Ident> {
+    let ModuleItem::Stmt(Stmt::Expr(statement)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = strip_parens(statement.expr.as_ref()) else {
+        return None;
+    };
+    if !is_object_define_property_global_call(call, unresolved_mark)
+        || call.args.len() != 3
+        || call.args.iter().any(|arg| arg.spread.is_some())
+    {
+        return None;
+    }
+    if !matches!(strip_parens(call.args[0].expr.as_ref()), Expr::Ident(id)
+        if is_unresolved_ident(id, "exports", unresolved_mark))
+        || !matches!(strip_parens(call.args[1].expr.as_ref()), Expr::Lit(Lit::Str(name))
+            if name.value.as_str() == Some("default"))
+    {
+        return None;
+    }
+    extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)
+}
+
+fn make_default_binding_compat_block(
+    item: &ModuleItem,
+    default_binding: &Ident,
+    unresolved_mark: Mark,
+) -> Option<ModuleItem> {
+    let (span, mut test, mut define_esmodule) =
+        extract_strict_default_compat_parts(item, unresolved_mark)?;
+    let mut replacer = ExportsDefaultToBinding {
+        binding: default_binding.clone(),
+        unresolved_mark,
+    };
+    test.visit_mut_with(&mut replacer);
+    define_esmodule.visit_mut_with(&mut replacer);
+
+    let self_mirror = Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span,
+                obj: Box::new(Expr::Ident(default_binding.clone())),
+                prop: MemberProp::Ident(IdentName::new("default".into(), span)),
+            })),
+            right: Box::new(Expr::Ident(default_binding.clone())),
+        })),
+    });
+
+    Some(ModuleItem::Stmt(Stmt::If(IfStmt {
+        span,
+        test,
+        cons: Box::new(Stmt::Block(BlockStmt {
+            span,
+            ctxt: Default::default(),
+            stmts: vec![
+                Stmt::Expr(ExprStmt {
+                    span,
+                    expr: define_esmodule,
+                }),
+                self_mirror,
+            ],
+        })),
+        alt: None,
+    })))
+}
+
+fn extract_strict_default_compat_parts(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<(Span, Box<Expr>, Box<Expr>)> {
+    let (span, test, define_esmodule, copy_exports, assign_default) = match item {
+        ModuleItem::Stmt(Stmt::If(if_stmt)) => {
+            if if_stmt.alt.is_some() {
+                return None;
+            }
+            let Stmt::Block(block) = if_stmt.cons.as_ref() else {
+                return None;
+            };
+            let [Stmt::Expr(define_esmodule), Stmt::Expr(copy_exports), Stmt::Expr(assign_default)] =
+                block.stmts.as_slice()
+            else {
+                return None;
+            };
+            (
+                if_stmt.span,
+                if_stmt.test.clone(),
+                define_esmodule.expr.clone(),
+                copy_exports.expr.as_ref(),
+                assign_default.expr.as_ref(),
+            )
+        }
+        ModuleItem::Stmt(Stmt::Expr(statement)) => {
+            let Expr::Bin(postamble) = strip_parens(statement.expr.as_ref()) else {
+                return None;
+            };
+            if postamble.op != BinaryOp::LogicalAnd {
+                return None;
+            }
+            let Expr::Seq(sequence) = strip_parens(postamble.right.as_ref()) else {
+                return None;
+            };
+            let [define_esmodule, copy_exports, assign_default] = sequence.exprs.as_slice() else {
+                return None;
+            };
+            (
+                statement.span,
+                postamble.left.clone(),
+                define_esmodule.clone(),
+                copy_exports.as_ref(),
+                assign_default.as_ref(),
+            )
+        }
+        _ => return None,
+    };
+
+    if !is_rewritable_exports_default_compat_test(test.as_ref(), unresolved_mark)
+        || !is_strict_define_esmodule_on_exports_default_expr(
+            define_esmodule.as_ref(),
+            unresolved_mark,
+        )
+        || !is_strict_object_assign_exports_default_exports_expr(copy_exports, unresolved_mark)
+        || !is_module_exports_default_reassignment_expr(assign_default, unresolved_mark)
+    {
+        return None;
+    }
+    Some((span, test, define_esmodule))
+}
+
+fn is_rewritable_exports_default_compat_test(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Bin(bin) = strip_parens(expr) else {
+        return false;
+    };
+    bin.op == BinaryOp::LogicalAnd
+        && is_rewritable_exports_default_type_guard(bin.left.as_ref(), unresolved_mark)
+        && is_exports_default_esmodule_undefined(bin.right.as_ref(), unresolved_mark)
+}
+
+fn is_rewritable_exports_default_type_guard(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Bin(bin) = strip_parens(expr) else {
+        return false;
+    };
+    if bin.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    let Expr::Bin(object_and_not_null) = strip_parens(bin.right.as_ref()) else {
+        return false;
+    };
+
+    is_typeof_exports_default_eq(bin.left.as_ref(), "function", unresolved_mark)
+        && object_and_not_null.op == BinaryOp::LogicalAnd
+        && (is_typeof_exports_default_eq(
+            object_and_not_null.left.as_ref(),
+            "object",
+            unresolved_mark,
+        ) || is_exports_default_type_helper_eq_object(
+            object_and_not_null.left.as_ref(),
+            unresolved_mark,
+        ))
+        && is_exports_default_not_null(object_and_not_null.right.as_ref(), unresolved_mark)
+}
+
+/// The helper result does not need to be interpreted: the rewrite preserves
+/// the call, its receiver, and its order, replacing only the generated live
+/// getter read with the binding that getter returns. Unlike the named-only
+/// dead-branch proof, this remains sound for an otherwise unknown one-argument
+/// type helper.
+fn is_exports_default_type_helper_eq_object(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Bin(bin) = strip_parens(expr) else {
+        return false;
+    };
+    if bin.op != BinaryOp::EqEqEq
+        || !matches!(strip_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(value))
+            if value.value.as_str() == Some("object"))
+    {
+        return false;
+    }
+    let Expr::Call(call) = strip_parens(bin.left.as_ref()) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let mut exports_ids = UnresolvedBindingIdCollector::new("exports", unresolved_mark);
+    callee.visit_with(&mut exports_ids);
+    let mut module_ids = UnresolvedBindingIdCollector::new("module", unresolved_mark);
+    callee.visit_with(&mut module_ids);
+    call.args.len() == 1
+        && call.args[0].spread.is_none()
+        && is_exports_default_expr(call.args[0].expr.as_ref(), unresolved_mark)
+        && exports_ids.ids.is_empty()
+        && module_ids.ids.is_empty()
+}
+
+fn is_strict_define_esmodule_on_exports_default_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    is_unresolved_member_expr(callee.as_ref(), "Object", "defineProperty", unresolved_mark)
+        && call.args.len() == 3
+        && call.args.iter().all(|arg| arg.spread.is_none())
+        && is_exports_default_expr(call.args[0].expr.as_ref(), unresolved_mark)
+        && is_esmodule_name_arg(call.args[1].expr.as_ref())
+        && is_esmodule_descriptor(call.args[2].expr.as_ref())
+}
+
+fn is_strict_object_assign_exports_default_exports_expr(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    call.args.iter().all(|arg| arg.spread.is_none())
+        && is_object_assign_exports_default_exports_expr(expr, unresolved_mark)
+}
+
+struct ExportsDefaultToBinding {
+    binding: Ident,
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for ExportsDefaultToBinding {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if is_exports_default_expr(expr, self.unresolved_mark) {
+            *expr = Expr::Ident(self.binding.clone());
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
 }
 
 fn is_exports_default_compat_postamble(item: &ModuleItem, unresolved_mark: Mark) -> bool {

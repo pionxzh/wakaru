@@ -1374,6 +1374,343 @@ const answer = 42;
 }
 
 #[test]
+fn recovered_default_only_getter_rewrites_default_compat_postamble() {
+    let input = r#"
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get: function() {
+    return entry;
+  }
+});
+function entry() {}
+("function" == typeof exports.default || "object" == typeof exports.default && null !== exports.default) && void 0 === exports.default.__esModule && (Object.defineProperty(exports.default, "__esModule", {
+  value: true
+}), Object.assign(exports.default, exports), module.exports = exports.default);
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+export { entry as default };
+function entry() {}
+if ((typeof entry === "function" || typeof entry === "object" && entry !== null) && entry.__esModule === undefined) {
+    Object.defineProperty(entry, "__esModule", {
+        value: true
+    });
+    entry.default = entry;
+}
+"#,
+    );
+    assert!(
+        validate_output_modules(&[("entry.js".into(), output)]).is_empty(),
+        "the rewritten default-only adapter should leave no CommonJS residual"
+    );
+}
+
+#[test]
+fn shadowed_exports_and_module_do_not_block_default_only_postamble_recovery() {
+    let input = format!(
+        r#"
+Object.defineProperty(exports, "__esModule", {{
+  value: true
+}});
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{
+    return entry;
+  }}
+}});
+function entry(exports, module) {{
+  return exports ?? module;
+}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+    );
+
+    let output = apply(&input);
+    assert!(!output.contains("Object.assign(exports.default, exports)"));
+    assert!(!output.contains("module.exports = exports.default"));
+    assert!(output.contains("export { entry as default }"));
+    assert!(output.contains("entry.default = entry"));
+}
+
+#[test]
+fn default_only_type_helper_is_preserved_on_the_recovered_binding() {
+    let input = r#"
+const typeOf = require("./typeof.js");
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() {
+    return entry;
+  }
+});
+function entry() {}
+if ((typeof exports.default === "function" || typeOf(exports.default) === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#;
+
+    let output = apply(input);
+    assert!(output.contains("typeOf(entry) === \"object\""), "{output}");
+    assert!(output.contains("entry.default = entry"), "{output}");
+    assert!(!output.contains("exports.default"), "{output}");
+    assert!(!output.contains("module.exports"), "{output}");
+}
+
+#[test]
+fn non_exact_default_surfaces_keep_default_compat_postamble() {
+    let cases = [
+        (
+            "named export getter",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "answer", {{
+  enumerable: true,
+  get() {{ return answer; }}
+}});
+function entry() {{}}
+const answer = 42;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "exports alias",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+const publicApi = exports;
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "other module use",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+inspect(module);
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "direct eval",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{ eval(source); }}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "default assignment instead of generated getter",
+            format!("function entry() {{}}\nexports.default = entry;\n{DEFAULT_COMPAT_POSTAMBLE}"),
+        ),
+        (
+            "authored ESM default",
+            format!(
+                "function entry() {{}}\nexport {{ entry as default }};\n{DEFAULT_COMPAT_POSTAMBLE}"
+            ),
+        ),
+        (
+            "mixed authored ESM surface",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{}}
+export const answer = 42;
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "getter re-export",
+            format!(
+                r#"
+const dependency = require("./dependency.js");
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return dependency.default; }}
+}});
+                {DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "shadowed Object helper",
+            format!(
+                r#"
+const Object = customObject;
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "duplicate default getter",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return replacement; }}
+}});
+function entry() {{}}
+function replacement() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "spread default getter argument",
+            format!(
+                r#"
+Object.defineProperty(...exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+"#
+            ),
+        ),
+        (
+            "postamble is not final",
+            format!(
+                r#"
+Object.defineProperty(exports, "default", {{
+  enumerable: true,
+  get() {{ return entry; }}
+}});
+function entry() {{}}
+{DEFAULT_COMPAT_POSTAMBLE}
+observe(entry);
+"#
+            ),
+        ),
+        (
+            "postamble has an alternate branch",
+            r#"
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() { return entry; }
+});
+function entry() {}
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+} else {
+  observe(exports.default);
+}
+"#
+            .to_string(),
+        ),
+        (
+            "effectful compatibility descriptor",
+            r#"
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() { return entry; }
+});
+function entry() {}
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true,
+    configurable: touch(exports)
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "multi-argument type helper",
+            r#"
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() { return entry; }
+});
+function entry() {}
+if ((typeof exports.default === "function" || typeOf(exports.default, exports) === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "CommonJS type helper receiver",
+            r#"
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() { return entry; }
+});
+function entry() {}
+if ((typeof exports.default === "function" || exports.typeOf(exports.default) === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    for (name, input) in cases {
+        let output = apply(&input);
+        assert!(
+            output.contains("Object.assign(exports.default, exports)")
+                && output.contains("module.exports = exports.default"),
+            "{name} must fail closed:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn dynamic_commonjs_surfaces_keep_default_compat_postamble() {
     let cases = [
         (
