@@ -419,25 +419,101 @@ System.register("entry", ["utils"], function (_export) {
     let modules = unpack_source_raw(source);
     let entry = module_code(&modules, "entry.js");
     let binding = entry
-        .find("const __systemjs_export =")
-        .unwrap_or_else(|| panic!("named export binding should be recovered:\n{entry}"));
-    let named_export = entry
-        .find("export { __systemjs_export as DerivedClass };")
-        .unwrap_or_else(|| panic!("named export alias should be recovered:\n{entry}"));
+        .find("export const DerivedClass =")
+        .unwrap_or_else(|| panic!("named IIFE should bind the export name directly:\n{entry}"));
     let member_assignment = entry
-        .find("__systemjs_export.marker = \"derived\";")
-        .unwrap_or_else(|| panic!("member assignment should be preserved:\n{entry}"));
+        .find("DerivedClass.marker = \"derived\";")
+        .unwrap_or_else(|| panic!("member assignment should use the export name:\n{entry}"));
     let after = entry
         .find("after();")
         .unwrap_or_else(|| panic!("sequence side effect should be preserved:\n{entry}"));
 
     assert!(
-        binding < named_export && named_export < member_assignment && member_assignment < after,
-        "binding, named export, member assignment, and sequence side effect should preserve order:\n{entry}"
+        binding < member_assignment && member_assignment < after,
+        "export binding, member assignment, and sequence side effect should preserve order:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__systemjs_export"),
+        "free export name should not use a synthetic alias:\n{entry}"
     );
     assert!(
         !entry.lines().any(|line| line.starts_with("function (")),
         "top-level anonymous function should not be emitted:\n{entry}"
+    );
+}
+
+#[test]
+fn nested_inner_function_iife_member_export_uses_export_name() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("WidgetUtils", function () {
+        function Inner() {}
+        return Inner;
+      }()).tag = "WidgetUtils";
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert!(
+        entry.contains("export const WidgetUtils =")
+            && entry.contains("WidgetUtils.tag = \"WidgetUtils\";"),
+        "nested IIFE member export should bind the export name directly:\n{entry}"
+    );
+    assert!(
+        !entry.contains("__systemjs_export"),
+        "free export name should not use a synthetic alias:\n{entry}"
+    );
+}
+
+#[test]
+fn member_export_does_not_redeclare_existing_export_const() {
+    let source = r#"
+System.register("entry", [], function (_export) {
+  return {
+    execute: function () {
+      _export("HelperUtils", makeValue());
+      _export("HelperUtils", makeOther()).tag = "HelperUtils";
+    }
+  };
+});
+"#;
+
+    let modules = unpack_source_raw(source);
+    let entry = module_code(&modules, "entry.js");
+
+    assert_eq!(
+        entry.matches("export const HelperUtils =").count(),
+        1,
+        "plain export should remain the only HelperUtils binding:\n{entry}"
+    );
+    assert!(
+        entry.contains("export const HelperUtils = makeValue();"),
+        "first export should keep the original value:\n{entry}"
+    );
+    assert!(
+        entry.contains("const __systemjs_export = makeOther();")
+            && entry.contains("__systemjs_export.tag = \"HelperUtils\";"),
+        "member export should evaluate the second value on a synthetic binding:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export { __systemjs_export as HelperUtils }"),
+        "already-declared export must not be repeated as an alias:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("makeValue()").count(),
+        1,
+        "makeValue should be evaluated once:\n{entry}"
+    );
+    assert_eq!(
+        entry.matches("makeOther()").count(),
+        1,
+        "makeOther should be evaluated once:\n{entry}"
     );
 }
 
@@ -701,21 +777,18 @@ System.register("entry", [], function (_export) {
     let modules = unpack_source_raw(source);
     let entry = module_code(&modules, "entry.js");
     let binding = entry
-        .find("const __systemjs_export = makeValue();")
-        .unwrap_or_else(|| panic!("VALUE binding should be recovered:\n{entry}"));
-    let named_export = entry
-        .find("export { __systemjs_export as DerivedClass };")
-        .unwrap_or_else(|| panic!("named export alias should be recovered:\n{entry}"));
+        .find("export const DerivedClass = makeValue();")
+        .unwrap_or_else(|| panic!("VALUE binding should use the export name:\n{entry}"));
     let assignment = entry
-        .find("__systemjs_export[getKey()] += rhs();")
-        .unwrap_or_else(|| panic!("computed assignment should be preserved:\n{entry}"));
+        .find("DerivedClass[getKey()] += rhs();")
+        .unwrap_or_else(|| panic!("computed assignment should use the export name:\n{entry}"));
     let rest = entry
         .find("after();")
         .unwrap_or_else(|| panic!("sequence rest should be preserved:\n{entry}"));
 
     assert!(
-        binding < named_export && named_export < assignment && assignment < rest,
-        "VALUE binding, named export, computed assignment, and sequence rest should preserve order:\n{entry}"
+        binding < assignment && assignment < rest,
+        "export binding, computed assignment, and sequence rest should preserve order:\n{entry}"
     );
     for call in ["makeValue()", "getKey()", "rhs()", "after()"] {
         assert_eq!(
@@ -725,8 +798,8 @@ System.register("entry", [], function (_export) {
         );
     }
     assert!(
-        entry.contains("__systemjs_export[getKey()] += rhs();"),
-        "assignment operator and computed member should be preserved:\n{entry}"
+        !entry.contains("__systemjs_export"),
+        "free export name should not use a synthetic alias:\n{entry}"
     );
 }
 
